@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# The playground vault is its own git repo, run by the daemon
+/playground_vault/
+# Kept locally, not in the repo
+/docs/
+/.claude/

@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 14px; color: #37352f; background: #fff; user-select: none; }
+  .row { display: flex; align-items: center; gap: 6px; position: relative; height: 92px; }
+  .stage { flex: 1; height: 64px; border: 2px solid #d0d0cc; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 600; transition: all .25s; background: #fafaf8; }
+  .stage small { font-weight: 400; color: #787774; font-size: 11px; }
+  .stage.on { border-color: #2383e2; background: #e8f1fb; transform: translateY(-3px); }
+  .arrow { color: #b0b0aa; }
+  .token { position: absolute; top: 72px; left: 0; padding: 2px 8px; border-radius: 12px; background: #2383e2; color: #fff; font: 12px ui-monospace, Consolas, monospace; cursor: grab; transition: left .3s; white-space: nowrap; }
+  .token.drag { transition: none; cursor: grabbing; }
+  .controls { display: flex; gap: 8px; margin-top: 14px; align-items: center; font-size: 13px; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid #d0d0cc; border-radius: 6px; background: #fff; cursor: pointer; }
+  .hint { color: #787774; }
+</style>
+</head>
+<body>
+  <div class="row" id="row">
+    <div class="stage" data-i="0">IF<small>fetch</small></div><span class="arrow">→</span>
+    <div class="stage" data-i="1">ID<small>decode</small></div><span class="arrow">→</span>
+    <div class="stage" data-i="2">EX<small>execute</small></div><span class="arrow">→</span>
+    <div class="stage" data-i="3">MEM<small>memory</small></div><span class="arrow">→</span>
+    <div class="stage" data-i="4">WB<small>write back</small></div>
+    <div class="token" id="token">add x3, x1, x2</div>
+  </div>
+  <div class="controls">
+    <button id="play">Play</button>
+    <button id="step">Step</button>
+    <span class="hint">or drag the instruction between stages</span>
+  </div>
+<script>
+  const STAGES = [
+    { anchor: 'if', tip: 'IF: the PC indexes instruction memory and fetches add x3, x1, x2' },
+    { anchor: 'id', tip: 'ID: the opcode is decoded and x1 and x2 are read from the register file' },
+    { anchor: 'ex', tip: 'EX: the ALU adds the two register values' },
+    { anchor: 'mem', tip: 'MEM: add does not touch data memory, so it just passes through' },
+    { anchor: 'wb', tip: 'WB: the sum is written back into x3' },
+  ]
+  const stages = [...document.querySelectorAll('.stage')]
+  const token = document.getElementById('token')
+  const row = document.getElementById('row')
+  let stage = 0, timer = null
+
+  function place(i) {
+    const s = stages[i], r = row.getBoundingClientRect(), b = s.getBoundingClientRect()
+    token.style.left = (b.left - r.left + b.width / 2 - token.offsetWidth / 2) + 'px'
+    stages.forEach((el, j) => el.classList.toggle('on', j === i))
+  }
+
+  // Every stage change talks to the note: highlight its section, show a popup, tell the other
+  // artifacts and save the position in this artifact's own tag
+  function go(i, save = true) {
+    stage = (i + STAGES.length) % STAGES.length
+    place(stage)
+    const s = STAGES[stage]
+    vault.note.highlight(s.anchor)
+    vault.note.popup(s.anchor, s.tip)
+    vault.bus.publish('stage', { stage: s.anchor, instr: 'add x3, x1, x2' })
+    if (save) vault.state.set({ stage })
+  }
+
+  document.getElementById('step').onclick = () => go(stage + 1)
+  document.getElementById('play').onclick = (e) => {
+    if (timer) { clearInterval(timer); timer = null; e.target.textContent = 'Play'; return }
+    e.target.textContent = 'Pause'
+    timer = setInterval(() => go(stage + 1), 1400)
+  }
+
+  // Drag the instruction token and drop it on the nearest stage
+  token.addEventListener('pointerdown', (e) => {
+    token.setPointerCapture(e.pointerId)
+    token.classList.add('drag')
+    const r = row.getBoundingClientRect()
+    const move = (ev) => { token.style.left = (ev.clientX - r.left - token.offsetWidth / 2) + 'px' }
+    const up = (ev) => {
+      token.removeEventListener('pointermove', move)
+      token.removeEventListener('pointerup', up)
+      token.classList.remove('drag')
+      let best = 0, dist = Infinity
+      stages.forEach((s, j) => { const b = s.getBoundingClientRect(); const d = Math.abs(b.left + b.width / 2 - ev.clientX); if (d < dist) { dist = d; best = j } })
+      go(best)
+    }
+    token.addEventListener('pointermove', move)
+    token.addEventListener('pointerup', up)
+  })
+
+  vault.ready.then((init) => {
+    const saved = init && init.state && Number.isInteger(init.state.stage) ? init.state.stage : 0
+    requestAnimationFrame(() => { stage = saved; place(stage) })
+  })
+</script>
+</body>
+</html>
