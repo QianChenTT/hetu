@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-// The daemon owns the vault. The spike reaches it through this dev server, which adds the bearer token on the way.
+// The daemon owns the vault. The editor reaches it through this dev server, which adds the bearer token on the way.
 // The token stays on the server side, so the page never holds it, and the page and the API share one origin (no CORS)
 const DAEMON = process.env.HETU_DAEMON ?? 'http://127.0.0.1:4747'
 const TOKEN_FILE = process.env.HETU_TOKEN_FILE ?? path.join(os.homedir(), '.hetu', 'token')

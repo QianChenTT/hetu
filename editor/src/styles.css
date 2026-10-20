@@ -114,33 +114,10 @@ body {
   padding: 24px 16px 120px;
 }
 
-.prose {
-  font-size: 16px;
-  line-height: 1.65;
-}
-
 .empty {
   color: var(--muted);
   padding: 48px;
   text-align: center;
-}
-
-/* Engine switch */
-.engine {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.engine button {
-  border: 0 !important;
-  border-radius: 0 !important;
-}
-
-.engine button.on {
-  background: #e3e2e0 !important;
-  font-weight: 600;
 }
 
 .hint {
