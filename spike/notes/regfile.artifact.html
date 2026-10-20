@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 12px 14px; color: #37352f; background: #fff; font-size: 13px; }
+  .title { color: #787774; margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .reg { border: 1px solid #d0d0cc; border-radius: 6px; padding: 6px 4px; text-align: center; font-family: ui-monospace, Consolas, monospace; transition: all .25s; }
+  .reg b { display: block; font-size: 11px; color: #787774; font-weight: 400; }
+  .reg.read { border-color: #2383e2; background: #e8f1fb; }
+  .reg.write { border-color: #0f7b6c; background: #ddedea; }
+</style>
+</head>
+<body>
+  <div class="title" id="title">Register file, listening to the datapath</div>
+  <div class="grid" id="grid"></div>
+<script>
+  const values = [0, 7, 5, 0, 0, 0, 0, 0]
+  const grid = document.getElementById('grid')
+  const render = (read = [], write = []) => {
+    grid.innerHTML = ''
+    values.forEach((v, i) => {
+      const d = document.createElement('div')
+      d.className = 'reg' + (read.includes(i) ? ' read' : '') + (write.includes(i) ? ' write' : '')
+      d.innerHTML = '<b>x' + i + '</b>' + v
+      grid.appendChild(d)
+    })
+  }
+  render()
+  // Reacts to another artifact through the bus, without reading the note
+  vault.bus.subscribe('stage', ({ stage, instr }) => {
+    document.getElementById('title').textContent = instr + ' is in ' + stage.toUpperCase()
+    if (stage === 'id') render([1, 2])
+    else if (stage === 'wb') { values[3] = values[1] + values[2]; render([], [3]) }
+    else render()
+  })
+</script>
+</body>
+</html>

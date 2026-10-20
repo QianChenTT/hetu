@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<style>body { font: 12px ui-monospace, Consolas, monospace; margin: 8px; color: #37352f; white-space: pre-wrap; }</style>
+</head>
+<body>
+<div id="out">probing...</div>
+<script>
+  // Tries every way out of the sandbox and saves what happened into its own tag's state.
+  // "blocked" is the expected answer for every escape
+  const results = {}
+  const tryIt = async (name, fn) => {
+    try { results[name] = 'open: ' + String(await fn()).slice(0, 40) } catch (e) { results[name] = 'blocked' }
+  }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))])
+
+  ;(async () => {
+    await tryIt('parent DOM', () => window.parent.document.title)
+    await tryIt('top location', () => window.top.location.href)
+    await tryIt('localStorage', () => { localStorage.setItem('k', 'v'); return localStorage.getItem('k') })
+    await tryIt('cookies', () => { document.cookie = 'a=b'; if (!document.cookie) throw 0; return document.cookie })
+    await tryIt('fetch out', () => withTimeout(fetch('https://example.com/', { mode: 'no-cors' }), 3000).then((r) => 'sent, ' + r.type))
+    await tryIt('image beacon', () => withTimeout(new Promise((res, rej) => { const i = new Image(); i.onload = () => res('loaded'); i.onerror = () => rej(0); i.src = 'https://example.com/x.png' }), 3000))
+    await tryIt('window.open', () => { const w = window.open('https://example.com'); if (!w) throw 0; return 'opened' })
+    await tryIt('note.read', () => vault.note.read().then((t) => 'read ' + t.length + ' chars'))
+    document.getElementById('out').textContent = JSON.stringify(results, null, 1)
+    await vault.state.set(results)
+  })()
+</script>
+</body>
+</html>

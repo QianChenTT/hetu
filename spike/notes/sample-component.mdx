@@ -1,0 +1,13 @@
+---
+title: Capability sample
+---
+
+# Linux capabilities in one picture
+
+A binary with `cap_setuid+ep` can change its own user ID, which makes it **almost as dangerous as SUID**.
+
+<Callout type="warn" title="Exploit pattern">
+  Python with cap_setuid can call *os.setuid(0)* and spawn a root shell.
+</Callout>
+
+Check for them with `getcap -r / 2>/dev/null` during enumeration.
