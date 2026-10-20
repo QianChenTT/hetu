@@ -1,57 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  MDXEditor,
-  type MDXEditorMethods,
-  type JsxComponentDescriptor,
-  headingsPlugin,
-  listsPlugin,
-  quotePlugin,
-  thematicBreakPlugin,
-  linkPlugin,
-  linkDialogPlugin,
-  imagePlugin,
-  tablePlugin,
-  frontmatterPlugin,
-  codeBlockPlugin,
-  codeMirrorPlugin,
-  markdownShortcutPlugin,
-  diffSourcePlugin,
-  toolbarPlugin,
-  jsxPlugin,
-  GenericJsxEditor,
-  DiffSourceToggleWrapper,
-  UndoRedo,
-  BoldItalicUnderlineToggles,
-} from '@mdxeditor/editor'
-import '@mdxeditor/editor/style.css'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { EditorView } from '@codemirror/view'
 import { CmEditor, applyRemote } from './CmEditor'
-
-// The one sample component. No `source`, so MDXEditor won't inject an import line into the note
-const descriptors: JsxComponentDescriptor[] = [
-  {
-    name: 'Callout',
-    kind: 'flow',
-    props: [
-      { name: 'type', type: 'string' },
-      { name: 'title', type: 'string' },
-    ],
-    hasChildren: true,
-    Editor: GenericJsxEditor,
-  },
-]
-
-const languages = {
-  '': 'Plain text',
-  txt: 'Plain text',
-  bash: 'Bash',
-  sh: 'Shell',
-  python: 'Python',
-  js: 'JavaScript',
-  ts: 'TypeScript',
-  json: 'JSON',
-  md: 'Markdown',
-}
 
 // Vault paths can hold slashes, each segment is encoded on its own
 const notesUrl = (p: string) => `/api/notes/${p.split('/').map(encodeURIComponent).join('/')}`
@@ -76,12 +25,9 @@ export default function App() {
   const [original, setOriginal] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [banner, setBanner] = useState<string | null>(null)
-  const [parseError, setParseError] = useState<string | null>(null)
   // Who holds each leased note, from the daemon's event stream
   const [leases, setLeases] = useState<Map<string, string>>(new Map())
-  const editor = useRef<MDXEditorMethods>(null)
   const cmView = useRef<EditorView | null>(null)
-  const [engine, setEngine] = useState<'cm' | 'mdx'>('cm')
   // What the open note looks like on disk: its version (sent back on save) and its text (to tell unsaved edits apart)
   const activeRef = useRef<string | null>(null)
   const versionRef = useRef<string | null>(null)
@@ -98,7 +44,6 @@ export default function App() {
 
   const open = useCallback(async (name: string) => {
     const note = await (await fetch(notesUrl(name))).json()
-    setParseError(null)
     setStatus('')
     setBanner(null)
     activeRef.current = name
@@ -107,8 +52,6 @@ export default function App() {
     setOriginal(note.text)
     setActive(name)
   }, [])
-
-  const current = () => (engine === 'cm' ? cmView.current?.state.doc.toString() : editor.current?.getMarkdown())
 
   // A note changed on disk. Show it at once unless the user has unsaved edits, which are never overwritten
   const onChanged = useCallback(async (change: Extract<Change, { type: 'note.changed' }>) => {
@@ -156,7 +99,7 @@ export default function App() {
 
   const save = useCallback(async () => {
     if (!active || original === null) return
-    const out = engine === 'cm' ? cmView.current?.state.doc.toString() : editor.current?.getMarkdown()
+    const out = cmView.current?.state.doc.toString()
     if (out === undefined) return
     const res = await fetch(notesUrl(active), { method: 'PUT', body: JSON.stringify({ text: out, baseVersion: versionRef.current }) })
     const body = await res.json()
@@ -167,7 +110,7 @@ export default function App() {
     diskText.current = out
     const diff = changedLines(original, out)
     setStatus(`Saved, commit ${body.commit ? body.commit.slice(0, 7) : 'none (no change)'}, ${diff} line(s) differ from when you opened it`)
-  }, [active, original, engine])
+  }, [active, original])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -185,44 +128,10 @@ export default function App() {
     const w = window as unknown as Record<string, unknown>
     w.__open = open
     w.__save = save
-    w.__parseError = parseError
     w.__state = { active, original, version: versionRef.current, holder }
-    w.__md = current
+    w.__md = () => cmView.current?.state.doc.toString()
     w.__cm = () => cmView.current
-    w.__engine = setEngine
-  }, [open, save, parseError, active, original, engine, holder])
-
-  const isMdx = active?.endsWith('.mdx') ?? false
-
-  const plugins = useMemo(() => {
-    if (original === null) return []
-    const list = [
-      headingsPlugin(),
-      listsPlugin(),
-      quotePlugin(),
-      thematicBreakPlugin(),
-      linkPlugin(),
-      linkDialogPlugin(),
-      imagePlugin(),
-      tablePlugin(),
-      frontmatterPlugin(),
-      codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
-      codeMirrorPlugin({ codeBlockLanguages: languages }),
-      markdownShortcutPlugin(),
-      diffSourcePlugin({ viewMode: 'rich-text', diffMarkdown: original }),
-      toolbarPlugin({
-        toolbarContents: () => (
-          <DiffSourceToggleWrapper>
-            <UndoRedo />
-            <BoldItalicUnderlineToggles />
-          </DiffSourceToggleWrapper>
-        ),
-      }),
-    ]
-    // Plain .md stays plain markdown. Only .mdx gets JSX parsing, so a stray { or < in a .md note can't break it
-    if (isMdx) list.push(jsxPlugin({ jsxComponentDescriptors: descriptors }))
-    return list
-  }, [original, isMdx])
+  }, [open, save, active, original, holder])
 
   return (
     <div className="app">
@@ -240,31 +149,14 @@ export default function App() {
           <>
             <div className="bar">
               <span className="name">{active}</span>
-              <div className="engine">
-                <button className={engine === 'cm' ? 'on' : ''} onClick={() => setEngine('cm')}>CodeMirror</button>
-                <button className={engine === 'mdx' ? 'on' : ''} onClick={() => setEngine('mdx')}>MDXEditor</button>
-              </div>
               <button onClick={save} disabled={!!holder}>Save (Ctrl+S)</button>
-              {engine === 'cm' && <span className="hint">Ctrl+/ raw view</span>}
+              <span className="hint">Ctrl+/ raw view</span>
               <span className="status">{status}</span>
             </div>
             {holder && <div className="lease-banner">Held by {holder}, view only. Changes appear here as the agent writes them</div>}
             {banner && <div className="error">{banner}</div>}
-            {parseError && <div className="error">Parse error: {parseError}</div>}
             <div className="page">
-              {engine === 'cm' ? (
-                <CmEditor key={active} text={original} path={active} readOnly={!!holder} onReady={(v) => (cmView.current = v)} />
-              ) : (
-                <MDXEditor
-                  key={active}
-                  ref={editor}
-                  markdown={original}
-                  plugins={plugins}
-                  contentEditableClassName="prose"
-                  toMarkdownOptions={{ bullet: '-' }}
-                  onError={(e) => setParseError(e.error)}
-                />
-              )}
+              <CmEditor key={active} text={original} path={active} readOnly={!!holder} onReady={(v) => (cmView.current = v)} />
             </div>
           </>
         ) : (

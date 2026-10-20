@@ -4,5 +4,22 @@ A local notes app for a markdown vault where AI agents are the main writers. Age
 
 Named after the Hetu (河图), the legendary chart a dragon-horse carried out of the Yellow River, said to be the first record with marks on it
 
-- [spike/](spike/): throwaway prototype comparing MDXEditor and a text-first CodeMirror 6 editor. Reads and saves `playground_vault` through the daemon (start the daemon first), shows agent edits live and goes view only while an agent holds a note. Run with `npm install` then `npm run dev` (port 5174). `spike/notes` stays as the fixture set the playground is seeded from
-- [daemon/](daemon/): vault daemon proof of concept (MCP over local HTTP, scoped leases, a git commit per lease and per save). In `daemon/`: `npm install`, `npm run seed` once, then `npm start`. Tests with `npm test`. Claude Code sessions opened in this repo connect through `.mcp.json` after the folder is trusted and the server approved
+## Layout
+
+- [daemon/](daemon/): the vault daemon. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
+- [editor/](editor/): the text-first CodeMirror 6 editor. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
+- [fixtures/](fixtures/): test notes and artifacts. The playground vault is seeded from here
+- [scripts/dev.ts](scripts/dev.ts): starts the daemon, waits for it, then starts the editor
+- `playground_vault/`: a throwaway vault with its own git repo, not tracked here
+
+## Run
+
+```
+npm install
+npm run seed
+npm run dev
+```
+
+The editor runs at http://localhost:5174 and the daemon at http://127.0.0.1:4747. `npm run seed:fresh` replaces the playground and its history. `npm test` runs the daemon tests, `npm run typecheck` checks both workspaces
+
+Claude Code sessions opened in this folder connect to the daemon through `.mcp.json` once the folder is trusted and the server approved
