@@ -134,6 +134,17 @@ describe('vault daemon over MCP', () => {
     expect(third.ok).toBe(true)
   })
 
+  it('never shows a refused caller the holder lease id, so the refusal cannot be used to take over the lease', async () => {
+    const holder = await connect('holder')
+    const other = await connect('other')
+    const held = await call(holder, 'acquire_lease', { paths: ['notes/a.md'], label: 'holder' })
+    const refused = await call(other, 'acquire_lease', { paths: ['notes/a.md'], label: 'other' })
+    expect(refused.body.error).toBe('LeaseHeld')
+    expect(JSON.stringify(refused.body)).not.toContain(held.body.lease_id)
+    // What the caller needs to wait or narrow its request stays
+    expect(refused.body.details).toEqual([{ path: 'notes/a.md', holder: 'holder', expires_at: held.body.expires_at }])
+  })
+
   it('refuses writes outside the lease scope, stale versions and paths outside the vault', async () => {
     const client = await connect('agent')
     const lease = await call(client, 'acquire_lease', { paths: ['notes/a.md'] })
