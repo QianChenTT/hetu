@@ -227,7 +227,9 @@ export class VaultCore {
       .map(h => ({ path: h.path, holder: h.lease!.label, lease: h.lease!.id, expires_at: new Date(h.lease!.expiresAt).toISOString() }))
     if (held.length > 0) {
       this.events.emit('lease.denied', { label: cleanLabel, paths, conflicts: held.map(({ path, holder, lease }) => ({ path, holder, lease })) })
-      throw new VaultError('LeaseHeld', `Already leased: ${held.map(h => `${h.path} (${h.holder})`).join(', ')}`, held)
+      // The holder's lease id stays in the log. Sent back to the caller, it would let them write under that lease
+      const conflicts = held.map(({ lease, ...conflict }) => conflict)
+      throw new VaultError('LeaseHeld', `Already leased: ${held.map(h => `${h.path} (${h.holder})`).join(', ')}`, conflicts)
     }
     const ttl = ttlSeconds ? ttlSeconds * 1000 : this.ttlMs
     const versions = new Map<string, Version>()
