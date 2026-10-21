@@ -1,0 +1,20 @@
+{
+  "name": "hetu",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "daemon",
+    "editor"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.ts",
+    "seed": "npm run seed -w daemon",
+    "seed:fresh": "npm run seed -w daemon -- --fresh",
+    "test": "npm test -w daemon",
+    "typecheck": "npm run typecheck --workspaces"
+  }
+}

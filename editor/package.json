@@ -1,10 +1,11 @@
 {
-  "name": "vault-app-spike",
+  "name": "hetu-editor",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5174 --strictPort"
+    "dev": "vite --port 5174 --strictPort",
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -12,13 +13,13 @@
     "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.15",
+    "@lezer/common": "^1.5.3",
     "@lezer/markdown": "^1.8.1",
-    "@mdxeditor/editor": "^4.3.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
