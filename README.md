@@ -1,5 +1,9 @@
 # hetu
 
+> **Ongoing security assessment and review: do not download for personal use**
+>
+> Security findings are published in [findings/](findings/) as they are found
+
 A local notes app for a markdown vault where AI agents are the main writers. Agents edit through an MCP server with per-note leases and a git commit per edit. The human edits in a Notion-like editor that hides markdown markers without ever rewriting text
 
 Named after the Hetu (河图), the legendary chart a dragon-horse carried out of the Yellow River, said to be the first record with marks on it
