@@ -8,6 +8,10 @@ updates:
     # Wait before proposing a new release: let new versions be tested by others first
     cooldown:
       default-days: 7
+    # The types follow the Node major hetu runs on (engines: node >=24), not the newest Node
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   # Action SHAs in .github/workflows
   - package-ecosystem: github-actions
