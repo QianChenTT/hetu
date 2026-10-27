@@ -126,7 +126,9 @@ describe('vault daemon over MCP', () => {
     const two = await connect('agent-2')
     const first = await call(one, 'acquire_lease', { paths: ['notes/a.md', 'notes/b.md'], label: 'one' })
     expect(first.ok).toBe(true)
-    const second = await call(two, 'acquire_lease', { paths: ['notes/c.md', 'NOTES/B.md'], label: 'two' })
+    // Only Windows and macOS ignore case, on Linux NOTES/B.md is a different file
+    const overlap = process.platform === 'win32' || process.platform === 'darwin' ? 'NOTES/B.md' : 'notes/b.md'
+    const second = await call(two, 'acquire_lease', { paths: ['notes/c.md', overlap], label: 'two' })
     expect(second.ok).toBe(false)
     expect(second.body.error).toBe('LeaseHeld')
     // c.md was not leased by the failed call

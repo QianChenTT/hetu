@@ -45,6 +45,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const core = new VaultCore({ root: options.vault, leaseTtlSeconds: options.leaseTtlSeconds, events })
   await core.start()
   const watcher = watchVault(core, options.humanDebounceMs ?? 2000)
+  // Linux sets up its watches during the first scan, a save before that is never seen
+  await new Promise<void>(resolve => watcher.once('ready', () => resolve()))
 
   const handler = createMcpHandler(
     ctx => {
