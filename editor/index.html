@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Artifact frames load from srcdoc only. Blocks an artifact navigating its frame to a website,
+         which the CSP inside the frame doesn't cover -->
+    <meta http-equiv="Content-Security-Policy" content="frame-src 'none'" />
     <title>hetu</title>
   </head>
   <body>
