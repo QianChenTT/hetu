@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege for the automatic GITHUB_TOKEN: default read-only, job request more on the fly
+permissions:
+  contents: read
+
+jobs:
+  # Daemon tests and the typecheck of both workspaces. Windows too, since it is hetu's main target
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    env:
+      # The daemon commits with the machine's git identity and a fresh runner has none
+      GIT_AUTHOR_NAME: hetu-ci
+      GIT_AUTHOR_EMAIL: ci@hetu.invalid
+      GIT_COMMITTER_NAME: hetu-ci
+      GIT_COMMITTER_EMAIL: ci@hetu.invalid
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # No dependency has an install script today, skipping until there is any
+      - name: install packages
+        run: npm ci --ignore-scripts
+      - name: typecheck
+        run: npm run typecheck
+      - name: run tests
+        run: npm test
+
+  # SCA: dev dependencies and medium or lower advisories only warn, high and critical in
+  # production dependencies fail
+  sca:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Report: every advisory at every severity, dev included. Never fails, a warning shows on the run
+      - name: dependency report (all, dev included)
+        run: npm audit || echo "::warning title=npm audit::advisories found, details in the dependency report step"
+      # Gate policy: fail only on high or critical in production dependencies
+      - name: dependency gate (production, high+)
+        run: npm audit --omit=dev --audit-level=high
+
+  secret-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # all commits
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # SAST: the repo's own source code against insecure patterns
+  sast:
+    runs-on: ubuntu-24.04
+    container:
+      image: semgrep/semgrep@sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b # 1.178.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # --error: any finding fails the job, --metrics=off: send no usage data to Semgrep
+      - name: semgrep scan
+        run: semgrep scan --config p/javascript --config p/typescript --config p/react --error --metrics=off
+
+  # SAST with data flow: CodeQL follows input from source to sink across files, which pattern
+  # rules can't. Results land in the Security tab.
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
