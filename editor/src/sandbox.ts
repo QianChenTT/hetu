@@ -100,6 +100,9 @@ export class Sandbox {
       this.port = ch.port1
       this.topics.clear()
       ch.port1.onmessage = (e) => void this.onCall(e.data)
+      // '*' is the only target an opaque-origin frame accepts. frame-src 'none' on the editor page
+      // keeps the frame on its srcdoc, so nothing else can be loaded in it to receive this
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
       f.contentWindow?.postMessage({ type: 'vault-init', init: getInit() }, '*', [ch.port2])
     })
     this.frame = f
