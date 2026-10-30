@@ -102,9 +102,9 @@ var N=[
   role:"Any plugin you installed. Same wall as ours: a worker that can only ask the gate. Class computed from what it requests.",
   where:"Hidden renderer, worker",trust:"Untrusted, sandboxed",does:["Signed, signer pinned on first approval","Only class 0 updates on its own"],dec:["Plugin classes","Signing and updates"],th:[27,28,29,44,46,47]},
 
- {id:"ecore",zone:"zEditor",cls:"sandbox",key:true,x:590,y:402,w:285,h:56,l:["Editor core plugin"],sub:["CodeMirror · hidden marks · raw view"],
-  role:"First-party core plugin that owns the text, cursor and undo. Only two things run in its page: hidden marks and the raw view. The raw view ignores every plugin decoration.",
-  where:"Editor window page",trust:"First-party, in-page",does:["Hidden marks re-hide markers on every keystroke","Raw view shows the real text, no plugin can reach it","Saves as you, plugin edits attributed to the plugin"],dec:["Editor API, locked in"],th:[19,41,42]},
+ {id:"ecore",zone:"zEditor",cls:"sandbox",key:true,x:590,y:402,w:285,h:56,l:["Editor core plugin"],sub:["CodeMirror · raw view"],
+  role:"First-party core plugin that owns the text, cursor and undo. Only two things run in its page: the raw view and the hidden marks plugin, which is compiled in. The raw view ignores every plugin decoration.",
+  where:"Editor window page",trust:"First-party, in-page",does:["Hidden marks plugin re-hides markers on every keystroke","Raw view shows the real text, no plugin can reach it","Saves as you, plugin edits attributed to the plugin"],dec:["Editor API, locked in"],th:[19,41,42]},
  {id:"egate",zone:"zEditor",cls:"sandbox",x:590,y:474,w:285,h:44,l:["Editor gate · mount"],sub:["artifact bridge, CodeMirror-shaped"],
   role:"Mounts only code and grants the daemon hands over, then checks every editor request: decorations, key bindings, commands and edits against a document version.",
   where:"Editor window",trust:"Trusted gate",does:["Theme styles only, no raw CSS","Widgets are text or a frame, never HTML","Stale edits rejected"],dec:["Editor API"],th:[33,41,44]},

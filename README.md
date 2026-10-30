@@ -19,8 +19,10 @@ The daemon, its MCP tools, leases, the commit per write and outside-write detect
 
 ## Layout
 
-- [daemon/](daemon/): the vault daemon. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
-- [editor/](editor/): the text-first CodeMirror 6 editor. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
+- [core/](core/): the plugin core, being built here. Each folder's README says what it holds
+- [plugins/](plugins/): the plugins that replace today's features
+- [daemon/](daemon/): today's vault daemon, removed file by file as the core replaces it. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
+- [editor/](editor/): today's text-first CodeMirror 6 editor, removed the same way. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
 - [docs/](docs/): the interactive core map, published with GitHub Pages
 - [fixtures/](fixtures/): test notes and artifacts. The playground vault is seeded from here
 - [scripts/dev.ts](scripts/dev.ts): starts the daemon, waits for it, then starts the editor
