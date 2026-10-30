@@ -16,4 +16,4 @@ The `baseline` tag marks the code before the build sprint guardrails
 
 ## Index
 
-None published yet
+- [A-05: lease theft through a refused acquire_lease](A-05-lease-theft.md)
