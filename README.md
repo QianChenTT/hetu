@@ -15,12 +15,13 @@ hetu is a local notes app designed around that problem
 
 Many security decisions in hetu are still handed to the user: approving a plugin, giving it more power, switching a guard off. Most people are here for the features and can't be expected to know what each approval risks. So an approval made for convenience points to a gap in hetu's design, not a mistake by the user. Each prompt says plainly what is being signed. The goal is fewer of these decisions left to the user and a safe choice that is also the easy one
 
-The daemon, its MCP tools, leases, the commit per write and outside-write detection run today. The plugin core is designed and being built next, and an attack phase follows. Findings are published in [findings/](findings/)
+The daemon, its MCP tools, leases, the commit per write and outside-write detection run today. The plugin core is designed, see the [core map](https://qianchentt.github.io/hetu/), and being built next, and an attack phase follows. Findings are published in [findings/](findings/)
 
 ## Layout
 
 - [daemon/](daemon/): the vault daemon. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
 - [editor/](editor/): the text-first CodeMirror 6 editor. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
+- [docs/](docs/): the interactive core map, published with GitHub Pages
 - [fixtures/](fixtures/): test notes and artifacts. The playground vault is seeded from here
 - [scripts/dev.ts](scripts/dev.ts): starts the daemon, waits for it, then starts the editor
 - `playground_vault/`: a throwaway vault with its own git repo, not tracked here
