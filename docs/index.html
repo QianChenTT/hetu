@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="description" content="Interactive map of the hetu core design: every component, every flow with its checks and the threats it covers">
+<title>hetu Core Map</title>
+<link rel="stylesheet" href="map.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="stack">
+      <span class="eyebrow">hetu · core design</span>
+      <h1>hetu Core Map</h1>
+      <p class="lede">Every component of the everything-is-a-plugin core, every flow between them and what each flow is checked by. Pick a scenario to walk a real sequence step by step, or click any box or arrow to read what it does.</p>
+    </div>
+    <div class="legend" aria-label="Legend">
+      <span><i class="sw core"></i>Trusted core</span>
+      <span><i class="sw sandbox"></i>Sandboxed plugins</span>
+      <span><i class="sw outside"></i>Outside hetu</span>
+      <span><i class="sw disk"></i>Disk and OS</span>
+      <span><i class="ln"></i>Flow</span>
+      <span><i class="ln opt"></i>Optional</span>
+      <span><i class="ln att"></i>Attack attempt</span>
+      <span><i class="ln act"></i>Active step</span>
+    </div>
+  </header>
+
+  <p class="status"><strong>This is the design, not what runs today.</strong> The daemon, its MCP tools, leases, the commit per write, outside-write detection and a CodeMirror editor run today, without the plugin core. Everything else here is designed and being built next.</p>
+
+  <div class="scen-bar" role="toolbar" aria-label="Scenarios">
+    <span class="eyebrow lbl">Scenarios</span>
+    <div id="scenButtons" class="contents"></div>
+    <button class="chipbtn ghost" id="exploreBtn" aria-pressed="true">Explore freely</button>
+    <label class="switch"><input type="checkbox" role="switch" id="arrowSwitch" checked>Show all arrows</label>
+  </div>
+
+  <div class="stage">
+    <div>
+      <div class="mapbox" id="mapbox">
+        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the signed app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk and OS key store on the right, with arrows for every flow between them">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
+            <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>
+            <marker id="arrAtt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-att"/></marker>
+          </defs>
+          <g id="zones"></g>
+          <g id="edges"></g>
+          <g id="nodes"></g>
+          <g id="labels"></g>
+          <g id="dots"></g>
+        </svg>
+      </div>
+      <p class="maphint" id="maphint">Hover a box to see its connections. Click a box or an arrow to pin it in the panel. On a phone, scroll the map sideways.</p>
+    </div>
+    <aside class="panel" id="panel" aria-live="polite"></aside>
+  </div>
+
+  <section class="sheet" id="flows">
+    <div class="hdr">
+      <div><span class="eyebrow">Reference</span><h2>Every flow</h2></div>
+      <div class="filters">
+        <label for="flowFilter">Component</label>
+        <select id="flowFilter"><option value="">All components</option></select>
+        <label for="flowSearch">Search</label>
+        <input type="search" id="flowSearch" placeholder="e.g. lease, signature, exec">
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>From</th><th>To</th><th>What moves</th><th>Checked by</th><th>Threats it covers</th></tr></thead>
+        <tbody id="flowRows"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="flowCount"></p>
+  </section>
+
+  <section class="sheet" id="parts">
+    <div class="hdr"><div><span class="eyebrow">Reference</span><h2>Every component</h2></div></div>
+    <div id="partGroups" class="groups"></div>
+  </section>
+
+  <section class="sheet">
+    <div class="hdr"><div><span class="eyebrow">Reading the map</span><h2>Rules the whole core keeps</h2></div></div>
+    <div class="notes">
+      <div><strong>Plugins have no power of their own.</strong> Every plugin runs in a Chromium worker or frame and can only ask the capability gate. The gate is the reference monitor: always in the path, out of reach of plugins, small enough to check.</div>
+      <div><strong>The daemon holds all power.</strong> It is Electron's main process. The hidden renderer and editor windows only get what the daemon grants them.</div>
+      <div><strong>Mechanism in the core, policy in plugins.</strong> Leases, the watchdog and git all follow this split: the core enforces, a core plugin decides.</div>
+      <div><strong>Security stays on until you approve otherwise.</strong> Every security switch needs a Windows Hello or Touch ID approval, lives per machine and shows a banner while off. A guard that crashes fails closed.</div>
+      <div><strong>Tamper-evident, not tamper-proof.</strong> Every start checks the signed state against the key that exists in hardware now, which catches edits, replays and a deleted key. A targeted attack that gets one prompt approved can forge a state. That is an accepted risk, closing it needs an OS boundary.</div>
+      <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>
+    </div>
+  </section>
+
+  <footer>Part of <a href="https://github.com/QianChenTT/hetu">hetu</a>. Security findings are published in <a href="https://github.com/QianChenTT/hetu/tree/main/findings">findings/</a>.</footer>
+</div>
+<script src="map.js"></script>
+</body>
+</html>
