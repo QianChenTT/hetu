@@ -79,8 +79,8 @@ var N=[
  {id:"watcher",zone:"zDaemon",cls:"core",x:403,y:466,w:142,h:48,l:["Disk watcher"],sub:["outside writes"],
   role:"Compares the vault against the daemon's own writes and flags anything written around it.",
   where:"Daemon",trust:"Trusted core",does:["Flags outside writes while an agent holds a lease","Next commit marks unknown writers in the shadow repo"],dec:["Detection only for shell agents"],th:[10]},
- {id:"signer",zone:"zDaemon",cls:"core",key:true,x:245,y:528,w:300,h:44,l:["Signing service"],sub:["started from hetu's UI only"],
-  role:"Asks the OS key store to create a new hardware key, sign the new security state, then delete the old key. No other process can ask it to sign.",
+ {id:"signer",zone:"zDaemon",cls:"core",key:true,x:245,y:528,w:300,h:44,l:["Signing service"],sub:["called only by the gate"],
+  role:"Asks the OS key store to create a new hardware key, sign the new security state, then delete the old key. Only the gate can call it, for a request from hetu's own window. It starts the Windows Hello or Touch ID prompt.",
   where:"Daemon + native addon",trust:"Trusted core",does:["Key per approval: old states die with their key","Never a verification-only prompt","No signing through command-line arguments or local IPC"],dec:["Key per approval","Key binding"],th:[25,43,52,53]},
 
  {id:"mcp",zone:"zHidden",cls:"sandbox",x:590,y:166,w:135,h:44,l:["MCP plugin"],sub:[],
@@ -116,8 +116,8 @@ var N=[
   where:"Editor window, opaque-origin frames",trust:"Sandboxed",does:["No same-origin, injected CSP","Read and network never together"],dec:["Artifacts"],th:[17,21,44]},
 
  {id:"hetuui",zone:"zUI",cls:"core",key:true,x:590,y:678,w:285,h:58,l:["hetu UI"],sub:["approvals · consent · banners"],
-  role:"hetu's own trusted window. The only place in hetu that starts a Windows Hello or Touch ID prompt, and it shows what is being signed. The OS prompt itself is generic and can't prove who asked. No plugin can draw here.",
-  where:"Separate trusted window",trust:"Trusted core",does:["Install and update approvals, all or nothing","Agent consent pages","Banners: guard off, check failed, plugin unresponsive"],dec:["hetu starts the prompt only from its UI"],th:[22,33,43]},
+  role:"hetu's own trusted window. The only caller that can ask to change the security state, through the gate like every other call. The backend then starts the Windows Hello or Touch ID prompt, and this window shows what is being signed. The OS prompt itself is generic and can't prove who asked. No plugin can draw here.",
+  where:"Separate trusted window",trust:"Trusted core",does:["Install and update approvals, all or nothing","Agent consent pages","Banners: guard off, check failed, plugin unresponsive"],dec:["Security requests start only from hetu's UI"],th:[22,33,43]},
 
  {id:"osproc",zone:"zProc",cls:"proc",x:245,y:670,w:300,h:56,l:["OS process"],sub:["git · exact exec commands"],
   role:"Where exec lands: a real process running as you, outside Chromium and outside the gate. That's why exec is class 4 and its inputs must come from the signed package.",
@@ -165,8 +165,9 @@ var E=[
  {id:"agent_oauth",f:"agent",t:"oauth",l:"OAuth 2.1 + PKCE",chk:["Protected Resource Metadata (RFC 9728)","Resource Indicators (RFC 8707)","Refresh rotation with reuse detection"],th:[9,50]},
  {id:"oauth_internet",f:"oauth",t:"internet",l:"client metadata (HTTPS)",chk:["HTTPS only","No private or loopback addresses","Size and time limits, or pre-registered clients"],th:[51]},
  {id:"oauth_ui",f:"oauth",t:"hetuui",l:"consent page",chk:["You pick the agent's grants"],th:[9]},
- {id:"human_ui",f:"human",t:"hetuui",l:"approve · Windows Hello",chk:["hetu starts the prompt only from its UI","hetu's window names what is signed"],th:[33,43]},
- {id:"ui_signer",f:"hetuui",t:"signer",l:"sign this change",chk:["No other process can start hetu's signing service"],th:[53]},
+ {id:"human_ui",f:"human",t:"hetuui",l:"approve · Windows Hello",chk:["Only a request from hetu's window starts the prompt","hetu's window names what is signed"],th:[33,43]},
+ {id:"ui_gate",f:"hetuui",t:"gate",l:"security request",chk:["Only hetu's window holds security actions","Known by the window, not a token","Rate limited, every request logged"],th:[22,33]},
+ {id:"gate_signer",f:"gate",t:"signer",l:"sign this change",chk:["Only the gate can call the signing service","The backend starts the prompt"],th:[53]},
  {id:"signer_key",f:"signer",t:"keystore",l:"new key · sign · delete old",chk:["Each new key needs your gesture","Never a verification-only prompt"],th:[25,43,52]},
  {id:"signer_bundle",f:"signer",t:"bundle",l:"write state N+1",chk:["Canonical JSON, signed","Pinned signer, hashes, grants, class"],th:[24,47,54]},
  {id:"gate_write",f:"gate",t:"write",l:"vault.write",chk:["Version check (StaleVersion)","Scope within the grant"],th:[1,30]},
@@ -225,7 +226,7 @@ var S=[
    {t:"hetu notices a new plugin",n:["loader","pfolder","hetuui"],e:["loader_pfolder","loader_ui"],x:"The loader sees a plugin that isn't in the signed bundle. It never loads it silently. An agent dropping a plugin in hits the same prompt.",c:["New plugin found: prompt"],th:[27]},
    {t:"Verify and classify",n:["loader","pfolder"],e:["loader_pfolder"],x:"The loader verifies the Sigstore signature locally, reads the manifest with the strict schema and computes the class from what it requests. Read plus network together ranks class 4.",c:["Signature valid","Class computed, never declared","Combination rules"],th:[27,54]},
    {t:"See exactly what it asks for",n:["hetuui"],e:[],x:"hetu's own window shows the plugin, its signer identity, its class and every permission. Approval is all or nothing: plugin makers own their permission design.",c:["All or nothing","Signer shown"],th:[33]},
-   {t:"Approve with your gesture",n:["human","hetuui","signer"],e:["human_ui","ui_signer"],x:"You approve with Windows Hello or Touch ID. hetu starts that prompt only from its own UI, and that window names what is being signed.",c:["hetu starts the prompt only from its UI"],th:[43,33]},
+   {t:"Approve with your gesture",n:["human","hetuui","gate","signer"],e:["human_ui","ui_gate","gate_signer"],x:"You approve in hetu's window, which sends the request through the gate. The backend then starts Windows Hello or Touch ID, and that window names what is being signed.",c:["Only a request from hetu's window starts the prompt"],th:[43,33]},
    {t:"New key, new state",n:["signer","keystore"],e:["signer_key"],x:"The signing service asks the OS key store for a brand new hardware key, signs the new state with it, then deletes the old key. Every older state is now unverifiable.",c:["Key per approval","Each new key needs your gesture"],th:[25,52]},
    {t:"Write state N+1",n:["signer","bundle"],e:["signer_bundle"],x:"The bundle now records the plugin's version, content hash, pinned signer, granted permissions and class. Later updates must come from the same signer.",c:["Signer pinned (trust on first use)"],th:[47]},
    {t:"Start the plugin",n:["loader","community","eplug"],e:["loader_hidden","loader_egate"],x:"The loader starts the plugin's daemon half in the hidden renderer and its editor half in the window, each as a worker with exactly the approved grants.",c:["Worker sandbox","Grants from the bundle"],th:[29]},
@@ -237,14 +238,14 @@ var S=[
    {t:"Same signer?",n:["loader","pfolder","bundle"],e:["loader_pfolder"],x:"The loader compares the signer identity with the one pinned at first approval. A different identity, even with a valid signature, is treated as a new plugin with a warning. That stops a forked plugin with a backdoor.",c:["Signer must match the pin"],th:[47]},
    {t:"Did it ask for more?",n:["loader","hetuui"],e:["loader_ui"],x:"An update whose manifest requests anything more needs your approval again, whatever its class.",c:["Widened manifest asks again"],th:[28]},
    {t:"Class 0 loads on its own",n:["loader","community"],e:["loader_hidden"],x:"Only plugins with no privilege (class 0) update without a prompt. Everything else asks every time, which bounds a hijacked developer workflow.",c:["Only class 0 auto-updates"],th:[48]},
-   {t:"Everything else asks you",n:["human","hetuui","signer","keystore","bundle"],e:["human_ui","ui_signer","signer_key","signer_bundle"],x:"For class 1 and up you approve the update with your gesture, which writes a new signed state with a new key.",c:["New key per approval"],th:[25]},
+   {t:"Everything else asks you",n:["human","hetuui","gate","signer","keystore","bundle"],e:["human_ui","ui_gate","gate_signer","signer_key","signer_bundle"],x:"For class 1 and up you approve the update with your gesture, which writes a new signed state with a new key.",c:["New key per approval"],th:[25]},
    {t:"First-party never comes this way",n:["firstparty","boot"],e:["boot_first"],x:"The host, editor and guards update only with the signed app install itself, never through the plugin channel.",c:["Core ships inside the signed app"],th:[49]}
   ]},
  {id:"agent",name:"An agent edits a note",sum:"First connection, consent, lease, edit, commit and the events that follow.",
   steps:[
    {t:"First call without a token",n:["agent","http"],e:["agent_http"],x:"The agent calls hetu's MCP endpoint on 127.0.0.1. With no token it gets a 401 and the Protected Resource Metadata pointing at hetu's authorization server.",c:["Loopback only, Host and Origin checks"],th:[14,15]},
    {t:"OAuth with PKCE",n:["agent","oauth","internet"],e:["agent_oauth","oauth_internet"],x:"The agent starts OAuth 2.1 with PKCE. If it identifies with a client metadata URL, hetu fetches it over HTTPS only and never from private or loopback addresses.",c:["HTTPS only","No private addresses"],th:[51]},
-   {t:"You consent once",n:["oauth","hetuui","human","signer","keystore","bundle"],e:["oauth_ui","human_ui","ui_signer","signer_key","signer_bundle"],x:"hetu's consent page shows the agent and lets you set its grants. Your gesture approves it and the agent's grants land in the signed state.",c:["Agent grants signed"],th:[9]},
+   {t:"You consent once",n:["oauth","hetuui","human","gate","signer","keystore","bundle"],e:["oauth_ui","human_ui","ui_gate","gate_signer","signer_key","signer_bundle"],x:"hetu's consent page shows the agent and lets you set its grants. Your gesture approves it and the agent's grants land in the signed state.",c:["Agent grants signed"],th:[9]},
    {t:"Short-lived token",n:["oauth","agent"],e:["agent_oauth"],x:"The agent receives a short-lived access token bound to hetu. Its harness stores it, not hetu. Refresh tokens rotate, and reuse of an old one revokes the chain and alerts you.",c:["Short-lived","Reuse detection"],th:[50]},
    {t:"Ask for a lease",n:["agent","http","mcp","gate","leases"],e:["agent_http","http_mcp","hidden_gate"],x:"The MCP plugin forwards acquire_lease with the agent's identity. The gate checks the agent's grants and the MCP plugin's together, and the leases guard decides.",c:["Agent grants and MCP grants both"],th:[40,1]},
    {t:"Refused? Only its own details",n:["leases","mcp"],e:[],x:"If another writer holds the note, the refusal carries path, holder and expiry only. Never another agent's lease id. That's the A-05 lesson.",c:["Refusal names only the caller's things"],th:[6,37]},
@@ -265,7 +266,7 @@ var S=[
  {id:"guardoff",name:"Switch a guard off",sum:"How you switch security off on purpose, and why nothing else can.",
   steps:[
    {t:"You choose to switch it off",n:["human","hetuui"],e:["human_ui"],x:"Only hetu's trusted window offers the switch. MCP and plugins can't reach it.",c:["Never over MCP, never by a plugin"],th:[22]},
-   {t:"Your gesture signs it",n:["hetuui","signer","keystore"],e:["ui_signer","signer_key"],x:"Windows Hello or Touch ID approves. A new key signs the new state and the old key is deleted.",c:["Key per approval"],th:[25,43]},
+   {t:"Your gesture signs it",n:["hetuui","gate","signer","keystore"],e:["ui_gate","gate_signer","signer_key"],x:"hetu's window sends the request through the gate and the backend starts the prompt. Windows Hello or Touch ID approves. A new key signs the new state and the old key is deleted.",c:["Key per approval"],th:[25,43]},
    {t:"New state with the switch",n:["signer","bundle"],e:["signer_bundle"],x:"The switch lives in the per-machine signed state, never in the vault, so a synced or cloned vault can't bring it along.",c:["Per machine"],th:[22]},
    {t:"A banner while it's off",n:["loader","hetuui","logw","logs"],e:["loader_ui","gate_log","logw_logs"],x:"While any guard is off hetu says so plainly, and the log records who switched it.",c:["Visible state","Logged"],th:[11]},
    {t:"Crash is not a switch",n:["leases","write"],e:["leases_write"],x:"If a guard is missing or crashed without you switching it off, writes fail closed.",c:["Fail closed"],th:[39],bad:true}
