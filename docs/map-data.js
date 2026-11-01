@@ -3,7 +3,8 @@
 /* ---------- threats ---------- */
 var TH={
  1:"Write outside leased files",3:"Path tricks",6:"Lease id leak (A-05)",7:"Exhaust the vault",8:"Prompt injection in notes",9:"Forged agent identity",10:"Direct disk write",11:"Event log tampering",12:"Token read from disk",13:"Planted git config",14:"DNS rebinding",15:"Cross-site request",17:"Frame escape",19:"HTML in rendering",21:"Frame freezes editor",22:"Settings changed without you",
- 24:"Edit signed files",25:"Replay signed state",26:"Swap after check",27:"Over-broad manifest",28:"Widening update",29:"Sandbox escape",30:"Scope bypass",31:"Plugin confused deputy",32:"Plugin identity spoof",33:"Fake approval prompt",34:"Install scripts",35:"Boot race",36:"Plugin hang",37:"Event and error leaks",38:"Fake hetu download",39:"Fail-closed lockout",40:"MCP plugin as deputy",41:"Editor plugin reads page",42:"Renderer gets Node",43:"Agent triggers signing",44:"Missed CSP channel",45:"Command environment",46:"Write-then-run",47:"Forked plugin signer",48:"Hijacked author workflow",49:"Hijacked hetu workflow",50:"Token theft",51:"SSRF via client metadata",52:"Verification-only prompt",53:"Borrowed signing",54:"Parser differential"
+ 24:"Edit security files",25:"Replay old state",26:"Swap after check",27:"Over-broad manifest",28:"Widening update",29:"Sandbox escape",30:"Scope bypass",31:"Plugin confused deputy",32:"Plugin identity spoof",33:"Fake approval prompt",34:"Install scripts",35:"Boot race",36:"Plugin hang",37:"Event and error leaks",38:"Fake hetu download",39:"Fail-closed lockout",40:"MCP plugin as deputy",41:"Editor plugin reads page",42:"Renderer gets Node",43:"Agent triggers signing",44:"Missed CSP channel",45:"Command environment",46:"Write-then-run",47:"Forked plugin signer",48:"Hijacked author workflow",49:"Hijacked hetu workflow",50:"Token theft",51:"SSRF via client metadata",52:"Verification-only prompt",53:"Borrowed signing",54:"Parser differential",
+ 55:"Reset to first run",56:"Bug in the service",57:"Elevated program",58:"Code injected into hetu"
 };
 
 /* ---------- zones ---------- */
@@ -26,9 +27,9 @@ var N=[
  {id:"agent",zone:"zOutside",cls:"outside",x:25,y:150,w:170,h:48,l:["AI agent"],sub:["MCP client"],
   role:"An MCP client such as Claude Code or Claude Desktop. Reaches hetu only over MCP with its own OAuth token and its own grants.",
   where:"Its own harness, on your machine or in the cloud",trust:"Untrusted, scoped",does:["Discovers hetu's authorization server and gets consent once","Calls MCP tools with a short-lived token","Leases notes before editing"],dec:["MCP OAuth spec"],th:[9,40,50]},
- {id:"shell",zone:"zOutside",cls:"outside",x:25,y:240,w:170,h:48,l:["Agent with a shell"],sub:["detect only"],
-  role:"An agent that can run commands as you. Anything you can do on disk, it can do. hetu can't prevent it, only detect it and refuse to load what it changed.",
-  where:"Your OS user",trust:"Hostile in the threat model",does:["Can edit files directly, replay old signed files, read memory","Needs you to approve a prompt to get a signature from hetu's key","On Windows it can open or delete hetu's key: a deleted key fails closed at the next start"],dec:["Tamper-evident, not tamper-proof"],th:[10,24,25,43,53]},
+ {id:"shell",zone:"zOutside",cls:"outside",x:25,y:240,w:170,h:48,l:["Agent with a shell"],sub:["can't change security state"],
+  role:"An agent that can run commands as you, not elevated. It can do almost anything you can on disk, so hetu detects what it does to notes. What it can't do is write the security state: only hetu's service can, and only with your gesture.",
+  where:"Your OS user",trust:"Hostile in the threat model",does:["Can edit notes directly and read hetu's memory","Can't edit, replay or delete the security state","Can delete your Hello key, which only blocks changes","Can try to fool you at an approval: the accepted risk"],dec:["The service is the only writer"],th:[10,24,25,43,53,58]},
  {id:"dev",zone:"zOutside",cls:"outside",x:25,y:400,w:170,h:48,l:["Plugin developer"],sub:["CI workflow"],
   role:"Builds and publishes a plugin. Signs each release keylessly from a GitHub workflow, so the signer identity is the repo plus workflow.",
   where:"GitHub Actions",trust:"Pinned on first approval",does:["Signs releases with Sigstore through GitHub's login token","Their identity is pinned in your security state at first approval"],dec:["Signing and updates"],th:[47,48]},
@@ -36,18 +37,18 @@ var N=[
   role:"Public services hetu touches: Sigstore's certificate authority and Rekor transparency log, OAuth client metadata documents, hosts a plugin may fetch.",
   where:"Remote",trust:"Untrusted",does:["Rekor records every public signature","Client metadata documents describe OAuth clients","net.fetch reaches only hosts a plugin was granted"],dec:["HTTPS only for metadata fetches"],th:[51]},
  {id:"cloud",zone:"zOutside",cls:"outside",x:25,y:700,w:170,h:48,l:["Your cloud"],sub:["optional plugin"],
-  role:"For users who run their own infrastructure. An optional plugin ships the event log off-machine and can alert on a counter that goes down. Never required.",
+  role:"For users who run their own infrastructure. An optional plugin ships the event log off-machine and can alert on gaps. Never required.",
   where:"Your own cloud account",trust:"Optional",does:["Append-only copy of the event log (S3 Object Lock)","rekor-monitor watches hetu's signing identity"],dec:["Cloud detection is optional, not the base control"],th:[11,25,49]},
 
  {id:"boot",zone:"zInstall",cls:"core",key:true,x:245,y:55,w:150,h:48,l:["Boot loader"],sub:["holds no policy"],
-  role:"The one piece that can't be a plugin. Reads your signed state, checks it against the hardware key that exists now, and loads what it says. Even skipping verification is allowed if you sign it.",
-  where:"Read-only app install",trust:"Trusted, fixed",does:["Sets the program up: security, signing and plugin checks","Fetches the current public key from the OS key store","Verifies the security-state bundle signature and schema","Loads the host, editor and guards only from the read-only install"],dec:["Secure Boot model","Key per approval"],th:[24,25,54]},
+  role:"The one piece that can't be a plugin. Reads the security state hetu's service wrote and loads what it says. Even skipping verification is allowed if you approve it.",
+  where:"Read-only app install",trust:"Trusted, fixed",does:["Sets the program up: security and plugin checks","Reads the security state, which no program running as you can edit","Parses it with the strict schema","Loads the host, editor and guards only from the read-only install"],dec:["Secure Boot model","The service is the only writer"],th:[24,25,54]},
  {id:"firstparty",zone:"zInstall",cls:"core",x:410,y:55,w:225,h:48,l:["Core packages"],sub:["host · editor · guards · recovery copy"],
   role:"First-party plugins that ship only inside the read-only app install, never through the plugin update channel. The same copy restores them when a check fails.",
   where:"Program Files on Windows · macOS open",trust:"Trusted, read-only",does:["Host, editor core and guard plugins","Recovery copy when a check on one of them fails"],dec:["Signing and updates","Recovery copy"],th:[49,38]},
  {id:"appid",zone:"zInstall",cls:"core",x:650,y:55,w:225,h:48,l:["App identity"],sub:["none on Windows · macOS open"],
-  role:"What the OS could use to tell hetu from other programs. hetu ships with no package identity or paid signing on Windows, because Windows Hello keys are scoped to the user with or without one. macOS is still open.",
-  where:"OS records",trust:"Not relied on",does:["Not a key boundary on Windows: Windows Hello keys are scoped to the user","Windows: the install folder is protected by Program Files, not by an identity","macOS: runs without the Windows Hello step for now, its state isn't signed"],dec:["Key binding"],th:[53,38]},
+  role:"What the OS could use to tell hetu from other programs. hetu ships with no package identity or paid signing on Windows, because Windows Hello keys are scoped to the user with or without one. What protects hetu instead is a separate Windows account for its service. macOS is still open.",
+  where:"OS records",trust:"Not relied on",does:["Not a key boundary on Windows: Windows Hello keys are scoped to the user","Windows: the install folder is protected by Program Files, the security state by the service's own account","macOS: runs without the Windows Hello step for now, its state isn't protected"],dec:["Key binding"],th:[53,38]},
 
  {id:"http",zone:"zDaemon",cls:"core",x:245,y:166,w:300,h:40,l:["Local HTTP · 127.0.0.1 only"],sub:[],
   role:"The daemon's only network door, for agents only. Windows use Electron IPC and plugins use ports, so neither needs a token. Plain HTTP bound to loopback, with Host and Origin checks.",
@@ -56,8 +57,8 @@ var N=[
   role:"hetu's own local authorization server, from a certified library. hetu writes the policy: consent, scopes, client rules and token lifetimes.",
   where:"Daemon",trust:"Trusted core",does:["OAuth 2.1 with PKCE, resource-bound tokens","Short-lived access tokens, refresh rotation with reuse detection","Fetches client metadata over HTTPS only, never private addresses"],dec:["MCP OAuth spec (2026-07-28)"],th:[9,50,51]},
  {id:"loader",zone:"zDaemon",cls:"core",x:403,y:218,w:142,h:48,l:["Plugin loader"],sub:["verify · start · stop"],
-  role:"Owns the plugin folder: checks every file against the signed hashes, computes classes, starts workers with their grants, holds plugins until guards are ready.",
-  where:"Daemon",trust:"Trusted core",does:["Hashes every file and loads the hashed bytes, never re-reading the path","New plugin not in the bundle: prompt, never a silent load","Starts guards first, holds the rest until guards report ready"],dec:["One loader, thin editor mount"],th:[24,26,27,35]},
+  role:"Owns the plugin folder: checks every file against the hashes in the security state, computes classes, starts workers with their grants, holds plugins until guards are ready.",
+  where:"Daemon",trust:"Trusted core",does:["Hashes every file and loads the hashed bytes, never re-reading the path","New plugin not in the security state: prompt, never a silent load","Starts guards first, holds the rest until guards report ready"],dec:["One loader, thin editor mount"],th:[24,26,27,35]},
  {id:"gate",zone:"zDaemon",cls:"core",key:true,x:245,y:280,w:300,h:52,l:["Capability gate"],sub:["the reference monitor"],
   role:"The one authority. Every request lands here in the same shape, whether it came from a plugin's port, a window's IPC or an agent's HTTP call, and the way in adds the caller. Checks the type against the fixed list, the scope after path normalising, the class and combination rules, and for agents the agent's grants together with the MCP plugin's.",
   where:"Daemon",trust:"Trusted core",does:["vault.read, vault.write, history, storage, events, net.fetch, ui, exec","Refusals name only the caller's own things","Passes caller identity on plugin-to-plugin calls (yes or no grant)"],dec:["Plugins have no power of their own","Plugin classes","Events"],th:[1,3,27,30,31,37,40]},
@@ -79,9 +80,9 @@ var N=[
  {id:"watcher",zone:"zDaemon",cls:"core",x:403,y:466,w:142,h:48,l:["Disk watcher"],sub:["outside writes"],
   role:"Compares the vault against the daemon's own writes and flags anything written around it.",
   where:"Daemon",trust:"Trusted core",does:["Flags outside writes while an agent holds a lease","Next commit marks unknown writers in the shadow repo"],dec:["Detection only for shell agents"],th:[10]},
- {id:"signer",zone:"zDaemon",cls:"core",key:true,x:245,y:528,w:300,h:44,l:["Signing service"],sub:["called only by the gate"],
-  role:"Asks the OS key store to create a new hardware key, sign the new security state, then delete the old key. Only the gate can call it, for a confirmation from hetu's trusted window. It starts the Windows Hello or Touch ID prompt.",
-  where:"Daemon + native addon",trust:"Trusted core",does:["Key per approval: old states die with their key","Never a verification-only prompt","No signing through command-line arguments or local IPC"],dec:["Key per approval","Key binding"],th:[25,43,52,53]},
+ {id:"signer",zone:"zDaemon",cls:"core",key:true,x:245,y:528,w:300,h:44,l:["Hello client"],sub:["called only by the gate"],
+  role:"The app's side of an approval. Gets a one-time code from hetu's service for the exact change, starts the Windows Hello or Touch ID prompt, and hands the signature to the service. It can't write the security state itself. Only the gate can call it, for a confirmation from hetu's trusted window.",
+  where:"Daemon",trust:"Trusted core",does:["Asks the service for a code tied to the change","Never a verification-only prompt","No signing through command-line arguments or local IPC"],dec:["The service is the only writer","Key binding"],th:[43,52,53]},
 
  {id:"mcp",zone:"zHidden",cls:"sandbox",x:590,y:166,w:135,h:44,l:["MCP plugin"],sub:[],
   role:"Core plugin that turns MCP calls into capability requests. Passes which agent is calling, so the gate checks that agent's grants too.",
@@ -116,22 +117,22 @@ var N=[
   where:"Editor window, opaque-origin frames",trust:"Sandboxed",does:["No same-origin, injected CSP","Read and network never together"],dec:["Artifacts"],th:[17,21,44]},
 
  {id:"hetuui",zone:"zUI",cls:"core",key:true,x:590,y:678,w:285,h:58,l:["hetu UI"],sub:["approvals · consent · banners"],
-  role:"hetu's own trusted window, a separate page with no plugins and no note content. Any hetu window can ask to change the security state, through the gate like every other call. The backend opens this page with the exact change, and only Confirm here starts the Windows Hello or Touch ID prompt. The OS prompt itself is generic and can't prove who asked, so this page is what you read. No plugin can draw here.",
-  where:"Separate trusted window",trust:"Trusted core",does:["Install and update approvals, all or nothing","Agent consent pages","Banners: guard off, check failed, plugin unresponsive"],dec:["Security confirmation in a separate page"],th:[22,33,43]},
+  role:"hetu's own trusted window, a separate page with no plugins and no note content. Any hetu window can ask to change the security state, through the gate like every other call. The backend opens this page with the exact change, and only Confirm here starts the Windows Hello or Touch ID prompt. The OS prompt itself is generic, so this page is what you read. No plugin can draw here. What hetu can't promise: a program that injects code into hetu could show one change here and ask for another, so your gesture proves you were there, not what you saw.",
+  where:"Separate trusted window",trust:"Trusted core",does:["Install and update approvals, all or nothing","Agent consent pages","Banners: guard off, check failed, plugin unresponsive"],dec:["Security confirmation in a separate page"],th:[22,33,43,58]},
 
  {id:"osproc",zone:"zProc",cls:"proc",x:245,y:670,w:300,h:56,l:["OS process"],sub:["git · exact exec commands"],
   role:"Where exec lands: a real process running as you, outside Chromium and outside the gate. That's why exec is class 4 and its inputs must come from the signed package.",
   where:"Your OS user",trust:"Leaves the sandbox",does:["git with --git-dir pointing at the shadow repo","Exact commands a plugin claimed, nothing else"],dec:["What exec really grants"],th:[13,45,46]},
 
  {id:"keystore",zone:"zDisk",cls:"disk",key:true,x:925,y:60,w:290,h:58,l:["OS key store"],sub:["Windows Hello TPM · Secure Enclave"],
-  role:"The local third party. Keys are made inside the chip and never leave it. On Windows they are scoped to your user, so a program running as you can open or delete hetu's key and raise a generic prompt. That makes this tamper evidence, not a lock.",
-  where:"Hardware, reached through the OS",trust:"Hardware-enforced",does:["New key per approval, old one deleted","A new key needs PIN, fingerprint or face","A signature asked for by another program raises a prompt","Optional later: FIDO2 security key"],dec:["Key per approval","Key binding"],th:[25,43,52]},
- {id:"bundle",zone:"zDisk",cls:"disk",x:925,y:140,w:290,h:58,l:["Security-state bundle"],sub:["signed · counter · grants · switches"],
-  role:"One signed file per machine with everything security depends on: plugin hashes, pinned signers, grants, classes, switches, agent grants.",
-  where:"App data, per machine",trust:"Signed by your hardware key",does:["Strict JSON, duplicate keys rejected","Signed over RFC 8785 canonical bytes","Replays fail: the old key is gone"],dec:["Format"],th:[24,25,54]},
+  role:"Holds the private half of your gesture key, made inside the chip and never leaving it. On Windows keys are scoped to your user, so a program running as you can delete it or make its own. Neither helps it: the service only trusts the key it enrolled.",
+  where:"Hardware, reached through the OS",trust:"Hardware-enforced",does:["Signs only after PIN, fingerprint or face","A deleted key blocks changes until you enroll again","A key another program makes isn't the enrolled one","Optional later: FIDO2 security key"],dec:["Key binding"],th:[43,52,53]},
+ {id:"bundle",zone:"zDisk",cls:"disk",x:925,y:140,w:290,h:58,l:["Security state"],sub:["only the service writes it"],
+  role:"One file per machine with everything security depends on: plugin hashes, pinned signers, grants, classes, switches, agent grants and the enrolled key. It sits in a folder only hetu's service can write, so a program running as you can read it but not edit, replay or delete it.",
+  where:"Service folder, per machine",trust:"Written only by the service",does:["Strict JSON, duplicate keys rejected","Only the service's account can write the folder","No old copy can be put back"],dec:["The service is the only writer","Format"],th:[24,25,54,55]},
  {id:"pfolder",zone:"zDisk",cls:"disk",x:925,y:220,w:290,h:58,l:["Plugin folder"],sub:["per machine · plugin storage"],
   role:"One central folder for every plugin, ours and community ones alike, plus each plugin's own storage. Doesn't sync between machines.",
-  where:"App data, per machine",trust:"Checked against the bundle",does:["Package files plus Sigstore signature","storage.get and set, quota, unreadable by others"],dec:["Registry v1"],th:[24,26,46]},
+  where:"App data, per machine",trust:"Checked against the security state",does:["Package files plus Sigstore signature","storage.get and set, quota, unreadable by others"],dec:["Registry v1"],th:[24,26,46]},
  {id:"vault",zone:"zDisk",cls:"disk",x:925,y:320,w:290,h:58,l:["Vault"],sub:["your markdown notes"],
   role:"Plain markdown on disk. Written only through the write path. Plain text on purpose: reading by a shell agent is out of scope.",
   where:"Your vault folder",trust:"Your data",does:["Work tree for the shadow repo","Watched for outside writes"],dec:["No local encryption"],th:[1,3,8,10]},
@@ -143,18 +144,20 @@ var N=[
   where:"The vault's .git",trust:"Yours, untouched",does:["Your own commits and backups continue","Your notes sync however they already do"],dec:["Shadow repo leaves it untouched"],th:[13]},
  {id:"logs",zone:"zDisk",cls:"disk",x:925,y:580,w:290,h:58,l:["Event log files"],sub:["hash chain"],
   role:"The local log. Same OS user can delete it, so the hash chain shows gaps and the optional cloud plugin keeps a copy that survives.",
-  where:"App data",trust:"Evidence",does:["Sequence numbers and previous hashes","Optional off-machine copy"],dec:["Detection"],th:[11]}
+  where:"App data",trust:"Evidence",does:["Sequence numbers and previous hashes","Optional off-machine copy"],dec:["Detection"],th:[11]},
+ {id:"service",zone:"zDisk",cls:"core",key:true,x:925,y:680,w:290,h:58,l:["Security service"],sub:["its own Windows account · session 0"],
+  role:"A small Windows service running under its own account, the only writer of the security state. It hands out a one-time code for a requested change and writes the change only with a Windows Hello signature over that code and change, under the key it enrolled at install. Programs running as you can't open it, hook it or write its folder. Elevated programs are out of scope.",
+  where:"Its own Windows account, no window",trust:"Trusted core, separate account",does:["Anything may ask, only a signed change is written","Logs every request, refusal and change where you can't edit them","Holds only the security state, nothing else"],dec:["The service is the only writer","Its own account, not SYSTEM"],th:[24,25,43,55,56,57]}
 ];
 
 /* ---------- edges ---------- */
 var E=[
  {id:"human_boot",f:"human",t:"boot",l:"launch hetu",chk:["Nothing to check yet: the boot loader does the checking"],th:[]},
- {id:"boot_key",f:"boot",t:"keystore",l:"current public key",chk:["Only the key that exists now is trusted","A deleted key can't come back"],th:[25]},
- {id:"boot_bundle",f:"boot",t:"bundle",l:"verify signature",chk:["Signature over canonical bytes","Strict schema, duplicate keys rejected","Fails: every guard on, suspect parts off"],th:[24,25,54,39]},
+ {id:"boot_bundle",f:"boot",t:"bundle",l:"read state",chk:["Only the service can have written it","Strict schema, duplicate keys rejected","Missing or unreadable: every guard on, suspect parts off"],th:[24,25,54,39]},
  {id:"boot_first",f:"boot",t:"firstparty",l:"load host · editor · guards",chk:["Only from the signed, read-only install","Recovery copy if a check fails"],th:[49]},
  {id:"first_loader",f:"firstparty",t:"loader",l:"host starts",chk:["The host plugin is the one holding all power"],th:[]},
  {id:"appid_key",f:"appid",t:"keystore",l:"key access rules",chk:["Windows: keys scoped to the user, not to hetu","macOS: keychain access group by entitlement, not yet tested"],th:[53]},
- {id:"loader_pfolder",f:"loader",t:"pfolder",l:"hash files · load hashed bytes",chk:["contentHash must match the bundle","Load the bytes that were hashed","Unknown plugin: prompt, never load"],th:[24,26]},
+ {id:"loader_pfolder",f:"loader",t:"pfolder",l:"hash files · load hashed bytes",chk:["contentHash must match the security state","Load the bytes that were hashed","Unknown plugin: prompt, never load"],th:[24,26]},
  {id:"loader_hidden",f:"loader",t:"zHidden",l:"start workers + grants",chk:["Guards first, others held until ready","Grants equal the approved manifest"],th:[35,27]},
  {id:"loader_egate",f:"loader",t:"egate",l:"verified code + grants",chk:["Editor mounts only what the daemon hands over"],th:[41]},
  {id:"loader_ui",f:"loader",t:"hetuui",l:"new plugin · banners",chk:["New plugins prompt","Failed checks and guards off shown plainly"],th:[22,39]},
@@ -167,9 +170,10 @@ var E=[
  {id:"oauth_ui",f:"oauth",t:"hetuui",l:"consent page",chk:["You pick the agent's grants"],th:[9]},
  {id:"human_ui",f:"human",t:"hetuui",l:"approve · Windows Hello",chk:["Only Confirm in the trusted window starts the prompt","The trusted window names what is signed"],th:[33,43]},
  {id:"ui_gate",f:"hetuui",t:"gate",l:"security confirm",chk:["Any hetu window can request, only this one can confirm","Known by the window, not a token","Rate limited, every request logged"],th:[22,33]},
- {id:"gate_signer",f:"gate",t:"signer",l:"sign this change",chk:["Only the gate can call the signing service","The backend starts the prompt"],th:[53]},
- {id:"signer_key",f:"signer",t:"keystore",l:"new key · sign · delete old",chk:["Each new key needs your gesture","Never a verification-only prompt"],th:[25,43,52]},
- {id:"signer_bundle",f:"signer",t:"bundle",l:"write state N+1",chk:["Canonical JSON, signed","Pinned signer, hashes, grants, class"],th:[24,47,54]},
+ {id:"gate_signer",f:"gate",t:"signer",l:"approve this change",chk:["Only the gate can call the Hello client","The backend starts the prompt"],th:[53]},
+ {id:"signer_key",f:"signer",t:"keystore",l:"sign code + change",chk:["Needs your gesture","Never a verification-only prompt"],th:[43,52]},
+ {id:"signer_service",f:"signer",t:"service",l:"code · signature",chk:["The code is tied to this exact change","Checked against the enrolled key"],th:[25,43,53]},
+ {id:"service_bundle",f:"service",t:"bundle",l:"write state",chk:["The only writer","Strict schema, canonical JSON","Pinned signer, hashes, grants, class"],th:[24,25,47,54]},
  {id:"gate_write",f:"gate",t:"write",l:"vault.write",chk:["Version check (StaleVersion)","Scope within the grant"],th:[1,30]},
  {id:"leases_write",f:"leases",t:"write",l:"guard: allow or refuse",chk:["One writer per note","Missing or crashed guard fails closed"],th:[1,6,39]},
  {id:"write_vault",f:"write",t:"vault",l:"write file",chk:["The only writer of notes"],th:[1]},
@@ -182,7 +186,7 @@ var E=[
  {id:"proc_vault",f:"osproc",t:"vault",l:"read work tree",chk:["Read only for git status and commit"],th:[]},
  {id:"gate_log",f:"gate",t:"logw",l:"every decision",chk:["Allowed and refused both recorded"],th:[11]},
  {id:"logw_logs",f:"logw",t:"logs",l:"append · hash chain",chk:["Sequence number and previous hash"],th:[11]},
- {id:"logs_cloud",f:"logs",t:"cloud",kind:"opt",l:"ship off-machine",chk:["Write-only credential, Object Lock","Alerts on a counter going down or a gap"],th:[11,25]},
+ {id:"logs_cloud",f:"logs",t:"cloud",kind:"opt",l:"ship off-machine",chk:["Write-only credential, Object Lock","Alerts on a gap"],th:[11]},
  {id:"gate_pfolder",f:"gate",t:"pfolder",l:"storage (own space)",chk:["Always granted, quota","Keyed by lockfile identity"],th:[46]},
  {id:"gate_internet",f:"gate",t:"internet",l:"net.fetch (listed hosts)",chk:["Host list from the grant","Read plus network ranks class 4"],th:[44]},
  {id:"watchm_hidden",f:"watchm",t:"zHidden",l:"measure · throttle · stop",chk:["Heartbeat, per-process metrics","Stop answering bridge calls, terminate"],th:[36]},
@@ -201,8 +205,10 @@ var E=[
  {id:"internet_cloud",f:"internet",t:"cloud",kind:"opt",l:"rekor-monitor",chk:["Unexpected signature under hetu's identity files an issue"],th:[49]},
  {id:"userrepo_vault",f:"userrepo",t:"vault",kind:"opt",l:"your own history",chk:["hetu never commits here"],th:[13]},
  {id:"shell_vault",f:"shell",t:"vault",kind:"att",l:"write directly",chk:["Watcher flags it","Unknown writer in the shadow repo"],th:[10]},
- {id:"shell_bundle",f:"shell",t:"bundle",kind:"att",l:"restore old state",chk:["Old key deleted, verify fails at start"],th:[25]},
- {id:"shell_key",f:"shell",t:"keystore",kind:"att",l:"use hetu's key",chk:["Raises a generic prompt, nothing signs until you approve","Accepted risk: one approved prompt can forge a state"],th:[43,53]}
+ {id:"shell_bundle",f:"shell",t:"bundle",kind:"att",l:"edit or restore state",chk:["Refused: only the service's account can write the folder"],th:[24,25,55]},
+ {id:"shell_key",f:"shell",t:"keystore",kind:"att",l:"delete or make a key",chk:["Deleting your key only blocks changes","Its own key isn't the enrolled one"],th:[43,53]},
+ {id:"shell_service",f:"shell",t:"service",kind:"att",l:"open or write the service",chk:["Refused: a different account","No window to hook in session 0"],th:[56]},
+ {id:"shell_ui",f:"shell",t:"hetuui",kind:"att",l:"inject · fake a screen",chk:["Possible: the accepted risk","Still needs your real gesture","Logged by the service"],th:[58]}
 ];
 
 /* ---------- scenarios ---------- */
@@ -210,10 +216,9 @@ var S=[
  {id:"start",name:"Start the program",sum:"From double-click to every plugin running, and what happens when a check fails.",
   steps:[
    {t:"You launch hetu",n:["human","boot"],e:["human_boot"],x:"The boot loader runs first. It is the one part that can't be a plugin and it holds no policy of its own.",c:["Boot loader comes from the read-only install"],th:[]},
-   {t:"Ask the hardware for the current key",n:["boot","keystore","appid"],e:["boot_key","appid_key"],x:"The boot loader asks the OS key store for hetu's current public key. Only the key that exists right now counts: every approval made a new one and deleted the old.",c:["Only the key that exists now counts"],th:[25]},
-   {t:"Verify the security state",n:["boot","bundle"],e:["boot_bundle"],x:"The signed bundle lists every plugin hash, pinned signer, grant, class and switch. The boot loader checks the signature over canonical bytes and parses it with the strict schema.",c:["Signature over RFC 8785 canonical JSON","Duplicate keys and unknown types rejected"],th:[24,54]},
+   {t:"Read the security state",n:["boot","bundle","service"],e:["boot_bundle"],x:"The security state lists every plugin hash, pinned signer, grant, class and switch. It sits in a folder only hetu's service can write, so nothing running as you can have edited, replayed or deleted it. The boot loader parses it with the strict schema.",c:["Only the service writes it","Duplicate keys and unknown types rejected"],th:[24,25,54]},
    {t:"Load the host, editor and guards",n:["boot","firstparty","loader"],e:["boot_first","first_loader"],x:"First-party core plugins come only from the read-only install, never from the plugin folder. The plugin loader sets up each plugin's environment, and the host starts as the running guard.",c:["Program Files: a normal program can't edit these files"],th:[49]},
-   {t:"Check every plugin file",n:["loader","pfolder"],e:["loader_pfolder"],x:"The loader hashes every file of every plugin and compares with the bundle. It then loads the exact bytes it hashed, so nothing can be swapped in between.",c:["contentHash matches","Load hashed bytes, never re-read the path"],th:[24,26]},
+   {t:"Check every plugin file",n:["loader","pfolder"],e:["loader_pfolder"],x:"The loader hashes every file of every plugin and compares with the security state. It then loads the exact bytes it hashed, so nothing can be swapped in between.",c:["contentHash matches","Load hashed bytes, never re-read the path"],th:[24,26]},
    {t:"Start guards, then everything else",n:["loader","leases","mcp","gitp","search","watchp","community"],e:["loader_hidden"],x:"Always-on plugins start as workers in the hidden renderer, so they keep running with every window closed. Guards start first. Other plugins are held until the guards report ready.",c:["Guards first","Each worker gets exactly its approved grants"],th:[35]},
    {t:"Open the editor window",n:["loader","egate","ecore","eplug","frames"],e:["loader_egate"],x:"If you open a window, the editor mount asks the daemon what to load and with which grants. The editor core plugin runs in the page, editor plugins in workers and frames.",c:["The window can't touch disk, only the daemon can"],th:[42]},
    {t:"Record the start",n:["gate","logw","logs"],e:["gate_log","logw_logs"],x:"\"State N loaded\" goes into the hash-chained event log. With the optional cloud plugin, a copy leaves the machine.",c:["Hash chain"],th:[11]},
@@ -223,13 +228,13 @@ var S=[
   steps:[
    {t:"Developer signs a release",n:["dev","internet"],e:["dev_internet"],x:"The developer's GitHub workflow signs the release keylessly with Sigstore. The signature lands in Rekor, the public append-only log. The signer identity is the repo plus workflow.",c:["No long-lived key to steal"],th:[48]},
    {t:"You add it to the plugin folder",n:["human","internet","pfolder"],e:["internet_pfolder","human_pfolder"],x:"You download the package with its signature file into the one central plugin folder. Nothing loads yet.",c:["A file in the folder is not an approval"],th:[]},
-   {t:"hetu notices a new plugin",n:["loader","pfolder","hetuui"],e:["loader_pfolder","loader_ui"],x:"The loader sees a plugin that isn't in the signed bundle. It never loads it silently. An agent dropping a plugin in hits the same prompt.",c:["New plugin found: prompt"],th:[27]},
+   {t:"hetu notices a new plugin",n:["loader","pfolder","hetuui"],e:["loader_pfolder","loader_ui"],x:"The loader sees a plugin that isn't in the security state. It never loads it silently. An agent dropping a plugin in hits the same prompt.",c:["New plugin found: prompt"],th:[27]},
    {t:"Verify and classify",n:["loader","pfolder"],e:["loader_pfolder"],x:"The loader verifies the Sigstore signature locally, reads the manifest with the strict schema and computes the class from what it requests. Read plus network together ranks class 4.",c:["Signature valid","Class computed, never declared","Combination rules"],th:[27,54]},
    {t:"See exactly what it asks for",n:["hetuui"],e:[],x:"hetu's own window shows the plugin, its signer identity, its class and every permission. Approval is all or nothing: plugin makers own their permission design.",c:["All or nothing","Signer shown"],th:[33]},
-   {t:"Approve with your gesture",n:["human","hetuui","gate","signer"],e:["human_ui","ui_gate","gate_signer"],x:"You confirm in hetu's trusted window, which names what is being signed and sends the confirmation through the gate. The backend then starts Windows Hello or Touch ID.",c:["Only Confirm in the trusted window starts the prompt"],th:[43,33]},
-   {t:"New key, new state",n:["signer","keystore"],e:["signer_key"],x:"The signing service asks the OS key store for a brand new hardware key, signs the new state with it, then deletes the old key. Every older state is now unverifiable.",c:["Key per approval","Each new key needs your gesture"],th:[25,52]},
-   {t:"Write state N+1",n:["signer","bundle"],e:["signer_bundle"],x:"The bundle now records the plugin's version, content hash, pinned signer, granted permissions and class. Later updates must come from the same signer.",c:["Signer pinned (trust on first use)"],th:[47]},
-   {t:"Start the plugin",n:["loader","community","eplug"],e:["loader_hidden","loader_egate"],x:"The loader starts the plugin's daemon half in the hidden renderer and its editor half in the window, each as a worker with exactly the approved grants.",c:["Worker sandbox","Grants from the bundle"],th:[29]},
+   {t:"Approve with your gesture",n:["human","hetuui","gate","signer"],e:["human_ui","ui_gate","gate_signer"],x:"You confirm in hetu's trusted window, which names what is being changed and sends the confirmation through the gate. The backend then starts Windows Hello or Touch ID.",c:["Only Confirm in the trusted window starts the prompt"],th:[43,33]},
+   {t:"The service checks your gesture",n:["signer","keystore","service"],e:["signer_key","signer_service"],x:"The Hello client gets a one-time code from hetu's service for this exact change. Windows Hello signs the code and the change, and the service checks the signature against the key it enrolled at install.",c:["Code tied to the change","Enrolled key only"],th:[43,52]},
+   {t:"The service writes the state",n:["service","bundle"],e:["service_bundle"],x:"The security state now records the plugin's version, content hash, pinned signer, granted permissions and class. Later updates must come from the same signer.",c:["Signer pinned (trust on first use)","Only the service writes"],th:[47]},
+   {t:"Start the plugin",n:["loader","community","eplug"],e:["loader_hidden","loader_egate"],x:"The loader starts the plugin's daemon half in the hidden renderer and its editor half in the window, each as a worker with exactly the approved grants.",c:["Worker sandbox","Grants from the security state"],th:[29]},
    {t:"Its first request",n:["community","gate","logw"],e:["hidden_gate","gate_log"],x:"Every action the plugin takes is a capability call the gate checks and logs. It has no power of its own.",c:["Reference monitor"],th:[30,31]}
   ]},
  {id:"update",name:"A plugin update arrives",sum:"Which updates load on their own, which ask you, and when hetu warns.",
@@ -238,14 +243,14 @@ var S=[
    {t:"Same signer?",n:["loader","pfolder","bundle"],e:["loader_pfolder"],x:"The loader compares the signer identity with the one pinned at first approval. A different identity, even with a valid signature, is treated as a new plugin with a warning. That stops a forked plugin with a backdoor.",c:["Signer must match the pin"],th:[47]},
    {t:"Did it ask for more?",n:["loader","hetuui"],e:["loader_ui"],x:"An update whose manifest requests anything more needs your approval again, whatever its class.",c:["Widened manifest asks again"],th:[28]},
    {t:"Class 0 loads on its own",n:["loader","community"],e:["loader_hidden"],x:"Only plugins with no privilege (class 0) update without a prompt. Everything else asks every time, which bounds a hijacked developer workflow.",c:["Only class 0 auto-updates"],th:[48]},
-   {t:"Everything else asks you",n:["human","hetuui","gate","signer","keystore","bundle"],e:["human_ui","ui_gate","gate_signer","signer_key","signer_bundle"],x:"For class 1 and up you approve the update with your gesture, which writes a new signed state with a new key.",c:["New key per approval"],th:[25]},
+   {t:"Everything else asks you",n:["human","hetuui","gate","signer","keystore","service","bundle"],e:["human_ui","ui_gate","gate_signer","signer_key","signer_service","service_bundle"],x:"For class 1 and up you approve the update with your gesture, and the service writes it into the security state.",c:["Your gesture per approval"],th:[43]},
    {t:"First-party never comes this way",n:["firstparty","boot"],e:["boot_first"],x:"The host, editor and guards update only with the app install itself, never through the plugin channel.",c:["Core ships inside the app install"],th:[49]}
   ]},
  {id:"agent",name:"An agent edits a note",sum:"First connection, consent, lease, edit, commit and the events that follow.",
   steps:[
    {t:"First call without a token",n:["agent","http"],e:["agent_http"],x:"The agent calls hetu's MCP endpoint on 127.0.0.1. With no token it gets a 401 and the Protected Resource Metadata pointing at hetu's authorization server.",c:["Loopback only, Host and Origin checks"],th:[14,15]},
    {t:"OAuth with PKCE",n:["agent","oauth","internet"],e:["agent_oauth","oauth_internet"],x:"The agent starts OAuth 2.1 with PKCE. If it identifies with a client metadata URL, hetu fetches it over HTTPS only and never from private or loopback addresses.",c:["HTTPS only","No private addresses"],th:[51]},
-   {t:"You consent once",n:["oauth","hetuui","human","gate","signer","keystore","bundle"],e:["oauth_ui","human_ui","ui_gate","gate_signer","signer_key","signer_bundle"],x:"hetu's consent page shows the agent and lets you set its grants. Your gesture approves it and the agent's grants land in the signed state.",c:["Agent grants signed"],th:[9]},
+   {t:"You consent once",n:["oauth","hetuui","human","gate","signer","keystore","service","bundle"],e:["oauth_ui","human_ui","ui_gate","gate_signer","signer_key","signer_service","service_bundle"],x:"hetu's consent page shows the agent and lets you set its grants. Your gesture approves it and the service writes the agent's grants into the security state.",c:["Agent grants need your gesture"],th:[9]},
    {t:"Short-lived token",n:["oauth","agent"],e:["agent_oauth"],x:"The agent receives a short-lived access token bound to hetu. Its harness stores it, not hetu. Refresh tokens rotate, and reuse of an old one revokes the chain and alerts you.",c:["Short-lived","Reuse detection"],th:[50]},
    {t:"Ask for a lease",n:["agent","http","mcp","gate","leases"],e:["agent_http","http_mcp","hidden_gate"],x:"The MCP plugin forwards acquire_lease with the agent's identity. The gate checks the agent's grants and the MCP plugin's together, and the leases guard decides.",c:["Agent grants and MCP grants both"],th:[40,1]},
    {t:"Refused? Only its own details",n:["leases","mcp"],e:[],x:"If another writer holds the note, the refusal carries path, holder and expiry only. Never another agent's lease id. That's the A-05 lesson.",c:["Refusal names only the caller's things"],th:[6,37]},
@@ -266,19 +271,18 @@ var S=[
  {id:"guardoff",name:"Switch a guard off",sum:"How you switch security off on purpose, and why nothing else can.",
   steps:[
    {t:"You choose to switch it off",n:["human","hetuui"],e:["human_ui"],x:"Any hetu window can ask for the switch, and only the trusted window can confirm it. MCP and plugins can't reach it.",c:["Never over MCP, never by a plugin"],th:[22]},
-   {t:"Your gesture signs it",n:["hetuui","gate","signer","keystore"],e:["ui_gate","gate_signer","signer_key"],x:"The trusted window sends your confirmation through the gate and the backend starts the prompt. Windows Hello or Touch ID approves. A new key signs the new state and the old key is deleted.",c:["Key per approval"],th:[25,43]},
-   {t:"New state with the switch",n:["signer","bundle"],e:["signer_bundle"],x:"The switch lives in the per-machine signed state, never in the vault, so a synced or cloned vault can't bring it along.",c:["Per machine"],th:[22]},
+   {t:"Your gesture approves it",n:["hetuui","gate","signer","keystore","service"],e:["ui_gate","gate_signer","signer_key","signer_service"],x:"The trusted window sends your confirmation through the gate and the backend starts the prompt. Windows Hello or Touch ID signs a one-time code from the service together with the change, and the service checks it.",c:["Code tied to the change"],th:[43]},
+   {t:"New state with the switch",n:["service","bundle"],e:["service_bundle"],x:"The service writes the switch into the per-machine security state, never into the vault, so a synced or cloned vault can't bring it along.",c:["Per machine","Only the service writes"],th:[22]},
    {t:"A banner while it's off",n:["loader","hetuui","logw","logs"],e:["loader_ui","gate_log","logw_logs"],x:"While any guard is off hetu says so plainly, and the log records who switched it.",c:["Visible state","Logged"],th:[11]},
    {t:"Crash is not a switch",n:["leases","write"],e:["leases_write"],x:"If a guard is missing or crashed without you switching it off, writes fail closed.",c:["Fail closed"],th:[39],bad:true}
   ]},
- {id:"replay",name:"Shell agent replays old state",sum:"An agent with a shell restores an older signed state. Why it fails.",
+ {id:"replay",name:"Shell agent goes after security",sum:"An agent with a shell tries to change hetu's security state without you. What stops it and what's left.",
   steps:[
-   {t:"It saved old files earlier",n:["shell","bundle","pfolder"],e:["shell_bundle"],x:"Months ago the agent copied an old security state that had a guard off, plus an old plugin version. Both were validly signed by you at the time.",c:["A signature proves who, not freshness"],th:[25],bad:true},
-   {t:"It puts them back",n:["shell","bundle"],e:["shell_bundle"],x:"While hetu is closed, it copies the old files over the current ones. Nothing is modified, so a plain signature check alone would pass.",c:[],th:[25],bad:true},
-   {t:"Signing a new one needs you",n:["shell","keystore"],e:["shell_key"],x:"On Windows it can open hetu's key, but asking for a signature raises a generic Windows Hello prompt. If you approve one you didn't start, it can forge a state. hetu accepts that risk, closing it needs an OS boundary.",c:["Human in the loop","Accepted risk: one approved prompt"],th:[43,53]},
-   {t:"Next start: the key is gone",n:["boot","keystore","bundle"],e:["boot_key","boot_bundle"],x:"The old state was signed by a key deleted at a later approval. The boot loader verifies against the key that exists now, so the old state fails.",c:["Key per approval"],th:[25]},
-   {t:"Fail closed and tell you",n:["loader","hetuui","firstparty"],e:["loader_ui","boot_first"],x:"Every guard on, suspect parts off, a banner explaining what failed. The agent broke something but couldn't silently turn security off.",c:["Tamper-evident"],th:[39]},
-   {t:"Optional: the cloud saw it too",n:["logs","cloud"],e:["logs_cloud"],x:"With the optional plugin, the off-machine log shows the counter went down. Not required for the protection above.",c:["Optional detection"],th:[11]}
+   {t:"It edits or restores the state",n:["shell","bundle"],e:["shell_bundle"],x:"The agent tries to edit the security state, or copy an old one with a guard off over it, or delete it so hetu starts fresh. The folder belongs to hetu's service and a program running as you can't write it.",c:["Only the service writes the folder"],th:[24,25,55]},
+   {t:"It goes after the service",n:["shell","service"],e:["shell_service"],x:"The service runs under its own Windows account in session 0. A program running as you can't open it, write its memory or hook it, since it has no window on your desktop.",c:["A different account","No window to hook"],th:[56]},
+   {t:"It makes its own key",n:["shell","keystore"],e:["shell_key"],x:"On Windows it can delete your Hello key or make a new one under hetu's name, with no gesture. The service only trusts the key it enrolled, so a new key signs nothing that counts, and a deleted key only blocks changes until you enroll again.",c:["Enrolled key only","Fails closed"],th:[43,53]},
+   {t:"It tries to fool you instead",n:["shell","hetuui","human"],e:["shell_ui"],x:"What's left is deception. With code injected into hetu it could show you one change in the trusted window and ask for another. It still needs your real gesture, and the request is logged. hetu accepts this risk: no app on one PC can show you something an injected program can't also draw.",c:["Needs your gesture","Accepted risk"],th:[58],bad:true},
+   {t:"Every attempt is on record",n:["service"],e:[],x:"The service logs every request and refusal in its own folder, where a program running as you can't edit them.",c:["Logged out of reach"],th:[11]}
   ]},
  {id:"hang",name:"A plugin hangs",sum:"The watchdog: the kernel measures and stops, the plugin decides, you choose.",
   steps:[

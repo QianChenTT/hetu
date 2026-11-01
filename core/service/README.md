@@ -1,0 +1,1 @@
+The security service: a small Windows service under its own account, the only writer of hetu's security state. It hands out a one-time code for a requested change and writes the change only with a Windows Hello signature over that code and change, under the key it enrolled at install. Not built yet, its language and packaging are decided by its prototype

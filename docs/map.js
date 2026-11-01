@@ -115,7 +115,7 @@ function renderIntro(){
   panel.replaceChildren();
   panel.appendChild(h("span","eyebrow","How to read it"));
   panel.appendChild(h("h2",null,"Pick a box, an arrow or a scenario"));
-  var p=h("p",null,"The daemon in the middle-left holds all power. Everything in teal is sandboxed and can only ask the capability gate. The hardware key store on the right keeps you in the loop: hetu's security state only changes with a prompt you approve.");p.style.color="var(--muted)";panel.appendChild(p);
+  var p=h("p",null,"The daemon in the middle-left holds all power. Everything in teal is sandboxed and can only ask the capability gate. The security service and the hardware key store on the right keep you in the loop: only the service writes hetu's security state, and only with a prompt you approve.");p.style.color="var(--muted)";panel.appendChild(p);
   var ul=h("ul");["Hover a box to light up every flow it has","Click to pin it and read its role, checks and threats","Choose a scenario above to step through a sequence","Every flow is also listed in the table below the map"].forEach(function(s){ul.appendChild(h("li",null,s))});panel.appendChild(ul);
   panel.appendChild(h("span","eyebrow","Counts"));
   var m=h("p",null,N.length+" components · "+E.length+" flows · "+S.length+" scenarios");m.className="mono";panel.appendChild(m);
