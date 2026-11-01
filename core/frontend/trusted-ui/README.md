@@ -1,1 +1,1 @@
-The one window that can ask for a gesture: approvals, consent and banners
+The separate page where a gesture is confirmed: approvals, consent and banners. No plugins and no note content
