@@ -40,7 +40,7 @@
   <div class="stage">
     <div>
       <div class="mapbox" id="mapbox">
-        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the read-only app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk and OS key store on the right, with arrows for every flow between them">
+        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the read-only app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk, the OS key store and the security service on the right, with arrows for every flow between them">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
             <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>
@@ -89,7 +89,7 @@
       <div><strong>The daemon holds all power.</strong> It is Electron's main process. The hidden renderer and editor windows only get what the daemon grants them.</div>
       <div><strong>Mechanism in the core, policy in plugins.</strong> Leases, the watchdog and git all follow this split: the core enforces, a core plugin decides.</div>
       <div><strong>Security stays on until you approve otherwise.</strong> Every security switch needs a Windows Hello or Touch ID approval, lives per machine and shows a banner while off. A guard that crashes fails closed.</div>
-      <div><strong>Tamper-evident, not tamper-proof.</strong> Every start checks the signed state against the key that exists in hardware now, which catches edits, replays and a deleted key. A targeted attack that gets one prompt approved can forge a state. That is an accepted risk, closing it needs an OS boundary.</div>
+      <div><strong>Only hetu's service writes the security state.</strong> It runs under its own Windows account, so a program running as you, not elevated, can't edit, replay or delete the state, and every change needs your Windows Hello gesture. What's left is deception: a program that injects code into hetu could show you one change and ask for another. That is an accepted risk, since no app on one PC can show you something such a program can't also draw. Elevated programs are out of scope.</div>
       <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>
     </div>
   </section>
