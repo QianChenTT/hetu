@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 1
           # No git operations after checkout, so do not leave the token on disk
           persist-credentials: false
-      - uses: anthropics/claude-code-action@6b6870e649b5ff408753befeaee5fc7989d4e6a9 # v1.0.258
+      - uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
           # Subscription auth: the OAuth token from `claude setup-token`, stored as a repo secret
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
