@@ -90,6 +90,9 @@ export class EventLog {
   private readonly dir: string
   private tail: Promise<unknown> = Promise.resolve()
   private tip: Tip | null = null
+  // The tip of a line being written, kept when its write throws, since the line may still have landed. Looking again
+  // then takes it as this process's own line, not as a change made while hetu ran
+  private pending: Tip | null = null
   private ok = false
   private tried = false
   private quietUntil = 0
@@ -131,6 +134,7 @@ export class EventLog {
       await mkdir(this.dir, { recursive: true })
       const { tip, opened } = await this.resume(this.tip)
       this.tip = tip
+      this.pending = null
       this.ok = true
       return opened
     } catch (err) {
@@ -151,14 +155,17 @@ export class EventLog {
       })
       .sort((a, b) => a - b)
     const newest = numbers.at(-1)
-    if (newest === undefined && before === null) return { tip: { segment: 1, first: 1, seq: 0, prev: ZERO }, opened: { lastSeq: 0, broken: null } }
+    // Nothing written yet, or a first line that never landed and was removed, is still a new log
+    if (newest === undefined && (before === null || before.seq < before.first)) {
+      return { tip: { segment: 1, first: 1, seq: 0, prev: ZERO }, opened: { lastSeq: 0, broken: null } }
+    }
 
     const found = newest === undefined ? null : await this.read(newest)
     // An empty segment after the first means a crash before the record of a break was written
     if (newest !== undefined && found && !found.broken && (found.lines > 0 || newest === 1)) {
       const tip = { segment: newest, first: found.first ?? 1, seq: found.last ?? 0, prev: found.tip }
-      const same = before === null || (tip.segment === before.segment && tip.seq === before.seq && tip.prev === before.prev)
-      if (same) return { tip, opened: { lastSeq: tip.seq, broken: null } }
+      const at = (other: Tip | null) => other !== null && tip.segment === other.segment && tip.seq === other.seq && tip.prev === other.prev
+      if (before === null || at(before) || at(this.pending)) return { tip, opened: { lastSeq: tip.seq, broken: null } }
     }
     // The last good seq, looking back through earlier segments when the newest has none
     let last = found?.last ?? null
@@ -193,6 +200,8 @@ export class EventLog {
     const line = JSON.stringify({ seq, prev: tip.prev, at: new Date().toISOString(), event, ...fields })
     // Nothing is written before the file opens, so a lock there is safe to wait out
     const file = this.file(tip.segment)
+    const next = { ...tip, seq, prev: sha256(line) }
+    this.pending = next
     await writable(file)
     const handle = await retried(() => open(file, 'a'), file)
     try {
@@ -209,7 +218,8 @@ export class EventLog {
     await handle.close()
     // The segment's first line made the file, which is only on disk once its folder is
     if (seq === tip.first) await syncDir(this.dir)
-    return { ...tip, seq, prev: sha256(line) }
+    this.pending = null
+    return next
   }
 
   async append(event: string, fields: Record<string, Field> = {}): Promise<void> {

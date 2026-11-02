@@ -627,7 +627,10 @@ describe('a log that can not be written', () => {
     await writeFile(segmentFile(1), Buffer.concat([kept, Buffer.from('{"seq":3,"pr')]))
     await log.append('test.line', { n: 3 })
     expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
-    expect((await recordsOf(2)).map(r => [r.seq, r.event])).toEqual([[3, 'log.chain-broken'], [4, 'test.line']])
+    const records = await recordsOf(2)
+    expect(records.map(r => [r.seq, r.event])).toEqual([[3, 'log.chain-broken'], [4, 'test.line']])
+    // The torn line is seq 3, the last good one is intact and must not be blamed
+    expect(records[0]).toMatchObject({ segment: 1, brokenSeq: 3 })
   })
 
   it('refuses at once during the quiet window after a failure, then looks at the file again', async () => {
@@ -766,6 +769,62 @@ describe('a log that can not be written', () => {
     full.mockRestore()
     await log.append('test.line', { n: 9 })
     expect((await recordsOf(2)).map(r => [r.seq, r.event, r.segment])).toEqual([[3, 'log.chain-broken', 1], [4, 'test.line', undefined]])
+  })
+
+  // The line lands, then its sync throws, which can happen on a failing disk. The next sync after this one works
+  async function failSyncOnceAfterWriting() {
+    const proto = await fileHandleProto()
+    const realSync = proto.sync
+    let fail = true
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: unknown) {
+      await realSync.call(this)
+      if (fail) {
+        fail = false
+        throw Object.assign(new Error('EIO'), { code: 'EIO' })
+      }
+    })
+  }
+
+  it('takes a line that landed before its write threw as its own, with no break', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    await fill(log, 3)
+    await failSyncOnceAfterWriting()
+    await expect(log.append('test.line', { n: 4 })).rejects.toThrow('EIO')
+    await log.append('test.line', { n: 5 })
+    expect(await segments()).toEqual(['events-1.jsonl'])
+    expect((await recordsOf(1)).map(r => r.n)).toEqual([1, 2, 3, 4, 5])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('takes a break record that landed before its write threw as its own, with no second break', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    await fill(log, 3)
+    const lines = await linesOf(1)
+    await failOnce(log, 1, () => writeFile(segmentFile(1), joined([lines[0]])))
+    await failSyncOnceAfterWriting()
+    await expect(log.append('test.line', { n: 4 })).rejects.toThrow('EIO')
+    await log.append('test.line', { n: 4 })
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    expect((await recordsOf(2)).map(r => [r.seq, r.event])).toEqual([[4, 'log.chain-broken'], [5, 'test.line']])
+  })
+
+  it('goes on from a line that landed when a torn line follows it, using no seq twice', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    await fill(log, 3)
+    await failSyncOnceAfterWriting()
+    await expect(log.append('test.line', { n: 4 })).rejects.toThrow('EIO')
+    await writeFile(segmentFile(1), Buffer.concat([await readFile(segmentFile(1)), Buffer.from('{"seq":5,"pr')]))
+    await log.append('test.line', { n: 5 })
+    expect((await recordsOf(2)).map(r => [r.seq, r.event, r.brokenSeq])).toEqual([[5, 'log.chain-broken', 5], [6, 'test.line', undefined]])
+  })
+
+  it('reads a new log whose first line never landed as still new, with no break', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    vi.spyOn(await fileHandleProto(), 'writeFile').mockRejectedValueOnce(Object.assign(new Error('full'), { code: 'ENOSPC' }))
+    await expect(log.append('test.line', { n: 1 })).rejects.toThrow()
+    await log.append('test.line', { n: 1 })
+    expect(await segments()).toEqual(['events-1.jsonl'])
+    expect((await recordsOf(1)).map(r => [r.seq, r.event])).toEqual([[1, 'test.line']])
   })
 
   it('does not count a failed event, the next one takes its seq', async () => {

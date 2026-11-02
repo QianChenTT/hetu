@@ -357,6 +357,15 @@ describe('writing', () => {
       expect(await readdir(stateFile('plugins'))).toEqual([])
     })
 
+    // rm deletes a read-only file by itself, so the read-only check that stops a write mustn't stop a delete
+    it('waits out a hold on a read-only entry of a plugin it removes', async () => {
+      await store.writePlugin('search', pluginIn())
+      await chmod(pluginPath('search'), 0o444)
+      const holder = await holdOpen(pluginPath('search'), 'None')
+      await Promise.all([store.removePlugin('search'), releaseAfter(holder, 300)])
+      expect(await readdir(stateFile('plugins'))).toEqual([])
+    })
+
     it('replaces the file when a restore left it read-only', async () => {
       await store.writeSwitches(noSwitches)
       await chmod(switchesPath(), 0o444)
@@ -376,6 +385,8 @@ describe('writing', () => {
 
     it('waits out a short hold on a plugin code file at load', async () => {
       const root = await addPlugin('search')
+      // Read-only too, which a read gets past, so only the read's own retry waits out the hold
+      await chmod(path.join(root, 'a.js'), 0o444)
       const holder = await holdOpen(path.join(root, 'a.js'), 'None')
       const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
       expect(result(loaded, 'plugin-files', 'search')).toBe('ok')

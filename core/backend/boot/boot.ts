@@ -104,7 +104,7 @@ async function lock(dataDir: string): Promise<() => Promise<void>> {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0) throw err
       const holder = await holderOf(file)
       if (holder !== null) throw new Error(`${holder} is using ${dataDir}. If no hetu is running, remove ${file}`)
-      await retried(() => rm(file, { force: true }), file)
+      await retried(() => rm(file, { force: true }))
       continue
     }
     try {
@@ -129,7 +129,7 @@ async function lock(dataDir: string): Promise<() => Promise<void>> {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
         throw err
       }
-      if (text === String(process.pid)) await retried(() => rm(file, { force: true }), file)
+      if (text === String(process.pid)) await retried(() => rm(file, { force: true }))
     }
   }
 }

@@ -299,7 +299,8 @@ export class StateStore {
   async removePlugin(id: string): Promise<void> {
     const file = this.file('plugins', `${pluginId.parse(id)}.json`)
     await this.serial(async () => {
-      await retried(() => rm(file, { force: true }), file)
+      // No target for the read-only check: rm deletes a read-only file by itself, and a folder throws EISDIR, no lock
+      await retried(() => rm(file, { force: true }))
       await syncDir(path.dirname(file))
     })
   }
