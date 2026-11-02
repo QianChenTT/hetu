@@ -7,6 +7,7 @@
     "node": ">=24"
   },
   "workspaces": [
+    "core",
     "daemon",
     "editor"
   ],
@@ -14,7 +15,7 @@
     "dev": "node scripts/dev.ts",
     "seed": "npm run seed -w daemon",
     "seed:fresh": "npm run seed -w daemon -- --fresh",
-    "test": "npm test -w daemon",
+    "test": "npm test -w core -w daemon",
     "typecheck": "npm run typecheck --workspaces"
   }
 }
