@@ -1,1 +1,1 @@
-The app's side of an approval: asks the security service for a one-time code tied to the change, starts the Windows Hello or Touch ID prompt and passes the signature to the service. It never writes the security state itself, see [core/service](../../service/)
+The app's side of an approval: starts the Windows Hello or Touch ID prompt for a confirmation from hetu's trusted window, before the backend writes the change into the security state. Only the gate can call it. Whether it signs with a key or asks the OS to verify the user is decided in #65
