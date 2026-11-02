@@ -72,9 +72,14 @@ describe('a file system that can not sync a folder', () => {
     await syncDir(dir)
   })
 
-  it('is fine with a folder that can not be opened for a sync', async () => {
-    fake.openDirError = 'EACCES'
+  it.each(['EACCES', 'EPERM', 'EISDIR'])('is fine with a folder that can not be opened for a sync, answering %s', async code => {
+    fake.openDirError = code
     await syncDir(dir)
+  })
+
+  it('still throws an error opening the folder that means something else went wrong', async () => {
+    fake.openDirError = 'EIO'
+    await expect(syncDir(dir)).rejects.toThrow('EIO')
   })
 
   it('still throws a sync error that means the disk failed', async () => {

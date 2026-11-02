@@ -12,7 +12,7 @@ export type BootOptions = {
   platform: string
 }
 
-// gone is boot's own result: switches or agents with no file and no hash although hetu has run here before
+// gone is boot's own result: switches or agents with no file although hetu has run here before
 export type BootCheck = Omit<Check, 'result'> & { result: Check['result'] | 'gone' }
 
 export type Booted = {
@@ -76,8 +76,8 @@ async function holderOf(file: string): Promise<string | null> {
   let text: string
   let written: number
   try {
-    written = (await retried(() => stat(file), file)).mtimeMs
-    text = await retried(() => readFile(file, 'utf8'), file)
+    written = (await retried(() => stat(file), file, 'read')).mtimeMs
+    text = await retried(() => readFile(file, 'utf8'), file, 'read')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     // Fails closed, a lock that can't be read may well be held
@@ -124,7 +124,7 @@ async function lock(dataDir: string): Promise<() => Promise<void>> {
       held.delete(file)
       let text: string
       try {
-        text = await retried(() => readFile(file, 'utf8'), file)
+        text = await retried(() => readFile(file, 'utf8'), file, 'read')
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
         throw err

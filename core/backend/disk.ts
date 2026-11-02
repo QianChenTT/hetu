@@ -1,19 +1,21 @@
 import { chmod, lstat, open } from 'node:fs/promises'
 
-// What Windows answers when antivirus, an indexer or a sync tool holds a file open for a moment
-const busy = new Set(['EPERM', 'EBUSY', 'EACCES'])
+// What Windows answers when antivirus, an indexer or a sync tool holds a file open for a moment. A write, rename or
+// delete over a held file can come back as any of these. A read only meets a sharing lock, EBUSY, since access denied
+// on a read is an ACL that never passes and would cost the whole wait at every boot
+const busy = { write: new Set(['EPERM', 'EBUSY', 'EACCES']), read: new Set(['EBUSY']) }
 
-// Retries a rename, delete or read for about 2.5 seconds on Windows. A folder or a read-only file in the way is not a
-// lock and fails at once
-export async function retried<T>(work: () => Promise<T>, target?: string): Promise<T> {
+// Retries for about 2.5 seconds on Windows. A folder in the way is not a lock and fails at once, and neither is a
+// read-only file for a write, which no wait gets past
+export async function retried<T>(work: () => Promise<T>, target?: string, kind: 'write' | 'read' = 'write'): Promise<T> {
   for (let wait = 10; ; wait *= 2) {
     try {
       return await work()
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code ?? ''
-      if (process.platform !== 'win32' || !busy.has(code) || wait > 1280) throw err
+      if (process.platform !== 'win32' || !busy[kind].has(code) || wait > 1280) throw err
       const found = target ? await lstat(target).catch(() => null) : null
-      if (found?.isDirectory() || (found?.isFile() && (found.mode & 0o200) === 0)) throw err
+      if (found?.isDirectory() || (kind === 'write' && found?.isFile() && (found.mode & 0o200) === 0)) throw err
       await new Promise(resolve => setTimeout(resolve, wait))
     }
   }

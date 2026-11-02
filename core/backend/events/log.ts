@@ -129,27 +129,20 @@ export class EventLog {
     this.ok = false
     try {
       await mkdir(this.dir, { recursive: true })
-      const before = this.tip
-      let { tip, opened } = await this.resume()
-      // In this process the tip of the last line written is known, so a segment that now ends earlier or with another
-      // last line was cut or put back. Its seqs are not used again
-      const moved = before !== null && tip.segment === before.segment
-        && (tip.seq < before.seq || (tip.seq === before.seq && tip.prev !== before.prev))
-      if (moved) {
-        const broken = { segment: before.segment, brokenSeq: Math.min(tip.seq + 1, before.seq) }
-        tip = await this.write({ segment: before.segment + 1, first: before.seq + 1, seq: before.seq, prev: ZERO }, 'log.chain-broken', broken)
-        opened = { lastSeq: before.seq, broken }
-      }
+      const { tip, opened } = await this.resume(this.tip)
       this.tip = tip
       this.ok = true
       return opened
     } catch (err) {
-      this.quietUntil = Date.now() + this.retryAfterMs
+      this.quietUntil = performance.now() + this.retryAfterMs
       throw err
     }
   }
 
-  private async resume(): Promise<{ tip: Tip, opened: Opened }> {
+  // before is the tip of the last line this process wrote, null at the first open. It is the anchor the chain alone
+  // lacks: a newest segment that isn't the one written to, or ends at another seq or with another last line, was cut,
+  // edited, deleted or put back while hetu ran. Every seq goes on from before, so none is used twice
+  private async resume(before: Tip | null): Promise<{ tip: Tip, opened: Opened }> {
     const numbers = (await readdir(this.dir))
       .flatMap(name => {
         const match = segmentName.exec(name)
@@ -158,20 +151,25 @@ export class EventLog {
       })
       .sort((a, b) => a - b)
     const newest = numbers.at(-1)
-    if (newest === undefined) return { tip: { segment: 1, first: 1, seq: 0, prev: ZERO }, opened: { lastSeq: 0, broken: null } }
+    if (newest === undefined && before === null) return { tip: { segment: 1, first: 1, seq: 0, prev: ZERO }, opened: { lastSeq: 0, broken: null } }
 
-    const found = await this.read(newest)
+    const found = newest === undefined ? null : await this.read(newest)
     // An empty segment after the first means a crash before the record of a break was written
-    if (found && !found.broken && (found.lines > 0 || newest === 1)) {
-      const seq = found.last ?? 0
-      return { tip: { segment: newest, first: found.first ?? 1, seq, prev: found.tip }, opened: { lastSeq: seq, broken: null } }
+    if (newest !== undefined && found && !found.broken && (found.lines > 0 || newest === 1)) {
+      const tip = { segment: newest, first: found.first ?? 1, seq: found.last ?? 0, prev: found.tip }
+      const same = before === null || (tip.segment === before.segment && tip.seq === before.seq && tip.prev === before.prev)
+      if (same) return { tip, opened: { lastSeq: tip.seq, broken: null } }
     }
-    // The seq carries on from the last good line, looking back through earlier segments when the newest has none
+    // The last good seq, looking back through earlier segments when the newest has none
     let last = found?.last ?? null
     for (let i = numbers.length - 2; last === null && i >= 0; i--) last = (await this.read(numbers[i]))?.last ?? null
-    const seq = last ?? 0
-    const broken = { segment: newest, brokenSeq: seq + 1 }
-    const tip = await this.write({ segment: newest + 1, first: seq + 1, seq, prev: ZERO }, 'log.chain-broken', broken)
+    // A last line this process wrote that is still there under another hash was edited, otherwise the first seq missing
+    // or broken is the one after the last good line
+    const edited = before !== null && newest === before.segment && found?.last === before.seq && found.tip !== before.prev
+    const segment = Math.max(newest ?? 0, before?.segment ?? 0)
+    const seq = Math.max(last ?? 0, before?.seq ?? 0)
+    const broken = { segment, brokenSeq: edited ? before.seq : (last ?? 0) + 1 }
+    const tip = await this.write({ segment: segment + 1, first: seq + 1, seq, prev: ZERO }, 'log.chain-broken', broken)
     return { tip, opened: { lastSeq: seq, broken } }
   }
 
@@ -181,7 +179,7 @@ export class EventLog {
     const file = this.file(segment)
     let bytes: Buffer
     try {
-      bytes = await retried(() => readFile(file), file)
+      bytes = await retried(() => readFile(file), file, 'read')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EISDIR' || (await stat(file).catch(() => null))?.isDirectory()) return null
       throw err
@@ -219,14 +217,14 @@ export class EventLog {
     await this.serial(async () => {
       // After a failed open or write the file is looked at again, so a lock that has passed doesn't keep the log off.
       // A half written line then reads as a break. Until retryAfterMs has passed appends are refused at once
-      if (!this.ok && this.tried && Date.now() >= this.quietUntil) await this.reopen()
+      if (!this.ok && this.tried && performance.now() >= this.quietUntil) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
       try {
         this.tip = await this.write(this.tip, event, checked)
       } catch (err) {
         // A half written line may be on disk, so nothing more is added until the file has been looked at again
         this.ok = false
-        this.quietUntil = Date.now() + this.retryAfterMs
+        this.quietUntil = performance.now() + this.retryAfterMs
         throw err
       }
     })
@@ -241,7 +239,7 @@ export class EventLog {
       let bytes = Buffer.alloc(0)
       try {
         const file = this.file(tip.segment)
-        bytes = await retried(() => readFile(file), file)
+        bytes = await retried(() => readFile(file), file, 'read')
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
       }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { contentHash, defaultState, stateDir, StateStore, type Check, type Loaded } from '../backend/boot/state.ts'
-import { holdOpen, onWindows, release, releaseAfter } from './hold.ts'
+import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
 
@@ -104,6 +104,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  await releaseAll()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -339,7 +340,7 @@ describe('writing', () => {
     expect(sync).toHaveBeenCalledTimes(onWindows ? 1 : 2)
   })
 
-  describe.runIf(onWindows)('a file another program holds open', () => {
+  describe.runIf(onWindows)('a file another program holds open', { timeout: HOLD_TIMEOUT }, () => {
     it('waits out a reader holding the file', async () => {
       await store.writeSwitches(noSwitches)
       const reader = await holdOpen(switchesPath(), 'Read')
@@ -363,6 +364,21 @@ describe('writing', () => {
       const loaded = await store.load()
       expect(result(loaded, 'switches')).toBe('ok')
       expect(loaded.state.switches).toEqual(switchesIn)
+    })
+
+    it('waits out a short hold on a read-only file at load, a read is not blocked by the attribute', async () => {
+      await store.writeSwitches(switchesIn)
+      await chmod(switchesPath(), 0o444)
+      const holder = await holdOpen(switchesPath(), 'None')
+      const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
+      expect(result(loaded, 'switches')).toBe('ok')
+    })
+
+    it('waits out a short hold on a plugin code file at load', async () => {
+      const root = await addPlugin('search')
+      const holder = await holdOpen(path.join(root, 'a.js'), 'None')
+      const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
+      expect(result(loaded, 'plugin-files', 'search')).toBe('ok')
     })
 
     it('waits out a short hold at load rather than reading the file as unreadable', async () => {
@@ -447,16 +463,13 @@ describe('writing', () => {
       expect((await jsonOf(pluginPath('search'))).version).toBe('5.0.0')
     })
 
-    it('never lets a load see a write half done', async () => {
-      await store.writeSwitches(noSwitches)
-      for (let round = 0; round < 5; round++) {
-        let writing = true
-        const write = store.writeSwitches({ ...switchesIn, guardsOff: [`g${round}`] }).finally(() => { writing = false })
-        const seen: Loaded[] = []
-        while (writing) seen.push(await store.load())
-        await write
-        expect(seen.filter(loaded => loaded.suspect)).toEqual([])
-      }
+    // One rename per file means a load can't see half a write anyway, what the queue still gives is order
+    it('lets a load called after two writes see both, without waiting for them first', async () => {
+      const writes = [store.writeSwitches(switchesIn), store.writeAgents(agentsIn)]
+      const loaded = await store.load()
+      await Promise.all(writes)
+      expect(loaded.state.switches).toEqual(switchesIn)
+      expect(loaded.state.agents).toEqual(agentsIn)
     })
 
     it('keeps going after a queued call fails', async () => {
@@ -940,6 +953,20 @@ describe('names in the plugins folder', () => {
 })
 
 describe('removing a plugin', () => {
+  it('is fine with removing a plugin whose entry is already gone', async () => {
+    await expect(store.removePlugin('search')).resolves.toBeUndefined()
+  })
+
+  // Reads like an uninstalled plugin, the same as a wiped file. The host's scan for a code folder with no entry (#66)
+  // is what asks about it
+  it('reads a deleted entry as no plugin at all, with no check of its own', async () => {
+    await addPlugin('search')
+    await rm(pluginPath('search'))
+    const loaded = await store.load()
+    expect(loaded.state.plugins.search).toBeUndefined()
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'agents'])
+  })
+
   it('removes its entry and leaves the others', async () => {
     await addPlugin('search')
     await addPlugin('git')

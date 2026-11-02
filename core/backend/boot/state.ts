@@ -132,7 +132,7 @@ function parseStrict<T extends z.ZodType>(bytes: Buffer, schema: T): z.output<T>
 // A short hold by antivirus at boot would otherwise read as unreadable and suspect
 async function readIfExists(file: string): Promise<Buffer | null> {
   try {
-    return await retried(() => readFile(file), file)
+    return await retried(() => readFile(file), file, 'read')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
@@ -219,7 +219,7 @@ export async function contentHash(root: string): Promise<string> {
   const digest = createHash('sha256')
   for (const rel of files.sort()) {
     const file = path.join(root, rel)
-    const bytes = await retried(() => readFile(file), file)
+    const bytes = await retried(() => readFile(file), file, 'read')
     digest.update(`${rel}\0${bytes.length}\0`).update(bytes)
   }
   return digest.digest('hex')
@@ -299,7 +299,7 @@ export class StateStore {
   async removePlugin(id: string): Promise<void> {
     const file = this.file('plugins', `${pluginId.parse(id)}.json`)
     await this.serial(async () => {
-      await retried(() => rm(file, { force: true }))
+      await retried(() => rm(file, { force: true }), file)
       await syncDir(path.dirname(file))
     })
   }

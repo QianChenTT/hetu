@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, firstPartyPath, resolveDataDir, type BootOptions, type Booted } from '../backend/boot/boot.ts'
 import { contentHash, stateDir, StateStore } from '../backend/boot/state.ts'
 import { EventLog } from '../backend/events/log.ts'
-import { holdOpen, onWindows, release } from './hold.ts'
+import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 let base: string
 let running: Booted[] = []
@@ -53,6 +53,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  await releaseAll()
   for (const booted of running) await booted.release()
   running = []
   await rm(base, { recursive: true, force: true })
@@ -86,6 +87,7 @@ describe('first run', () => {
     expect(booted.state.switches.guardsOff).toEqual([])
     expect(await bootRecords()).toContainEqual({ event: 'boot.default-failed', file: 'switches', error: 'EACCES' })
     expect(await bootRecords()).toContainEqual({ event: 'boot.default-written', file: 'agents' })
+    expect(await bootRecords()).not.toContainEqual({ event: 'boot.default-written', file: 'switches' })
   })
 })
 
@@ -313,6 +315,39 @@ describe('one hetu per folder', () => {
     await leaveLock(String(process.pid))
     await started()
   })
+
+  it('stops counting a lock as its own once it has released it', async () => {
+    await stopped(await started())
+    await leaveLock(String(process.pid))
+    await started()
+  })
+
+  // Written after the machine started, so only the pid decides. Half the uptime in milliseconds, which reads as before
+  // the start if uptime were taken as milliseconds instead of seconds
+  it('refuses a live lock written after the machine started, however long ago', async () => {
+    await leaveLock(process.platform === 'win32' ? '4' : '1', Math.min(uptime() * 500, 3_600_000))
+    await expect(boot(installed())).rejects.toThrow(/another hetu/)
+  })
+
+  it('takes over an empty lock once it is past the few seconds a start needs to write its pid', async () => {
+    await leaveLock('', 10_000)
+    await started()
+  })
+
+  it.runIf(onWindows)('waits out a reader holding a stale lock it takes over', async () => {
+    await leaveLock('garbage', 60_000)
+    const reader = await holdOpen(lockFile(), 'Read')
+    const [booted] = await Promise.all([started(), releaseAfter(reader, 300)])
+    expect(await readFile(lockFile(), 'utf8')).toBe(String(process.pid))
+    await stopped(booted)
+  }, HOLD_TIMEOUT)
+
+  it.runIf(onWindows)('waits out a program holding its lock with no sharing when it releases it', async () => {
+    const booted = await started()
+    const reader = await holdOpen(lockFile(), 'None')
+    await Promise.all([stopped(booted), releaseAfter(reader, 300)])
+    expect(await readdir(dataDir())).not.toContain('hetu.lock')
+  }, HOLD_TIMEOUT)
 
   it('refuses an empty lock a start may still be writing', async () => {
     await leaveLock('')

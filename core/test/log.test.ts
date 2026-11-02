@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../backend/events/log.ts'
-import { holdOpen, onWindows, release, releaseAfter } from './hold.ts'
+import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 const ZERO = '0'.repeat(64)
@@ -20,6 +20,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  await releaseAll()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -656,23 +657,103 @@ describe('a log that can not be written', () => {
 
   // In one process the tip of the last line written is known, so what the chain alone can't see after a restart is
   // seen here
+  // A failed append, so the next one looks at the file again, then whatever a tool did to it meanwhile
+  async function failOnce(log: EventLog, segment: number, change: () => Promise<void>) {
+    const kept = await readFile(segmentFile(segment))
+    await rm(segmentFile(segment))
+    await mkdir(segmentFile(segment))
+    await expect(log.append('test.line', { n: 0 })).rejects.toThrow()
+    await rm(segmentFile(segment), { recursive: true })
+    await writeFile(segmentFile(segment), kept)
+    await change()
+  }
+
+  // The cases where the segment still checks out and the ones where it no longer does, which went by a different path
   it.each([
     ['cut back to its first line', (lines: string[]) => joined([lines[0]]), 2],
     ['its last line edited', (lines: string[]) => joined([lines[0], lines[1], edit(lines[2], '"n":3', '"n":9')]), 3],
+    ['cut in the middle of a line', (lines: string[]) => `${lines[0]}\n${lines[1].slice(0, 20)}`, 2],
+    ['turned into CRLF', (lines: string[]) => joined(lines).replaceAll('\n', '\r\n'), 1],
+    ['its middle line edited', (lines: string[]) => joined([lines[0], edit(lines[1], '"n":2', '"n":9'), lines[2]]), 3],
+    ['its last line respaced', (lines: string[]) => joined([lines[0], lines[1], edit(lines[2], '"n":3', '"n": 3')]), 3],
   ])('notices a segment %s while it was away, and uses no seq twice', async (_name, change, brokenSeq) => {
     const log = await opened({ retryAfterMs: 0 })
     await fill(log, 3)
     const lines = await linesOf(1)
-    await rm(segmentFile(1))
-    await mkdir(segmentFile(1))
-    await expect(log.append('test.line', { n: 4 })).rejects.toThrow()
-    await rm(segmentFile(1), { recursive: true })
-    await writeFile(segmentFile(1), change(lines))
+    await failOnce(log, 1, () => writeFile(segmentFile(1), change(lines)))
     await log.append('test.line', { n: 4 })
     const records = await recordsOf(2)
     expect(records[0]).toMatchObject({ seq: 4, event: 'log.chain-broken', segment: 1, brokenSeq })
     expect(records[1]).toMatchObject({ seq: 5, event: 'test.line', n: 4 })
+    expect(records).toHaveLength(2)
     expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('says what it found when an open looks again after a cut', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    await fill(log, 3)
+    const lines = await linesOf(1)
+    await failOnce(log, 1, () => writeFile(segmentFile(1), joined([lines[0]])))
+    expect(await log.open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 2 } })
+    expect((await recordsOf(2))[0]).toMatchObject({ seq: 4, event: 'log.chain-broken' })
+  })
+
+  it.each([
+    ['deleted', () => rm(segmentFile(2))],
+    ['emptied', () => writeFile(segmentFile(2), '')],
+  ])('notices the newest segment %s while it was away, and goes on after it', async (_name, change) => {
+    await put(1, joined(chain(1, 3)))
+    await put(2, joined(chainOf([good(4), good(5)])))
+    const log = await opened({ retryAfterMs: 0 })
+    await failOnce(log, 2, change)
+    await log.append('test.line', { n: 6 })
+    const records = await recordsOf(3)
+    expect(records[0]).toMatchObject({ seq: 6, event: 'log.chain-broken', segment: 2, brokenSeq: 4 })
+    expect(records[1]).toMatchObject({ seq: 7, event: 'test.line', n: 6 })
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('notices the whole log folder gone while it was away, and keeps counting', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    await fill(log, 2)
+    await failOnce(log, 1, () => rm(eventsDir(), { recursive: true }))
+    await log.append('test.line', { n: 3 })
+    expect(await segments()).toEqual(['events-2.jsonl'])
+    expect((await recordsOf(2)).map(r => [r.seq, r.event, r.segment, r.brokenSeq])).toEqual([
+      [3, 'log.chain-broken', 1, 1],
+      [4, 'test.line', undefined, undefined],
+    ])
+  })
+
+  it('keeps the quiet window 5 seconds by default, on a clock the wall clock can not move', async () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const log = await opened()
+    await fill(log, 1)
+    const kept = await readFile(segmentFile(1))
+    await rm(segmentFile(1))
+    await mkdir(segmentFile(1))
+    await expect(log.append('test.line', { n: 2 })).rejects.toThrow()
+    await rm(segmentFile(1), { recursive: true })
+    await writeFile(segmentFile(1), kept)
+    now = 5999
+    await expect(log.append('test.line', { n: 2 })).rejects.toThrow(/not healthy/)
+    now = 6000
+    await log.append('test.line', { n: 2 })
+    expect((await recordsOf(1)).map(r => r.seq)).toEqual([1, 2])
+  })
+
+  it('starts the quiet window after an open that failed too', async () => {
+    let now = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    await writeFile(eventsDir(), 'in the way')
+    const log = new EventLog(dir)
+    await expect(log.open()).rejects.toThrow()
+    await rm(eventsDir())
+    await expect(log.append('test.line')).rejects.toThrow(/not healthy/)
+    now = 6000
+    await log.append('test.line')
+    expect(log.healthy).toBe(true)
   })
 
   it('leaves no empty segment behind for each failed retry on a full disk, and blames the segment that broke', async () => {
@@ -739,7 +820,7 @@ describe('durability', () => {
   })
 })
 
-describe.runIf(onWindows)('a segment another program holds open', () => {
+describe.runIf(onWindows)('a segment another program holds open', { timeout: HOLD_TIMEOUT }, () => {
   it('waits out a lock at open and goes on in the same segment', async () => {
     await put(1, joined(chain(1, 3)))
     const holder = await holdOpen(segmentFile(1), 'None')
@@ -760,6 +841,15 @@ describe.runIf(onWindows)('a segment another program holds open', () => {
     expect(log.healthy).toBe(false)
     expect(await segments()).toEqual(['events-1.jsonl'])
   }, 15_000)
+
+  it('waits out a lock on a read-only segment it reads, a read is not blocked by the attribute', async () => {
+    await put(1, joined(chain(1, 3)))
+    await chmod(segmentFile(1), 0o444)
+    const holder = await holdOpen(segmentFile(1), 'None')
+    const [found] = await Promise.all([new EventLog(dir).open(), releaseAfter(holder, 300)])
+    expect(found).toEqual({ lastSeq: 3, broken: null })
+    await chmod(segmentFile(1), 0o666)
+  })
 
   it('clears a read-only attribute a restore left on the segment, without waiting', async () => {
     const log = await opened()
