@@ -342,9 +342,9 @@ describe('writing', () => {
       expect(loaded.state.switches).toEqual(switchesIn)
     })
 
-    it('waits out a reader holding a plugin entry it removes', async () => {
+    it.each([['its entry', (file: string) => file], ['its hash', sidecar]])('waits out a reader holding %s while it removes a plugin', async (_name, which) => {
       await store.writePlugin('search', pluginIn())
-      const reader = await holdOpen(sidecar(pluginPath('search')), 'Read')
+      const reader = await holdOpen(which(pluginPath('search')), 'Read')
       await Promise.all([store.removePlugin('search'), releaseAfter(reader, 300)])
       expect(await readdir(stateFile('plugins'))).toEqual([])
     })
@@ -356,6 +356,14 @@ describe('writing', () => {
       const loaded = await store.load()
       expect(result(loaded, 'switches')).toBe('ok')
       expect(loaded.state.switches).toEqual(switchesIn)
+    })
+
+    it('waits out a short hold at load rather than reading the file as unreadable', async () => {
+      await store.writeSwitches(switchesIn)
+      const holder = await holdOpen(switchesPath(), 'None')
+      const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
+      expect(result(loaded, 'switches')).toBe('ok')
+      expect(loaded.suspect).toBe(false)
     })
 
     it('gives up after a few seconds and leaves the file and its old hash, which reads as a mismatch', async () => {
@@ -402,7 +410,7 @@ describe('writing', () => {
     })
 
     const badIds = ['../evil', '..', 'a/b', 'a\\b', 'search.', '.search', 'Search', 'a b', 'a..b', '', 'evil\0',
-      'con', 'prn', 'aux', 'nul', 'com0', 'com9', 'lpt1', 'con.x', 'nul.json']
+      'con', 'prn', 'aux', 'nul', 'com0', 'com9', 'lpt0', 'lpt1', 'lpt9', 'con.x', 'nul.json']
 
     it.each(['console', 'com10', 'lpt', 'auxiliary', 'x.con'])('takes %j, which only looks like a device name', async id => {
       await store.writePlugin(id, pluginIn())
@@ -659,11 +667,13 @@ describe.each(kinds)('the $name file', kind => {
     kind.fellBack(loaded)
   })
 
-  it('fails closed when the hash can not be read', async () => {
+  it('fails closed when the hash can not be read, at once since a folder is not a lock', async () => {
     await kind.seed()
     await rm(sidecar(kind.file()))
     await mkdir(sidecar(kind.file()))
+    const started = Date.now()
     const loaded = await store.load()
+    expect(Date.now() - started).toBeLessThan(1000)
     expect(kind.result(loaded)).toBe('unreadable')
     expect(loaded.suspect).toBe(true)
     kind.fellBack(loaded)

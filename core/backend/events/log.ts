@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { mkdir, open, readdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { retried, syncDir } from '../disk.ts'
+import { retried, syncDir, writable } from '../disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
 // and the record's own names can't be overwritten. It catches mistakes under these names only, not note text under
@@ -91,13 +91,18 @@ export class EventLog {
   private tail: Promise<unknown> = Promise.resolve()
   private tip: Tip | null = null
   private ok = false
-  private opened = false
+  private tried = false
+  private quietUntil = 0
+  private readonly retryAfterMs: number
 
-  constructor(stateDir: string) {
+  // retryAfterMs is how long appends are refused at once after a failure before one looks at the file again, so a
+  // file that stays locked costs one wait in the retry and not one per event
+  constructor(stateDir: string, options: { retryAfterMs?: number } = {}) {
     this.dir = path.join(stateDir, 'events')
+    this.retryAfterMs = options.retryAfterMs ?? 5000
   }
 
-  // False until open succeeds and after a failed write until the next append or open has looked at the file again
+  // False until open succeeds and after a failure until an append or open has looked at the file again
   get healthy(): boolean {
     return this.ok
   }
@@ -116,17 +121,32 @@ export class EventLog {
   // Continues the chain from the newest segment. A segment that doesn't check out is left as found and a new one
   // opens with a record of the break, so a damaged log never stops new events
   open(): Promise<Opened> {
+    this.tried = true
     return this.serial(() => this.reopen())
   }
 
   private async reopen(): Promise<Opened> {
     this.ok = false
-    await mkdir(this.dir, { recursive: true })
-    const { tip, opened } = await this.resume()
-    this.tip = tip
-    this.ok = true
-    this.opened = true
-    return opened
+    try {
+      await mkdir(this.dir, { recursive: true })
+      const before = this.tip
+      let { tip, opened } = await this.resume()
+      // In this process the tip of the last line written is known, so a segment that now ends earlier or with another
+      // last line was cut or put back. Its seqs are not used again
+      const moved = before !== null && tip.segment === before.segment
+        && (tip.seq < before.seq || (tip.seq === before.seq && tip.prev !== before.prev))
+      if (moved) {
+        const broken = { segment: before.segment, brokenSeq: Math.min(tip.seq + 1, before.seq) }
+        tip = await this.write({ segment: before.segment + 1, first: before.seq + 1, seq: before.seq, prev: ZERO }, 'log.chain-broken', broken)
+        opened = { lastSeq: before.seq, broken }
+      }
+      this.tip = tip
+      this.ok = true
+      return opened
+    } catch (err) {
+      this.quietUntil = Date.now() + this.retryAfterMs
+      throw err
+    }
   }
 
   private async resume(): Promise<{ tip: Tip, opened: Opened }> {
@@ -175,13 +195,20 @@ export class EventLog {
     const line = JSON.stringify({ seq, prev: tip.prev, at: new Date().toISOString(), event, ...fields })
     // Nothing is written before the file opens, so a lock there is safe to wait out
     const file = this.file(tip.segment)
+    await writable(file)
     const handle = await retried(() => open(file, 'a'), file)
     try {
       await handle.writeFile(`${line}\n`)
       await handle.sync()
-    } finally {
-      await handle.close()
+    } catch (err) {
+      // A new segment whose first line never landed is removed, or each failed retry on a full disk leaves another
+      // empty segment behind and the next open blames the wrong one
+      const empty = seq === tip.first && (await handle.stat().catch(() => null))?.size === 0
+      await handle.close().catch(() => {})
+      if (empty) await rm(file, { force: true }).catch(() => {})
+      throw err
     }
+    await handle.close()
     // The segment's first line made the file, which is only on disk once its folder is
     if (seq === tip.first) await syncDir(this.dir)
     return { ...tip, seq, prev: sha256(line) }
@@ -190,15 +217,16 @@ export class EventLog {
   async append(event: string, fields: Record<string, Field> = {}): Promise<void> {
     const checked = checkFields(event, fields)
     await this.serial(async () => {
-      // After a failed write the file is looked at again first, so a lock that has passed doesn't keep the log off.
-      // A half written line then reads as a break
-      if (!this.ok && this.opened) await this.reopen()
+      // After a failed open or write the file is looked at again, so a lock that has passed doesn't keep the log off.
+      // A half written line then reads as a break. Until retryAfterMs has passed appends are refused at once
+      if (!this.ok && this.tried && Date.now() >= this.quietUntil) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
       try {
         this.tip = await this.write(this.tip, event, checked)
       } catch (err) {
-        // A half written line may be on disk, so nothing more is added until open has looked at the file again
+        // A half written line may be on disk, so nothing more is added until the file has been looked at again
         this.ok = false
+        this.quietUntil = Date.now() + this.retryAfterMs
         throw err
       }
     })

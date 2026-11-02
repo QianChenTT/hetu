@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir, uptime } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, firstPartyPath, resolveDataDir, type BootOptions, type Booted } from '../backend/boot/boot.ts'
-import { contentHash, StateStore } from '../backend/boot/state.ts'
+import { contentHash, stateDir, StateStore } from '../backend/boot/state.ts'
+import { EventLog } from '../backend/events/log.ts'
+import { holdOpen, onWindows, release } from './hold.ts'
 
 let base: string
 let running: Booted[] = []
@@ -102,10 +104,36 @@ describe('a later run', () => {
   })
 
   it('hands back the store it loaded with, so later writes go through the one writer', async () => {
+    const load = vi.spyOn(StateStore.prototype, 'load')
     const booted = await started()
+    expect(load.mock.contexts[0]).toBe(booted.store)
     await booted.store.writeSwitches({ guardsOff: ['leases'], devMode: false, skipVerification: false, allowUnsigned: [] })
     await stopped(booted)
     expect((await started()).state.switches.guardsOff).toEqual(['leases'])
+  })
+
+  it('says the log is not healthy when one record was lost, even though the log healed after it', async () => {
+    const append = vi.spyOn(EventLog.prototype, 'append').mockRejectedValueOnce(new Error('lost'))
+    const booted = await started()
+    expect(append).toHaveBeenCalled()
+    expect(booted.log.healthy).toBe(true)
+    expect(booted.logHealthy).toBe(false)
+  })
+
+  it('writes the defaults before it logs anything, so a crash between the two reads as a second run', async () => {
+    const order: string[] = []
+    const switches = StateStore.prototype.writeSwitches
+    vi.spyOn(StateStore.prototype, 'writeSwitches').mockImplementation(function (this: StateStore, input) {
+      order.push('write')
+      return switches.call(this, input)
+    })
+    const append = EventLog.prototype.append
+    vi.spyOn(EventLog.prototype, 'append').mockImplementation(function (this: EventLog, event, fields) {
+      order.push('log')
+      return append.call(this, event, fields)
+    })
+    await started()
+    expect(order.indexOf('write')).toBeLessThan(order.indexOf('log'))
   })
 
   it('logs a tampered plugin entry with its id and says the boot is suspect', async () => {
@@ -174,6 +202,16 @@ describe('a wiped state', () => {
     expect(booted.suspect).toBe(true)
   })
 
+  it('reads a pair gone when the log was wiped and the other file is there but tampered', async () => {
+    await stopped(await started())
+    await rm(path.join(dataDir(), 'events'), { recursive: true })
+    await rm(stateFile('switches.json'))
+    await rm(stateFile('switches.json.sha256'))
+    await writeFile(stateFile('agents.json'), '{}')
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'hash-mismatch' }])
+  })
+
   // Accepted: with the log wiped too or unreadable nothing is left to tell, row 55
   it('reads a wipe of the state and the log as a new install', async () => {
     await stopped(await started())
@@ -209,8 +247,19 @@ describe('the data folder', () => {
     await expect(readdir(dataDir())).rejects.toThrow()
   })
 
-  it('refuses a HETU_DATA_DIR that is not absolute', async () => {
-    await expect(boot({ ...installed({ HETU_DATA_DIR: 'state-here' }), packaged: false })).rejects.toThrow(/absolute/)
+  // Relative to the working folder but inside the temp folder, so a regression can't leave a data folder in the repo.
+  // Skipped when the two are on different drives, where no relative path reaches it
+  const relativeIntoBase = () => path.relative(process.cwd(), path.join(base, 'relative'))
+  it('refuses a HETU_DATA_DIR that is not absolute', async ({ skip }) => {
+    if (path.isAbsolute(relativeIntoBase())) skip()
+    await expect(boot({ ...installed({ HETU_DATA_DIR: relativeIntoBase() }), packaged: false })).rejects.toThrow(/absolute/)
+  })
+
+  it('names the dev folder hetu-dev on every platform', () => {
+    expect(stateDir('win32', { LOCALAPPDATA: 'C:\\Users\\a\\AppData\\Local' }, 'hetu-dev')).toBe('C:\\Users\\a\\AppData\\Local\\hetu-dev')
+    expect(stateDir('darwin', { HOME: '/Users/a' }, 'hetu-dev')).toBe('/Users/a/Library/Application Support/hetu-dev')
+    expect(stateDir('linux', { HOME: '/home/a' }, 'hetu-dev')).toBe('/home/a/.local/state/hetu-dev')
+    expect(stateDir('linux', { HOME: '/home/a', XDG_STATE_HOME: '/s' }, 'hetu-dev')).toBe('/s/hetu-dev')
   })
 })
 
@@ -228,7 +277,7 @@ describe('a log that can not be used', () => {
 describe('one hetu per folder', () => {
   it('refuses a second boot on a folder another boot holds, and takes it once released', async () => {
     const first = await started()
-    await expect(boot(installed())).rejects.toThrow(/another hetu/)
+    await expect(boot(installed())).rejects.toThrow(/this process \(pid \d+\) is using .*remove .*hetu\.lock/)
     await stopped(first)
     await started()
   })
@@ -240,6 +289,67 @@ describe('one hetu per folder', () => {
     await writeFile(path.join(dataDir(), 'hetu.lock'), String(child.pid))
     await started()
     expect(await readFile(path.join(dataDir(), 'hetu.lock'), 'utf8')).toBe(String(process.pid))
+  })
+
+  const lockFile = () => path.join(dataDir(), 'hetu.lock')
+  async function leaveLock(text: string, agoMs = 0) {
+    await mkdir(dataDir(), { recursive: true })
+    await writeFile(lockFile(), text)
+    const when = new Date(Date.now() - agoMs)
+    await utimes(lockFile(), when, when)
+  }
+
+  // pid 4 is System on Windows and pid 1 is init elsewhere, both alive and both refuse a signal from this process
+  it('refuses a lock whose pid is alive even when it can not be signalled', async () => {
+    await leaveLock(process.platform === 'win32' ? '4' : '1')
+    await expect(boot(installed())).rejects.toThrow(/another hetu \(pid (4|1)\)/)
+  })
+
+  // After a reboot Windows hands old pids to any program, the lock's pid then names someone else
+  it('takes over a lock written before the machine last started, whatever its pid', async () => {
+    await leaveLock(String(process.ppid), (uptime() + 60) * 1000)
+    await started()
+    expect(await readFile(lockFile(), 'utf8')).toBe(String(process.pid))
+  })
+
+  it('takes over a lock naming this pid when this process holds no lock there', async () => {
+    await leaveLock(String(process.pid))
+    await started()
+  })
+
+  it('refuses an empty lock a start may still be writing', async () => {
+    await leaveLock('')
+    await expect(boot(installed())).rejects.toThrow(/a hetu that is starting/)
+  })
+
+  it.each([['empty', ''], ['not a pid', 'garbage'], ['zero', '0'], ['negative', '-5']])('takes over a lock that is %s and old', async (_name, text) => {
+    await leaveLock(text, 60_000)
+    await started()
+  })
+
+  it.runIf(onWindows)('refuses a lock it can not read, since it may well be held', async () => {
+    await leaveLock(String(process.ppid))
+    const holder = await holdOpen(lockFile(), 'None')
+    try {
+      await expect(boot(installed())).rejects.toThrow(/can't read .*hetu\.lock/)
+    } finally {
+      await release(holder)
+    }
+  }, 15_000)
+
+  it('lets go of its lock when the checks throw', async () => {
+    vi.spyOn(StateStore.prototype, 'load').mockRejectedValueOnce(new Error('broken'))
+    await expect(boot(installed())).rejects.toThrow('broken')
+    expect(await readdir(dataDir())).not.toContain('hetu.lock')
+    await started()
+  })
+
+  it('releases once, so a second call can not remove a lock taken after it', async () => {
+    const first = await started()
+    await stopped(first)
+    await started()
+    await first.release()
+    expect(await readFile(lockFile(), 'utf8')).toBe(String(process.pid))
   })
 
   it('removes its own lock on release and leaves one that is not its own', async () => {
@@ -260,6 +370,7 @@ describe('firstPartyPath', () => {
     ['posix', '/opt/hetu', '../evil.js', null],
     ['posix', '/opt/hetu', 'core/../../evil.js', null],
     ['posix', '/opt/hetu', '/etc/passwd', null],
+    ['posix', '/opt/hetu', '/opt/hetu/core/host.js', null],
     ['posix', '/opt/hetu', '', null],
     ['posix', '/opt/hetu', '.', null],
     ['posix', '/opt/hetu', '..', null],
@@ -269,6 +380,7 @@ describe('firstPartyPath', () => {
     ['win32', 'C:\\Program Files\\hetu', '..\\evil.js', null],
     ['win32', 'C:\\Program Files\\hetu', 'core\\..\\..\\evil.js', null],
     ['win32', 'C:\\Program Files\\hetu', 'C:\\Windows\\evil.js', null],
+    ['win32', 'C:\\Program Files\\hetu', 'C:\\Program Files\\hetu\\core\\host.js', null],
     ['win32', 'C:\\Program Files\\hetu', 'D:evil.js', null],
     ['win32', 'C:\\Program Files\\hetu', '\\\\server\\share\\evil.js', null],
     ['win32', 'C:\\Program Files\\hetu', '\\evil.js', null],

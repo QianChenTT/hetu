@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { evaluate, parse } from '@humanwhocodes/momoa'
 import { z } from 'zod'
-import { retried, syncDir } from '../disk.ts'
+import { retried, syncDir, writable } from '../disk.ts'
 
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
@@ -129,9 +129,10 @@ function parseStrict<T extends z.ZodType>(bytes: Buffer, schema: T): z.output<T>
   return schema.parse(evaluate(document))
 }
 
+// A short hold by antivirus at boot would otherwise read as unreadable and suspect
 async function readIfExists(file: string): Promise<Buffer | null> {
   try {
-    return await readFile(file)
+    return await retried(() => readFile(file), file)
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
@@ -155,14 +156,6 @@ async function replaceFile(file: string, bytes: Buffer | string): Promise<void> 
     throw err
   }
   await syncDir(path.dirname(file))
-}
-
-// Windows won't replace a read-only file, which a restore or a copy can leave. The files are hetu's own, so the
-// attribute is cleared. A folder in the way is left for manual cleanup and the write fails closed
-async function writable(file: string): Promise<void> {
-  if (process.platform !== 'win32') return
-  const found = await lstat(file).catch(() => null)
-  if (found?.isFile()) await chmod(file, 0o666)
 }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
@@ -210,7 +203,8 @@ export async function contentHash(root: string): Promise<string> {
   await listFiles(root, '', files)
   const digest = createHash('sha256')
   for (const rel of files.sort()) {
-    const bytes = await readFile(path.join(root, rel))
+    const file = path.join(root, rel)
+    const bytes = await retried(() => readFile(file), file)
     digest.update(`${rel}\0${bytes.length}\0`).update(bytes)
   }
   return digest.digest('hex')
@@ -267,7 +261,8 @@ export class StateStore {
     const bytes = Buffer.from(`${JSON.stringify(content, null, 2)}\n`)
     await this.serial(async () => {
       await mkdir(path.dirname(file), { recursive: true })
-      // Both before either is replaced, so a read-only hash can't leave a new file beside its old hash
+      // Both before either is replaced, so a read-only hash can't leave a new file beside its old hash. A folder in the
+      // way is left for manual cleanup and the write fails closed
       await writable(file)
       await writable(`${file}.sha256`)
       // File first: a crash between the two reads as a mismatch, which fails closed

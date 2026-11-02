@@ -1,5 +1,7 @@
-import { mkdir, open, readFile, rm } from 'node:fs/promises'
+import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
+import { uptime } from 'node:os'
 import path from 'node:path'
+import { retried } from '../disk.ts'
 import { EventLog, type Opened } from '../events/log.ts'
 import { defaultState, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
 
@@ -62,28 +64,72 @@ function alive(pid: number): boolean {
   }
 }
 
-// Two hetus on one folder would pair one's file with the other's hash and fork the log. A lock left by a process that
-// is gone is taken over. Two starts racing over the same stale lock can both get in, a later single-instance lock
-// in #66 covers two copies of the same app
+// The locks this process holds, so a lock naming this pid can be told apart from one an earlier run left
+const held = new Set<string>()
+// An empty lock this young may be a start that hasn't written its pid yet
+const YOUNG_MS = 5000
+
+// Who holds the lock, or null when it was left by a run that is gone. A pid is only a name: after a reboot Windows hands
+// old pids to any program, so a lock from before this boot of the machine is stale whatever its pid. Reuse within one
+// uptime still reads as live, #66's single-instance lock closes that for the installed app
+async function holderOf(file: string): Promise<string | null> {
+  let text: string
+  let written: number
+  try {
+    written = (await retried(() => stat(file), file)).mtimeMs
+    text = await retried(() => readFile(file, 'utf8'), file)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    // Fails closed, a lock that can't be read may well be held
+    throw new Error(`can't read ${file}: ${(err as NodeJS.ErrnoException).code ?? 'unknown'}`)
+  }
+  if (written < Date.now() - uptime() * 1000) return null
+  if (text.trim() === '') return Date.now() - written < YOUNG_MS ? 'a hetu that is starting' : null
+  const pid = Number(text)
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  if (pid === process.pid) return held.has(file) ? `this process (pid ${pid})` : null
+  return alive(pid) ? `another hetu (pid ${pid})` : null
+}
+
+// Two hetus on one folder would pair one's file with the other's hash and fork the log. A lock left by a run that is
+// gone is taken over. Two starts racing over the same stale lock can both get in, a later single-instance lock in #66
+// covers two copies of the same app
 async function lock(dataDir: string): Promise<() => Promise<void>> {
   const file = path.join(dataDir, 'hetu.lock')
   for (let attempt = 0; ; attempt++) {
+    let handle
     try {
-      const handle = await open(file, 'wx')
-      try {
-        await handle.writeFile(String(process.pid))
-      } finally {
-        await handle.close()
-      }
-      return async () => {
-        // Only its own lock, in case a stale takeover put someone else's there
-        if ((await readFile(file, 'utf8').catch(() => '')) === String(process.pid)) await rm(file, { force: true })
-      }
+      handle = await open(file, 'wx')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0) throw err
-      const holder = Number(await readFile(file, 'utf8').catch(() => ''))
-      if (Number.isSafeInteger(holder) && holder > 0 && alive(holder)) throw new Error(`another hetu (pid ${holder}) is using ${dataDir}`)
-      await rm(file, { force: true })
+      const holder = await holderOf(file)
+      if (holder !== null) throw new Error(`${holder} is using ${dataDir}. If no hetu is running, remove ${file}`)
+      await retried(() => rm(file, { force: true }), file)
+      continue
+    }
+    try {
+      await handle.writeFile(String(process.pid))
+    } catch (err) {
+      await handle.close().catch(() => {})
+      await rm(file, { force: true }).catch(() => {})
+      throw err
+    }
+    await handle.close()
+    held.add(file)
+    let released = false
+    return async () => {
+      // Once only, and only its own lock, in case a takeover put someone else's there
+      if (released) return
+      released = true
+      held.delete(file)
+      let text: string
+      try {
+        text = await retried(() => readFile(file, 'utf8'), file)
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw err
+      }
+      if (text === String(process.pid)) await retried(() => rm(file, { force: true }), file)
     }
   }
 }
@@ -135,6 +181,23 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
     if (missing.length > 0) suspect = true
   }
 
+  // Defaults loosen nothing, every guard on and no agents, so they go in without a confirmation. Written so the next
+  // boot can tell a wipe from a new install, and before anything is logged, so a crash in between can't leave records
+  // that make the next boot read a new install as a wipe. A write that fails still does, once, accepted
+  const state = loaded.state
+  const written: { file: string, error?: string }[] = []
+  for (const check of missing) {
+    const write = check.check === 'switches'
+      ? () => store.writeSwitches(defaultState().switches)
+      : () => store.writeAgents({})
+    try {
+      await write()
+      written.push({ file: check.check })
+    } catch (err) {
+      written.push({ file: check.check, error: (err as NodeJS.ErrnoException).code ?? 'unknown' })
+    }
+  }
+
   let healthy = opened !== null
   for (const check of checks) {
     const fields: Record<string, string> = { check: check.check, result: check.result }
@@ -142,20 +205,10 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
     healthy = await record(log, 'boot.check', fields) && healthy
   }
   if (suspect) healthy = await record(log, 'boot.suspect') && healthy
-
-  // Defaults loosen nothing, every guard on and no agents, so they go in without a confirmation. Written so the next
-  // boot can tell a wipe from a new install
-  const state = loaded.state
-  for (const check of missing) {
-    const write = check.check === 'switches'
-      ? () => store.writeSwitches(defaultState().switches)
-      : () => store.writeAgents({})
-    try {
-      await write()
-      healthy = await record(log, 'boot.default-written', { file: check.check }) && healthy
-    } catch (err) {
-      healthy = await record(log, 'boot.default-failed', { file: check.check, error: (err as NodeJS.ErrnoException).code ?? 'unknown' }) && healthy
-    }
+  for (const { file, error } of written) {
+    healthy = await (error === undefined
+      ? record(log, 'boot.default-written', { file })
+      : record(log, 'boot.default-failed', { file, error })) && healthy
   }
 
   return { state, suspect, checks, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release }
