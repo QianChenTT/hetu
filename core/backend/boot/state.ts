@@ -81,20 +81,20 @@ function absolute(value: string | undefined, name: string): string {
   return value
 }
 
-// Local, not roaming, so the state stays on this machine
-export function stateDir(platform: string = process.platform, env: Record<string, string | undefined> = process.env): string {
+// Local, not roaming, so the state stays on this machine. name is hetu-dev for an unpackaged run
+export function stateDir(platform: string = process.platform, env: Record<string, string | undefined> = process.env, name = 'hetu'): string {
   if (platform === 'win32') {
     const local = env.LOCALAPPDATA
     if (!local || !path.win32.isAbsolute(local)) throw new Error('LOCALAPPDATA is not an absolute path')
-    return path.win32.join(local, 'hetu')
+    return path.win32.join(local, name)
   }
-  if (platform === 'darwin') return path.posix.join(absolute(env.HOME, 'HOME'), 'Library', 'Application Support', 'hetu')
+  if (platform === 'darwin') return path.posix.join(absolute(env.HOME, 'HOME'), 'Library', 'Application Support', name)
   if (platform === 'linux') {
     // A bad XDG_STATE_HOME is refused, not skipped, or a typo would move the state without a word
     const base = env.XDG_STATE_HOME === undefined
       ? path.posix.join(absolute(env.HOME, 'HOME'), '.local', 'state')
       : absolute(env.XDG_STATE_HOME, 'XDG_STATE_HOME')
-    return path.posix.join(base, 'hetu')
+    return path.posix.join(base, name)
   }
   throw new Error(`no security state location on ${platform}`)
 }
