@@ -40,7 +40,7 @@
   <div class="stage">
     <div>
       <div class="mapbox" id="mapbox">
-        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the read-only app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk, Windows Hello and the security state on the right, with arrows for every flow between them">
+        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the read-only app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk and the security state on the right, with arrows for every flow between them">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
             <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>
@@ -88,8 +88,8 @@
       <div><strong>Plugins have no power of their own.</strong> Every plugin runs in a Chromium worker or frame and can only ask the capability gate. The gate is the reference monitor: always in the path, out of reach of plugins, small enough to check.</div>
       <div><strong>The daemon holds all power.</strong> It is Electron's main process. The hidden renderer and editor windows only get what the daemon grants them.</div>
       <div><strong>Mechanism in the core, policy in plugins.</strong> Leases, the watchdog and git all follow this split: the core enforces, a core plugin decides.</div>
-      <div><strong>Security stays on until you approve otherwise.</strong> Every security switch needs a Windows Hello or Touch ID approval, lives per machine and shows a banner while off. A guard that crashes fails closed.</div>
-      <div><strong>A program running as you is detect only.</strong> Plugins and MCP agents can't change the security state, since only hetu writes it and only after your gesture in the trusted window. A program running as you can edit the file. hetu checks it against the hash it recorded at its last write and loads with every guard on if they differ, which catches careless edits but not a program that rewrites the hash too. That program can already read and edit your notes directly, so hetu doesn't pretend to stop it.</div>
+      <div><strong>Security stays on until you approve otherwise.</strong> Every security switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. A guard that crashes fails closed.</div>
+      <div><strong>A program that targets hetu is out of scope.</strong> Plugins and MCP agents can't change the security state, since only hetu writes it and only after your Confirm click in the trusted window. A program running as you can edit the files. hetu checks each against the hash it recorded at its last write and a plugin or setting whose hash differs doesn't load. That catches careless edits but not a program that rewrites the hash too. hetu assumes the machine has no such program, which could already read and edit your notes directly.</div>
       <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>
     </div>
   </section>
