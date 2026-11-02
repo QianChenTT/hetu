@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -349,6 +349,15 @@ describe('writing', () => {
       expect(await readdir(stateFile('plugins'))).toEqual([])
     })
 
+    it.each([['the hash', sidecar], ['the file', (file: string) => file]])('replaces %s when a restore left it read-only', async (_name, which) => {
+      await store.writeSwitches(noSwitches)
+      await chmod(which(switchesPath()), 0o444)
+      await store.writeSwitches(switchesIn)
+      const loaded = await store.load()
+      expect(result(loaded, 'switches')).toBe('ok')
+      expect(loaded.state.switches).toEqual(switchesIn)
+    })
+
     it('gives up after a few seconds and leaves the file and its old hash, which reads as a mismatch', async () => {
       await store.writeSwitches(noSwitches)
       const reader = await holdOpen(sidecar(switchesPath()), 'Read')
@@ -392,7 +401,13 @@ describe('writing', () => {
       expect(await snapshot()).toEqual(before)
     })
 
-    const badIds = ['../evil', '..', 'a/b', 'a\\b', 'search.', '.search', 'Search', 'a b', 'a..b', '', 'evil\0']
+    const badIds = ['../evil', '..', 'a/b', 'a\\b', 'search.', '.search', 'Search', 'a b', 'a..b', '', 'evil\0',
+      'con', 'prn', 'aux', 'nul', 'com0', 'com9', 'lpt1', 'con.x', 'nul.json']
+
+    it.each(['console', 'com10', 'lpt', 'auxiliary', 'x.con'])('takes %j, which only looks like a device name', async id => {
+      await store.writePlugin(id, pluginIn())
+      expect(await readdir(stateFile('plugins'))).toContain(`${id}.json`)
+    })
 
     it.each(badIds)('refuses to write a plugin named %j and creates nothing', async id => {
       await expect(store.writePlugin(id, pluginIn())).rejects.toThrow()
@@ -850,7 +865,7 @@ describe('the plugin files check', () => {
 describe('names in the plugins folder', () => {
   const entry = JSON.stringify({ format: 1, ...pluginIn() })
 
-  it.each(['Evil', 'a b', '.hidden', 'trail.', 'a..b', '-a', '_a', 'a-'])('ignores %j and reports it as invalid', async name => {
+  it.each(['Evil', 'a b', '.hidden', 'trail.', 'a..b', '-a', '_a', 'a-', 'con', 'nul'])('ignores %j and reports it as invalid', async name => {
     await addPlugin('search')
     await plant(pluginPath(name), entry)
     const loaded = await store.load()

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { evaluate, parse } from '@humanwhocodes/momoa'
 import { z } from 'zod'
@@ -7,8 +7,11 @@ import { retried, syncDir } from '../disk.ts'
 
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
-// Becomes a folder name under plugins/: no separators, no dot at either end for Windows to drop
-const pluginId = z.string().regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/)
+// Becomes a folder name under plugins/: no separators, no dot at either end for Windows to drop. Windows device names
+// are refused alone or before a dot on every platform, since tools such as PowerShell 5.1 can't delete such a folder
+const pluginId = z.string()
+  .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/)
+  .refine(id => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/.test(id), 'a Windows device name')
 
 // The fixed list from the core design, a new type needs a new core API version
 const capability = z.discriminatedUnion('type', [
@@ -154,6 +157,14 @@ async function replaceFile(file: string, bytes: Buffer | string): Promise<void> 
   await syncDir(path.dirname(file))
 }
 
+// Windows won't replace a read-only file, which a restore or a copy can leave. The files are hetu's own, so the
+// attribute is cleared. A folder in the way is left for manual cleanup and the write fails closed
+async function writable(file: string): Promise<void> {
+  if (process.platform !== 'win32') return
+  const found = await lstat(file).catch(() => null)
+  if (found?.isFile()) await chmod(file, 0o666)
+}
+
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
 async function readChecked<T extends z.ZodType>(file: string, schema: T): Promise<{ result: FileResult; value?: z.output<T> }> {
   let bytes: Buffer | null
@@ -256,6 +267,9 @@ export class StateStore {
     const bytes = Buffer.from(`${JSON.stringify(content, null, 2)}\n`)
     await this.serial(async () => {
       await mkdir(path.dirname(file), { recursive: true })
+      // Both before either is replaced, so a read-only hash can't leave a new file beside its old hash
+      await writable(file)
+      await writable(`${file}.sha256`)
       // File first: a crash between the two reads as a mismatch, which fails closed
       await replaceFile(file, bytes)
       await replaceFile(`${file}.sha256`, sha256(bytes))
