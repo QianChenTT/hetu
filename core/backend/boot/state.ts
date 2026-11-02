@@ -3,6 +3,7 @@ import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promi
 import path from 'node:path'
 import { evaluate, parse } from '@humanwhocodes/momoa'
 import { z } from 'zod'
+import { retried, syncDir } from '../disk.ts'
 
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
@@ -145,11 +146,12 @@ async function replaceFile(file: string, bytes: Buffer | string): Promise<void> 
     } finally {
       await handle.close()
     }
-    await rename(temp, file)
+    await retried(() => rename(temp, file), file)
   } catch (err) {
     await rm(temp, { force: true })
     throw err
   }
+  await syncDir(path.dirname(file))
 }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
@@ -211,12 +213,16 @@ async function checkPluginFiles(root: string, expected: string): Promise<FilesRe
   }
 }
 
+// What Finder and Explorer leave in a folder the user only looked at. Never read, so they can't stand in for an entry
+const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
+
 // Plugin ids come from file names here, so a name that is not <id>.json or <id>.json.sha256 with a good id is reported
 function sortEntryNames(names: string[]): { ids: string[]; invalid: string[] } {
   const ids = new Set<string>()
   const invalid = new Set<string>()
   for (const name of names) {
     if (name.endsWith('.tmp')) continue // what a crashed write leaves, never read
+    if (osFiles.has(name.toLowerCase())) continue
     const suffix = ['.json.sha256', '.json'].find(s => name.endsWith(s))
     const id = suffix ? name.slice(0, -suffix.length) : null
     if (id !== null && pluginId.safeParse(id).success) ids.add(id)
@@ -275,8 +281,9 @@ export class StateStore {
     const file = this.file('plugins', `${pluginId.parse(id)}.json`)
     await this.serial(async () => {
       // File first, so a crash between the two reads as state-missing
-      await rm(file, { force: true })
-      await rm(`${file}.sha256`, { force: true })
+      await retried(() => rm(file, { force: true }))
+      await retried(() => rm(`${file}.sha256`, { force: true }))
+      await syncDir(path.dirname(file))
     })
   }
 

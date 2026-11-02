@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../backend/events/log.ts'
+import { holdOpen, onWindows, release, releaseAfter } from './hold.ts'
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 const ZERO = '0'.repeat(64)
@@ -18,8 +19,18 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await rm(dir, { recursive: true, force: true })
 })
+
+// FileHandle isn't exported, so its prototype comes from a handle opened once
+async function fileHandleProto() {
+  const handle = await open(path.join(dir, 'probe'), 'w')
+  const proto = Object.getPrototypeOf(handle)
+  await handle.close()
+  await rm(path.join(dir, 'probe'))
+  return proto
+}
 
 async function opened() {
   const log = new EventLog(dir)
@@ -53,6 +64,17 @@ function chain(first: number, count: number): string[] {
   }
   return lines
 }
+
+// Lines from the records given, each with the right prev and in append's key order, so only the record's shape is wrong
+function chainOf(records: Record<string, unknown>[]): string[] {
+  let prev = ZERO
+  return records.map(({ seq, ...rest }) => {
+    const line = JSON.stringify({ seq, prev, ...rest })
+    prev = sha256(line)
+    return line
+  })
+}
+const good = (seq: number) => ({ seq, at: '2026-11-02T00:00:00.000Z', event: 'test.line' })
 
 // One valid line after the given ones, the way a program that knows the format would add one
 const after = (lines: string[]) => JSON.stringify({
@@ -200,6 +222,7 @@ describe('refusing input', () => {
     ['an event name with a double dot', 'note..written', {}],
     ['an event name with a double dash', 'note--written', {}],
     ['an event name that starts with a digit', '1note', {}],
+    ['a value longer than 4096', 'test.line', { path: 'x'.repeat(4097) }],
   ]
 
   it.each(refused)('refuses %s, writes nothing and keeps the log healthy', async (_name, event, fields) => {
@@ -220,6 +243,12 @@ describe('refusing input', () => {
     expect((await recordsOf(1)).map(r => r.event)).toEqual(['a', 'note.written', 'log.chain-broken', 'plugin.v2.loaded'])
   })
 
+  it('accepts a value of exactly 4096', async () => {
+    const log = await opened()
+    await log.append('test.line', { path: 'x'.repeat(4096) })
+    expect((await recordsOf(1))[0].path).toHaveLength(4096)
+  })
+
   it('accepts field names that merely contain a refused word', async () => {
     const log = await opened()
     await log.append('test.line', { contentHash: ZERO, textLength: 4, bodyBytes: 9 })
@@ -236,6 +265,25 @@ describe('opening', () => {
     expect(await readdir(path.join(state, 'events'))).toEqual([])
     await log.append('test.line')
     expect(await readdir(path.join(state, 'events'))).toEqual(['events-1.jsonl'])
+  })
+
+  it('says what it found: no records in a new log', async () => {
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: null })
+  })
+
+  it('says what it found: the last seq of a good log', async () => {
+    await put(1, joined(chain(1, 3)))
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 3, broken: null })
+  })
+
+  it('says what it found: the break, before the record of it was written', async () => {
+    await put(1, joined([...chain(1, 2), 'garbage']))
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 2, broken: { segment: 1, brokenSeq: 3 } })
+  })
+
+  it('says what it found: a break with no good line anywhere', async () => {
+    await put(1, 'garbage\n')
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: { segment: 1, brokenSeq: 1 } })
   })
 
   it('is not healthy before it is opened, and takes no events', async () => {
@@ -300,6 +348,25 @@ describe('opening', () => {
     for (const name of others) expect(await readFile(path.join(eventsDir(), name), 'utf8')).toBe('garbage\n')
   })
 
+  // The segment after the largest safe integer would round to a number no open can tell apart
+  it.each(['events-99999999999999999999.jsonl', 'events-9007199254740991.jsonl'])('ignores %s, a number too big to count on from', async name => {
+    await put(1, joined(chain(1, 3)))
+    await writeFile(path.join(eventsDir(), name), 'garbage\n')
+    const log = await opened()
+    await log.append('test.line', { n: 4 })
+    expect((await recordsOf(1)).map(r => r.seq)).toEqual([1, 2, 3, 4])
+    expect(await segments()).toEqual(['events-1.jsonl', name].sort())
+  })
+
+  it('takes the segment just below the largest safe integer', async () => {
+    const name = 'events-9007199254740990.jsonl'
+    await mkdir(eventsDir(), { recursive: true })
+    await writeFile(path.join(eventsDir(), name), joined(chain(1, 2)))
+    const log = await opened()
+    await log.append('test.line', { n: 3 })
+    expect((await readFile(path.join(eventsDir(), name), 'utf8')).trimEnd().split('\n')).toHaveLength(3)
+  })
+
   it('goes on in a first segment that is empty', async () => {
     await put(1, '')
     const log = await opened()
@@ -357,6 +424,30 @@ describe('a broken chain at open', () => {
     await put(2, joined([two[0], edit(two[1], '"n":4', '"n":9'), two[2]]))
     await opened()
     await expectBreakRecord(3, 5, 2)
+  })
+
+  // Chained right but not what append writes. As the newest segment's last line after a restart these checks are all
+  // that catches an edit, nothing covers that line otherwise
+  const misshapen: [string, Record<string, unknown>][] = [
+    ['an at that is a number', { seq: 3, at: 5, event: 'test.line' }],
+    ['no at', { seq: 3, event: 'test.line' }],
+    ['an event that is a number', { seq: 3, at: '2026-11-02T00:00:00.000Z', event: 7 }],
+    ['no event', { seq: 3, at: '2026-11-02T00:00:00.000Z' }],
+    ['a gap in seq', { ...good(4) }],
+    ['a seq that repeats', { ...good(2) }],
+    ['a seq that is a string', { ...good(3), seq: '3' }],
+  ]
+
+  it.each(misshapen)('breaks at a last line with %s', async (_name, third) => {
+    await put(1, joined(chainOf([good(1), good(2), third])))
+    await opened()
+    await expectBreakRecord(2, 3, 1)
+  })
+
+  it.each([[0], [1.5], [-1], [2 ** 53]])('does not take a first line with seq %s', async seq => {
+    await put(1, joined(chainOf([{ ...good(1), seq }])))
+    await opened()
+    await expectBreakRecord(2, 1, 1)
   })
 
   it('counts on from the earlier segment when the newest one has no good line', async () => {
@@ -440,6 +531,36 @@ describe('verify', () => {
     expect(await linesOf(1)).toHaveLength(10)
   })
 
+  it('answers only after every append called before it has landed', async () => {
+    const log = await opened()
+    const order: string[] = []
+    const pending = Array.from({ length: 5 }, (_, n) => log.append('test.line', { n }).then(() => { order.push('append') }))
+    const verified = log.verify().then(result => { order.push('verify'); return result })
+    await Promise.all(pending)
+    expect(await verified).toEqual({ ok: true })
+    expect(order).toEqual([...Array(5).fill('append'), 'verify'])
+  })
+
+  it.each([
+    ['deleted', () => rm(segmentFile(2))],
+    ['emptied', () => writeFile(segmentFile(2), '')],
+  ])('names the first seq of a segment that did not start at 1 when it is %s after a restart', async (_name, damage) => {
+    await put(1, joined(chain(1, 2)))
+    // A segment's first line points at zeros, the seq carries on from the one before
+    await put(2, joined(chainOf([good(3), good(4)])))
+    const log = await opened()
+    await damage()
+    expect(await log.verify()).toEqual({ ok: false, seq: 3 })
+  })
+
+  it('throws on a segment it can not read rather than reading it as empty', async () => {
+    const log = await opened()
+    await log.append('test.line')
+    await rm(segmentFile(1))
+    await mkdir(segmentFile(1))
+    await expect(log.verify()).rejects.toThrow()
+  })
+
   it('refuses to answer before open', async () => {
     await expect(new EventLog(dir).verify()).rejects.toThrow()
   })
@@ -458,7 +579,7 @@ describe('overlapping appends', () => {
 })
 
 describe('a log that can not be written', () => {
-  it('turns unhealthy, refuses events after that even when the disk is fine again, and recovers on open', async () => {
+  it('turns unhealthy, then the next append looks at the file again and goes on once the disk is fine', async () => {
     const log = await opened()
     await log.append('test.line', { n: 1 })
     const first = await readFile(segmentFile(1))
@@ -470,16 +591,36 @@ describe('a log that can not be written', () => {
 
     await rm(segmentFile(1), { recursive: true })
     await writeFile(segmentFile(1), first)
-    await expect(log.append('test.line', { n: 2 })).rejects.toThrow(/not healthy/)
-    expect(await readFile(segmentFile(1))).toEqual(first)
-
-    await log.open()
-    expect(log.healthy).toBe(true)
     await log.append('test.line', { n: 2 })
+    expect(log.healthy).toBe(true)
     const records = await recordsOf(1)
     expect(records.map(r => r.seq)).toEqual([1, 2])
     expect(records[1].prev).toBe(sha256((await linesOf(1))[0]))
     expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('stays unhealthy and refuses while the disk is still in the way', async () => {
+    const log = await opened()
+    await log.append('test.line', { n: 1 })
+    await rm(eventsDir(), { recursive: true })
+    await writeFile(eventsDir(), 'in the way')
+    await expect(log.append('test.line', { n: 2 })).rejects.toThrow()
+    await expect(log.append('test.line', { n: 3 })).rejects.toThrow()
+    expect(log.healthy).toBe(false)
+  })
+
+  it('reads a half written line as a break when it looks again after a failed write', async () => {
+    const log = await opened()
+    await fill(log, 2)
+    const kept = await readFile(segmentFile(1))
+    await rm(segmentFile(1))
+    await mkdir(segmentFile(1))
+    await expect(log.append('test.line', { n: 3 })).rejects.toThrow()
+    await rm(segmentFile(1), { recursive: true })
+    await writeFile(segmentFile(1), Buffer.concat([kept, Buffer.from('{"seq":3,"pr')]))
+    await log.append('test.line', { n: 3 })
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    expect((await recordsOf(2)).map(r => [r.seq, r.event])).toEqual([[3, 'log.chain-broken'], [4, 'test.line']])
   })
 
   it('does not count a failed event, the next one takes its seq', async () => {
@@ -520,5 +661,48 @@ describe('a log that can not be written', () => {
     await expect(log.open()).rejects.toThrow()
     expect(log.healthy).toBe(false)
     await expect(log.append('test.line')).rejects.toThrow()
+  })
+})
+
+describe('durability', () => {
+  // Folders can't be synced from Node on Windows, elsewhere the folder is synced when a segment's first line makes it
+  it('syncs every line to disk before append resolves', async () => {
+    const sync = vi.spyOn(await fileHandleProto(), 'sync')
+    const log = await opened()
+    await log.append('test.line')
+    await log.append('test.line')
+    expect(sync).toHaveBeenCalledTimes(onWindows ? 2 : 3)
+  })
+})
+
+describe.runIf(onWindows)('a segment another program holds open', () => {
+  it('waits out a lock at open and goes on in the same segment', async () => {
+    await put(1, joined(chain(1, 3)))
+    const holder = await holdOpen(segmentFile(1), 'None')
+    const [found] = await Promise.all([new EventLog(dir).open(), releaseAfter(holder, 300)])
+    expect(found).toEqual({ lastSeq: 3, broken: null })
+    expect(await segments()).toEqual(['events-1.jsonl'])
+  })
+
+  it('fails open rather than calling a locked segment broken, so no seq is used twice', async () => {
+    await put(1, joined(chain(1, 3)))
+    const holder = await holdOpen(segmentFile(1), 'None')
+    const log = new EventLog(dir)
+    try {
+      await expect(log.open()).rejects.toThrow()
+    } finally {
+      await release(holder)
+    }
+    expect(log.healthy).toBe(false)
+    expect(await segments()).toEqual(['events-1.jsonl'])
+  }, 15_000)
+
+  it('waits out a reader that keeps it from being written', async () => {
+    const log = await opened()
+    await log.append('test.line', { n: 1 })
+    const reader = await holdOpen(segmentFile(1), 'Read')
+    await Promise.all([log.append('test.line', { n: 2 }), releaseAfter(reader, 300)])
+    expect(log.healthy).toBe(true)
+    expect((await recordsOf(1)).map(r => r.seq)).toEqual([1, 2])
   })
 })

@@ -1,16 +1,23 @@
 import { createHash } from 'node:crypto'
-import { mkdir, open, readdir, readFile } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { retried, syncDir } from '../disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
-// and the record's own names can't be overwritten
+// and the record's own names can't be overwritten. It catches mistakes under these names only, not note text under
+// any other name
 const refusedNames = new Set(['seq', 'prev', 'at', 'event', 'content', 'text', 'body', '__proto__'])
+// A path is the longest value expected. Every open reads the newest segment back, so one huge value costs every start
+const MAX_VALUE = 4096
 const eventName = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
 const segmentName = /^events-([1-9][0-9]*)\.jsonl$/
 const ZERO = '0'.repeat(64)
 
 export type Field = string | number | boolean | null
 export type Verification = { ok: true } | { ok: false, seq: number }
+// What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
+// a new segment because the newest one didn't check out
+export type Opened = { lastSeq: number, broken: { segment: number, brokenSeq: number } | null }
 
 // first is the seq the segment began with and prev is the hash of its last line or zeros before the first line
 type Tip = { segment: number, first: number, seq: number, prev: string }
@@ -30,6 +37,7 @@ function checkFields(event: unknown, fields: unknown): Record<string, Field> {
     if (refusedNames.has(name.toLowerCase())) throw new Error(`field name is not allowed: ${name}`)
     const plain = value === null || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))
     if (!plain) throw new Error(`field ${name} is not a string, a finite number, a boolean or null`)
+    if (typeof value === 'string' && value.length > MAX_VALUE) throw new Error(`field ${name} is longer than ${MAX_VALUE}`)
     checked[name] = value
   }
   return checked
@@ -75,18 +83,21 @@ function walk(bytes: Buffer): Walk {
 }
 
 // Append only, one line per event, each carrying the hash of the line before. The hash catches edits by a tool that
-// doesn't know hetu, not one that rewrites the whole chain
+// doesn't know hetu, not one that rewrites the whole chain. Across a restart nothing covers the newest segment's last
+// line, a cut at a line boundary or a deleted newest segment, the chain alone can't see those. The anchor for them is a
+// copy kept off the machine, row 11
 export class EventLog {
   private readonly dir: string
   private tail: Promise<unknown> = Promise.resolve()
   private tip: Tip | null = null
   private ok = false
+  private opened = false
 
   constructor(stateDir: string) {
     this.dir = path.join(stateDir, 'events')
   }
 
-  // False until open succeeds and after any failed write. Callers decide what to refuse meanwhile
+  // False until open succeeds and after a failed write until the next append or open has looked at the file again
   get healthy(): boolean {
     return this.ok
   }
@@ -104,63 +115,84 @@ export class EventLog {
 
   // Continues the chain from the newest segment. A segment that doesn't check out is left as found and a new one
   // opens with a record of the break, so a damaged log never stops new events
-  open(): Promise<void> {
-    return this.serial(async () => {
-      this.ok = false
-      await mkdir(this.dir, { recursive: true })
-      this.tip = await this.resume()
-      this.ok = true
-    })
+  open(): Promise<Opened> {
+    return this.serial(() => this.reopen())
   }
 
-  private async resume(): Promise<Tip> {
+  private async reopen(): Promise<Opened> {
+    this.ok = false
+    await mkdir(this.dir, { recursive: true })
+    const { tip, opened } = await this.resume()
+    this.tip = tip
+    this.ok = true
+    this.opened = true
+    return opened
+  }
+
+  private async resume(): Promise<{ tip: Tip, opened: Opened }> {
     const numbers = (await readdir(this.dir))
       .flatMap(name => {
         const match = segmentName.exec(name)
-        return match && Number.isSafeInteger(Number(match[1])) ? [Number(match[1])] : []
+        // Below the largest safe integer, so the segment after it is one the next open can see too
+        return match && Number(match[1]) < Number.MAX_SAFE_INTEGER ? [Number(match[1])] : []
       })
       .sort((a, b) => a - b)
     const newest = numbers.at(-1)
-    if (newest === undefined) return { segment: 1, first: 1, seq: 0, prev: ZERO }
+    if (newest === undefined) return { tip: { segment: 1, first: 1, seq: 0, prev: ZERO }, opened: { lastSeq: 0, broken: null } }
 
     const found = await this.read(newest)
     // An empty segment after the first means a crash before the record of a break was written
     if (found && !found.broken && (found.lines > 0 || newest === 1)) {
-      return { segment: newest, first: found.first ?? 1, seq: found.last ?? 0, prev: found.tip }
+      const seq = found.last ?? 0
+      return { tip: { segment: newest, first: found.first ?? 1, seq, prev: found.tip }, opened: { lastSeq: seq, broken: null } }
     }
     // The seq carries on from the last good line, looking back through earlier segments when the newest has none
     let last = found?.last ?? null
     for (let i = numbers.length - 2; last === null && i >= 0; i--) last = (await this.read(numbers[i]))?.last ?? null
     const seq = last ?? 0
-    return this.write({ segment: newest + 1, first: seq + 1, seq, prev: ZERO }, 'log.chain-broken', { segment: newest, brokenSeq: seq + 1 })
+    const broken = { segment: newest, brokenSeq: seq + 1 }
+    const tip = await this.write({ segment: newest + 1, first: seq + 1, seq, prev: ZERO }, 'log.chain-broken', broken)
+    return { tip, opened: { lastSeq: seq, broken } }
   }
 
-  // A segment that can't be read counts as broken
+  // A folder in a segment's place counts as broken. Any other read error is a lock or a permission and says nothing
+  // about the chain, so it fails open instead of starting a segment that would reuse the seqs the file holds
   private async read(segment: number): Promise<Walk | null> {
+    const file = this.file(segment)
+    let bytes: Buffer
     try {
-      return walk(await readFile(this.file(segment)))
-    } catch {
-      return null
+      bytes = await retried(() => readFile(file), file)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EISDIR' || (await stat(file).catch(() => null))?.isDirectory()) return null
+      throw err
     }
+    return walk(bytes)
   }
 
   // Gives back the tip after the line is on disk, so a failed write leaves the old one as it was
   private async write(tip: Tip, event: string, fields: Record<string, Field>): Promise<Tip> {
     const seq = tip.seq + 1
     const line = JSON.stringify({ seq, prev: tip.prev, at: new Date().toISOString(), event, ...fields })
-    const handle = await open(this.file(tip.segment), 'a')
+    // Nothing is written before the file opens, so a lock there is safe to wait out
+    const file = this.file(tip.segment)
+    const handle = await retried(() => open(file, 'a'), file)
     try {
       await handle.writeFile(`${line}\n`)
       await handle.sync()
     } finally {
       await handle.close()
     }
+    // The segment's first line made the file, which is only on disk once its folder is
+    if (seq === tip.first) await syncDir(this.dir)
     return { ...tip, seq, prev: sha256(line) }
   }
 
   async append(event: string, fields: Record<string, Field> = {}): Promise<void> {
     const checked = checkFields(event, fields)
     await this.serial(async () => {
+      // After a failed write the file is looked at again first, so a lock that has passed doesn't keep the log off.
+      // A half written line then reads as a break
+      if (!this.ok && this.opened) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
       try {
         this.tip = await this.write(this.tip, event, checked)
@@ -180,7 +212,8 @@ export class EventLog {
       if (tip === null) throw new Error('event log is not open')
       let bytes = Buffer.alloc(0)
       try {
-        bytes = await readFile(this.file(tip.segment))
+        const file = this.file(tip.segment)
+        bytes = await retried(() => readFile(file), file)
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
       }

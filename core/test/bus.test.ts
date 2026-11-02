@@ -67,6 +67,15 @@ describe('topics', () => {
 })
 
 describe('read scope', () => {
+  it('asks canRead about an empty path too, it is a path and not a missing one', () => {
+    const bus = new EventBus()
+    const asked: string[] = []
+    const scoped = listen(bus, ['note.written'], p => { asked.push(p); return false })
+    bus.publish({ topic: 'note.written', path: '' })
+    expect(asked).toEqual([''])
+    expect(scoped.heard).toEqual([])
+  })
+
   it('gives a path only to subscribers whose canRead accepts it', () => {
     const bus = new EventBus()
     const publicOnly = listen(bus, ['note.written'], p => p.startsWith('public/'))
@@ -306,5 +315,20 @@ describe('unsubscribing', () => {
     expect(joined).toEqual([])
     bus.publish({ topic: 'a' })
     expect(joined).toHaveLength(1)
+  })
+})
+
+describe('nested publishes', () => {
+  // Written down so #66 knows it: delivery is at once, so no order holds across a publish made inside a listener
+  it('delivers an event a listener publishes before the rest of the round', () => {
+    const bus = new EventBus()
+    const order: string[] = []
+    bus.subscribe({ topics: ['a'], canRead: anyPath }, () => {
+      order.push('first heard a')
+      bus.publish({ topic: 'b' })
+    })
+    bus.subscribe({ topics: ['a', 'b'], canRead: anyPath }, event => { order.push(`second heard ${event.topic}`) })
+    bus.publish({ topic: 'a' })
+    expect(order).toEqual(['first heard a', 'second heard b', 'second heard a'])
   })
 })

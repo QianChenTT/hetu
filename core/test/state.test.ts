@@ -1,11 +1,21 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { contentHash, defaultState, stateDir, StateStore, type Check, type Loaded } from '../backend/boot/state.ts'
+import { holdOpen, onWindows, release, releaseAfter } from './hold.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
+
+// FileHandle isn't exported, so its prototype comes from a handle opened once
+async function fileHandleProto() {
+  const handle = await open(path.join(dir, 'probe'), 'w')
+  const proto = Object.getPrototypeOf(handle)
+  await handle.close()
+  await rm(path.join(dir, 'probe'))
+  return proto
+}
 
 const HASH = 'a'.repeat(64)
 const noSwitches = { guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] }
@@ -85,6 +95,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await rm(dir, { recursive: true, force: true })
 })
 
@@ -164,6 +175,17 @@ describe('contentHash', () => {
       .update('a.js\u00004\u0000zero')
       .update('b.js\u00003\u0000two')
       .update('sub/a.js\u00003\u0000one')
+      .digest('hex')
+    expect(await contentHash(root)).toBe(expected)
+  })
+
+  // NTFS lists a.js/b.js, a.js, B.js in that order, so the hash only matches if the code sorts by code unit itself
+  it('sorts by code unit, not in the order the file system lists', async () => {
+    const root = await pluginFiles('search', { 'a.js': '1', 'a/b.js': '2', 'B.js': '3' })
+    const expected = createHash('sha256')
+      .update('B.js\u00001\u00003')
+      .update('a.js\u00001\u00001')
+      .update('a/b.js\u00001\u00002')
       .digest('hex')
     expect(await contentHash(root)).toBe(expected)
   })
@@ -295,6 +317,50 @@ describe('writing', () => {
     expect((await readdir(stateFile())).sort()).toEqual(['switches.json', 'switches.json.sha256'])
   })
 
+  it('puts a new file in place rather than writing over the old one', async () => {
+    await store.writeSwitches(switchesIn)
+    const before = await stat(switchesPath(), { bigint: true })
+    await store.writeSwitches(noSwitches)
+    const after = await stat(switchesPath(), { bigint: true })
+    expect(after.ino).not.toBe(before.ino)
+  })
+
+  // Folders can't be synced from Node on Windows, elsewhere each rename's folder is synced too
+  it('syncs the file and its hash to disk', async () => {
+    const sync = vi.spyOn(await fileHandleProto(), 'sync')
+    await store.writeSwitches(switchesIn)
+    expect(sync).toHaveBeenCalledTimes(onWindows ? 2 : 4)
+  })
+
+  describe.runIf(onWindows)('a file another program holds open', () => {
+    it('waits out a reader holding the hash, so the pair stays matched', async () => {
+      await store.writeSwitches(noSwitches)
+      const reader = await holdOpen(sidecar(switchesPath()), 'Read')
+      await Promise.all([store.writeSwitches(switchesIn), releaseAfter(reader, 300)])
+      const loaded = await store.load()
+      expect(result(loaded, 'switches')).toBe('ok')
+      expect(loaded.state.switches).toEqual(switchesIn)
+    })
+
+    it('waits out a reader holding a plugin entry it removes', async () => {
+      await store.writePlugin('search', pluginIn())
+      const reader = await holdOpen(sidecar(pluginPath('search')), 'Read')
+      await Promise.all([store.removePlugin('search'), releaseAfter(reader, 300)])
+      expect(await readdir(stateFile('plugins'))).toEqual([])
+    })
+
+    it('gives up after a few seconds and leaves the file and its old hash, which reads as a mismatch', async () => {
+      await store.writeSwitches(noSwitches)
+      const reader = await holdOpen(sidecar(switchesPath()), 'Read')
+      try {
+        await expect(store.writeSwitches(switchesIn)).rejects.toThrow(/EPERM|EBUSY|EACCES/)
+      } finally {
+        await release(reader)
+      }
+      expect(result(await store.load(), 'switches')).toBe('hash-mismatch')
+    }, 15_000)
+  })
+
   describe('refusing bad input', () => {
     const refused: [string, () => Promise<void>][] = [
       ['a switch that is not a boolean', () => store.writeSwitches({ ...switchesIn, devMode: 'true' })],
@@ -312,6 +378,11 @@ describe('writing', () => {
       ['a plugin class out of range', () => store.writePlugin('search', pluginIn({ class: 5 }))],
       ['a content hash that is not a hash', () => store.writePlugin('search', pluginIn({ contentHash: 'abc' }))],
       ['a plugin capability with no scope', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'net.fetch' }] }))],
+      // An extra key on each kind of capability, which a loose schema would strip without a word
+      ...everyCapability.map((capability): [string, () => Promise<void>] => [
+        `a ${capability.type} capability with an extra key`,
+        () => store.writeAgents({ a: { grants: [{ ...capability, ...('paths' in capability ? { hosts: ['x'] } : { paths: ['**'] }) }] } }),
+      ]),
     ]
 
     it.each(refused)('refuses %s and changes nothing on disk', async (_name, write) => {
@@ -515,6 +586,24 @@ describe.each(kinds)('the $name file', kind => {
     await writeFile(kind.file(), kind.edit(text))
     const loaded = await store.load()
     expect(kind.edit(text)).not.toBe(text)
+    expect(kind.result(loaded)).toBe('hash-mismatch')
+    expect(loaded.suspect).toBe(true)
+    kind.fellBack(loaded)
+  })
+
+  // The compare is exact on the hash file's side too, an editor or a sync conflict can leave any of these
+  const changedHashes: [string, (hash: string) => string][] = [
+    ['an empty hash file', () => ''],
+    ['a hash cut short', hash => hash.slice(0, 32)],
+    ['a hash with a trailing newline', hash => `${hash}\n`],
+    ['a hash with CRLF', hash => `${hash}\r\n`],
+    ['a hash in upper case', hash => hash.toUpperCase()],
+  ]
+
+  it.each(changedHashes)('fails closed on %s', async (_name, change) => {
+    await kind.seed()
+    await writeFile(sidecar(kind.file()), change(await readFile(sidecar(kind.file()), 'utf8')))
+    const loaded = await store.load()
     expect(kind.result(loaded)).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
     kind.fellBack(loaded)
@@ -779,6 +868,14 @@ describe('names in the plugins folder', () => {
     expect(result(loaded, 'plugin-entry', name)).toBe('invalid')
     expect(loaded.suspect).toBe(true)
     expect(loaded.state.plugins.search.enabled).toBe(true)
+  })
+
+  it.each(['.DS_Store', 'Thumbs.db', 'desktop.ini', 'Desktop.ini'])('ignores %j, which the OS leaves in a folder someone looked at', async name => {
+    await addPlugin('search')
+    await writeFile(stateFile('plugins', name), entry)
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.checks.map(c => c.id)).toEqual([undefined, undefined, 'search', 'search'])
   })
 
   it('ignores files ending in .tmp, which are what a crashed write leaves', async () => {

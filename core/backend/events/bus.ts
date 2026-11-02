@@ -27,7 +27,9 @@ export class EventBus {
     }
   }
 
-  // A failing subscriber never breaks the write that triggered the event or the other subscribers
+  // A failing subscriber never breaks the write that triggered the event or the other subscribers. Delivery is at once,
+  // so an event a listener publishes reaches later subscribers before the one being delivered. No order is promised
+  // across nested publishes
   publish(event: BusEvent): void {
     // Each field is read once, so the path canRead approved is the path the subscriber gets
     const { topic, path } = event
