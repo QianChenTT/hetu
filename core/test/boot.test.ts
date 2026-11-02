@@ -65,7 +65,7 @@ describe('first run', () => {
     expect(booted.suspect).toBe(false)
     expect(booted.logHealthy).toBe(true)
     expect(booted.dev).toBe(false)
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'agents.json.sha256', 'switches.json', 'switches.json.sha256'])
+    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'switches.json'])
     expect(booted.state.switches).toEqual({ guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] })
     expect(Object.keys(booted.state.agents)).toEqual([])
   })
@@ -176,10 +176,9 @@ describe('a wiped state', () => {
     expect((await started()).suspect).toBe(false)
   })
 
-  it('reads one file gone when only its pair was deleted', async () => {
+  it('reads one file gone when only that file was deleted', async () => {
     await stopped(await started())
     await rm(stateFile('agents.json'))
-    await rm(stateFile('agents.json.sha256'))
     const booted = await started()
     expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'agents', result: 'gone' }])
     expect(booted.suspect).toBe(true)
@@ -192,24 +191,22 @@ describe('a wiped state', () => {
     expect((await started()).checks.map(c => c.result)).toEqual(['gone', 'gone'])
   })
 
-  it('reads a pair gone when the log was wiped but the other file is still there', async () => {
+  it('reads a file gone when the log was wiped but the other file is still there', async () => {
     await stopped(await started())
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     await rm(stateFile('switches.json'))
-    await rm(stateFile('switches.json.sha256'))
     const booted = await started()
     expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'ok' }])
     expect(booted.suspect).toBe(true)
   })
 
-  it('reads a pair gone when the log was wiped and the other file is there but tampered', async () => {
+  it('reads a file gone when the log was wiped and the other file is there but tampered', async () => {
     await stopped(await started())
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     await rm(stateFile('switches.json'))
-    await rm(stateFile('switches.json.sha256'))
     await writeFile(stateFile('agents.json'), '{}')
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'hash-mismatch' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'hash-missing' }])
   })
 
   // Accepted: with the log wiped too or unreadable nothing is left to tell, row 55

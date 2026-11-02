@@ -91,7 +91,7 @@ async function holderOf(file: string): Promise<string | null> {
   return alive(pid) ? `another hetu (pid ${pid})` : null
 }
 
-// Two hetus on one folder would pair one's file with the other's hash and fork the log. A lock left by a run that is
+// Two hetus on one folder would write over each other's state and fork the log. A lock left by a run that is
 // gone is taken over. Two starts racing over the same stale lock can both get in, a later single-instance lock in #66
 // covers two copies of the same app
 async function lock(dataDir: string): Promise<() => Promise<void>> {
@@ -171,8 +171,8 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
   const checks: BootCheck[] = loaded.checks.map(c => ({ ...c }))
   let suspect = loaded.suspect
 
-  // A missing pair is a new install only if nothing says hetu ran here before. A log that couldn't be opened says
-  // nothing, so a wipe then reads as a new install
+  // A missing switches or agents file is a new install only if nothing says hetu ran here before. A log that couldn't
+  // be opened says nothing, so a wipe then reads as a new install
   const ranBefore = (opened !== null && (opened.lastSeq > 0 || opened.broken !== null))
     || checks.some(c => c.result !== 'absent')
   const missing = checks.filter(c => (c.check === 'switches' || c.check === 'agents') && c.result === 'absent')

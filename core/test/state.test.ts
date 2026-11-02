@@ -52,13 +52,21 @@ const stateFile = (...parts: string[]) => path.join(dir, 'state', ...parts)
 const switchesPath = () => stateFile('switches.json')
 const agentsPath = () => stateFile('agents.json')
 const pluginPath = (id: string) => stateFile('plugins', `${id}.json`)
-const sidecar = (file: string) => `${file}.sha256`
+// A state file is its JSON and then one line holding the hash of every byte above it
+const hashLine = (body: Buffer | string) => `${sha256(body)}\n`
+async function bodyOf(file: string) {
+  const text = await readFile(file, 'utf8')
+  return text.slice(0, text.lastIndexOf('\n', text.length - 2) + 1)
+}
+const jsonOf = async (file: string) => JSON.parse(await bodyOf(file))
+const hashOf = async (file: string) => (await readFile(file, 'utf8')).slice((await bodyOf(file)).length)
 
-// What a program that knows hetu does: writes the file and a matching hash
+// What a program that knows hetu does: writes the bytes, ending in a newline, and a matching hash line after them
 async function plant(file: string, bytes: Buffer | string) {
+  const body = Buffer.from(bytes)
+  const ended = body.at(-1) === 0x0a ? body : Buffer.concat([body, Buffer.from('\n')])
   await mkdir(path.dirname(file), { recursive: true })
-  await writeFile(file, bytes)
-  await writeFile(sidecar(file), sha256(bytes))
+  await writeFile(file, Buffer.concat([ended, Buffer.from(hashLine(ended))]))
 }
 
 async function pluginFiles(id: string, files: Record<string, string>) {
@@ -218,23 +226,26 @@ describe('writing', () => {
     await store.writePlugin('search', pluginIn())
   }
 
-  it('puts each file where the layout says, with a hash beside it and nothing else', async () => {
+  it('puts each file where the layout says and nothing else', async () => {
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'agents.json.sha256', 'plugins', 'switches.json', 'switches.json.sha256'])
-    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json', 'search.json.sha256'])
+    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'plugins', 'switches.json'])
+    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
   it('gives each file its format number and its own content', async () => {
     await writeAll()
-    expect(JSON.parse(await readFile(switchesPath(), 'utf8'))).toEqual({ format: 1, ...switchesIn })
-    expect(JSON.parse(await readFile(agentsPath(), 'utf8'))).toEqual({ format: 1, agents: agentsIn })
-    expect(JSON.parse(await readFile(pluginPath('search'), 'utf8'))).toEqual({ format: 1, ...pluginIn() })
+    expect(await jsonOf(switchesPath())).toEqual({ format: 1, ...switchesIn })
+    expect(await jsonOf(agentsPath())).toEqual({ format: 1, agents: agentsIn })
+    expect(await jsonOf(pluginPath('search'))).toEqual({ format: 1, ...pluginIn() })
   })
 
-  it('records a hash of the exact bytes on disk for every file', async () => {
+  it('ends every file with one line holding the hash of the exact bytes above it', async () => {
     await writeAll()
     for (const file of [switchesPath(), agentsPath(), pluginPath('search')]) {
-      expect(await readFile(sidecar(file), 'utf8')).toBe(sha256(await readFile(file)))
+      const body = await bodyOf(file)
+      expect(body.endsWith('}\n')).toBe(true)
+      expect(await hashOf(file)).toBe(hashLine(body))
+      expect(await readFile(file, 'utf8')).toBe(body + hashLine(body))
     }
   })
 
@@ -301,20 +312,16 @@ describe('writing', () => {
   it('leaves no temp files behind', async () => {
     await writeAll()
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'agents.json.sha256', 'plugins', 'switches.json', 'switches.json.sha256'])
-    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json', 'search.json.sha256'])
+    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'plugins', 'switches.json'])
+    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
-  it('renames the file in before its hash, so a failed write can only leave a mismatch', async () => {
-    await mkdir(sidecar(switchesPath()), { recursive: true })
+  it('cleans up its temp file when a write fails, and fails at once on a folder in the way', async () => {
+    await mkdir(switchesPath(), { recursive: true })
+    const started = Date.now()
     await expect(store.writeSwitches(switchesIn)).rejects.toThrow()
-    expect(JSON.parse(await readFile(switchesPath(), 'utf8')).devMode).toBe(true)
-  })
-
-  it('cleans up its temp file when a write fails', async () => {
-    await mkdir(sidecar(switchesPath()), { recursive: true })
-    await expect(store.writeSwitches(switchesIn)).rejects.toThrow()
-    expect((await readdir(stateFile())).sort()).toEqual(['switches.json', 'switches.json.sha256'])
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(await readdir(stateFile())).toEqual(['switches.json'])
   })
 
   it('puts a new file in place rather than writing over the old one', async () => {
@@ -326,32 +333,32 @@ describe('writing', () => {
   })
 
   // Folders can't be synced from Node on Windows, elsewhere each rename's folder is synced too
-  it('syncs the file and its hash to disk', async () => {
+  it('syncs the file to disk', async () => {
     const sync = vi.spyOn(await fileHandleProto(), 'sync')
     await store.writeSwitches(switchesIn)
-    expect(sync).toHaveBeenCalledTimes(onWindows ? 2 : 4)
+    expect(sync).toHaveBeenCalledTimes(onWindows ? 1 : 2)
   })
 
   describe.runIf(onWindows)('a file another program holds open', () => {
-    it('waits out a reader holding the hash, so the pair stays matched', async () => {
+    it('waits out a reader holding the file', async () => {
       await store.writeSwitches(noSwitches)
-      const reader = await holdOpen(sidecar(switchesPath()), 'Read')
+      const reader = await holdOpen(switchesPath(), 'Read')
       await Promise.all([store.writeSwitches(switchesIn), releaseAfter(reader, 300)])
       const loaded = await store.load()
       expect(result(loaded, 'switches')).toBe('ok')
       expect(loaded.state.switches).toEqual(switchesIn)
     })
 
-    it.each([['its entry', (file: string) => file], ['its hash', sidecar]])('waits out a reader holding %s while it removes a plugin', async (_name, which) => {
+    it('waits out a reader holding the entry of a plugin it removes', async () => {
       await store.writePlugin('search', pluginIn())
-      const reader = await holdOpen(which(pluginPath('search')), 'Read')
+      const reader = await holdOpen(pluginPath('search'), 'Read')
       await Promise.all([store.removePlugin('search'), releaseAfter(reader, 300)])
       expect(await readdir(stateFile('plugins'))).toEqual([])
     })
 
-    it.each([['the hash', sidecar], ['the file', (file: string) => file]])('replaces %s when a restore left it read-only', async (_name, which) => {
+    it('replaces the file when a restore left it read-only', async () => {
       await store.writeSwitches(noSwitches)
-      await chmod(which(switchesPath()), 0o444)
+      await chmod(switchesPath(), 0o444)
       await store.writeSwitches(switchesIn)
       const loaded = await store.load()
       expect(result(loaded, 'switches')).toBe('ok')
@@ -366,15 +373,18 @@ describe('writing', () => {
       expect(loaded.suspect).toBe(false)
     })
 
-    it('gives up after a few seconds and leaves the file and its old hash, which reads as a mismatch', async () => {
+    // With the hash inside the file one rename writes both, so a write that fails leaves the old state as it was
+    it('gives up after a few seconds and leaves the old file whole, which still reads as ok', async () => {
       await store.writeSwitches(noSwitches)
-      const reader = await holdOpen(sidecar(switchesPath()), 'Read')
+      const reader = await holdOpen(switchesPath(), 'Read')
       try {
         await expect(store.writeSwitches(switchesIn)).rejects.toThrow(/EPERM|EBUSY|EACCES/)
       } finally {
         await release(reader)
       }
-      expect(result(await store.load(), 'switches')).toBe('hash-mismatch')
+      const loaded = await store.load()
+      expect(result(loaded, 'switches')).toBe('ok')
+      expect(loaded.state.switches).toEqual(noSwitches)
     }, 15_000)
   })
 
@@ -431,13 +441,13 @@ describe('writing', () => {
   })
 
   describe('overlapping calls', () => {
-    it('keeps a file and its hash matched when writes overlap', async () => {
+    it('keeps the last call on disk with a matching hash when writes overlap', async () => {
       await Promise.all(['1', '2', '3', '4', '5'].map(n => store.writePlugin('search', pluginIn({ version: `${n}.0.0` }))))
-      expect(await readFile(sidecar(pluginPath('search')), 'utf8')).toBe(sha256(await readFile(pluginPath('search'))))
-      expect(JSON.parse(await readFile(pluginPath('search'), 'utf8')).version).toBe('5.0.0')
+      expect(await hashOf(pluginPath('search'))).toBe(hashLine(await bodyOf(pluginPath('search'))))
+      expect((await jsonOf(pluginPath('search'))).version).toBe('5.0.0')
     })
 
-    it('never lets a load see a file renamed in without its hash', async () => {
+    it('never lets a load see a write half done', async () => {
       await store.writeSwitches(noSwitches)
       for (let round = 0; round < 5; round++) {
         let writing = true
@@ -451,8 +461,8 @@ describe('writing', () => {
 
     it('keeps going after a queued call fails', async () => {
       await store.writePlugin('search', pluginIn())
-      await rm(sidecar(pluginPath('search')))
-      await mkdir(sidecar(pluginPath('search')))
+      await rm(pluginPath('search'))
+      await mkdir(pluginPath('search'))
       await expect(store.removePlugin('search')).rejects.toThrow()
       await expect(store.writeSwitches(switchesIn)).resolves.toBeUndefined()
       expect((await store.load()).state.switches).toEqual(switchesIn)
@@ -593,10 +603,9 @@ describe.each(kinds)('the $name file', kind => {
     kind.fellBack(loaded)
   })
 
-  it('reads a wiped file and hash as absent, which is not suspect', async () => {
+  it('reads a deleted file as absent, which is not suspect', async () => {
     await kind.seed()
     await rm(kind.file())
-    await rm(sidecar(kind.file()))
     const loaded = await store.load()
     expect(kind.result(loaded)).toBe(kind.absent)
     expect(loaded.suspect).toBe(false)
@@ -614,63 +623,57 @@ describe.each(kinds)('the $name file', kind => {
     kind.fellBack(loaded)
   })
 
-  // The compare is exact on the hash file's side too, an editor or a sync conflict can leave any of these
-  const changedHashes: [string, (hash: string) => string][] = [
-    ['an empty hash file', () => ''],
-    ['a hash cut short', hash => hash.slice(0, 32)],
-    ['a hash with a trailing newline', hash => `${hash}\n`],
-    ['a hash with CRLF', hash => `${hash}\r\n`],
-    ['a hash in upper case', hash => hash.toUpperCase()],
+  // The hash line is exact too, an editor or a sync conflict can leave any of these. A last line that isn't a hash
+  // means there is none, one that is but doesn't match is a mismatch
+  const changedHashes: [string, (hash: string) => string, string][] = [
+    ['no hash line', () => '', 'hash-missing'],
+    ['a hash cut short', hash => `${hash.slice(0, 32)}\n`, 'hash-missing'],
+    ['a blank line after the hash', hash => `${hash}\n\n`, 'hash-missing'],
+    ['a hash with CRLF', hash => `${hash}\r\n`, 'hash-missing'],
+    ['a hash with no newline after it', hash => hash, 'hash-mismatch'],
+    ['a hash in upper case', hash => `${hash.toUpperCase()}\n`, 'hash-mismatch'],
+    ['a hash with one character changed', hash => `${hash[0] === 'a' ? 'b' : 'a'}${hash.slice(1)}\n`, 'hash-mismatch'],
   ]
 
-  it.each(changedHashes)('fails closed on %s', async (_name, change) => {
+  it.each(changedHashes)('fails closed on %s', async (_name, change, expected) => {
     await kind.seed()
-    await writeFile(sidecar(kind.file()), change(await readFile(sidecar(kind.file()), 'utf8')))
+    const body = await bodyOf(kind.file())
+    await writeFile(kind.file(), body + change(hashLine(body).trimEnd()))
     const loaded = await store.load()
-    expect(kind.result(loaded)).toBe('hash-mismatch')
+    expect(kind.result(loaded)).toBe(expected)
     expect(loaded.suspect).toBe(true)
     kind.fellBack(loaded)
   })
 
   it('counts a reformat of the same JSON as a mismatch', async () => {
     await kind.seed()
-    await writeFile(kind.file(), JSON.stringify(JSON.parse(await readFile(kind.file(), 'utf8'))))
+    await writeFile(kind.file(), `${JSON.stringify(await jsonOf(kind.file()))}\n${await hashOf(kind.file())}`)
     const loaded = await store.load()
     expect(kind.result(loaded)).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
   })
 
-  it('fails closed when only the file is gone', async () => {
+  // The hash of no bytes at all, so only the rule that a hash needs a body above it says this has none
+  it('fails closed on a file that is only a hash line', async () => {
     await kind.seed()
-    await rm(kind.file())
-    const loaded = await store.load()
-    expect(kind.result(loaded)).toBe('state-missing')
-    expect(loaded.suspect).toBe(true)
-    kind.fellBack(loaded)
-  })
-
-  it('fails closed when only the hash is gone', async () => {
-    await kind.seed()
-    await rm(sidecar(kind.file()))
+    await writeFile(kind.file(), hashLine(''))
     const loaded = await store.load()
     expect(kind.result(loaded)).toBe('hash-missing')
     expect(loaded.suspect).toBe(true)
     kind.fellBack(loaded)
   })
 
-  it('fails closed when the file can not be read', async () => {
-    await mkdir(kind.file(), { recursive: true })
-    await writeFile(sidecar(kind.file()), HASH)
+  it('fails closed on the JSON alone, with its hash line taken off', async () => {
+    await kind.seed()
+    await writeFile(kind.file(), await bodyOf(kind.file()))
     const loaded = await store.load()
-    expect(kind.result(loaded)).toBe('unreadable')
+    expect(kind.result(loaded)).toBe('hash-missing')
     expect(loaded.suspect).toBe(true)
     kind.fellBack(loaded)
   })
 
-  it('fails closed when the hash can not be read, at once since a folder is not a lock', async () => {
-    await kind.seed()
-    await rm(sidecar(kind.file()))
-    await mkdir(sidecar(kind.file()))
+  it('fails closed when the file can not be read, at once since a folder is not a lock', async () => {
+    await mkdir(kind.file(), { recursive: true })
     const started = Date.now()
     const loaded = await store.load()
     expect(Date.now() - started).toBeLessThan(1000)
@@ -716,7 +719,8 @@ describe('what the hash does not catch', () => {
     await store.writeSwitches(switchesIn)
     const oldFile = await readFile(switchesPath())
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), oldFile)
+    // The old file carries its own hash line, so a plain copy puts it back
+    await writeFile(switchesPath(), oldFile)
     const loaded = await store.load()
     expect(loaded.state.switches.devMode).toBe(true)
     expect(loaded.suspect).toBe(false)
@@ -886,7 +890,7 @@ describe('names in the plugins folder', () => {
     expect(loaded.state.plugins.search.enabled).toBe(true)
   })
 
-  it.each(['notes.txt', 'search.json.bak', 'search'])('reports a file that is not an entry, such as %j, as invalid', async name => {
+  it.each(['notes.txt', 'search.json.bak', 'search', 'search.json.sha256'])('reports a file that is not an entry, such as %j, as invalid', async name => {
     await addPlugin('search')
     await writeFile(stateFile('plugins', name), 'x')
     const loaded = await store.load()
@@ -936,11 +940,11 @@ describe('names in the plugins folder', () => {
 })
 
 describe('removing a plugin', () => {
-  it('removes its entry and hash and leaves the others', async () => {
+  it('removes its entry and leaves the others', async () => {
     await addPlugin('search')
     await addPlugin('git')
     await store.removePlugin('search')
-    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['git.json', 'git.json.sha256'])
+    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['git.json'])
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git'])
@@ -950,20 +954,13 @@ describe('removing a plugin', () => {
   it('clears a bad entry, which is the way out for a plugin that did not load', async () => {
     await addPlugin('search')
     await writeFile(pluginPath('search'), 'tampered')
-    expect(result(await store.load(), 'plugin-entry', 'search')).toBe('hash-mismatch')
+    expect(result(await store.load(), 'plugin-entry', 'search')).toBe('hash-missing')
     await store.removePlugin('search')
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.plugins).toEqual({})
   })
 
-  it('removes the entry before its hash, so a crash reads as state-missing', async () => {
-    await store.writePlugin('search', pluginIn())
-    await rm(sidecar(pluginPath('search')))
-    await mkdir(sidecar(pluginPath('search')))
-    await expect(store.removePlugin('search')).rejects.toThrow()
-    expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json.sha256'])
-  })
 })
 
 describe('loading', () => {
@@ -989,7 +986,7 @@ describe('loading', () => {
     await store.writeAgents(agentsIn)
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     await writeFile(switchesPath(), 'tampered')
-    await rm(sidecar(agentsPath()))
+    await writeFile(agentsPath(), await bodyOf(agentsPath()))
     await writeFile(pluginPath('git'), 'tampered')
     await writeFile(stateFile('plugins', 'notes.txt'), 'x')
     const before = await snapshot()

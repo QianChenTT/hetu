@@ -51,7 +51,7 @@ export type Agents = z.infer<typeof agents>
 export type Plugin = z.infer<typeof plugin>
 export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches, agents: Agents }
 
-export type FileResult = 'ok' | 'absent' | 'state-missing' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable'
+export type FileResult = 'ok' | 'absent' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable'
 export type FilesResult = 'ok' | 'mismatch' | 'missing' | 'unreadable'
 // id is the plugin and is left out when the plugins folder itself can't be listed
 export type Check = {
@@ -158,23 +158,38 @@ async function replaceFile(file: string, bytes: Buffer | string): Promise<void> 
   await syncDir(path.dirname(file))
 }
 
+// The hash sits on a file's last line, over every byte before it, so one rename writes the state and its hash together
+// and nothing can leave a new file beside an old hash
+function withHash(body: Buffer): Buffer {
+  return Buffer.concat([body, Buffer.from(`${sha256(body)}\n`)])
+}
+
+// The body above the hash line, or why the file doesn't check out. A last line that isn't a hash means there is none,
+// one that is must be exactly the lowercase hash of the bytes before it with one newline after
+function checkHash(bytes: Buffer): { body: Buffer } | { result: 'hash-missing' | 'hash-mismatch' } {
+  const end = bytes.at(-1) === 0x0a ? bytes.length - 1 : bytes.length
+  const start = end > 0 ? bytes.lastIndexOf(0x0a, end - 1) + 1 : 0
+  const line = bytes.subarray(start, end).toString('latin1')
+  if (start === 0 || !/^[0-9a-f]{64}$/i.test(line)) return { result: 'hash-missing' }
+  const body = bytes.subarray(0, start)
+  if (end === bytes.length || line !== sha256(body)) return { result: 'hash-mismatch' }
+  return { body }
+}
+
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
 async function readChecked<T extends z.ZodType>(file: string, schema: T): Promise<{ result: FileResult; value?: z.output<T> }> {
   let bytes: Buffer | null
-  let recorded: Buffer | null
   try {
     bytes = await readIfExists(file)
-    recorded = await readIfExists(`${file}.sha256`)
   } catch {
     return { result: 'unreadable' }
   }
-  // A wiped pair reads the same as a new install, threat 55
-  if (bytes === null && recorded === null) return { result: 'absent' }
-  if (bytes === null) return { result: 'state-missing' }
-  if (recorded === null) return { result: 'hash-missing' }
-  if (recorded.toString('utf8') !== sha256(bytes)) return { result: 'hash-mismatch' }
+  // A wiped file reads the same as a new install, threat 55
+  if (bytes === null) return { result: 'absent' }
+  const checked = checkHash(bytes)
+  if ('result' in checked) return checked
   try {
-    return { result: 'ok', value: parseStrict(bytes, schema) }
+    return { result: 'ok', value: parseStrict(checked.body, schema) }
   } catch {
     return { result: 'invalid' }
   }
@@ -221,15 +236,14 @@ async function checkPluginFiles(root: string, expected: string): Promise<FilesRe
 // What Finder and Explorer leave in a folder the user only looked at. Never read, so they can't stand in for an entry
 const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 
-// Plugin ids come from file names here, so a name that is not <id>.json or <id>.json.sha256 with a good id is reported
+// Plugin ids come from file names here, so a name that is not <id>.json with a good id is reported
 function sortEntryNames(names: string[]): { ids: string[]; invalid: string[] } {
   const ids = new Set<string>()
   const invalid = new Set<string>()
   for (const name of names) {
     if (name.endsWith('.tmp')) continue // what a crashed write leaves, never read
     if (osFiles.has(name.toLowerCase())) continue
-    const suffix = ['.json.sha256', '.json'].find(s => name.endsWith(s))
-    const id = suffix ? name.slice(0, -suffix.length) : null
+    const id = name.endsWith('.json') ? name.slice(0, -'.json'.length) : null
     if (id !== null && pluginId.safeParse(id).success) ids.add(id)
     else invalid.add(id || name)
   }
@@ -237,7 +251,7 @@ function sortEntryNames(names: string[]): { ids: string[]; invalid: string[] } {
 }
 
 // The one writer of the security state. Detect only against a program running as the user: the hash
-// catches edits by anything that doesn't know hetu, not one that rewrites the hash or restores an old pair
+// catches edits by anything that doesn't know hetu, not one that rewrites the hash or restores an old copy
 export class StateStore {
   private readonly dir: string
   private tail: Promise<unknown> = Promise.resolve()
@@ -250,7 +264,7 @@ export class StateStore {
     return path.join(this.dir, 'state', ...parts)
   }
 
-  // Overlapping calls would pair one write's file with another's hash
+  // Overlapping calls would land in any order, and a load could read between them
   private serial<T>(work: () => Promise<T>): Promise<T> {
     const run = this.tail.then(work)
     this.tail = run.catch(() => {})
@@ -258,16 +272,12 @@ export class StateStore {
   }
 
   private async put(file: string, content: object): Promise<void> {
-    const bytes = Buffer.from(`${JSON.stringify(content, null, 2)}\n`)
+    const bytes = withHash(Buffer.from(`${JSON.stringify(content, null, 2)}\n`))
     await this.serial(async () => {
       await mkdir(path.dirname(file), { recursive: true })
-      // Both before either is replaced, so a read-only hash can't leave a new file beside its old hash. A folder in the
-      // way is left for manual cleanup and the write fails closed
+      // A folder in the way is left for manual cleanup and the write fails closed, with the old file as it was
       await writable(file)
-      await writable(`${file}.sha256`)
-      // File first: a crash between the two reads as a mismatch, which fails closed
       await replaceFile(file, bytes)
-      await replaceFile(`${file}.sha256`, sha256(bytes))
     })
   }
 
@@ -289,9 +299,7 @@ export class StateStore {
   async removePlugin(id: string): Promise<void> {
     const file = this.file('plugins', `${pluginId.parse(id)}.json`)
     await this.serial(async () => {
-      // File first, so a crash between the two reads as state-missing
       await retried(() => rm(file, { force: true }))
-      await retried(() => rm(`${file}.sha256`, { force: true }))
       await syncDir(path.dirname(file))
     })
   }
