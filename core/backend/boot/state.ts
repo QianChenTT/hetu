@@ -31,7 +31,6 @@ const switches = z.strictObject({
   skipVerification: z.boolean(),
   allowUnsigned: z.array(sha256Hex),
 })
-const agents = z.record(text, z.strictObject({ grants: z.array(capability) }))
 const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
@@ -43,19 +42,17 @@ const plugin = z.strictObject({
 
 const format = z.literal(1)
 const switchesFile = z.strictObject({ format, ...switches.shape })
-const agentsFile = z.strictObject({ format, agents })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
 
 export type Switches = z.infer<typeof switches>
-export type Agents = z.infer<typeof agents>
 export type Plugin = z.infer<typeof plugin>
-export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches, agents: Agents }
+export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches }
 
 export type FileResult = 'ok' | 'absent' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable'
 export type FilesResult = 'ok' | 'mismatch' | 'missing' | 'unreadable'
 // id is the plugin and is left out when the plugins folder itself can't be listed
 export type Check = {
-  check: 'switches' | 'agents' | 'plugin-entry' | 'plugin-files'
+  check: 'switches' | 'plugin-entry' | 'plugin-files'
   id?: string
   result: FileResult | FilesResult
 }
@@ -63,7 +60,7 @@ export type Check = {
 // state is what to run with. After a failed check state differs from the files and must not be written back as is
 export type Loaded = { state: SecurityState; suspect: boolean; checks: Check[] }
 
-// No prototype, so a name an agent picks can't find Object's own members in place of an entry
+// No prototype, so a plugin id can't find Object's own members in place of an entry
 function table<T>(entries: Record<string, T> = {}): Record<string, T> {
   return Object.assign(Object.create(null), entries)
 }
@@ -72,7 +69,6 @@ export function defaultState(): SecurityState {
   return {
     plugins: table(),
     switches: { guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] },
-    agents: table(),
   }
 }
 
@@ -286,12 +282,6 @@ export class StateStore {
     await this.put(this.file('switches.json'), { format: 1, ...switches.parse(input) })
   }
 
-  async writeAgents(input: unknown): Promise<void> {
-    // The record parse drops a __proto__ key without a word, which would lose that agent from the file
-    if (typeof input === 'object' && input !== null && Object.hasOwn(input, '__proto__')) throw new Error('__proto__ is not an agent name')
-    await this.put(this.file('agents.json'), { format: 1, agents: agents.parse(input) })
-  }
-
   async writePlugin(id: string, input: unknown): Promise<void> {
     const entry = plugin.parse(input)
     await this.put(this.file('plugins', `${pluginId.parse(id)}.json`), { format: 1, ...entry })
@@ -318,10 +308,6 @@ export class StateStore {
     const switchesRead = await readChecked(this.file('switches.json'), switchesFile)
     checks.push({ check: 'switches', result: switchesRead.result })
     if (switchesRead.value) state.switches = withoutFormat(switchesRead.value)
-
-    const agentsRead = await readChecked(this.file('agents.json'), agentsFile)
-    checks.push({ check: 'agents', result: agentsRead.result })
-    if (agentsRead.value) state.agents = table(agentsRead.value.agents)
 
     await this.readPlugins(state, checks)
 

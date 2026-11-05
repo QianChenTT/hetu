@@ -47,6 +47,16 @@ async function records(dir = dataDir()) {
 const bootRecords = async (dir?: string) =>
   (await records(dir)).filter(r => String(r.event).startsWith('boot.')).map(({ seq, prev, at, ...rest }) => rest)
 
+// A plugin with its code and a matching entry, written through the store boot handed back
+async function addSearch(booted: Booted) {
+  const root = path.join(dataDir(), 'plugins', 'search')
+  await mkdir(root, { recursive: true })
+  await writeFile(path.join(root, 'main.js'), 'export {}')
+  await booted.store.writePlugin('search', {
+    version: '1.0.0', contentHash: await contentHash(root), signer: 'x', granted: [], class: 1, enabled: true,
+  })
+}
+
 beforeEach(async () => {
   base = await mkdtemp(path.join(tmpdir(), 'hetu-boot-'))
 })
@@ -60,24 +70,21 @@ afterEach(async () => {
 })
 
 describe('first run', () => {
-  it('finds nothing, writes the default switches and agents and is not suspect', async () => {
+  it('finds nothing, writes the default switches and is not suspect', async () => {
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }, { check: 'agents', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }])
     expect(booted.suspect).toBe(false)
     expect(booted.logHealthy).toBe(true)
     expect(booted.dev).toBe(false)
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'switches.json'])
+    expect(await readdir(stateFile())).toEqual(['switches.json'])
     expect(booted.state.switches).toEqual({ guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] })
-    expect(Object.keys(booted.state.agents)).toEqual([])
   })
 
   it('logs each check without an id where the check has none, then what it wrote', async () => {
     await started()
     expect(await bootRecords()).toEqual([
       { event: 'boot.check', check: 'switches', result: 'absent' },
-      { event: 'boot.check', check: 'agents', result: 'absent' },
       { event: 'boot.default-written', file: 'switches' },
-      { event: 'boot.default-written', file: 'agents' },
     ])
   })
 
@@ -86,7 +93,6 @@ describe('first run', () => {
     const booted = await started()
     expect(booted.state.switches.guardsOff).toEqual([])
     expect(await bootRecords()).toContainEqual({ event: 'boot.default-failed', file: 'switches', error: 'EACCES' })
-    expect(await bootRecords()).toContainEqual({ event: 'boot.default-written', file: 'agents' })
     expect(await bootRecords()).not.toContainEqual({ event: 'boot.default-written', file: 'switches' })
   })
 })
@@ -96,12 +102,11 @@ describe('a later run', () => {
     await stopped(await started())
     const before = await readFile(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'agents', result: 'ok' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }])
     expect(booted.suspect).toBe(false)
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
-    expect((await bootRecords()).slice(4)).toEqual([
+    expect((await bootRecords()).slice(2)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'ok' },
-      { event: 'boot.check', check: 'agents', result: 'ok' },
     ])
   })
 
@@ -140,12 +145,7 @@ describe('a later run', () => {
 
   it('logs a tampered plugin entry with its id and says the boot is suspect', async () => {
     const first = await started()
-    const root = path.join(dataDir(), 'plugins', 'search')
-    await mkdir(root, { recursive: true })
-    await writeFile(path.join(root, 'main.js'), 'export {}')
-    await first.store.writePlugin('search', {
-      version: '1.0.0', contentHash: await contentHash(root), signer: 'x', granted: [], class: 1, enabled: true,
-    })
+    await addSearch(first)
     await stopped(first)
     const entry = stateFile('plugins', 'search.json')
     await writeFile(entry, (await readFile(entry, 'utf8')).replace('"enabled": true', '"enabled": false'))
@@ -153,7 +153,7 @@ describe('a later run', () => {
     const booted = await started()
     expect(booted.suspect).toBe(true)
     expect(booted.state.plugins.search).toBeUndefined()
-    const later = (await bootRecords()).slice(4)
+    const later = (await bootRecords()).slice(2)
     expect(later).toContainEqual({ event: 'boot.check', check: 'plugin-entry', id: 'search', result: 'hash-mismatch' })
     expect(later.at(-1)).toEqual({ event: 'boot.suspect' })
   })
@@ -161,54 +161,52 @@ describe('a later run', () => {
 
 // Threat 55: the cheap signal that the state was wiped while hetu has run here before
 describe('a wiped state', () => {
-  it('reads both files gone when the log already held records, and writes the defaults again', async () => {
+  it('reads the switches gone when the log already held records, and writes the default again', async () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'gone' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }])
     expect(booted.suspect).toBe(true)
-    expect((await bootRecords()).slice(4)).toEqual([
+    expect((await bootRecords()).slice(2)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'gone' },
-      { event: 'boot.check', check: 'agents', result: 'gone' },
       { event: 'boot.suspect' },
       { event: 'boot.default-written', file: 'switches' },
-      { event: 'boot.default-written', file: 'agents' },
     ])
     await stopped(booted)
     expect((await started()).suspect).toBe(false)
-  })
-
-  it('reads one file gone when only that file was deleted', async () => {
-    await stopped(await started())
-    await rm(stateFile('agents.json'))
-    const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'agents', result: 'gone' }])
-    expect(booted.suspect).toBe(true)
   })
 
   it('reads a wipe as gone when the log was damaged too, a break still means records were there', async () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })
     await writeFile(path.join(dataDir(), 'events', 'events-1.jsonl'), 'garbage\n')
-    expect((await started()).checks.map(c => c.result)).toEqual(['gone', 'gone'])
+    expect((await started()).checks.map(c => c.result)).toEqual(['gone'])
   })
 
-  it('reads a file gone when the log was wiped but the other file is still there', async () => {
-    await stopped(await started())
+  it('reads the switches gone when the log was wiped but a plugin entry is still there', async () => {
+    const first = await started()
+    await addSearch(first)
+    await stopped(first)
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     await rm(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'ok' }])
+    expect(booted.checks).toEqual([
+      { check: 'switches', result: 'gone' },
+      { check: 'plugin-entry', id: 'search', result: 'ok' },
+      { check: 'plugin-files', id: 'search', result: 'ok' },
+    ])
     expect(booted.suspect).toBe(true)
   })
 
-  it('reads a file gone when the log was wiped and the other file is there but tampered', async () => {
-    await stopped(await started())
+  it('reads the switches gone when the log was wiped and a plugin entry is there but tampered', async () => {
+    const first = await started()
+    await addSearch(first)
+    await stopped(first)
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     await rm(stateFile('switches.json'))
-    await writeFile(stateFile('agents.json'), '{}')
+    await writeFile(stateFile('plugins', 'search.json'), '{}')
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'hash-missing' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'plugin-entry', id: 'search', result: 'hash-missing' }])
   })
 
   // Accepted: with the log wiped too or unreadable nothing is left to tell, threat 55
@@ -217,7 +215,7 @@ describe('a wiped state', () => {
     await rm(stateFile(), { recursive: true })
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     const booted = await started()
-    expect(booted.checks.map(c => c.result)).toEqual(['absent', 'absent'])
+    expect(booted.checks.map(c => c.result)).toEqual(['absent'])
     expect(booted.suspect).toBe(false)
   })
 })
@@ -268,7 +266,7 @@ describe('a log that can not be used', () => {
     await writeFile(path.join(dataDir(), 'events'), 'in the way')
     const booted = await started()
     expect(booted.logHealthy).toBe(false)
-    expect(booted.checks.map(c => c.result)).toEqual(['absent', 'absent'])
+    expect(booted.checks.map(c => c.result)).toEqual(['absent'])
     expect(await readdir(stateFile())).toContain('switches.json')
   })
 })

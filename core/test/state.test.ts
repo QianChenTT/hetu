@@ -20,7 +20,6 @@ async function fileHandleProto() {
 const HASH = 'a'.repeat(64)
 const noSwitches = { guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] }
 const switchesIn = { guardsOff: ['leases'], devMode: true, skipVerification: false, allowUnsigned: [HASH] }
-const agentsIn = { 'https://example.com/client.json': { grants: [{ type: 'vault.read', paths: ['notes/**'] }] } }
 const pluginIn = (over: object = {}) => ({
   version: '1.0.0',
   contentHash: HASH,
@@ -50,7 +49,6 @@ let dir: string
 let store: StateStore
 const stateFile = (...parts: string[]) => path.join(dir, 'state', ...parts)
 const switchesPath = () => stateFile('switches.json')
-const agentsPath = () => stateFile('agents.json')
 const pluginPath = (id: string) => stateFile('plugins', `${id}.json`)
 // A state file is its JSON and then one line holding the hash of every byte above it
 const hashLine = (body: Buffer | string) => `${sha256(body)}\n`
@@ -109,8 +107,8 @@ afterEach(async () => {
 })
 
 describe('defaults', () => {
-  it('has every guard on, no plugins and no agents', () => {
-    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, agents: {} })
+  it('has every guard on and no plugins', () => {
+    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches })
   })
 
   it('hands out a new object each time, so a caller can not change the next default', () => {
@@ -223,26 +221,24 @@ describe('contentHash', () => {
 describe('writing', () => {
   async function writeAll() {
     await store.writeSwitches(switchesIn)
-    await store.writeAgents(agentsIn)
     await store.writePlugin('search', pluginIn())
   }
 
   it('puts each file where the layout says and nothing else', async () => {
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'plugins', 'switches.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
   it('gives each file its format number and its own content', async () => {
     await writeAll()
     expect(await jsonOf(switchesPath())).toEqual({ format: 1, ...switchesIn })
-    expect(await jsonOf(agentsPath())).toEqual({ format: 1, agents: agentsIn })
     expect(await jsonOf(pluginPath('search'))).toEqual({ format: 1, ...pluginIn() })
   })
 
   it('ends every file with one line holding the hash of the exact bytes above it', async () => {
     await writeAll()
-    for (const file of [switchesPath(), agentsPath(), pluginPath('search')]) {
+    for (const file of [switchesPath(), pluginPath('search')]) {
       const body = await bodyOf(file)
       expect(body.endsWith('}\n')).toBe(true)
       expect(await hashOf(file)).toBe(hashLine(body))
@@ -254,16 +250,13 @@ describe('writing', () => {
     await addPlugin('search')
     await addPlugin('git')
     await store.writeSwitches(switchesIn)
-    await store.writeAgents(agentsIn)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.agents).toEqual(agentsIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
     expect(loaded.state.plugins.search).toEqual(pluginIn({ contentHash: await contentHash(path.join(dir, 'plugins', 'search')) }))
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
-      { check: 'agents', result: 'ok' },
       { check: 'plugin-entry', id: 'git', result: 'ok' },
       { check: 'plugin-files', id: 'git', result: 'ok' },
       { check: 'plugin-entry', id: 'search', result: 'ok' },
@@ -273,22 +266,20 @@ describe('writing', () => {
 
   it('takes back what load returned, so a caller can change one part and write it', async () => {
     await store.writeSwitches(switchesIn)
-    await store.writeAgents(agentsIn)
+    await addPlugin('search')
     const { state } = await store.load()
     await store.writeSwitches(state.switches)
-    await store.writeAgents(state.agents)
+    await store.writePlugin('search', state.plugins.search)
     const again = await store.load()
     expect(again.suspect).toBe(false)
     expect(again.state.switches).toEqual(switchesIn)
-    expect(again.state.agents).toEqual(agentsIn)
+    expect(again.state.plugins.search).toEqual(state.plugins.search)
   })
 
-  it('accepts every capability type in an agent and in a plugin, on the way in and on the way out', async () => {
+  it('accepts every capability type in a plugin, on the way in and on the way out', async () => {
     await addPlugin('search', { granted: everyCapability })
-    await store.writeAgents({ a: { grants: everyCapability } })
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.state.agents.a.grants).toEqual(everyCapability)
     expect(loaded.state.plugins.search.granted).toEqual(everyCapability)
   })
 
@@ -300,20 +291,18 @@ describe('writing', () => {
   })
 
   it('answers an unknown name with nothing, even one that every object has', async () => {
-    await store.writeAgents({ constructor: { grants: [] } })
     await addPlugin('search')
     const { state } = await store.load()
-    expect(Object.keys(state.agents)).toEqual(['constructor'])
-    expect(state.agents['toString']).toBeUndefined()
-    expect(state.agents['__proto__']).toBeUndefined()
     expect(state.plugins['constructor']).toBeUndefined()
-    expect(defaultState().agents['toString']).toBeUndefined()
+    expect(state.plugins['toString']).toBeUndefined()
+    expect(state.plugins['__proto__']).toBeUndefined()
+    expect(defaultState().plugins['toString']).toBeUndefined()
   })
 
   it('leaves no temp files behind', async () => {
     await writeAll()
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['agents.json', 'plugins', 'switches.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
@@ -422,10 +411,7 @@ describe('writing', () => {
       ['switches that carry a format', () => store.writeSwitches({ ...switchesIn, format: 1 })],
       ['a guard name that is not a plugin id', () => store.writeSwitches({ ...switchesIn, guardsOff: ['../leases'] })],
       ['an allowlist entry that is not a hash', () => store.writeSwitches({ ...switchesIn, allowUnsigned: ['abc'] })],
-      ['an agent named __proto__', () => store.writeAgents(JSON.parse('{"__proto__":{"grants":[]},"b":{"grants":[]}}'))],
-      ['an agent with an empty name', () => store.writeAgents({ '': { grants: [] } })],
-      ['an agent with no grants list', () => store.writeAgents({ a: {} })],
-      ['an agent with an unknown capability', () => store.writeAgents({ a: { grants: [{ type: 'host.replace' }] } })],
+      ['a plugin with an unknown capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'host.replace' }] }))],
       ['a plugin with an unknown field', () => store.writePlugin('search', pluginIn({ extra: 1 }))],
       ['a plugin that carries its own id', () => store.writePlugin('search', pluginIn({ id: 'search' }))],
       ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 1 }))],
@@ -435,7 +421,7 @@ describe('writing', () => {
       // An extra key on each kind of capability, which a loose schema would strip without a word
       ...everyCapability.map((capability): [string, () => Promise<void>] => [
         `a ${capability.type} capability with an extra key`,
-        () => store.writeAgents({ a: { grants: [{ ...capability, ...('paths' in capability ? { hosts: ['x'] } : { paths: ['**'] }) }] } }),
+        () => store.writePlugin('search', pluginIn({ granted: [{ ...capability, ...('paths' in capability ? { hosts: ['x'] } : { paths: ['**'] }) }] })),
       ]),
     ]
 
@@ -476,11 +462,11 @@ describe('writing', () => {
 
     // One rename per file means a load can't see half a write anyway, what the queue still gives is order
     it('lets a load called after two writes see both, without waiting for them first', async () => {
-      const writes = [store.writeSwitches(switchesIn), store.writeAgents(agentsIn)]
+      const writes = [store.writeSwitches(switchesIn), store.writePlugin('search', pluginIn())]
       const loaded = await store.load()
       await Promise.all(writes)
       expect(loaded.state.switches).toEqual(switchesIn)
-      expect(loaded.state.agents).toEqual(agentsIn)
+      expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
     })
 
     it('keeps going after a queued call fails', async () => {
@@ -541,29 +527,6 @@ const kinds: Kind[] = [
       ['an allowlist entry that is not a hash', JSON.stringify({ format: 1, ...switchesIn, allowUnsigned: ['abc'] })],
       ['an uppercase allowlist hash', JSON.stringify({ format: 1, ...switchesIn, allowUnsigned: ['A'.repeat(64)] })],
       ['a duplicate switch', JSON.stringify({ format: 1, ...switchesIn }).replace('"devMode":true', '"devMode":false,"devMode":true')],
-    ],
-  },
-  {
-    name: 'agents',
-    file: agentsPath,
-    valid: { format: 1, agents: agentsIn },
-    seed: () => store.writeAgents(agentsIn),
-    edit: text => text.replace('"notes/**"', '"**"'),
-    result: loaded => result(loaded, 'agents'),
-    absent: 'absent',
-    seeded: loaded => expect(loaded.state.agents).toEqual(agentsIn),
-    fellBack: loaded => expect(loaded.state.agents).toEqual({}),
-    rejected: [
-      ['a missing agents section', '{"format":1}'],
-      ['agents as a list', '{"format":1,"agents":[]}'],
-      ['an agent with no grants list', '{"format":1,"agents":{"a":{}}}'],
-      ['an unknown field on an agent', '{"format":1,"agents":{"a":{"grants":[],"extra":1}}}'],
-      ['an agent with an empty name', '{"format":1,"agents":{"":{"grants":[]}}}'],
-      ['__proto__ as an agent', '{"format":1,"agents":{"__proto__":{"grants":[]}}}'],
-      ['a duplicate agent', '{"format":1,"agents":{"a":{"grants":[]},"a":{"grants":[{"type":"vault.read","paths":["**"]}]}}}'],
-      ['bytes that are not UTF-8', badUtf8('{"format":1,"agents":{"', '":{"grants":[]}}}')],
-      ...capabilityCases(capability => JSON.stringify({ format: 1, agents: { a: { grants: [capability] } } })),
-      ['an unknown capability on an agent', '{"format":1,"agents":{"a":{"grants":[{"type":"host.replace"}]}}}'],
     ],
   },
   {
@@ -756,7 +719,6 @@ describe('files that fail alone', () => {
     const searchRoot = await addPlugin('search')
     const gitRoot = await addPlugin('git')
     await store.writeSwitches(switchesIn)
-    await store.writeAgents(agentsIn)
     return { searchRoot, gitRoot }
   }
 
@@ -773,7 +735,6 @@ describe('files that fail alone', () => {
     expect(Object.keys(loaded.state.plugins)).toEqual(['git'])
     expect(loaded.state.plugins.git.enabled).toBe(true)
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.agents).toEqual(agentsIn)
   })
 
   it('does not look at the code of a plugin whose entry failed', async () => {
@@ -792,19 +753,6 @@ describe('files that fail alone', () => {
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
     expect(loaded.state.plugins.git.enabled).toBe(true)
-    expect(loaded.state.agents).toEqual(agentsIn)
-  })
-
-  it('leaves the switches and plugins alone when the agents are edited', async () => {
-    await setup()
-    await writeFile(agentsPath(), (await readFile(agentsPath(), 'utf8')).replace('"notes/**"', '"**"'))
-    const loaded = await store.load()
-    expect(loaded.suspect).toBe(true)
-    expect(result(loaded, 'agents')).toBe('hash-mismatch')
-    expect(loaded.state.agents).toEqual({})
-    expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.plugins.search.enabled).toBe(true)
-    expect(loaded.state.plugins.git.enabled).toBe(true)
   })
 
   it('does not reset the switches when a plugin file changes', async () => {
@@ -815,17 +763,16 @@ describe('files that fail alone', () => {
     expect(result(loaded, 'plugin-files', 'search')).toBe('mismatch')
     expect(result(loaded, 'switches')).toBe('ok')
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.agents).toEqual(agentsIn)
   })
 
   it('writing one file does not repair another bad one', async () => {
     await setup()
-    await writeFile(agentsPath(), (await readFile(agentsPath(), 'utf8')).replace('"notes/**"', '"**"'))
+    await change(pluginPath('git'))
     await writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"devMode": true', '"devMode": false'))
     await store.writeSwitches(switchesIn)
     const loaded = await store.load()
     expect(result(loaded, 'switches')).toBe('ok')
-    expect(result(loaded, 'agents')).toBe('hash-mismatch')
+    expect(result(loaded, 'plugin-entry', 'git')).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
   })
 })
@@ -928,7 +875,7 @@ describe('names in the plugins folder', () => {
     await writeFile(stateFile('plugins', name), entry)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.checks.map(c => c.id)).toEqual([undefined, undefined, 'search', 'search'])
+    expect(loaded.checks.map(c => c.id)).toEqual([undefined, 'search', 'search'])
   })
 
   it('ignores files ending in .tmp, which are what a crashed write leaves', async () => {
@@ -938,7 +885,7 @@ describe('names in the plugins folder', () => {
     await writeFile(stateFile('plugins', 'Evil.json.tmp'), entry)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.checks.map(c => c.id)).toEqual([undefined, undefined, 'search', 'search'])
+    expect(loaded.checks.map(c => c.id)).toEqual([undefined, 'search', 'search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
   })
 
@@ -948,7 +895,6 @@ describe('names in the plugins folder', () => {
     expect(loaded.suspect).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
-      { check: 'agents', result: 'absent' },
     ])
   })
 
@@ -975,7 +921,7 @@ describe('removing a plugin', () => {
     await rm(pluginPath('search'))
     const loaded = await store.load()
     expect(loaded.state.plugins.search).toBeUndefined()
-    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'agents'])
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches'])
   })
 
   it('removes its entry and leaves the others', async () => {
@@ -1008,7 +954,6 @@ describe('loading', () => {
     expect(loaded.suspect).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'absent' },
-      { check: 'agents', result: 'absent' },
     ])
   })
 
@@ -1021,10 +966,8 @@ describe('loading', () => {
     const searchRoot = await addPlugin('search')
     await addPlugin('git')
     await store.writeSwitches(switchesIn)
-    await store.writeAgents(agentsIn)
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     await writeFile(switchesPath(), 'tampered')
-    await writeFile(agentsPath(), await bodyOf(agentsPath()))
     await writeFile(pluginPath('git'), 'tampered')
     await writeFile(stateFile('plugins', 'notes.txt'), 'x')
     const before = await snapshot()

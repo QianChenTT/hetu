@@ -12,7 +12,7 @@ export type BootOptions = {
   platform: string
 }
 
-// gone is boot's own result: switches or agents with no file although hetu has run here before
+// gone is boot's own result: switches with no file although hetu has run here before
 export type BootCheck = Omit<Check, 'result'> & { result: Check['result'] | 'gone' }
 
 export type Booted = {
@@ -171,27 +171,24 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
   const checks: BootCheck[] = loaded.checks.map(c => ({ ...c }))
   let suspect = loaded.suspect
 
-  // A missing switches or agents file is a new install only if nothing says hetu ran here before. A log that couldn't
-  // be opened says nothing, so a wipe then reads as a new install
+  // A missing switches file is a new install only if nothing says hetu ran here before. A log that couldn't be opened
+  // says nothing, so a wipe then reads as a new install
   const ranBefore = (opened !== null && (opened.lastSeq > 0 || opened.broken !== null))
     || checks.some(c => c.result !== 'absent')
-  const missing = checks.filter(c => (c.check === 'switches' || c.check === 'agents') && c.result === 'absent')
+  const missing = checks.filter(c => c.check === 'switches' && c.result === 'absent')
   if (ranBefore) {
     for (const check of missing) check.result = 'gone'
     if (missing.length > 0) suspect = true
   }
 
-  // Defaults loosen nothing, every guard on and no agents, so they go in without a confirmation. Written so the next
-  // boot can tell a wipe from a new install, and before anything is logged, so a crash in between can't leave records
-  // that make the next boot read a new install as a wipe. A write that fails still does, once, accepted
+  // Defaults loosen nothing, every guard on, so they go in without a confirmation. Written so the next boot can tell a
+  // wipe from a new install, and before anything is logged, so a crash in between can't leave records that make the
+  // next boot read a new install as a wipe. A write that fails still does, once, accepted
   const state = loaded.state
   const written: { file: string, error?: string }[] = []
   for (const check of missing) {
-    const write = check.check === 'switches'
-      ? () => store.writeSwitches(defaultState().switches)
-      : () => store.writeAgents({})
     try {
-      await write()
+      await store.writeSwitches(defaultState().switches)
       written.push({ file: check.check })
     } catch (err) {
       written.push({ file: check.check, error: (err as NodeJS.ErrnoException).code ?? 'unknown' })
