@@ -30,7 +30,7 @@ export type Booted = {
 }
 
 // A packaged build ignores HETU_DATA_DIR, so the environment can't move the state somewhere else. An unpackaged run
-// gets its own folder, so a dev copy never shares the state of an installed hetu (Han, 2026-11-02)
+// gets its own folder, so a dev copy never shares the state of an installed hetu
 export function resolveDataDir(options: Omit<BootOptions, 'installDir'>): { dataDir: string, dev: boolean } {
   const { packaged, env, platform } = options
   if (packaged) return { dataDir: stateDir(platform, env), dev: false }

@@ -211,7 +211,7 @@ describe('a wiped state', () => {
     expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'agents', result: 'hash-missing' }])
   })
 
-  // Accepted: with the log wiped too or unreadable nothing is left to tell, row 55
+  // Accepted: with the log wiped too or unreadable nothing is left to tell, threat 55
   it('reads a wipe of the state and the log as a new install', async () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })

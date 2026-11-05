@@ -22,7 +22,7 @@ export async function retried<T>(work: () => Promise<T>, target?: string, kind: 
 }
 
 // Windows won't replace or append to a read-only file, which a restore or a copy can leave. Only for hetu's own files,
-// which hetu may clear (Han, 2026-11-02, "Clear read-only only"). A folder or a link is left alone
+// which hetu may clear
 export async function writable(file: string): Promise<void> {
   if (process.platform !== 'win32') return
   const found = await lstat(file).catch(() => null)
@@ -33,8 +33,8 @@ export async function writable(file: string): Promise<void> {
 const cantSync = new Set(['EINVAL', 'ENOTSUP', 'EBADF', 'EISDIR', 'EACCES', 'EPERM'])
 
 // A rename or a new file is only on disk once its folder is. Best effort: a file system that can't sync a folder must
-// not fail the write after its rename, or a state file would be left beside its old hash. Node can't open a folder for
-// this on Windows, where NTFS journals renames in order
+// not fail a write whose change has landed. Node can't open a folder for this on Windows, where NTFS journals renames
+// in order
 export async function syncDir(dir: string): Promise<void> {
   if (process.platform === 'win32') return
   let handle

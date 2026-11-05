@@ -85,7 +85,7 @@ function walk(bytes: Buffer): Walk {
 // Append only, one line per event, each carrying the hash of the line before. The hash catches edits by a tool that
 // doesn't know hetu, not one that rewrites the whole chain. Across a restart nothing covers the newest segment's last
 // line, a cut at a line boundary or a deleted newest segment, the chain alone can't see those. The anchor for them is a
-// copy kept off the machine, row 11
+// copy kept off the machine, threat 11
 export class EventLog {
   private readonly dir: string
   private tail: Promise<unknown> = Promise.resolve()
