@@ -82,8 +82,8 @@ var N=[
   where:"Daemon",trust:"Trusted core",does:["Flags outside writes while an agent holds a lease","Next commit marks unknown writers in the shadow repo"],dec:["Detection only for shell agents"],th:[10]},
 
  {id:"mcp",zone:"zHidden",cls:"sandbox",x:590,y:166,w:135,h:44,l:["MCP plugin"],sub:[],
-  role:"Core plugin that turns MCP calls into capability requests. Passes which agent is calling, so the gate checks that agent's grants too.",
-  where:"Hidden renderer, worker",trust:"First-party, sandboxed",does:["list, read, search, lease, edit tools","Agent identity on every request"],dec:["MCP OAuth spec"],th:[40,6]},
+  role:"Core plugin that turns MCP calls into capability requests. Keeps each agent's grants in its own storage and checks them, so an agent never gets more than the MCP plugin holds.",
+  where:"Hidden renderer, worker",trust:"First-party, sandboxed",does:["list, read, search, lease, edit tools","Per-agent grants in its own storage"],dec:["MCP OAuth spec"],th:[40,6]},
  {id:"leases",zone:"zHidden",cls:"sandbox",x:740,y:166,w:135,h:44,l:["Leases"],sub:["guard plugin"],
   role:"The guard that decides who may write which notes. Its rules are security settings, changed only with a Confirm click in the trusted window. If it crashes, writes fail closed.",
   where:"Hidden renderer, worker",trust:"First-party guard",does:["One writer per note","Refusals carry path, holder and expiry only"],dec:["Guard class"],th:[1,6,39]},
@@ -122,7 +122,7 @@ var N=[
   where:"Your OS user",trust:"Leaves the sandbox",does:["git with --git-dir pointing at the shadow repo","Exact commands a plugin claimed, nothing else"],dec:["What exec really grants"],th:[13,45,46]},
 
  {id:"bundle",zone:"zDisk",cls:"disk",x:925,y:140,w:290,h:58,l:["Security state"],sub:["hetu writes them · hash checked at start"],
-  role:"Files per machine with everything security depends on: the switches, the agent grants and one file per plugin with its hash, pinned signer, grants and class. Only hetu writes them, after a Confirm click and records a hash beside each that is checked at start. A program running as you can still edit, restore or delete them and one that knows hetu can rewrite the hash too, so this catches careless edits, not a targeted program, which is out of scope.",
+  role:"Files per machine with everything security depends on: the switches and one file per plugin with its hash, pinned signer, grants and class. Only hetu writes them, after a Confirm click and ends each with a line holding its hash, checked at start. A program running as you can still edit, restore or delete them and one that knows hetu can rewrite the hash too, so this catches careless edits, not a targeted program, which is out of scope.",
   where:"Local app data, per machine",trust:"Hash checked at start",does:["Strict JSON, duplicate keys rejected","Hash over each file's raw bytes, checked before parsing","Never in the vault, so a synced or cloned vault can't bring it along"],dec:["Hash checked on load","Format"],th:[24,25,54,55]},
  {id:"pfolder",zone:"zDisk",cls:"disk",x:925,y:220,w:290,h:58,l:["Plugin folder"],sub:["per machine · plugin storage"],
   role:"One central folder for every plugin, ours and community ones alike, plus each plugin's own storage. Doesn't sync between machines.",
@@ -137,7 +137,7 @@ var N=[
   role:"Your own repository and backups, exactly as before. hetu never commits to it and never runs git under its config.",
   where:"The vault's .git",trust:"Yours, untouched",does:["Your own commits and backups continue","Your notes sync however they already do"],dec:["Shadow repo leaves it untouched"],th:[13]},
  {id:"logs",zone:"zDisk",cls:"disk",x:925,y:580,w:290,h:58,l:["Event log files"],sub:["hash chain"],
-  role:"The local log. Same OS user can delete it, so the hash chain shows gaps and the optional cloud plugin keeps a copy that survives.",
+  role:"The local log. A new file starts after 2 hours idle and the hash chain carries across files. Same OS user can delete it, so the chain shows gaps and the optional cloud plugin keeps a copy that survives.",
   where:"App data",trust:"Evidence",does:["Sequence numbers and previous hashes","Optional off-machine copy"],dec:["Detection"],th:[11]}
 ];
 
@@ -152,7 +152,7 @@ var E=[
  {id:"loader_egate",f:"loader",t:"egate",l:"verified code + grants",chk:["Editor mounts only what the daemon hands over"],th:[41]},
  {id:"loader_ui",f:"loader",t:"hetuui",l:"new plugin · banners",chk:["New plugins prompt","Failed checks and guards off shown plainly"],th:[22,39]},
  {id:"hidden_gate",f:"zHidden",t:"gate",l:"capability call",chk:["Type on the fixed list","Scope after path normalising","Class and combination rules","Refusal names only the caller's things"],th:[1,3,30,31,37,27]},
- {id:"http_gate",f:"http",t:"gate",l:"check token + grants",chk:["Token valid, bound to hetu","Agent grants and MCP plugin grants both"],th:[9,40]},
+ {id:"http_gate",f:"http",t:"gate",l:"check token + grants",chk:["Token valid, bound to hetu","MCP plugin grants, the plugin checks the agent's"],th:[9,40]},
  {id:"agent_http",f:"agent",t:"http",l:"MCP + access token",chk:["Loopback only, Host and Origin checks","Short-lived token","No token: 401 plus resource metadata"],th:[14,15,50]},
  {id:"http_mcp",f:"http",t:"mcp",l:"call + agent identity",chk:["MCP plugin learns which agent is calling"],th:[40]},
  {id:"agent_oauth",f:"agent",t:"oauth",l:"OAuth 2.1 + PKCE",chk:["Protected Resource Metadata (RFC 9728)","Resource Indicators (RFC 8707)","Refresh rotation with reuse detection"],th:[9,50]},
@@ -201,7 +201,7 @@ var S=[
  {id:"start",name:"Start the program",sum:"From double-click to every plugin running, and what happens when a check fails.",
   steps:[
    {t:"You launch hetu",n:["human","boot"],e:["human_boot"],x:"The boot loader runs first. It is the one part that can't be a plugin and it holds no policy of its own.",c:["Boot loader comes from the read-only install"],th:[]},
-   {t:"Read and check the security state",n:["boot","bundle"],e:["boot_bundle"],x:"The security state is split into files: the switches, the agent grants and one file per plugin with its hash, pinned signer, grants and class. The boot loader checks each against the hash hetu recorded at its last write and parses it with the strict schema. A plugin or plugin setting that fails doesn't load and nothing else stops. A program running as you can edit the files, so the hash catches careless edits, not one that rewrites the hash too.",c:["Hash checked","Duplicate keys and unknown types rejected"],th:[24,25,54]},
+   {t:"Read and check the security state",n:["boot","bundle"],e:["boot_bundle"],x:"The security state is split into files: the switches and one file per plugin with its hash, pinned signer, grants and class. The boot loader checks each against the hash hetu recorded at its last write and parses it with the strict schema. A plugin or plugin setting that fails doesn't load and nothing else stops. A program running as you can edit the files, so the hash catches careless edits, not one that rewrites the hash too.",c:["Hash checked","Duplicate keys and unknown types rejected"],th:[24,25,54]},
    {t:"Load the host, editor and guards",n:["boot","firstparty","loader"],e:["boot_first","first_loader"],x:"First-party core plugins come only from the read-only install, never from the plugin folder. The plugin loader sets up each plugin's environment, and the host starts as the running guard.",c:["Program Files: a normal program can't edit these files"],th:[49]},
    {t:"Check every plugin file",n:["loader","pfolder"],e:["loader_pfolder"],x:"The loader hashes every file of every plugin and compares with the security state. It then loads the exact bytes it hashed, so nothing can be swapped in between.",c:["contentHash matches","Load hashed bytes, never re-read the path"],th:[24,26]},
    {t:"Start guards, then everything else",n:["loader","leases","mcp","gitp","search","watchp","community"],e:["loader_hidden"],x:"Always-on plugins start as workers in the hidden renderer, so they keep running with every window closed. Guards start first. Other plugins are held until the guards report ready.",c:["Guards first","Each worker gets exactly its approved grants"],th:[35]},
@@ -234,9 +234,9 @@ var S=[
   steps:[
    {t:"First call without a token",n:["agent","http"],e:["agent_http"],x:"The agent calls hetu's MCP endpoint on 127.0.0.1. With no token it gets a 401 and the Protected Resource Metadata pointing at hetu's authorization server.",c:["Loopback only, Host and Origin checks"],th:[14,15]},
    {t:"OAuth with PKCE",n:["agent","oauth","internet"],e:["agent_oauth","oauth_internet"],x:"The agent starts OAuth 2.1 with PKCE. If it identifies with a client metadata URL, hetu fetches it over HTTPS only and never from private or loopback addresses.",c:["HTTPS only","No private addresses"],th:[51]},
-   {t:"You consent once",n:["oauth","hetuui","human","gate","bundle"],e:["oauth_ui","human_ui","ui_gate","gate_bundle"],x:"hetu's consent page shows the agent and lets you set its grants. Your Confirm click approves it and hetu writes the agent's grants into the security state.",c:["Agent grants need your Confirm click"],th:[9]},
+   {t:"You consent once",n:["oauth","hetuui","human","gate","pfolder"],e:["oauth_ui","human_ui","ui_gate","gate_pfolder"],x:"hetu's consent page shows the agent and lets you set its grants. Your Confirm click approves it and the MCP plugin keeps the agent's grants in its own storage.",c:["Agent grants need your Confirm click"],th:[9]},
    {t:"Short-lived token",n:["oauth","agent"],e:["agent_oauth"],x:"The agent receives a short-lived access token bound to hetu. Its harness stores it, not hetu. Refresh tokens rotate, and reuse of an old one revokes the chain and alerts you.",c:["Short-lived","Reuse detection"],th:[50]},
-   {t:"Ask for a lease",n:["agent","http","mcp","gate","leases"],e:["agent_http","http_mcp","hidden_gate"],x:"The MCP plugin forwards acquire_lease with the agent's identity. The gate checks the agent's grants and the MCP plugin's together, and the leases guard decides.",c:["Agent grants and MCP grants both"],th:[40,1]},
+   {t:"Ask for a lease",n:["agent","http","mcp","gate","leases"],e:["agent_http","http_mcp","hidden_gate"],x:"The MCP plugin checks the agent's grants and forwards acquire_lease. The gate checks the MCP plugin's grants and the leases guard decides.",c:["Agent grants inside the MCP plugin's"],th:[40,1]},
    {t:"Refused? Only its own details",n:["leases","mcp"],e:[],x:"If another writer holds the note, the refusal carries path, holder and expiry only. Never another agent's lease id. That's the A-05 lesson.",c:["Refusal names only the caller's things"],th:[6,37]},
    {t:"Edit the note",n:["mcp","gate","write","leases","vault"],e:["hidden_gate","gate_write","leases_write","write_vault"],x:"edit_note goes through the gate to the single write path. The version check stops a stale write, the lease guard confirms the holder, the file is written.",c:["StaleVersion","Lease holder only"],th:[1]},
    {t:"Commit to the shadow repo",n:["gate","exec","osproc","shadow","vault"],e:["gate_exec","exec_proc","proc_shadow","proc_vault"],x:"The core runs git against the hetu-owned shadow repo with a clean environment. The commit is attributed to the agent. Your own repo is untouched.",c:["Clean environment","Vault git config never read"],th:[13,45]},
