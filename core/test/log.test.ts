@@ -9,6 +9,8 @@ import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 const ZERO = '0'.repeat(64)
 const BOM = Buffer.from([0xef, 0xbb, 0xbf])
+// Hand-written lines are as old as the run, so the idle gap doesn't start a new segment under them
+const AT = new Date().toISOString()
 
 let dir: string
 const eventsDir = () => path.join(dir, 'events')
@@ -20,6 +22,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
   await releaseAll()
   await rm(dir, { recursive: true, force: true })
 })
@@ -33,7 +36,7 @@ async function fileHandleProto() {
   return proto
 }
 
-async function opened(options: { retryAfterMs?: number } = {}) {
+async function opened(options: ConstructorParameters<typeof EventLog>[1] = {}) {
   const log = new EventLog(dir, options)
   await log.open()
   return log
@@ -59,7 +62,7 @@ function chain(first: number, count: number): string[] {
   const lines: string[] = []
   let prev = ZERO
   for (let seq = first; seq < first + count; seq++) {
-    const line = JSON.stringify({ seq, prev, at: '2026-11-02T00:00:00.000Z', event: 'test.line', n: seq })
+    const line = JSON.stringify({ seq, prev, at: AT, event: 'test.line', n: seq })
     lines.push(line)
     prev = sha256(line)
   }
@@ -75,11 +78,11 @@ function chainOf(records: Record<string, unknown>[]): string[] {
     return line
   })
 }
-const good = (seq: number) => ({ seq, at: '2026-11-02T00:00:00.000Z', event: 'test.line' })
+const good = (seq: number) => ({ seq, at: AT, event: 'test.line' })
 
 // One valid line after the given ones, the way a program that knows the format would add one
 const after = (lines: string[]) => JSON.stringify({
-  seq: lines.length + 1, prev: sha256(lines[lines.length - 1]), at: '2026-11-02T00:00:00.000Z', event: 'test.line', n: lines.length + 1,
+  seq: lines.length + 1, prev: sha256(lines[lines.length - 1]), at: AT, event: 'test.line', n: lines.length + 1,
 })
 
 function edit(line: string, from: string, to: string): string {
@@ -269,28 +272,28 @@ describe('opening', () => {
   })
 
   it('says what it found: no records in a new log', async () => {
-    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: null })
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: null, unlinked: null })
   })
 
   it('says what it found: the last seq of a good log', async () => {
     await put(1, joined(chain(1, 3)))
-    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 3, broken: null })
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 3, broken: null, unlinked: null })
   })
 
   it('says what it found: the last seq of a later segment, not its number of lines', async () => {
     await put(1, joined(chain(1, 2)))
     await put(2, joined(chainOf([good(3), good(4)])))
-    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 4, broken: null })
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 4, broken: null, unlinked: null })
   })
 
   it('says what it found: the break, before the record of it was written', async () => {
     await put(1, joined([...chain(1, 2), 'garbage']))
-    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 2, broken: { segment: 1, brokenSeq: 3 } })
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 2, broken: { segment: 1, brokenSeq: 3 }, unlinked: null })
   })
 
   it('says what it found: a break with no good line anywhere', async () => {
     await put(1, 'garbage\n')
-    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: { segment: 1, brokenSeq: 1 } })
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 0, broken: { segment: 1, brokenSeq: 1 }, unlinked: null })
   })
 
   it('is not healthy before it is opened, and takes no events', async () => {
@@ -438,8 +441,8 @@ describe('a broken chain at open', () => {
   const misshapen: [string, Record<string, unknown>][] = [
     ['an at that is a number', { seq: 3, at: 5, event: 'test.line' }],
     ['no at', { seq: 3, event: 'test.line' }],
-    ['an event that is a number', { seq: 3, at: '2026-11-02T00:00:00.000Z', event: 7 }],
-    ['no event', { seq: 3, at: '2026-11-02T00:00:00.000Z' }],
+    ['an event that is a number', { seq: 3, at: AT, event: 7 }],
+    ['no event', { seq: 3, at: AT }],
     ['a gap in seq', { ...good(4) }],
     ['a seq that repeats', { ...good(2) }],
     ['a seq that is a string', { ...good(3), seq: '3' }],
@@ -697,7 +700,7 @@ describe('a log that can not be written', () => {
     await fill(log, 3)
     const lines = await linesOf(1)
     await failOnce(log, 1, () => writeFile(segmentFile(1), joined([lines[0]])))
-    expect(await log.open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 2 } })
+    expect(await log.open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 2 }, unlinked: null })
     expect((await recordsOf(2))[0]).toMatchObject({ seq: 4, event: 'log.chain-broken' })
   })
 
@@ -884,7 +887,7 @@ describe.runIf(onWindows)('a segment another program holds open', { timeout: HOL
     await put(1, joined(chain(1, 3)))
     const holder = await holdOpen(segmentFile(1), 'None')
     const [found] = await Promise.all([new EventLog(dir).open(), releaseAfter(holder, 300)])
-    expect(found).toEqual({ lastSeq: 3, broken: null })
+    expect(found).toEqual({ lastSeq: 3, broken: null, unlinked: null })
     expect(await segments()).toEqual(['events-1.jsonl'])
   })
 
@@ -906,7 +909,7 @@ describe.runIf(onWindows)('a segment another program holds open', { timeout: HOL
     await chmod(segmentFile(1), 0o444)
     const holder = await holdOpen(segmentFile(1), 'None')
     const [found] = await Promise.all([new EventLog(dir).open(), releaseAfter(holder, 300)])
-    expect(found).toEqual({ lastSeq: 3, broken: null })
+    expect(found).toEqual({ lastSeq: 3, broken: null, unlinked: null })
     await chmod(segmentFile(1), 0o666)
   })
 
@@ -949,5 +952,167 @@ describe.runIf(onWindows)('a segment another program holds open', { timeout: HOL
     await Promise.all([log.append('test.line', { n: 2 }), releaseAfter(reader, 300)])
     expect(log.healthy).toBe(true)
     expect((await recordsOf(1)).map(r => r.seq)).toEqual([1, 2])
+  })
+})
+
+// The wall clock only, so a test can step past the idle gap. performance.now and the timers stay real
+function clockAt(iso: string) {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(iso))
+  return (ms: number) => vi.setSystemTime(new Date(Date.now() + ms))
+}
+
+// Segments of the sizes given, one idle gap apart. The clock is left a gap past the last line
+async function rotations(...sizes: number[]) {
+  const step = clockAt('2026-11-05T10:00:00.000Z')
+  const log = await opened({ idleGapMs: 1000 })
+  let n = 0
+  for (const size of sizes) {
+    for (let i = 0; i < size; i++) await log.append('test.line', { n: ++n })
+    step(1000)
+  }
+  return log
+}
+
+describe('rotation', () => {
+  it('starts a new segment on the first append after the idle gap, its first line carrying the chain on', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    const log = await opened({ idleGapMs: 1000 })
+    await fill(log, 2)
+    step(999)
+    await log.append('test.line', { n: 3 })
+    expect(await segments()).toEqual(['events-1.jsonl'])
+    step(1000)
+    await log.append('test.line', { n: 4 })
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    const [first] = await recordsOf(2)
+    expect(first.seq).toBe(4)
+    expect(first.prev).toBe(sha256((await linesOf(1)).at(-1)!))
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('makes no empty segment while hetu is idle', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    const log = await opened({ idleGapMs: 1000 })
+    await fill(log, 1)
+    step(5000)
+    await log.verify()
+    expect(await segments()).toEqual(['events-1.jsonl'])
+  })
+
+  it('goes on in the rotated segment after a restart, with nothing recorded', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    const log = await opened({ idleGapMs: 1000 })
+    await fill(log, 2)
+    step(1000)
+    await log.append('test.line', { n: 3 })
+    expect(await new EventLog(dir, { idleGapMs: 1000 }).open()).toEqual({ lastSeq: 3, broken: null, unlinked: null })
+    expect(await linesOf(2)).toHaveLength(1)
+  })
+
+  it('takes the gap from the last line written before a restart', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    await fill(await opened({ idleGapMs: 1000 }), 1)
+    step(1000)
+    const log = await opened({ idleGapMs: 1000 })
+    await log.append('test.line', { n: 2 })
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+  })
+
+  it('keeps a busy session in one segment however large it grows', async () => {
+    const log = await opened()
+    await fill(log, 200)
+    expect(await segments()).toEqual(['events-1.jsonl'])
+  })
+})
+
+describe('the link between segments at open', () => {
+  async function rotated() {
+    await rotations(2, 2)
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    return { one: await linesOf(1), two: await linesOf(2) }
+  }
+
+  it.each([
+    ['the last line of the file before edited', (one: string[]) => put(1, joined([...one.slice(0, -1), edit(one.at(-1)!, '"n":', '"n":9')]))],
+    ['the last line of the file before removed', (one: string[]) => put(1, joined(one.slice(0, -1)))],
+    ['the file before deleted', () => rm(segmentFile(1))],
+  ])('records the newest segment as unlinked after %s, and goes on in it', async (_name, damage) => {
+    const { one, two } = await rotated()
+    await damage(one)
+    const damaged = await readdir(eventsDir())
+    // The default gap, so the record lands in the newest segment and not in one after it
+    const log = new EventLog(dir)
+    expect(await log.open()).toEqual({ lastSeq: two.length + one.length, broken: null, unlinked: 2 })
+    expect(await readdir(eventsDir())).toEqual(damaged)
+    const records = await recordsOf(2)
+    expect(records.at(-1)).toEqual({ seq: one.length + two.length + 1, prev: sha256(two.at(-1)!), at: expect.any(String), event: 'log.unlinked', segment: 2 })
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('records a first segment whose first line points at a line that is not there', async () => {
+    const [one, two] = chainOf([good(1), good(2)])
+    const moved = edit(one, ZERO, 'a'.repeat(64))
+    await put(1, joined([moved, edit(two, sha256(one), sha256(moved))]))
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 2, broken: null, unlinked: 1 })
+  })
+
+  it('takes a segment that starts from zeros after another as the start of a new chain, with nothing recorded', async () => {
+    await put(1, joined(chain(1, 2)))
+    await put(2, joined(chainOf([good(3), good(4)])))
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 4, broken: null, unlinked: null })
+    expect(await linesOf(2)).toHaveLength(2)
+  })
+})
+
+describe('history', () => {
+  it('is empty for a log with nothing in it', async () => {
+    expect(await new EventLog(dir).history()).toEqual([])
+    await opened()
+    expect(await new EventLog(dir).history()).toEqual([])
+  })
+
+  it('lists each segment with its seqs, one chain through the rotations', async () => {
+    const log = await rotations(3, 2)
+    expect(await log.history()).toEqual([
+      { segment: 1, lines: 3, first: 1, last: 3, start: 'zero', breaks: [] },
+      { segment: 2, lines: 2, first: 4, last: 5, start: 'continues', breaks: [] },
+    ])
+  })
+
+  // One edit breaks one link: the edited line still follows the one before it, the next one doesn't follow it
+  it('reports one break for an edited line in the middle of many and reads every line after it', async () => {
+    const lines = chain(1, 10)
+    lines[4] = edit(lines[4], '"n":5', '"n":9')
+    await put(1, joined(lines))
+    expect(await new EventLog(dir).history()).toEqual([{ segment: 1, lines: 10, first: 1, last: 10, start: 'zero', breaks: [6] }])
+  })
+
+  it.each([
+    ['a middle line removed', (l: string[]) => joined([...l.slice(0, 4), ...l.slice(5)]), 9, [5]],
+    ['torn bytes after the last line', (l: string[]) => `${joined(l)}{"seq":11,"prev":"ab`, 10, [11]],
+    ['garbage in place of a line', (l: string[]) => joined([...l.slice(0, 4), 'not json', ...l.slice(5)]), 10, [5, 6]],
+  ])('reports where the chain broke after %s', async (_name, make, lines, breaks) => {
+    await put(1, make(chain(1, 10)))
+    expect((await new EventLog(dir).history())[0]).toMatchObject({ lines, breaks })
+  })
+
+  it('reads a segment that follows a deleted one as unlinked', async () => {
+    const log = await rotations(1, 1, 1)
+    await rm(segmentFile(2))
+    expect((await log.history()).map(s => [s.segment, s.start])).toEqual([[1, 'zero'], [3, 'unlinked']])
+  })
+
+  it('reads the segment after a break as a new chain', async () => {
+    const lines = chain(1, 4)
+    await put(1, joined([lines[0], edit(lines[1], '"n":2', '"n":9'), lines[2], lines[3]]))
+    const log = await opened()
+    await log.append('test.line')
+    expect((await log.history()).map(s => [s.segment, s.start, s.breaks])).toEqual([[1, 'zero', [3]], [2, 'zero', []]])
+  })
+
+  it('reads a folder in a segment\'s place as a break', async () => {
+    await mkdir(segmentFile(1), { recursive: true })
+    expect(await new EventLog(dir).history()).toEqual([{ segment: 1, lines: 0, first: null, last: null, start: null, breaks: [1] }])
   })
 })
