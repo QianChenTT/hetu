@@ -22,9 +22,20 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read # read the design from main
-      pull-requests: write # post the review as comments on the PR
+      pull-requests: write # post the start notice and the review as comments on the PR
       id-token: write # the Claude GitHub App's OIDC auth, which posts the comments
     steps:
+      # Says the run started, so a REVIEW!!! comment that triggered nothing shows apart from a review
+      # still running. Posted by the workflow, not the model, so it lands within seconds, costs none of
+      # the turns and still shows when the review step fails. Values go in through env, never into the
+      # script itself
+      - name: Say the review started
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Claude review started, run: $RUN_URL"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
