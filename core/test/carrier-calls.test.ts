@@ -149,7 +149,7 @@ describe('plugin.call', () => {
   it('answers failed at once for a call that threw in flight', async () => {
     const { connect, loader } = harness()
     loader.slots.gate = 'off'
-    loader.plugins.git = { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: null as never }
+    loader.plugins.git = { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: null as never, topics: [] }
     connect(worker('git'))
     const started = Date.now()
     expect(code(await connect(worker('search')).ask('git.log'))).toBe('failed')

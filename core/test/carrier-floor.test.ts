@@ -213,7 +213,7 @@ describe('the floor', () => {
   it('treats a plugin whose state is outside the list as absent', async () => {
     const seen: Call[] = []
     const { carrier, loader } = harness({ core: async call => { seen.push(call); return null } })
-    loader.plugins.search = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {} }
+    loader.plugins.search = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {}, topics: [] }
     expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(seen).toEqual([])
   })

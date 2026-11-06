@@ -57,11 +57,11 @@ export class FakeLoader implements Loader {
 
   // A sandboxed plugin answering from its worker
   sandboxed(id: string, actions: PluginInfo['actions'] = {}, state: PluginInfo['state'] = 'ready', incarnation = 1): void {
-    this.plugins[id] = { state, place: 'sandboxed', incarnation, serves: 'worker', actions }
+    this.plugins[id] = { state, place: 'sandboxed', incarnation, serves: 'worker', actions, topics: [] }
   }
 
   installed(id: string, state: PluginInfo['state'] = 'ready'): void {
-    this.plugins[id] = { state, place: 'host', incarnation: 1, serves: 'host', actions: {} }
+    this.plugins[id] = { state, place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [] }
   }
 }
 

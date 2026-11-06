@@ -16,13 +16,15 @@ export type Port = {
 }
 
 // A plugin as a call target or a provider. actions are the manifest's provides.actions and serves is the half that
-// answers them
+// answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads from
+// step 5
 export type PluginInfo = {
   state: PluginState
   place: 'host' | 'sandboxed' | 'page'
   incarnation: number
   serves: string
   actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
+  topics: readonly string[]
 }
 
 type Values = Readonly<Partial<Record<FloorConstant, number>>>
