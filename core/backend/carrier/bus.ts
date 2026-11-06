@@ -7,17 +7,19 @@ type Send = (message: unknown) => void
 // the human, or every path is held back while the gate is down
 export type Paths = 'ask' | 'all' | 'none'
 
-// What the carrier lends the bus. key moves whenever the gate's state, the log's tie to it or the StateView does, which
-// is when the bus asks the gate about its subscriptions again
+// What the carrier lends the bus. key moves whenever the gate's state, whether it can be asked or the StateView does,
+// which is when the bus asks the gate about its subscriptions again. view is the StateView number, null when unreadable
 export type BusParts = {
-  state(): { key: string, paths: Paths }
+  state(): { key: string, paths: Paths, view: number | null }
   canRead(caller: Caller, path: string): boolean
-  // The gate's answer on one subscription it holds: allow, refuse, which ends it, or down, which leaves it as it is
+  // The gate's answer on one subscription it holds: allow, refuse, which ends it, or down when the gate gave no answer,
+  // which holds it back until the gate allows it
   recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down'
   limit(plugin: string | null, name: FloorConstant): number
-  // Counts for the floor lane
+  // Drops are counted for the floor lane. A change asking again made is recorded with the topics: subscriptions ended,
+  // started once the gate allowed them, or held back to wait for the gate
   dropped(caller: Caller, why: 'credits' | 'gate-down'): void
-  ended(caller: Caller, count: number): void
+  changed(caller: Caller, change: 'ended' | 'started' | 'waiting', topics: string[]): void
 }
 
 // A half or a window as the carrier names it. owner is its way in, so a way that ends takes its subscriptions and its
@@ -28,10 +30,13 @@ export type Holder = { owner: object, caller: Caller, plugin: string | null, pus
 type Subscription = {
   // Needs no gate: a plugin's own topic, or a core topic a window hears
   free: boolean
-  // false while it stands, made with the gate down and waiting for the gate to allow it
+  // false while it stands, made with the gate down or held back since, and waiting for the gate to allow it
   live: boolean
   // A path event may have been held back from it since the gate went down, so it reads again once the gate is up
   resync: boolean
+  // The StateView the gate last allowed it on, null when no gate has judged it: free, or taken with the gate off by the
+  // human. A gated subscription hears anything only while this is the current StateView or the gate is off
+  judged: number | null
 }
 
 type Subscriber = {
@@ -62,6 +67,9 @@ export class Bus {
   private readonly byTopic = new Map<string, Set<Subscriber>>()
   private key: string | null = null
   private paths: Paths = 'ask'
+  private view: number | null = null
+  // A subscription the gate gave no answer about waits, so the next sync asks again though the key didn't move
+  private unsettled = false
 
   constructor(parts: BusParts) {
     this.parts = parts
@@ -77,21 +85,26 @@ export class Bus {
 
   // Adds the half's subscriptions or replaces those it holds. free names the topics no gate holds. With the gate down a
   // new subscription the gate holds stands until the gate allows it while one already live stays live. A standing one
-  // the gate now allows starts with events.dropped. Gives back the topics left standing
+  // the call's own judgement now allows starts with events.dropped. Gives back the topics left standing
   subscribe(holder: Holder, topics: readonly string[], free: ReadonlySet<string>, down: boolean): string[] {
     const subscriber = this.subscriberOf(holder)
     const standing: string[] = []
     const started: string[] = []
+    // The carrier synced the bus before judging the call, so with the gate asked the allow was on this StateView
+    const judged = this.paths === 'ask' ? this.view : null
     for (const topic of topics) {
       const held = subscriber.topics.get(topic)
       if (held?.live === true) continue
       if (!free.has(topic) && down) {
-        if (held === undefined) this.add(subscriber, topic, { free: false, live: false, resync: false })
+        if (held === undefined) this.add(subscriber, topic, { free: false, live: false, resync: false, judged: null })
         standing.push(topic)
       } else if (held === undefined) {
-        this.add(subscriber, topic, { free: free.has(topic), live: true, resync: this.paths === 'none' && !pathless(topic) })
+        this.add(subscriber, topic, {
+          free: free.has(topic), live: true, resync: this.paths === 'none' && !pathless(topic), judged: free.has(topic) ? null : judged,
+        })
       } else {
         held.live = true
+        held.judged = judged
         started.push(topic)
       }
     }
@@ -155,45 +168,65 @@ export class Bus {
   }
 
   // Runs before anything the gate decides here, so a change the loader didn't report is still seen. While the gate is
-  // down every live path subscription is marked, since a path may be held back from it. Once the gate is up again, or
-  // the StateView moved, the bus asks about every subscription the gate holds, ends the ones it refuses with
-  // events.ended and sends one events.dropped to each subscriber with a marked or newly started subscription
+  // down every live path subscription is marked, since a path may be held back from it, and a gated subscription the
+  // gate didn't allow on the current StateView waits, path-less events included. Only an exact allow counts, so a
+  // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the StateView
+  // moved, the bus asks about every subscription the gate holds. A refused one ends with events.ended, one the gate gave
+  // no answer about waits and is asked again at every sync until it answers, and each subscriber with a marked or newly
+  // started subscription gets one events.dropped. With the gate off by the human nothing is asked and everything starts
   sync(): void {
-    const { key, paths } = this.parts.state()
-    if (key === this.key) return
-    const was = this.paths
+    const { key, paths, view } = this.parts.state()
+    if (key === this.key && !this.unsettled) return
+    const moved = key !== this.key
     this.key = key
     this.paths = paths
-    if (paths === 'none') {
-      if (was === 'none') return
-      for (const subscriber of this.subscribers.values()) {
-        for (const [topic, held] of subscriber.topics) if (held.live && !pathless(topic)) held.resync = true
-      }
-      // Nothing can be asked and nothing ends while the gate is down
-      return
-    }
+    this.view = view
+    this.unsettled = false
     for (const subscriber of [...this.subscribers.values()]) {
       const ended: string[] = []
       const again: string[] = []
+      const started: string[] = []
+      const waiting: string[] = []
       for (const [topic, held] of subscriber.topics) {
-        const answer = held.free ? 'allow' : this.parts.recheck(subscriber.caller, topic)
+        if (paths === 'none') {
+          if (held.live && !pathless(topic)) held.resync = true
+          if (held.live && !held.free && held.judged !== view) {
+            held.live = false
+            waiting.push(topic)
+          }
+          continue
+        }
+        // A retry with the key unmoved asks only about what waits, since every live one was allowed on this StateView
+        if (!moved && held.live) continue
+        const answer = held.free || paths === 'all' ? 'allow' : this.parts.recheck(subscriber.caller, topic)
         if (answer === 'refuse') {
           ended.push(topic)
-        } else if (!held.live) {
-          if (answer === 'allow') {
+        } else if (answer === 'down') {
+          this.unsettled = true
+          if (held.live) {
+            held.live = false
+            waiting.push(topic)
+          }
+        } else {
+          if (!held.free && paths === 'ask') held.judged = view
+          if (!held.live) {
             held.live = true
+            held.resync = false
+            again.push(topic)
+            if (!held.free) started.push(topic)
+          } else if (held.resync) {
+            held.resync = false
             again.push(topic)
           }
-        } else if (held.resync) {
-          held.resync = false
-          again.push(topic)
         }
       }
       for (const topic of ended) this.remove(subscriber, topic)
       if (ended.length > 0) {
         this.signal(subscriber, 'events.ended', ended)
-        this.parts.ended(subscriber.caller, ended.length)
+        this.parts.changed(subscriber.caller, 'ended', ended)
       }
+      if (waiting.length > 0) this.parts.changed(subscriber.caller, 'waiting', waiting)
+      if (started.length > 0) this.parts.changed(subscriber.caller, 'started', started)
       if (again.length > 0) this.resync(subscriber, again)
     }
   }

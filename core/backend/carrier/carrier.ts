@@ -123,6 +123,19 @@ function whoOf(caller: Caller): Record<string, Field> {
   return { plugin: caller.plugin }
 }
 
+// A record's value holds at most MAX_TOPICS_TEXT characters, so the topics that fit, space separated, and how many
+// there were in all
+const MAX_TOPICS_TEXT = 4096
+function topicsOf(topics: readonly string[]): Record<string, Field> {
+  let listed = ''
+  for (const topic of topics) {
+    const next = listed === '' ? topic : `${listed} ${topic}`
+    if (next.length > MAX_TOPICS_TEXT) break
+    listed = next
+  }
+  return { topics: listed, count: topics.length }
+}
+
 // The caller's own id and action, read only to answer a call the shape step refused. An action outside the grammar is
 // never echoed or recorded
 function readId(message: unknown): number | null {
@@ -198,8 +211,8 @@ export class Carrier {
       limit: (plugin, name) => this.limits.of(plugin, name),
       // Coalesced, since a publisher's pace or a subscriber's own can make them
       dropped: (caller, why) => this.coalesced.hit('events.dropped', { ...whoOf(caller), why }),
-      // One record each, since a change of the gate or the grants ends them
-      ended: (caller, count) => this.lane.write('events.ended', { ...whoOf(caller), count }),
+      // One record each, since a change of the gate or the grants makes them
+      changed: (caller, change, topics) => this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }),
     })
   }
 
@@ -221,15 +234,17 @@ export class Carrier {
 
   // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
   // StateView moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new StateView applied a security change
+  // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
+  // starts, not a change
   changed(): void {
     if (this.closed) return
     this.bus.sync()
     this.bus.emit('core.status')
     const view = this.view()
     if (view === this.announced) return
+    const first = this.announced === undefined
     this.announced = view
-    this.bus.emit('core.security')
+    if (!first) this.bus.emit('core.security')
   }
 
   // Binds a plugin half to one end of a channel. The carrier starts the port, since a paused MessagePortMain emits
@@ -272,7 +287,8 @@ export class Carrier {
   }
 
   // The way in for windows. check names the window that sent a message and runs before anything else, before any
-  // await. A sender it doesn't name is dropped unread. Step 12 gives the real check
+  // await. A sender it doesn't name is dropped unread. Step 12 gives the real check. answer must keep working after the
+  // reply, since the window's events go back on the answer of its newest subscribe
   window<S>(check: (sender: S) => Caller | null): (sender: S, message: unknown, answer: Send) => void {
     return (sender, message, answer) => {
       let named: unknown
@@ -738,8 +754,10 @@ export class Carrier {
   }
 
   // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A
-  // subscribe made while the gate starts, failed, is absent or tampered stands rather than being refused, so what a
-  // plugin subscribed to at start isn't lost. With the gate off it passes as any call with power does
+  // subscribe made while the gate can't be asked stands rather than being refused, so what a plugin subscribed to at
+  // start isn't lost. With the gate off it passes as any call with power does. A subscribe whose gated topics all
+  // stand used no power yet, so its audit record names only the topics that went live and coalesces like a free call,
+  // and the standing ones go in an events.waiting record until asking again starts or ends them
   private events(pending: Pending, args: unknown, kind: Kind): void {
     const { way } = pending
     if (pending.action === 'events.publish') {
@@ -755,8 +773,7 @@ export class Carrier {
     this.bus.sync()
     if (!this.bus.fits(way, topics, this.limits.of(way.plugin, 'topicsPerHalf'))) return this.finish(pending, no('invalid', 'too-large'))
     const gated = kind.kind === 'power' ? kind.scope.topics ?? [] : []
-    const state = this.slot('gate')
-    const down = gated.length > 0 && (state === 'starting' || state === 'failed' || state === 'absent' || state === 'tampered')
+    const down = gated.length > 0 && this.slot('gate') !== 'off' && !this.askable()
     if (kind.kind === 'power' && !down) {
       for (const stage of ['raw', 'canonical'] as const) {
         const refused = this.judge(pending, stage, kind.capability, kind.scope)
@@ -772,6 +789,12 @@ export class Carrier {
       alive: () => way.open && this.ways.get(way.key) === way,
     }
     const standing = this.bus.subscribe(holder, topics, free, down)
+    if (standing.length > 0) {
+      const live = topics.filter(topic => !standing.includes(topic))
+      pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
+      if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
+      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) })
+    }
     this.finish(pending, { ok: true, result: { standing } })
   }
 
@@ -782,12 +805,19 @@ export class Carrier {
   }
 
   // What the bus delivers paths under. The key holds everything a subscription the gate holds depends on, so the bus
-  // asks again whenever it moves. A gate on with no holder to ask is as good as down
-  private busState(): { key: string, paths: Paths } {
-    const open = this.gateOpen()
-    const asked = open === 'decide' && this.holder(() => this.options.gate()) !== null
-    const paths: Paths = open === 'pass' ? 'all' : asked ? 'ask' : 'none'
-    return { key: `${this.slot('gate')} ${open} ${paths} ${this.view()}`, paths }
+  // asks again whenever it moves. canRead is true with the gate off by the human whatever the log, since deliveries
+  // are never logged, as filterReadable passes every path then. A gate that can't be asked is down
+  private busState(): { key: string, paths: Paths, view: number | null } {
+    const state = this.slot('gate')
+    const view = this.view()
+    const paths: Paths = state === 'off' ? 'all' : this.askable() ? 'ask' : 'none'
+    return { key: `${state} ${paths} ${view}`, paths, view }
+  }
+
+  // The gate can be asked: its slot is on, there is a holder and the StateView can be read. Otherwise every answer
+  // would be policy-down, so the bus holds paths back and a subscribe stands
+  private askable(): boolean {
+    return this.slot('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
   }
 
   // canRead on every delivery of a path: only an exact true counts and a throw is a no that is recorded
@@ -802,14 +832,16 @@ export class Carrier {
     }
   }
 
-  // A subscription asked about again, at both stages as a subscribe is. A gate that can't answer leaves it as it is
+  // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
+  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault
   private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' {
     const asker: Asker = { caller, onBehalf: undefined, action: 'events.subscribe' }
     const scope: Scope = frozen({ topics: [topic] })
     for (const stage of ['raw', 'canonical'] as const) {
       const refused = this.decideFor(asker, stage, 'events.subscribe', scope, false)
       if (refused === null) continue
-      return refused.code === 'starting' || refused.code === 'policy-down' ? 'down' : 'refuse'
+      const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'
+      return none ? 'down' : 'refuse'
     }
     return 'allow'
   }

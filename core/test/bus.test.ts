@@ -184,7 +184,42 @@ describe('a gate outage end to end, step 5\'s proof', () => {
     expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
   })
 
-  it('leaves a standing subscription standing while the gate throws when asked again and starts it at the next StateView', async () => {
+  // S5-RACE-2: one rule for whether the gate can be asked, so the bus and a subscribe never disagree
+  it('stands a subscribe while the gate is on with no holder, as the bus holds paths back then', async () => {
+    let holder = true
+    let held: FakeGate | null = null
+    const { carrier, mcp, edited, gate } = setup({ gate: () => holder ? held : null })
+    held = gate
+    holder = false
+    expect((await mcp.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: ['vault.changed'] })
+    holder = true
+    carrier.changed()
+    await edited('notes/a.md')
+    await until(() => paths(mcp.events()).length === 1)
+    expect(mcp.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
+  })
+
+  it('holds paths back and stands a subscribe while the StateView can\'t be read, since every call is refused then', async () => {
+    const { carrier, loader, search, mcp, edited } = setup()
+    await search.ask('events.subscribe', { topics: ['vault.changed'] })
+    loader.view = () => { throw new Error('unreadable') }
+    expect((await mcp.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: ['vault.changed'] })
+    await edited('notes/secret-while-unreadable.md')
+    await settle()
+    expect(search.events()).toEqual([])
+    expect(mcp.events()).toEqual([])
+    loader.view = () => loader.current
+    carrier.changed()
+    await edited('notes/b.md')
+    await until(() => paths(search.events()).length === 1 && paths(mcp.events()).length === 1)
+    for (const subscriber of [search, mcp]) {
+      expect(subscriber.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
+    }
+  })
+
+  // S5A-1 and S5-RACE-1: a gate that throws when asked again gave no answer, so nothing it holds hears anything until it
+  // answers, and the bus asks again at every sync rather than waiting for the key to move
+  it('holds back every subscription the gate throws on when asked again and starts them at the next sync it answers', async () => {
     const { carrier, loader, gate, search, mcp, edited, log } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
     loader.slots.gate = 'failed'
@@ -193,20 +228,50 @@ describe('a gate outage end to end, step 5\'s proof', () => {
     gate.decision = () => { throw new Error('broken') }
     loader.slots.gate = 'on'
     carrier.changed()
-    await until(() => signals(search.events(), 'events.dropped').length === 1)
+    await edited('notes/a.md')
     await settle()
-    // Neither started nor ended, since the gate gave no answer
+    // Neither started nor ended, and the live one waits too, since the gate gave no answer
+    expect(search.events()).toEqual([])
     expect(mcp.events()).toEqual([])
     gate.decision = null
-    loader.current = 2
+    // No state and no StateView moved
     carrier.changed()
-    await until(() => signals(mcp.events(), 'events.dropped').length === 1)
-    await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(signals(search.events(), 'events.dropped')).toHaveLength(1)
+    await edited('notes/b.md')
+    await until(() => paths(mcp.events()).length === 1 && paths(search.events()).length === 1)
+    for (const subscriber of [search, mcp]) {
+      expect(subscriber.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
+    }
     carrier.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toContainEqual({ plugin: 'gate', step: 'precheck', count: 1 })
+  })
+
+  it('ends a live subscription a new StateView took away though the gate threw when first asked again', async () => {
+    const { carrier, loader, gate, mcp, git, edited, indexed } = setup()
+    await mcp.ask('events.subscribe', { topics: ['vault.changed'] })
+    await git.ask('events.subscribe', { topics: ['search.indexed'] })
+    gate.grants.mcp = [{ type: 'vault.read', paths: ['**'] }]
+    gate.grants.git = []
+    let throws = true
+    gate.decision = access => {
+      if (throws) throw new Error('broken')
+      return gate.granted(access)
+    }
+    loader.current = 2
+    carrier.changed()
+    await edited('notes/a.md')
+    await indexed()
+    await settle()
+    // Path-less events wait too
+    expect(mcp.events()).toEqual([])
+    expect(git.events()).toEqual([])
+    throws = false
+    await edited('notes/b.md')
+    await indexed()
+    await until(() => signals(mcp.events(), 'events.ended').length === 1 && signals(git.events(), 'events.ended').length === 1)
+    await settle()
+    expect(paths(mcp.events())).toEqual([])
+    expect(heard(git.events(), 'search.indexed')).toEqual([])
   })
 })
 
@@ -262,13 +327,21 @@ describe('asking again', () => {
     expect(asks).toEqual([])
   })
 
-  it('ends a subscription the gate answers on an older StateView', async () => {
-    const { carrier, loader, gate, search } = setup()
+  // S5S-3: the gate hasn't caught up with the StateView yet, which refuses nothing, so the join's order can't end them
+  it('holds back a subscription the gate answers on an older StateView and starts it once the gate answers on this one', async () => {
+    const { carrier, loader, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
     gate.decision = () => ({ allow: true, view: 1 })
     loader.current = 2
     carrier.changed()
-    await until(() => signals(search.events(), 'events.ended').length === 1)
+    await edited('notes/a.md')
+    await settle()
+    expect(search.events()).toEqual([])
+    gate.decision = null
+    await edited('notes/b.md')
+    await until(() => paths(search.events()).length === 1)
+    expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
+    expect(signals(search.events(), 'events.ended')).toEqual([])
   })
 
   it('narrows when the gate is switched back on: what was taken with the gate off and isn\'t granted ends', async () => {
@@ -285,6 +358,58 @@ describe('asking again', () => {
     await until(() => signals(ghost.events(), 'events.ended').length === 1)
     await settle()
     expect(paths(ghost.events())).toEqual(['secret/a.md'])
+  })
+
+  // S5A-2 A: no gate ever allowed what was taken with the gate off, so a gate switched back on that fails at start
+  // holds it back, path-less events included
+  it('holds back what was taken with the gate off when the gate switched back on fails, until the gate judges it', async () => {
+    const { carrier, loader, connect, indexed } = setup()
+    loader.slots.gate = 'off'
+    carrier.changed()
+    const ghost = connect(worker('ghost'))
+    await ghost.ask('events.subscribe', { topics: ['search.indexed'] })
+    await indexed()
+    await until(() => heard(ghost.events(), 'search.indexed').length === 1)
+    loader.slots.gate = 'failed'
+    carrier.changed()
+    await indexed()
+    await settle()
+    expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
+    // A repeat now stands, so the plugin and the topic get one answer
+    expect((await ghost.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
+    loader.slots.gate = 'on'
+    carrier.changed()
+    await until(() => signals(ghost.events(), 'events.ended').length === 1)
+    await indexed()
+    await settle()
+    expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
+  })
+
+  // S5A-2 B and S5-RACE-3: a narrowing never asks the gate, so a StateView that moves while the gate is down holds back
+  // everything the gate allowed on the old one. What it didn't touch starts again once the gate answers
+  it('holds back what the gate allowed on an older StateView when the StateView moves while the gate is down', async () => {
+    const { carrier, loader, gate, git, search, indexed, edited } = setup()
+    await git.ask('events.subscribe', { topics: ['search.indexed'] })
+    await search.ask('events.subscribe', { topics: ['vault.changed'] })
+    loader.slots.gate = 'failed'
+    carrier.changed()
+    await indexed()
+    await until(() => heard(git.events(), 'search.indexed').length === 1)
+    gate.grants.git = []
+    loader.current = 2
+    carrier.changed()
+    await indexed()
+    await settle()
+    expect(heard(git.events(), 'search.indexed')).toHaveLength(1)
+    expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
+    loader.slots.gate = 'on'
+    carrier.changed()
+    await edited('notes/a.md')
+    await indexed()
+    await until(() => signals(git.events(), 'events.ended').length === 1 && paths(search.events()).length === 1)
+    await settle()
+    expect(heard(git.events(), 'search.indexed')).toHaveLength(1)
+    expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
   })
 })
 
@@ -313,23 +438,21 @@ describe('the gate off by the human', () => {
     expect((await mcp.ask('events.unsubscribe', { topics: ['vault.changed'] })).ok).toBe(true)
   })
 
-  it('holds paths back while the log is down and resyncs once it is back', async () => {
-    const { carrier, loader, search, edited, indexed, git } = setup()
+  // S5S-2: canRead is true with the gate off by the human, and deliveries are never logged, so the log's tie to calls
+  // with power doesn't reach them, as filterReadable passes every path then too
+  it('delivers every path with the log down, since only calls with power need the log', async () => {
+    const { carrier, loader, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
-    await git.ask('events.subscribe', { topics: ['search.indexed'] })
     loader.slots.gate = 'off'
-    loader.slots.log = 'failed'
-    carrier.changed()
-    await edited('notes/a.md')
-    await indexed()
-    await until(() => heard(git.events(), 'search.indexed').length === 1)
-    await settle()
-    expect(paths(search.events())).toEqual([])
-    loader.slots.log = 'on'
-    carrier.changed()
-    await edited('notes/b.md')
-    await until(() => paths(search.events()).length === 1)
-    expect(signals(search.events(), 'events.dropped')).toEqual([['vault.changed']])
+    for (const log of ['failed', 'absent', 'starting', 'on'] as const) {
+      loader.slots.log = log
+      carrier.changed()
+      await edited(`secret/${log}.md`)
+    }
+    await until(() => paths(search.events()).length === 4)
+    expect(paths(search.events())).toEqual(['secret/failed.md', 'secret/absent.md', 'secret/starting.md', 'secret/on.md'])
+    expect(signals(search.events(), 'events.dropped')).toEqual([])
+    expect(gate.reads).toEqual([])
   })
 
   it('passes everything with the log down once the human turned recording off too', async () => {
@@ -460,7 +583,7 @@ describe('core.*', () => {
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['core.status', 'vault.changed'] }))).toBe('not-granted')
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['search.indexed'] }))).toBe('not-granted')
     carrier.changed()
-    expect(trustedWay.events().map(message => message.topic)).toEqual(['core.status', 'core.security'])
+    expect(trustedWay.events().map(message => message.topic)).toEqual(['core.status'])
     expect(gate.asked).toEqual([])
     expect((await trustedWay.ask('trusted', 'events.unsubscribe', { topics: ['core.security'] })).ok).toBe(true)
     // It holds credits like any subscriber and its ack frees them
@@ -472,6 +595,7 @@ describe('core.*', () => {
     expect(trustedWay.events().map(message => message.seq ?? message.topic)).toEqual([1, 2, 'events.dropped', 3])
   })
 
+  // S5S-4: the first StateView the carrier reads is where it starts, so the first changed() sends no core.security
   it('sends core.status to the windows on every change and core.security once per new StateView, never a path', async () => {
     const { carrier, loader, way } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'core.security'] })
@@ -479,8 +603,9 @@ describe('core.*', () => {
     carrier.changed()
     loader.current = 2
     carrier.changed()
+    carrier.changed()
     const events = way.events()
-    expect(events.map(message => message.topic)).toEqual(['core.status', 'core.security', 'core.status', 'core.status', 'core.security'])
+    expect(events.map(message => message.topic)).toEqual(['core.status', 'core.status', 'core.status', 'core.security', 'core.status'])
     expect(events.every(message => !('path' in message) && eventShape.safeParse(message).success)).toBe(true)
   })
 
@@ -1225,18 +1350,63 @@ describe('failing subscribers', () => {
 })
 
 describe('records', () => {
-  it('keeps a subscribe one audit record with its topics as scope and the gate\'s state, a standing one included', async () => {
+  it('keeps a subscribe one audit record with its topics as scope and the gate\'s state', async () => {
     const clock = 1_000_000
-    const { carrier, loader, search, mcp } = setup({ now: () => clock })
+    const { carrier, search } = setup({ now: () => clock })
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
-    loader.slots.gate = 'failed'
-    await mcp.ask('events.subscribe', { topics: ['vault.changed'] })
     const records = carrier.audit.next(10)
     expect(records.map(record => [record.action, record.scope, record.code, record.gate, record.count])).toEqual([
       ['events.subscribe', { topics: ['vault.changed'] }, null, 'on', 1],
       ['events.subscribe', { topics: ['vault.changed'] }, null, 'on', 1],
-      ['events.subscribe', { topics: ['vault.changed'] }, null, 'failed', 1],
+    ])
+  })
+
+  // S5S-1: a subscribe that only stands used no power, so the log never shows one passing a failed gate, and what the
+  // gate later decides about it is recorded with the topics
+  it('records what stands apart from the call, then what asking again started, held back or ended, with the topics', async () => {
+    const clock = 1_000_000
+    const { carrier, loader, gate, log, search, mcp, connect, git } = setup({ now: () => clock })
+    await git.ask('events.subscribe', { topics: ['search.indexed'] })
+    carrier.audit.next(10)
+    loader.slots.gate = 'failed'
+    carrier.changed()
+    const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
+    const ghost = connect(worker('ghost'))
+    await mcp.ask('events.subscribe', { topics: ['vault.changed'] })
+    await ghost.ask('events.subscribe', { topics: ['vault.changed'] })
+    await ghost.ask('events.subscribe', { topics: ['vault.changed'] })
+    // Its own topic goes live with no power and the vault's stands
+    await panel.ask('events.subscribe', { topics: ['search.indexed', 'vault.changed'] })
+    expect(carrier.audit.next(10).map(record => [(record.caller as { id: string }).id, record.scope, record.code, record.gate, record.count])).toEqual([
+      ['mcp', undefined, null, 'failed', 1],
+      ['ghost', undefined, null, 'failed', 2],
+      ['search', { topics: ['search.indexed'] }, null, 'failed', 1],
+    ])
+    // git's grant goes while the gate is down, so its subscription waits
+    gate.grants.git = []
+    loader.current = 2
+    carrier.changed()
+    loader.slots.gate = 'on'
+    carrier.changed()
+    carrier.close()
+    await tick()
+    const fields = (event: string) => log.events(event).map(record => record.fields)
+    expect(fields('events.waiting')).toEqual([
+      { plugin: 'mcp', half: 'worker', topics: 'vault.changed', count: 1 },
+      { plugin: 'ghost', half: 'worker', topics: 'vault.changed', count: 1 },
+      { plugin: 'search', half: 'panel', topics: 'vault.changed', count: 1 },
+      { plugin: 'git', half: 'worker', topics: 'search.indexed', count: 1 },
+      // ghost's two subscribes coalesced
+      { plugin: 'ghost', half: 'worker', topics: 'vault.changed', count: 1 },
+    ])
+    expect(fields('events.started')).toEqual([
+      { plugin: 'mcp', half: 'worker', topics: 'vault.changed', count: 1 },
+      { plugin: 'search', half: 'panel', topics: 'vault.changed', count: 1 },
+    ])
+    expect(fields('events.ended')).toEqual([
+      { plugin: 'git', half: 'worker', topics: 'search.indexed', count: 1 },
+      { plugin: 'ghost', half: 'worker', topics: 'vault.changed', count: 1 },
     ])
   })
 
@@ -1287,7 +1457,8 @@ describe('records', () => {
     carrier.changed()
     await carrier.flushFloor()
     expect(log.events('events.ended').map(record => record.fields)).toEqual([
-      { plugin: 'search', half: 'worker', count: 2 }, { window: 'editor', count: 1 },
+      { plugin: 'search', half: 'worker', topics: 'vault.changed vault.outside', count: 2 },
+      { window: 'editor', topics: 'vault.changed', count: 1 },
     ])
   })
 
