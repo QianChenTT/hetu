@@ -11,3 +11,5 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema
 - `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states and the audit record
 - `plain.ts`: the plain data check for values the core passes on unread and the frozen tables with no prototype that the core looks keys up in
+- `install.ts`: the install list the build writes, each install plugin with its path, version and hash and the bundled first-party copies marked, the version order and the signer first-party copies carry
+- `lifecycle.ts`: the lifecycle messages on a port, `init`, `deps`, `ready`, `stop` and `stopped`, with the fixed reasons a plugin hears as `lastStop`
