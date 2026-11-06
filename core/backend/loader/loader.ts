@@ -628,6 +628,9 @@ export class Loader implements Seam {
       if (read.problem !== null) return refused(read.problem)
       return { kind: 'found' }
     }
+    // The tombstone wins over an entry beside it, which only a remove that stopped between the two writes or an edit of
+    // the state leaves, since a restore clears the tombstone before it writes the entry
+    if (isOne(firstPartyIds, id) && isOne(this.state.switches.removed, id)) return refused('removed')
     if (!entry.enabled) return { kind: 'off' }
     if (read.hash === null) return refused('missing')
     const dev = this.dev(id)

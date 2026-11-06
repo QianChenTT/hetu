@@ -254,6 +254,25 @@ describe('removing and restoring a first-party plugin', () => {
     expect(await exists(folderOf(next.dataDir, 'git'))).toBe(false)
   })
 
+  // The step 6 attack review's removed-first-party-comeback: the reconcile honoured the tombstone only with no entry
+  it('keeps a removed first-party plugin out though an entry with the install\'s bytes sits beside its tombstone', async () => {
+    const made = await harness({
+      install: installWith({ git: gitFiles() }),
+      folder: { git: gitFiles() },
+      entries: { git: async root => firstPartyEntry(await hashOf(root), { enabled: true }) },
+      switches: { removed: ['git'] },
+    })
+    await made.loader.start()
+    expect(stateOf(made.loader, 'git')).toBe('refused')
+    expect(reasonOf(made.loader, 'git')).toBe('removed')
+    expect(made.runtime.order()).not.toContain('git')
+    // Only the human brings it back
+    await made.loader.apply({ kind: 'plugin.restore', plugin: 'git' })
+    await made.loader.settled()
+    expect(stateOf(made.loader, 'git')).toBe('ready')
+    expect((await new StateStore(made.dataDir).load()).state.switches.removed).toEqual([])
+  })
+
   it('restores the install\'s bytes over a copy whose check failed, keeping its switch', async () => {
     const made = await harness({
       install: installWith({ git: gitFiles() }),
