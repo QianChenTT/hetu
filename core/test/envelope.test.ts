@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { caller, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, VERSION } from '../api/envelope.ts'
+import {
+  ack, busSignals, caller, event, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, signal, VERSION,
+} from '../api/envelope.ts'
 import { floorConstants } from '../api/floor.ts'
 import { MAX_DEPTH, plainProblem } from '../api/plain.ts'
 
@@ -307,5 +309,59 @@ describe('a caller', () => {
     ['prototype', { kind: 'content', plugin: 'artifacts', token: 't', prototype: 1 }],
   ])('refuses %s', (_name, value) => {
     expect(caller.safeParse(value).success).toBe(false)
+  })
+})
+
+describe('what the bus pushes and hears', () => {
+  const pushed = (over: object = {}) => ({ v: 1, kind: 'event', seq: 1, topic: 'vault.changed', path: 'notes/a.md', ...over })
+
+  it('has the two signals', () => {
+    expect(busSignals).toEqual(['events.dropped', 'events.ended'])
+    expect(Object.isFrozen(busSignals)).toBe(true)
+  })
+
+  it.each([
+    ['an event with a path', pushed()],
+    ['an event with no path', { v: 1, kind: 'event', seq: 3, topic: 'search.indexed' }],
+    ['a core topic', { v: 1, kind: 'event', seq: 1, topic: 'core.status' }],
+  ])('takes %s', (_name, message) => {
+    expect(event.safeParse(message).success).toBe(true)
+  })
+
+  it.each([
+    ['no seq', { v: 1, kind: 'event', topic: 'vault.changed' }],
+    ['seq 0', pushed({ seq: 0 })],
+    ['a seq that is not whole', pushed({ seq: 1.5 })],
+    ['content beside the path', pushed({ text: 'the whole note' })],
+    ['a signal\'s topic', pushed({ topic: 'events.dropped' })],
+    ['a topic outside the grammar', pushed({ topic: 'vault' })],
+    ['an empty path', pushed({ path: '' })],
+    ['a path with a dot segment', pushed({ path: 'notes/../a.md' })],
+    ['a path with a backslash', pushed({ path: 'notes\\a.md' })],
+    ['another version', pushed({ v: 2 })],
+    ['another kind', pushed({ kind: 'call' })],
+  ])('refuses an event with %s', (_name, message) => {
+    expect(event.safeParse(message).success).toBe(false)
+  })
+
+  it('shapes a signal with the subscriber\'s own topics and no seq, which no event schema takes', () => {
+    for (const topic of busSignals) {
+      const message = { v: 1, kind: 'event', topic, topics: ['vault.changed', 'vault.outside'] }
+      expect(signal.safeParse(message).success).toBe(true)
+      expect(event.safeParse(message).success).toBe(false)
+    }
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.dropped', topics: [] }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'], seq: 1 }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.other', topics: ['vault.changed'] }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.ended', topics: ['vault.changed'], path: 'a.md' }).success).toBe(false)
+  })
+
+  it('shapes an ack by a seq and nothing else', () => {
+    expect(ack.safeParse({ v: 1, kind: 'ack', seq: 0 }).success).toBe(true)
+    expect(ack.safeParse({ v: 1, kind: 'ack', seq: 7 }).success).toBe(true)
+    for (const seq of [-1, 1.5, '1', 2 ** 53, null]) expect(ack.safeParse({ v: 1, kind: 'ack', seq }).success).toBe(false)
+    expect(ack.safeParse({ v: 1, kind: 'ack' }).success).toBe(false)
+    expect(ack.safeParse({ v: 1, kind: 'ack', seq: 1, topic: 'vault.changed' }).success).toBe(false)
+    expect(ack.safeParse({ v: 2, kind: 'ack', seq: 1 }).success).toBe(false)
   })
 })

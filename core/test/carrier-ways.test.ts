@@ -123,9 +123,11 @@ describe('ports bound by closure', () => {
     search.post({ v: '1', kind: 'call', id: 102, action: 'vault.read', args: { path: 'a.md' } })
     search.post({ v: 1, kind: 'hello', id: 103 })
     search.post({ v: 2, kind: 'ready' })
-    // Kinds only the carrier sends
+    // Kinds only the carrier sends, so a plugin can't hand another an event
     search.post({ v: 1, kind: 'init' })
     search.post({ v: 1, kind: 'deps' })
+    search.post({ v: 1, kind: 'event', seq: 1, topic: 'core.status' })
+    search.post({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'] })
     const sentinel = search.call('core.self')
     await search.reply(sentinel)
     await tick()
@@ -333,7 +335,7 @@ describe('the carrier\'s imports', () => {
   it('imports nothing from boot, so the state store and the log arrive only through its seams', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
-    expect(files.sort()).toEqual(['carrier.ts', 'limits.ts', 'records.ts', 'seams.ts'])
+    expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'limits.ts', 'records.ts', 'seams.ts'])
     for (const name of files) {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])

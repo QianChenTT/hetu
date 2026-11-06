@@ -37,6 +37,11 @@ export class FloorLane {
     return this.overflowed
   }
 
+  // Whether a record written now is taken in
+  get recording(): boolean {
+    return !this.closed && !this.muted()
+  }
+
   write(event: string, fields: Record<string, Field> = {}): void {
     if (this.closed || this.muted()) return
     if (this.backlog.length >= this.bound()) {
@@ -105,7 +110,7 @@ export class FloorLane {
 }
 
 // Floor records a plugin can trigger, one per event and fields per second with a count: the first at once and the rest
-// when its second is over
+// when its second is over. Nothing counts while the human turned recording off, so no count from the gap lands after it
 export class Coalesced {
   private readonly lane: FloorLane
   private readonly open = new Map<string, { event: string, fields: Record<string, Field>, count: number, timer: ReturnType<typeof setTimeout> }>()
@@ -115,6 +120,7 @@ export class Coalesced {
   }
 
   hit(event: string, fields: Record<string, Field>): void {
+    if (!this.lane.recording) return
     const key = JSON.stringify([event, fields])
     const found = this.open.get(key)
     if (found !== undefined) {

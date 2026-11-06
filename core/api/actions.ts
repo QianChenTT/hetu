@@ -3,12 +3,13 @@ import type { CapabilityType } from './capabilities.ts'
 import { change } from './changes.ts'
 import { token } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
-import { localName, pluginId } from './ids.ts'
+import { coreNamespaces, localName, pluginId, qualifiedName } from './ids.ts'
+import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 
-// The core actions and the provider actions with their argument schemas. A plugin's own actions come from its manifest
-// and their args stay opaque. events.* comes with the bus at step 5 and ui.* with the runtime and the mount, so neither
-// has an action here yet. Each provider's own step settles its list: history, exec and net have none yet
+// The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
+// actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
+// action here yet. Each provider's own step settles its list: history, exec and net have none yet
 
 // A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
 // A spelling no canonical path holds is refused here, so it answers invalid before precheck could answer not-granted
@@ -27,6 +28,22 @@ const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
 export const MAX_FILTER_PATHS = 1024
 // Paths one lease takes
 export const MAX_LEASE_PATHS = 64
+// Topics one subscribe or unsubscribe names. A half holds at most topicsPerHalf in all
+export const MAX_CALL_TOPICS = 64
+
+// The topics the core sends, to windows only and never with a path: core.status says to read core.status again and
+// core.security that a security change was applied
+export const coreTopics = frozen(['core.status', 'core.security'] as const)
+export type CoreTopic = typeof coreTopics[number]
+
+// A topic a subscriber names: one the core sends or a plugin's <id>.<name>. The core's other namespaces carry no
+// topic. events.dropped and events.ended reach every subscriber unasked
+const topic = qualifiedName.refine(name => {
+  const namespace = name.slice(0, name.indexOf('.'))
+  if (namespace === 'core') return (coreTopics as readonly string[]).includes(name)
+  return !(coreNamespaces as readonly string[]).includes(namespace)
+}, 'not a topic')
+const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
 // Who may call a core action: any caller, a hetu window, the trusted window or the watchdog slot's holder. The floor
 // decides these and never the gate, so a failed gate can't block the way out
@@ -71,6 +88,17 @@ export const coreActions = lookup<CoreAction>({
     from: 'watchdog',
     args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
   },
+})
+
+// The bus's actions, which the carrier serves itself. The floor decides who may name which topic and the gate judges a
+// subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
+// caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call
+export type EventAction = { readonly args: z.ZodType }
+
+export const eventActions = lookup<EventAction>({
+  'events.subscribe': { args: topics },
+  'events.unsubscribe': { args: topics },
+  'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }) },
 })
 
 const key = z.strictObject({ key: localName })
