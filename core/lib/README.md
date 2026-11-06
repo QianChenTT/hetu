@@ -3,3 +3,4 @@ Shared mechanism the core and the host halves import. Holds no state or policy. 
 - `event-log.ts`: the hash-chained event log, one line per event
 - `disk.ts`: the file helpers the folders share. A short retry when Windows refuses a rename, delete or read because another program has the file open. Syncing a folder after a rename on macOS and Linux
 - `hashed-file.ts`: the strict JSON parser and the hash line that ends each state file
+- `canonical.ts`: resolves a vault path the way the OS does through links, junctions and 8.3 short names. Refuses one that leaves the vault or reaches `.git` or hetu's own folders

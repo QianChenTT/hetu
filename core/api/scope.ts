@@ -46,7 +46,8 @@ export function scopeProblem(scope: string): string | null {
   return null
 }
 
-// Why a path can't be matched, or null. Paths reach the matcher canonical, so these never come from the disk
+// Why a path can't be matched, or null. A canonical path holds one of these only when a link in the vault leads to a
+// name on the disk that has it, and then the path matches nothing
 export function pathProblem(path: string): string | null {
   if (typeof path !== 'string' || path === '') return 'empty'
   if (path.length > MAX_SCOPE_LENGTH) return `longer than ${MAX_SCOPE_LENGTH} characters`
@@ -64,8 +65,20 @@ function sameUnit(a: number, b: number, foldCase: boolean): boolean {
   return lower >= 0x61 && lower <= 0x7a
 }
 
-function isGit(segment: string): boolean {
-  return segment.length === 4 && [...'.git'].every((char, i) => sameUnit(segment.charCodeAt(i), char.charCodeAt(0), true))
+// HFS+ skips these code points when comparing names, so .g\u200cit opens .git there or becomes .git in a folder that
+// has none. git's protectHFS skips the same set
+const ignorable = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g
+
+// The text with the code points HFS+ skips taken out
+export function withoutIgnorable(text: string): string {
+  return text.replace(ignorable, '')
+}
+
+// Whether a segment names .git on some volume: any ASCII case, with what HFS+ skips taken out. The matcher and the
+// canonicaliser both ask this one check
+export function isGitName(segment: string): boolean {
+  const name = withoutIgnorable(segment)
+  return name.length === 4 && [...'.git'].every((char, i) => sameUnit(name.charCodeAt(i), char.charCodeAt(0), true))
 }
 
 // One path segment against one scope segment. A * matches any run of characters but never a leading dot. Greedy with
@@ -124,7 +137,7 @@ function segmentsMatch(patterns: string[], segments: string[], foldCase: boolean
 export function scopeMatches(scope: string, path: string, options: { foldCase: boolean }): boolean {
   if (scopeProblem(scope) !== null || pathProblem(path) !== null) return false
   const segments = path.split('/')
-  if (segments.some(isGit)) return false
+  if (segments.some(isGitName)) return false
   return segmentsMatch(scope.split('/'), segments, options.foldCase)
 }
 

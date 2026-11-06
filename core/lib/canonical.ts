@@ -1,5 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
+import type { RefusalCode } from '../api/envelope.ts'
+import { isGitName, MAX_SCOPE_LENGTH, withoutIgnorable } from '../api/scope.ts'
 
 // A string that breaks a rule answers invalid and a refusal from the disk answers not-granted, so a caller can't tell
 // a link out of the vault from a missing grant. rule names the check for ctx.debug and the tests, never for a reply.
@@ -9,8 +11,8 @@ export type StringRule =
   | 'empty-segment' | 'dot-segment' | 'trailing' | 'device'
 export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'data' | 'install'
 export type NotCanonical =
-  | { ok: false, code: 'invalid', rule: StringRule }
-  | { ok: false, code: 'not-granted', rule: DiskRule }
+  | { ok: false, code: Extract<RefusalCode, 'invalid'>, rule: StringRule }
+  | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule }
 
 // absolute is for the disk. relative joins the names with / on every platform and is what the gate, the guards and
 // the records see. key is only for the vault's per-path lock and the lease table's conflict check
@@ -19,37 +21,30 @@ export type Canonical = { ok: true, absolute: string, relative: string, key: str
 // hetu's own folders, which a vault picked at the home folder holds
 export type CanonicalOptions = { dataDir?: string, installDir?: string }
 
-const MAX_LENGTH = 512
-
 // ASCII letters only. JS case folding joins names NTFS keeps apart, such as the Kelvin sign and k
 const fold = (text: string) => text.replace(/[A-Z]/g, letter => letter.toLowerCase())
 
 // Win32 opens a device for these names in any folder, with any extension and with spaces before the dot. The
 // superscript digits count as digits there. CONIN$ and CONOUT$ come from CPython's isreserved, COM0 and LPT0 from the
-// plugin id rule in state.ts. Refused on every platform, since a vault moves between machines
+// plugin id rule in core/api/ids.ts. Refused on every platform, since a vault moves between machines
 const devices = new Set([
   'con', 'prn', 'aux', 'nul', 'conin$', 'conout$',
   ...[...'0123456789\u00b9\u00b2\u00b3'].flatMap(digit => [`com${digit}`, `lpt${digit}`]),
 ])
 
-// HFS+ skips these code points when comparing names, so .g\u200cit opens .git there or becomes .git in a folder that
-// has none. git's protectHFS skips the same set
-const ignorable = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g
-const isGit = (name: string) => fold(name.replace(ignorable, '')) === '.git'
-
 // For locks and leases only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one new
 // note meet only here. Drops what HFS+ skips, takes NFC since APFS reads both forms as one name and folds case
-// further than lowercase, which keeps the sharp s, the long s and the micro sign apart from the ss, s and mu APFS
-// reads them as. Folding more than a volume does only makes two notes share a lock or block each other's lease. The
-// same fold in matching would widen a grant
+// further than lowercase does, since lowercase keeps the sharp s, the long s and the micro sign apart from the ss, s
+// and mu APFS reads them as. Folding more than a volume does only makes two notes share a lock or block each other's
+// lease. The same fold in matching would widen a grant
 const keyOf = (relative: string) =>
-  relative.replace(ignorable, '').normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
+  withoutIgnorable(relative).normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')
 
 // Before the disk is touched. Each rule closes a spelling the OS or the path joiner reads as another name
 function stringRule(input: string): StringRule | null {
   if (typeof input !== 'string') return 'type'
   if (input === '') return 'empty'
-  if (input.length > MAX_LENGTH) return 'too-long'
+  if (input.length > MAX_SCOPE_LENGTH) return 'too-long'
   // A lone surrogate becomes U+FFFD on the way to the disk, so two spellings would name one file
   if (!input.isWellFormed()) return 'ill-formed'
   if (input.startsWith('/') || /^[a-z]:/i.test(input)) return 'absolute'
@@ -123,7 +118,7 @@ export async function canonical(root: string, input: string, options: CanonicalO
   ]
   // A link to the vault itself, where no note lives
   if (names.length === 0) return refuse('root')
-  if (names.some(isGit)) return refuse('git')
+  if (names.some(isGitName)) return refuse('git')
 
   const absolute = path.join(found.real, ...found.rest)
   for (const [rule, folder] of [['data', options.dataDir], ['install', options.installDir]] as const) {

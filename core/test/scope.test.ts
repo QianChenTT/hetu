@@ -227,6 +227,10 @@ describe('matching', () => {
     ['notes/.git/*', 'notes/.git/config'],
     ['.GIT/**', '.GIT/config'],
     ['.Git/**', '.Git/hooks/pre-commit'],
+    // A code point HFS+ skips, which opens .git there
+    ['notes/.g*/**', 'notes/.g\u200cit/config'],
+    ['.*/**', '.\ufeffgit/config'],
+    ['.G*/**', '.G\u202eIT/config'],
   ])('%j never reaches %j', (grant, path) => {
     expect(matches(grant, path)).toBe(false)
     expect(matches(grant, path, exact)).toBe(false)
