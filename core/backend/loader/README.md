@@ -1,1 +1,9 @@
-The plugin loader: loads every plugin and sets up its environment, including the hidden renderer that runs plugins as Chromium workers
+The loader, one of the four parts of the core: what may run, where, when and as whom. It reads the install list and every manifest with the strict parser, reads each plugin's files once and keeps the bytes that run, applies the signer pairing and the reserved ids and places each plugin by where its code came from. It resolves the requires graph, mints every port and handle and registers it with the carrier in the same step and owns every plugin's lifecycle state. It runs no plugin code, decides no grant and restarts nothing on its own. Plain Node, no Electron
+
+- `loader.ts`: the `Loader` the carrier's seam names, the install check, the first-party reconcile, the plugin folder scan, the start order, starts, stops, crashes and restarts, the start markers, app updates to install plugins, staged updates against the live graph, the numbered `StateView` and the one entry that applies a confirmed change through the `StateStore`. It also serves `watchdog.stop` and `watchdog.restart` on the carrier's core seam
+- `graph.ts`: the requires graph as a pure function: cycles refused, a dependent waiting on its first direct requirement that can't serve it and the order every start and stop follows
+- `verify.ts`: one read of a plugin folder, its hash and its manifest parsed from the bytes read, with what a read alone can refuse
+- `folders.ts`: the loader's folders in the data folder: staging, the swap that puts a copy or an update in place before its entry, the start markers and the marker of each install plugin's version from the last run
+- `seams.ts`: what it needs from the carrier beyond `register`, `handle` and `end` and from the runtime, each a small interface the tests fake. The join builds the carrier's side
+
+It imports `firstPartyPath` and the state's types from `boot` and nothing from the carrier but its seam types
