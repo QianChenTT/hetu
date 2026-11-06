@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir, uptime } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, firstPartyPath, resolveDataDir, type BootOptions, type Booted } from '../backend/boot/boot.ts'
-import { contentHash, stateDir, StateStore } from '../backend/boot/state.ts'
+import { defaultSwitches, stateDir, StateStore } from '../backend/boot/state.ts'
 import { EventLog } from '../lib/event-log.ts'
+import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 let base: string
@@ -21,6 +23,9 @@ const installed = (extra: Record<string, string> = {}): BootOptions =>
   ({ packaged: true, installDir: path.join(base, 'install'), env: envFor(base, extra), platform: process.platform })
 const dataDir = () => resolveDataDir(installed()).dataDir
 const stateFile = (...parts: string[]) => path.join(dataDir(), 'state', ...parts)
+const noSwitches = defaultSwitches()
+// Absolute by the rules of the platform the tests run on
+const notes = { folder: process.platform === 'win32' ? 'C:\\Users\\han\\notes' : '/home/han/notes' }
 
 async function started(options: BootOptions = installed()) {
   const booted = await boot(options)
@@ -53,8 +58,15 @@ async function addSearch(booted: Booted) {
   await mkdir(root, { recursive: true })
   await writeFile(path.join(root, 'main.js'), 'export {}')
   await booted.store.writePlugin('search', {
-    version: '1.0.0', contentHash: await contentHash(root), signer: 'x', granted: [], class: 1, enabled: true,
+    version: '1.0.0', contentHash: hashFiles(await readFiles(root)), signer: 'x', granted: [], class: 1, enabled: true,
   })
+}
+
+// What a program that knows hetu writes: the bytes and a matching hash line
+async function plant(file: string, text: string) {
+  const body = `${text}\n`
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, `${body}${createHash('sha256').update(body).digest('hex')}\n`)
 }
 
 beforeEach(async () => {
@@ -70,28 +82,35 @@ afterEach(async () => {
 })
 
 describe('first run', () => {
-  it('finds nothing, writes the default switches and is not suspect', async () => {
+  it('finds nothing, writes the default switches and no vault and is not suspect', async () => {
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }, { check: 'vault', result: 'absent' }])
     expect(booted.suspect).toBe(false)
     expect(booted.logHealthy).toBe(true)
     expect(booted.dev).toBe(false)
     expect(await readdir(stateFile())).toEqual(['switches.json'])
-    expect(booted.state.switches).toEqual({ guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] })
+    expect(booted.state.switches).toEqual(noSwitches)
+    expect(booted.state.vault).toBeNull()
   })
 
   it('logs each check without an id where the check has none, then what it wrote', async () => {
     await started()
     expect(await bootRecords()).toEqual([
       { event: 'boot.check', check: 'switches', result: 'absent' },
+      { event: 'boot.check', check: 'vault', result: 'absent' },
       { event: 'boot.default-written', file: 'switches' },
     ])
+  })
+
+  // Nothing was removed before the first run, so a first-party plugin with no entry is one never copied
+  it('knows the tombstones, there are none yet', async () => {
+    expect((await started()).removedKnown).toBe(true)
   })
 
   it('goes on with the defaults and logs it when a default can not be written', async () => {
     vi.spyOn(StateStore.prototype, 'writeSwitches').mockRejectedValue(Object.assign(new Error('no'), { code: 'EACCES' }))
     const booted = await started()
-    expect(booted.state.switches.guardsOff).toEqual([])
+    expect(booted.state.switches).toEqual(noSwitches)
     expect(await bootRecords()).toContainEqual({ event: 'boot.default-failed', file: 'switches', error: 'EACCES' })
     expect(await bootRecords()).not.toContainEqual({ event: 'boot.default-written', file: 'switches' })
   })
@@ -102,11 +121,15 @@ describe('a later run', () => {
     await stopped(await started())
     const before = await readFile(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'absent' }])
     expect(booted.suspect).toBe(false)
+    expect(booted.removedKnown).toBe(true)
+    // What the first run wrote, which this boot takes as the human's own switches
+    expect(booted.state.switches).toEqual(noSwitches)
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
-    expect((await bootRecords()).slice(2)).toEqual([
+    expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'ok' },
+      { event: 'boot.check', check: 'vault', result: 'absent' },
     ])
   })
 
@@ -114,9 +137,12 @@ describe('a later run', () => {
     const load = vi.spyOn(StateStore.prototype, 'load')
     const booted = await started()
     expect(load.mock.contexts[0]).toBe(booted.store)
-    await booted.store.writeSwitches({ guardsOff: ['leases'], devMode: false, skipVerification: false, allowUnsigned: [] })
+    await booted.store.writeSwitches({ ...noSwitches, off: ['leases'], removed: ['git'] })
     await stopped(booted)
-    expect((await started()).state.switches.guardsOff).toEqual(['leases'])
+    const again = await started()
+    expect(again.state.switches.off).toEqual(['leases'])
+    expect(again.state.switches.removed).toEqual(['git'])
+    expect(again.removedKnown).toBe(true)
   })
 
   it('says the log is not healthy when one record was lost, even though the log healed after it', async () => {
@@ -153,9 +179,200 @@ describe('a later run', () => {
     const booted = await started()
     expect(booted.suspect).toBe(true)
     expect(booted.state.plugins.search).toBeUndefined()
-    const later = (await bootRecords()).slice(2)
+    const later = (await bootRecords()).slice(3)
     expect(later).toContainEqual({ event: 'boot.check', check: 'plugin-entry', id: 'search', result: 'hash-mismatch' })
     expect(later.at(-1)).toEqual({ event: 'boot.suspect' })
+  })
+
+  // The plugin files check is the loader's, which reads the bytes that run
+  it('checks no plugin code and leaves enabled as the entry holds it', async () => {
+    const first = await started()
+    await addSearch(first)
+    await stopped(first)
+    await writeFile(path.join(dataDir(), 'plugins', 'search', 'main.js'), 'changed')
+    const booted = await started()
+    expect(booted.checks.map(c => c.check)).toEqual(['switches', 'vault', 'plugin-entry'])
+    expect(booted.state.plugins.search.enabled).toBe(true)
+    expect(booted.suspect).toBe(false)
+  })
+})
+
+describe('the vault file', () => {
+  it('reads the folder written through the store and logs its check', async () => {
+    const first = await started()
+    await first.store.writeVault(notes)
+    await stopped(first)
+    const booted = await started()
+    expect(booted.state.vault).toEqual(notes)
+    expect(booted.checks).toContainEqual({ check: 'vault', result: 'ok' })
+    expect((await bootRecords()).slice(3)).toContainEqual({ event: 'boot.check', check: 'vault', result: 'ok' })
+  })
+
+  // Only the folder dialog and a Confirm pick a vault, so boot writes no default for one
+  it('reads a missing vault file as a vault not picked yet, never gone, even after hetu ran here', async () => {
+    const first = await started()
+    await first.store.writeVault(notes)
+    await stopped(first)
+    await rm(stateFile('vault.json'))
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'absent' }])
+    expect(booted.state.vault).toBeNull()
+    expect(booted.suspect).toBe(false)
+    expect(await readdir(stateFile())).toEqual(['switches.json'])
+  })
+
+  it('keeps the switches when the vault file is bad and writes nothing over it', async () => {
+    const first = await started()
+    await first.store.writeSwitches({ ...noSwitches, off: ['leases'] })
+    await first.store.writeVault(notes)
+    await stopped(first)
+    await writeFile(stateFile('vault.json'), 'tampered')
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'hash-missing' }])
+    expect(booted.suspect).toBe(true)
+    expect(booted.state.vault).toBeNull()
+    expect(booted.state.switches.off).toEqual(['leases'])
+    expect(await readFile(stateFile('vault.json'), 'utf8')).toBe('tampered')
+  })
+
+  it('keeps the vault when the switches file is bad', async () => {
+    const first = await started()
+    await first.store.writeVault(notes)
+    await stopped(first)
+    await writeFile(stateFile('switches.json'), 'tampered')
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'hash-missing' }, { check: 'vault', result: 'ok' }])
+    expect(booted.state.switches).toEqual(noSwitches)
+    expect(booted.state.vault).toEqual(notes)
+  })
+
+  it('keeps the vault when the switches file was wiped', async () => {
+    const first = await started()
+    await first.store.writeVault(notes)
+    await stopped(first)
+    await rm(stateFile('switches.json'))
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'ok' }])
+    expect(booted.state.vault).toEqual(notes)
+  })
+
+  // Only a posix host tells the platform given from its own. The mirror can't boot on Windows: HETU_DATA_DIR has to be
+  // absolute by the platform given, which a Windows temp folder is not by posix rules
+  it.skipIf(onWindows)('checks the vault folder by the platform boot was given', async () => {
+    const options = { ...installed({ HETU_DATA_DIR: path.join(base, 'win') }), packaged: false, platform: 'win32' }
+    const windowsNotes = { folder: 'C:\\Users\\han\\notes' }
+    const first = await started(options)
+    await first.store.writeVault(windowsNotes)
+    await stopped(first)
+    const booted = await started(options)
+    expect(booted.checks).toContainEqual({ check: 'vault', result: 'ok' })
+    expect(booted.state.vault).toEqual(windowsNotes)
+  })
+})
+
+// A newer build wrote the state, so this build runs on defaults and never writes over what the newer one left
+describe('a state file in a newer format', () => {
+  it('runs on the default switches, writes no default over the file and logs it, nothing suspect', async () => {
+    await stopped(await started())
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 3, off: ['gate'] }))
+    const before = await readFile(stateFile('switches.json'))
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'newer' }, { check: 'vault', result: 'absent' }])
+    expect(booted.state.switches).toEqual(noSwitches)
+    expect(booted.suspect).toBe(false)
+    expect(booted.removedKnown).toBe(false)
+    expect(await readFile(stateFile('switches.json'))).toEqual(before)
+    expect((await bootRecords()).slice(3)).toEqual([
+      { event: 'boot.check', check: 'switches', result: 'newer' },
+      { event: 'boot.check', check: 'vault', result: 'absent' },
+    ])
+  })
+
+  it('refuses every write of that file for the rest of the run', async () => {
+    await stopped(await started())
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 3 }))
+    await plant(stateFile('vault.json'), JSON.stringify({ format: 7 }))
+    const booted = await started()
+    await expect(booted.store.writeSwitches(noSwitches)).rejects.toThrow(/newer format/)
+    await expect(booted.store.writeVault(notes)).rejects.toThrow(/newer format/)
+    expect(booted.state.vault).toBeNull()
+    expect(booted.checks).toContainEqual({ check: 'vault', result: 'newer' })
+  })
+})
+
+// removed lives in the switches, so the reconcile may copy a first-party plugin with no entry only while this holds
+describe('the tombstones', () => {
+  it('are lost when the switches file failed its check', async () => {
+    const first = await started()
+    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
+    await stopped(first)
+    await writeFile(stateFile('switches.json'), (await readFile(stateFile('switches.json'), 'utf8')).replace('"git"', '"mcp"'))
+    const booted = await started()
+    expect(booted.removedKnown).toBe(false)
+    expect(booted.state.switches.removed).toEqual([])
+  })
+
+  it('are lost when the switches were wiped after hetu ran here', async () => {
+    const first = await started()
+    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
+    await stopped(first)
+    await rm(stateFile(), { recursive: true })
+    const booted = await started()
+    expect(booted.checks.map(c => c.result)).toEqual(['gone', 'absent'])
+    expect(booted.removedKnown).toBe(false)
+  })
+
+  // A one-boot signal: the boot that finds the switches gone writes the defaults, which the next boot reads as
+  // checked out
+  it('are read as known, with none, from the boot after a wipe', async () => {
+    const first = await started()
+    await first.store.writeSwitches({ ...noSwitches, removed: ['git'] })
+    await stopped(first)
+    await rm(stateFile(), { recursive: true })
+    const second = await started()
+    expect(second.removedKnown).toBe(false)
+    await stopped(second)
+    const third = await started()
+    expect(third.checks.map(c => c.result)).toEqual(['ok', 'absent'])
+    expect(third.suspect).toBe(false)
+    expect(third.removedKnown).toBe(true)
+    expect(third.state.switches.removed).toEqual([])
+  })
+})
+
+// Record nothing stops the core's own floor records until recording is back on, boot's included
+describe('recording off', () => {
+  async function recordingOff() {
+    const first = await started()
+    await first.store.writeSwitches({ ...noSwitches, recordNothing: true })
+    await first.store.writeVault(notes)
+    await stopped(first)
+  }
+
+  it('writes no boot record while the switches say so, a suspect boot included', async () => {
+    await recordingOff()
+    await writeFile(stateFile('vault.json'), 'tampered')
+    const before = await records()
+    const booted = await started()
+    expect(booted.state.switches.recordNothing).toBe(true)
+    expect(booted.suspect).toBe(true)
+    expect(booted.logHealthy).toBe(true)
+    expect(await records()).toEqual(before)
+  })
+
+  // Only switches that checked out turn recording off, so an edit or a wipe can't keep boot quiet
+  it.each([
+    ['edited', async () => {
+      const file = stateFile('switches.json')
+      await writeFile(file, (await readFile(file, 'utf8')).replace('"confirmOff": false', '"confirmOff": true'))
+    }],
+    ['wiped', () => rm(stateFile('switches.json'))],
+  ])('records a boot whose switches were %s, since the defaults record', async (_name, spoil) => {
+    await recordingOff()
+    await spoil()
+    const booted = await started()
+    expect(booted.state.switches.recordNothing).toBe(false)
+    expect((await bootRecords()).slice(3)).toContainEqual({ event: 'boot.suspect' })
   })
 })
 
@@ -165,10 +382,11 @@ describe('a wiped state', () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'absent' }])
     expect(booted.suspect).toBe(true)
-    expect((await bootRecords()).slice(2)).toEqual([
+    expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'gone' },
+      { event: 'boot.check', check: 'vault', result: 'absent' },
       { event: 'boot.suspect' },
       { event: 'boot.default-written', file: 'switches' },
     ])
@@ -180,7 +398,7 @@ describe('a wiped state', () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })
     await writeFile(path.join(dataDir(), 'events', 'events-1.jsonl'), 'garbage\n')
-    expect((await started()).checks.map(c => c.result)).toEqual(['gone'])
+    expect((await started()).checks.map(c => c.result)).toEqual(['gone', 'absent'])
   })
 
   it('reads the switches gone when the log was wiped but a plugin entry is still there', async () => {
@@ -192,9 +410,20 @@ describe('a wiped state', () => {
     const booted = await started()
     expect(booted.checks).toEqual([
       { check: 'switches', result: 'gone' },
+      { check: 'vault', result: 'absent' },
       { check: 'plugin-entry', id: 'search', result: 'ok' },
-      { check: 'plugin-files', id: 'search', result: 'ok' },
     ])
+    expect(booted.suspect).toBe(true)
+  })
+
+  it('reads the switches gone when the log was wiped but the vault file is still there', async () => {
+    const first = await started()
+    await first.store.writeVault(notes)
+    await stopped(first)
+    await rm(path.join(dataDir(), 'events'), { recursive: true })
+    await rm(stateFile('switches.json'))
+    const booted = await started()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'ok' }])
     expect(booted.suspect).toBe(true)
   })
 
@@ -206,7 +435,11 @@ describe('a wiped state', () => {
     await rm(stateFile('switches.json'))
     await writeFile(stateFile('plugins', 'search.json'), '{}')
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'plugin-entry', id: 'search', result: 'hash-missing' }])
+    expect(booted.checks).toEqual([
+      { check: 'switches', result: 'gone' },
+      { check: 'vault', result: 'absent' },
+      { check: 'plugin-entry', id: 'search', result: 'hash-missing' },
+    ])
   })
 
   // Accepted: with the log wiped too or unreadable nothing is left to tell, threat 55
@@ -215,8 +448,9 @@ describe('a wiped state', () => {
     await rm(stateFile(), { recursive: true })
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     const booted = await started()
-    expect(booted.checks.map(c => c.result)).toEqual(['absent'])
+    expect(booted.checks.map(c => c.result)).toEqual(['absent', 'absent'])
     expect(booted.suspect).toBe(false)
+    expect(booted.removedKnown).toBe(true)
   })
 })
 
@@ -266,7 +500,7 @@ describe('a log that can not be used', () => {
     await writeFile(path.join(dataDir(), 'events'), 'in the way')
     const booted = await started()
     expect(booted.logHealthy).toBe(false)
-    expect(booted.checks.map(c => c.result)).toEqual(['absent'])
+    expect(booted.checks.map(c => c.result)).toEqual(['absent', 'absent'])
     expect(await readdir(stateFile())).toContain('switches.json')
   })
 })

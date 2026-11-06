@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { StateStore } from '../backend/boot/state.ts'
+import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { syncDir } from '../lib/disk.ts'
 import { EventLog } from '../lib/event-log.ts'
 
@@ -90,10 +90,10 @@ describe('a file system that can not sync a folder', () => {
   it('still writes the state file and its hash when the folder sync is refused', async () => {
     fake.syncError = 'EINVAL'
     const store = new StateStore(dir)
-    await store.writeSwitches({ guardsOff: [], devMode: true, skipVerification: false, allowUnsigned: [] })
+    await store.writeSwitches({ ...defaultSwitches(), devMode: ['search'] })
     fake.syncError = null
     const loaded = await store.load()
     expect(loaded.checks[0]).toEqual({ check: 'switches', result: 'ok' })
-    expect(loaded.state.switches.devMode).toBe(true)
+    expect(loaded.state.switches.devMode).toEqual(['search'])
   })
 })

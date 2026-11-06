@@ -3,10 +3,17 @@ import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, symlink, writ
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { contentHash, defaultState, stateDir, StateStore, type Check, type Loaded } from '../backend/boot/state.ts'
+import { MAX_CAPABILITIES } from '../api/capabilities.ts'
+import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
+import { installIds } from '../api/ids.ts'
+import {
+  defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,
+} from '../backend/boot/state.ts'
+import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
+const many = <T>(n: number, make: (i: number) => T) => Array.from({ length: n }, (_, i) => make(i))
 
 // FileHandle isn't exported, so its prototype comes from a handle opened once
 async function fileHandleProto() {
@@ -18,8 +25,32 @@ async function fileHandleProto() {
 }
 
 const HASH = 'a'.repeat(64)
-const noSwitches = { guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] }
-const switchesIn = { guardsOff: ['leases'], devMode: true, skipVerification: false, allowUnsigned: [HASH] }
+const noSwitches = {
+  off: [],
+  devMode: [],
+  skipVerification: false,
+  allowUnsigned: [],
+  confirmOff: false,
+  removed: [],
+  execAnyCommand: [],
+  limits: { all: {}, plugins: {} },
+  recordNothing: false,
+}
+// Most switches away from the defaults, so a field the code drops or mixes up shows
+const switchesIn = {
+  off: ['gate', 'leases'],
+  devMode: ['my-plugin'],
+  skipVerification: false,
+  allowUnsigned: [HASH],
+  confirmOff: true,
+  removed: ['git'],
+  execAnyCommand: ['search'],
+  limits: { all: { callsInFlight: 128 }, plugins: { search: { messagesPerSecond: 2000, readyMs: 20000 } } },
+  recordNothing: false,
+}
+// Absolute by the rules of the platform the tests run on
+const notes = onWindows ? 'C:\\Users\\han\\notes' : '/home/han/notes'
+const vaultIn = { folder: notes }
 const pluginIn = (over: object = {}) => ({
   version: '1.0.0',
   contentHash: HASH,
@@ -29,7 +60,7 @@ const pluginIn = (over: object = {}) => ({
   enabled: true,
   ...over,
 })
-// Every capability type, so each schema has to accept every one
+// Every type a folder plugin may hold, so each schema has to accept every one
 const everyCapability = [
   { type: 'vault.read', paths: ['**'] },
   { type: 'vault.write', paths: ['04 - Daily/**'] },
@@ -38,17 +69,21 @@ const everyCapability = [
   { type: 'ui.decoration' },
   { type: 'ui.command' },
   { type: 'ui.statusBar' },
+  { type: 'ui.keys' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },
   { type: 'history', access: 'read', paths: ['**'] },
   { type: 'history', access: 'commit', paths: ['04 - Daily/**'] },
   { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
+  { type: 'plugin.call', targets: ['search'] },
+  { type: 'log.read' },
 ]
 
 let dir: string
 let store: StateStore
 const stateFile = (...parts: string[]) => path.join(dir, 'state', ...parts)
 const switchesPath = () => stateFile('switches.json')
+const vaultPath = () => stateFile('vault.json')
 const pluginPath = (id: string) => stateFile('plugins', `${id}.json`)
 // A state file is its JSON and then one line holding the hash of every byte above it
 const hashLine = (body: Buffer | string) => `${sha256(body)}\n`
@@ -79,7 +114,7 @@ async function pluginFiles(id: string, files: Record<string, string>) {
 // A plugin after install: code on disk and an entry holding the hash of that code
 async function addPlugin(id: string, over: object = {}) {
   const root = await pluginFiles(id, { 'a.js': id })
-  await store.writePlugin(id, pluginIn({ contentHash: await contentHash(root), ...over }))
+  await store.writePlugin(id, pluginIn({ contentHash: hashFiles(await readFiles(root)), ...over }))
   return root
 }
 
@@ -107,13 +142,27 @@ afterEach(async () => {
 })
 
 describe('defaults', () => {
-  it('has every guard on and no plugins', () => {
-    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches })
+  it('loosen nothing: every install plugin on, empty lists, false switches, no raised limits and no vault', () => {
+    expect(defaultSwitches()).toEqual(noSwitches)
+    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, vault: null })
   })
 
   it('hands out a new object each time, so a caller can not change the next default', () => {
-    defaultState().switches.guardsOff.push('leases')
-    expect(defaultState().switches.guardsOff).toEqual([])
+    const changed = defaultState()
+    changed.switches.off.push('leases')
+    changed.switches.devMode.push('search')
+    changed.switches.limits.all.callsInFlight = 1000
+    changed.switches.limits.plugins.search = { readyMs: 1 }
+    changed.plugins.search = pluginIn() as never
+    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, vault: null })
+  })
+
+  it('keeps every table free of a prototype, so a name every object has finds nothing', () => {
+    const { plugins, switches } = defaultState()
+    for (const found of [plugins, switches.limits.all, switches.limits.plugins]) {
+      expect(Object.getPrototypeOf(found)).toBeNull()
+      expect((found as Record<string, unknown>)['toString']).toBeUndefined()
+    }
   })
 })
 
@@ -175,70 +224,29 @@ describe('stateDir', () => {
   })
 })
 
-describe('contentHash', () => {
-  it('hashes each file by path, size and bytes in sorted order', async () => {
-    const root = await pluginFiles('search', { 'b.js': 'two', 'sub/a.js': 'one', 'a.js': 'zero' })
-    const expected = createHash('sha256')
-      .update('a.js\u00004\u0000zero')
-      .update('b.js\u00003\u0000two')
-      .update('sub/a.js\u00003\u0000one')
-      .digest('hex')
-    expect(await contentHash(root)).toBe(expected)
-  })
-
-  // NTFS lists a.js/b.js, a.js, B.js in that order, so the hash only matches if the code sorts by code unit itself
-  it('sorts by code unit, not in the order the file system lists', async () => {
-    const root = await pluginFiles('search', { 'a.js': '1', 'a/b.js': '2', 'B.js': '3' })
-    const expected = createHash('sha256')
-      .update('B.js\u00001\u00003')
-      .update('a.js\u00001\u00001')
-      .update('a/b.js\u00001\u00002')
-      .digest('hex')
-    expect(await contentHash(root)).toBe(expected)
-  })
-
-  it('tells apart the same bytes split across files differently', async () => {
-    const one = await pluginFiles('one', { 'a': 'xy', 'b': 'z' })
-    const two = await pluginFiles('two', { 'a': 'x', 'b': 'yz' })
-    expect(await contentHash(one)).not.toBe(await contentHash(two))
-  })
-
-  it('refuses a link inside the folder', async () => {
-    const outside = await pluginFiles('outside', { 'secret.js': '1' })
-    const root = await pluginFiles('search', { 'a.js': '1' })
-    await symlink(outside, path.join(root, 'link'), 'junction')
-    await expect(contentHash(root)).rejects.toThrow(/not a file or folder: link/)
-  })
-
-  it('refuses a folder that is itself a link', async () => {
-    const outside = await pluginFiles('outside', { 'a.js': '1' })
-    const link = path.join(dir, 'plugins', 'search')
-    await symlink(outside, link, 'junction')
-    await expect(contentHash(link)).rejects.toThrow(/not a folder/)
-  })
-})
-
 describe('writing', () => {
   async function writeAll() {
     await store.writeSwitches(switchesIn)
+    await store.writeVault(vaultIn)
     await store.writePlugin('search', pluginIn())
   }
 
   it('puts each file where the layout says and nothing else', async () => {
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json', 'vault.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
-  it('gives each file its format number and its own content', async () => {
+  it('gives each file format 2 and its own content', async () => {
     await writeAll()
-    expect(await jsonOf(switchesPath())).toEqual({ format: 1, ...switchesIn })
-    expect(await jsonOf(pluginPath('search'))).toEqual({ format: 1, ...pluginIn() })
+    expect(await jsonOf(switchesPath())).toEqual({ format: 2, ...switchesIn })
+    expect(await jsonOf(vaultPath())).toEqual({ format: 2, ...vaultIn })
+    expect(await jsonOf(pluginPath('search'))).toEqual({ format: 2, ...pluginIn() })
   })
 
   it('ends every file with one line holding the hash of the exact bytes above it', async () => {
     await writeAll()
-    for (const file of [switchesPath(), pluginPath('search')]) {
+    for (const file of [switchesPath(), vaultPath(), pluginPath('search')]) {
       const body = await bodyOf(file)
       expect(body.endsWith('}\n')).toBe(true)
       expect(await hashOf(file)).toBe(hashLine(body))
@@ -250,59 +258,99 @@ describe('writing', () => {
     await addPlugin('search')
     await addPlugin('git')
     await store.writeSwitches(switchesIn)
+    await store.writeVault(vaultIn)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches).toEqual(switchesIn)
+    expect(loaded.state.vault).toEqual(vaultIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
-    expect(loaded.state.plugins.search).toEqual(pluginIn({ contentHash: await contentHash(path.join(dir, 'plugins', 'search')) }))
+    expect(loaded.state.plugins.search).toEqual(pluginIn({ contentHash: hashFiles(await readFiles(path.join(dir, 'plugins', 'search'))) }))
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
+      { check: 'vault', result: 'ok' },
       { check: 'plugin-entry', id: 'git', result: 'ok' },
-      { check: 'plugin-files', id: 'git', result: 'ok' },
       { check: 'plugin-entry', id: 'search', result: 'ok' },
-      { check: 'plugin-files', id: 'search', result: 'ok' },
     ])
   })
 
   it('takes back what load returned, so a caller can change one part and write it', async () => {
-    await store.writeSwitches(switchesIn)
+    await writeAll()
     await addPlugin('search')
     const { state } = await store.load()
+    state.switches.off.push('history')
     await store.writeSwitches(state.switches)
+    await store.writeVault(state.vault)
     await store.writePlugin('search', state.plugins.search)
     const again = await store.load()
     expect(again.suspect).toBe(false)
-    expect(again.state.switches).toEqual(switchesIn)
+    expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'leases', 'history'] })
+    expect(again.state.vault).toEqual(vaultIn)
     expect(again.state.plugins.search).toEqual(state.plugins.search)
   })
 
-  it('accepts every capability type in a plugin, on the way in and on the way out', async () => {
+  it('accepts every capability type a folder plugin may hold, on the way in and on the way out', async () => {
     await addPlugin('search', { granted: everyCapability })
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.plugins.search.granted).toEqual(everyCapability)
   })
 
+  it('keeps a null class, which counts as 4 elsewhere', async () => {
+    await addPlugin('search', { class: null })
+    const loaded = await store.load()
+    expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
+    expect(loaded.state.plugins.search.class).toBeNull()
+  })
+
+  it('takes every switch that names a plugin with any id some plugin can hold', async () => {
+    const ids = ['watchdog', 'editor-core', 'search', 'my-plugin-x_2']
+    const switches = {
+      ...switchesIn,
+      off: [...installIds],
+      devMode: ids,
+      execAnyCommand: ids,
+      removed: ['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'],
+      limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { heartbeatMs: 9000 }])) },
+    }
+    await store.writeSwitches(switches)
+    expect((await store.load()).state.switches).toEqual(switches)
+  })
+
+  it('takes the most each list and map of plugins holds', async () => {
+    // Pinned, since the cases follow MAX_LISTED wherever it goes. A lower cap would read a file another format 2 build
+    // wrote as invalid
+    expect(MAX_LISTED).toBe(256)
+    const ids = many(MAX_LISTED, i => `p${i}`)
+    const switches = {
+      ...switchesIn,
+      devMode: ids,
+      execAnyCommand: ids,
+      limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { callsInFlight: 1 }])) },
+    }
+    await store.writeSwitches(switches)
+    expect((await store.load()).state.switches).toEqual(switches)
+  })
+
   it('writes a plugin whose id has dashes and underscores', async () => {
     await addPlugin('my-plugin-x_2')
     const loaded = await store.load()
-    expect(result(loaded, 'plugin-files', 'my-plugin-x_2')).toBe('ok')
+    expect(result(loaded, 'plugin-entry', 'my-plugin-x_2')).toBe('ok')
     expect(loaded.suspect).toBe(false)
   })
 
   it('answers an unknown name with nothing, even one that every object has', async () => {
-    await addPlugin('search')
+    await writeAll()
     const { state } = await store.load()
-    expect(state.plugins['constructor']).toBeUndefined()
-    expect(state.plugins['toString']).toBeUndefined()
-    expect(state.plugins['__proto__']).toBeUndefined()
-    expect(defaultState().plugins['toString']).toBeUndefined()
+    for (const found of [state.plugins, state.switches.limits.all, state.switches.limits.plugins, state.switches.limits.plugins.search]) {
+      expect(Object.getPrototypeOf(found)).toBeNull()
+      for (const name of ['constructor', 'toString', '__proto__']) expect((found as Record<string, unknown>)[name]).toBeUndefined()
+    }
   })
 
   it('leaves no temp files behind', async () => {
     await writeAll()
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json', 'vault.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
@@ -372,20 +420,11 @@ describe('writing', () => {
       expect(result(loaded, 'switches')).toBe('ok')
     })
 
-    it('waits out a short hold on a plugin code file at load', async () => {
-      const root = await addPlugin('search')
-      // Read-only too, which a read gets past, so only the read's own retry waits out the hold
-      await chmod(path.join(root, 'a.js'), 0o444)
-      const holder = await holdOpen(path.join(root, 'a.js'), 'None')
-      const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
-      expect(result(loaded, 'plugin-files', 'search')).toBe('ok')
-    })
-
     it('waits out a short hold at load rather than reading the file as unreadable', async () => {
-      await store.writeSwitches(switchesIn)
-      const holder = await holdOpen(switchesPath(), 'None')
+      await store.writeVault(vaultIn)
+      const holder = await holdOpen(vaultPath(), 'None')
       const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
-      expect(result(loaded, 'switches')).toBe('ok')
+      expect(result(loaded, 'vault')).toBe('ok')
       expect(loaded.suspect).toBe(false)
     })
 
@@ -405,21 +444,95 @@ describe('writing', () => {
   })
 
   describe('refusing bad input', () => {
+    const switches = (over: object) => () => store.writeSwitches({ ...switchesIn, ...over })
+    const limits = (over: object) => switches({ limits: { all: {}, plugins: {}, ...over } })
+    const forPlugin = (values: unknown) => limits({ plugins: { search: values } })
+    const tooMany = many(MAX_LISTED + 1, i => `p${i}`)
+    // An own __proto__ key, which only JSON.parse or defineProperty makes
+    const proto = (json: string) => JSON.parse(json)
     const refused: [string, () => Promise<void>][] = [
-      ['a switch that is not a boolean', () => store.writeSwitches({ ...switchesIn, devMode: 'true' })],
-      ['an unknown switch', () => store.writeSwitches({ ...switchesIn, gateOff: true })],
-      ['switches that carry a format', () => store.writeSwitches({ ...switchesIn, format: 1 })],
-      ['a guard name that is not a plugin id', () => store.writeSwitches({ ...switchesIn, guardsOff: ['../leases'] })],
-      ['an allowlist entry that is not a hash', () => store.writeSwitches({ ...switchesIn, allowUnsigned: ['abc'] })],
+      ['a switch that is not a boolean', switches({ confirmOff: 'true' })],
+      ['an unknown switch', switches({ gateOff: true })],
+      ['switches that carry a format', switches({ format: 2 })],
+      ['the guard list of format 1', switches({ guardsOff: [] })],
+      ['dev mode as the boolean of format 1', switches({ devMode: true })],
+      // Each switch on its own, so a default on any one can't fill in what a caller left out
+      ...Object.keys(switchesIn).map((key): [string, () => Promise<void>] => [
+        `switches with no ${key}`,
+        switches({ [key]: undefined }),
+      ]),
+      ['a first-party id in off', switches({ off: ['search'] })],
+      ['a community plugin in off', switches({ off: ['my-plugin'] })],
+      ['a namespace in off', switches({ off: ['core'] })],
+      ['an id outside the grammar in off', switches({ off: ['../gate'] })],
+      ['an id twice in off', switches({ off: ['gate', 'gate'] })],
+      ['off as a string', switches({ off: 'gate' })],
+      ['an id outside the grammar in dev mode', switches({ devMode: ['My-Plugin'] })],
+      ['a dotted id in dev mode', switches({ devMode: ['my.plugin'] })],
+      ['a namespace no plugin holds in dev mode', switches({ devMode: ['core'] })],
+      ['cache in dev mode, a namespace storage serves', switches({ devMode: ['cache'] })],
+      ['constructor in dev mode', switches({ devMode: ['constructor'] })],
+      ['__proto__ in dev mode', switches({ devMode: ['__proto__'] })],
+      ['an id twice in dev mode', switches({ devMode: ['search', 'search'] })],
+      ['more ids in dev mode than a list holds', switches({ devMode: tooMany })],
+      ['an id outside the grammar in execAnyCommand', switches({ execAnyCommand: ['a/b'] })],
+      ['a namespace no plugin holds in execAnyCommand', switches({ execAnyCommand: ['security'] })],
+      ['an id twice in execAnyCommand', switches({ execAnyCommand: ['search', 'search'] })],
+      ['more ids in execAnyCommand than a list holds', switches({ execAnyCommand: tooMany })],
+      ['an allowlist entry that is not a hash', switches({ allowUnsigned: ['abc'] })],
+      ['an uppercase allowlist hash', switches({ allowUnsigned: ['A'.repeat(64)] })],
+      ['an install id in removed', switches({ removed: ['vault'] })],
+      ['a community plugin in removed', switches({ removed: ['my-plugin'] })],
+      ['an id twice in removed', switches({ removed: ['git', 'git'] })],
+      ['an unknown constant for all plugins', limits({ all: { callsPerSecond: 10 } })],
+      ['an unknown constant for one plugin', forPlugin({ callsPerSecond: 10 })],
+      ['a limit of zero', limits({ all: { callsInFlight: 0 } })],
+      ['a negative limit', forPlugin({ readyMs: -1 })],
+      ['a limit that is not whole', limits({ all: { readyMs: 1.5 } })],
+      ['a limit as text', limits({ all: { readyMs: '100' } })],
+      ['a limit past the safe integers', limits({ all: { readyMs: 2 ** 53 } })],
+      ['a limit that is null', forPlugin({ readyMs: null })],
+      ['limits with no value for all', switches({ limits: { plugins: {} } })],
+      ['limits with an unknown field', limits({ watchdog: {} })],
+      ['limits as a list', switches({ limits: [] })],
+      ['limits for an id outside the grammar', limits({ plugins: { 'My-Plugin': { readyMs: 1 } } })],
+      ['limits for a namespace no plugin holds', limits({ plugins: { events: { readyMs: 1 } } })],
+      ['limits for constructor', limits({ plugins: { constructor: { readyMs: 1 } } })],
+      ['limits for more plugins than a map holds', limits({ plugins: Object.fromEntries(tooMany.map(id => [id, {}])) })],
+      ['__proto__ at the top of the switches', () => store.writeSwitches(Object.assign(proto('{"__proto__":{"recordNothing":true}}'), switchesIn))],
+      ['__proto__ inside the limits', switches({ limits: proto('{"all":{},"plugins":{},"__proto__":{}}') })],
+      ['__proto__ in the limits for all plugins', limits({ all: proto('{"__proto__":{"readyMs":1}}') })],
+      ['__proto__ as a plugin in the limits', limits({ plugins: proto('{"__proto__":{"readyMs":1}}') })],
+      ['__proto__ in the limits for one plugin', forPlugin(proto('{"__proto__":{"readyMs":1}}'))],
+      ['a relative vault folder', () => store.writeVault({ folder: 'notes' })],
+      ['an empty vault folder', () => store.writeVault({ folder: '' })],
+      ['a vault folder that is not text', () => store.writeVault({ folder: 5 })],
+      ['a vault folder past the cap', () => store.writeVault({ folder: notes + 'a'.repeat(MAX_FOLDER_LENGTH) })],
+      ['a vault folder with a control character', () => store.writeVault({ folder: `${notes}\u0007` })],
+      ['a vault folder with a bidi override', () => store.writeVault({ folder: `${notes}\u202egnp.exe` })],
+      ['a vault with no folder', () => store.writeVault({})],
+      ['a vault with an unknown field', () => store.writeVault({ ...vaultIn, extra: 1 })],
+      ['a vault that carries a format', () => store.writeVault({ ...vaultIn, format: 2 })],
+      ['__proto__ inside the vault', () => store.writeVault(proto(`{"folder":${JSON.stringify(notes)},"__proto__":{}}`))],
       ['a plugin with an unknown capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'host.replace' }] }))],
       // Entries are for folder plugins, which never hold an install-only type
       ['a plugin with an install-only capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'guard.hook' }] }))],
+      ['a plugin with more capabilities than core/api allows', () => store.writePlugin('search', pluginIn({
+        granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'ui.panel' })),
+      }))],
+      // Counted across entries, so one type split over many can't get past the cap
+      ['a plugin with more scopes for one type than core/api allows', () => store.writePlugin('search', pluginIn({
+        granted: [{ type: 'vault.read', paths: many(40, i => `a${i}/**`) }, { type: 'vault.read', paths: many(40, i => `b${i}/**`) }],
+      }))],
       ['a plugin with an unknown field', () => store.writePlugin('search', pluginIn({ extra: 1 }))],
       ['a plugin that carries its own id', () => store.writePlugin('search', pluginIn({ id: 'search' }))],
-      ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 1 }))],
+      ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 2 }))],
       ['a plugin class out of range', () => store.writePlugin('search', pluginIn({ class: 5 }))],
+      ['a plugin class as text', () => store.writePlugin('search', pluginIn({ class: '1' }))],
+      ['a plugin with no class at all', () => store.writePlugin('search', pluginIn({ class: undefined }))],
       ['a content hash that is not a hash', () => store.writePlugin('search', pluginIn({ contentHash: 'abc' }))],
       ['a plugin capability with no scope', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'net.fetch' }] }))],
+      ['__proto__ inside a capability', () => store.writePlugin('search', pluginIn({ granted: [proto('{"type":"storage","__proto__":{}}')] }))],
       // An extra key on each kind of capability, which a loose schema would strip without a word
       ...everyCapability.map((capability): [string, () => Promise<void>] => [
         `a ${capability.type} capability with an extra key`,
@@ -463,11 +576,12 @@ describe('writing', () => {
     })
 
     // One rename per file means a load can't see half a write anyway, what the queue still gives is order
-    it('lets a load called after two writes see both, without waiting for them first', async () => {
-      const writes = [store.writeSwitches(switchesIn), store.writePlugin('search', pluginIn())]
+    it('lets a load called after three writes see them all, without waiting for them first', async () => {
+      const writes = [store.writeSwitches(switchesIn), store.writeVault(vaultIn), store.writePlugin('search', pluginIn())]
       const loaded = await store.load()
       await Promise.all(writes)
       expect(loaded.state.switches).toEqual(switchesIn)
+      expect(loaded.state.vault).toEqual(vaultIn)
       expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
     })
 
@@ -505,37 +619,82 @@ const capabilityCases = (wrap: (capability: object) => string): [string, string]
   ['an empty exec command', wrap({ type: 'exec', commands: [[]], env: [] })],
   ['an unknown history access', wrap({ type: 'history', access: 'rewrite', paths: ['**'] })],
   ['a duplicate key in a capability', wrap({ type: 'vault.read', paths: ['safe/**'] }).replace('"paths":["safe/**"]', '"paths":["safe/**"],"paths":["**"]')],
+  ['__proto__ inside a capability', wrap({ type: 'storage' }).replace('{"type":"storage"', '{"__proto__":{"type":"guard.hook"},"type":"storage"')],
 ]
 
 const badUtf8 = (before: string, after: string) => Buffer.concat([Buffer.from(before), Buffer.from([0xff]), Buffer.from(after)])
+const switchesText = (over: object) => JSON.stringify({ format: 2, ...switchesIn, ...over })
+const limitsText = JSON.stringify({ format: 2, ...switchesIn })
 
 const kinds: Kind[] = [
   {
     name: 'switches',
     file: switchesPath,
-    valid: { format: 1, ...switchesIn },
+    valid: { format: 2, ...switchesIn },
     seed: () => store.writeSwitches(switchesIn),
-    edit: text => text.replace('"devMode": true', '"devMode": false'),
+    edit: text => text.replace('"recordNothing": false', '"recordNothing": true'),
     result: loaded => result(loaded, 'switches'),
     absent: 'absent',
     seeded: loaded => expect(loaded.state.switches).toEqual(switchesIn),
     fellBack: loaded => expect(loaded.state.switches).toEqual(noSwitches),
     rejected: [
-      ['a missing switch', JSON.stringify({ format: 1, guardsOff: [], devMode: false, allowUnsigned: [] })],
-      ['an unknown switch', JSON.stringify({ format: 1, ...switchesIn, gateOff: true })],
-      ['devMode that is not a boolean', JSON.stringify({ format: 1, ...switchesIn, devMode: 'true' })],
-      ['skipVerification that is not a boolean', JSON.stringify({ format: 1, ...switchesIn, skipVerification: 1 })],
-      ['a guard list that is a string', JSON.stringify({ format: 1, ...switchesIn, guardsOff: 'leases' })],
-      ['a guard name that is not a plugin id', JSON.stringify({ format: 1, ...switchesIn, guardsOff: ['../leases'] })],
-      ['an allowlist entry that is not a hash', JSON.stringify({ format: 1, ...switchesIn, allowUnsigned: ['abc'] })],
-      ['an uppercase allowlist hash', JSON.stringify({ format: 1, ...switchesIn, allowUnsigned: ['A'.repeat(64)] })],
-      ['a duplicate switch', JSON.stringify({ format: 1, ...switchesIn }).replace('"devMode":true', '"devMode":false,"devMode":true')],
+      // Each switch on its own, so a default on any one can't stand in for what the file left out
+      ...Object.keys(switchesIn).map((key): [string, string] => [`no ${key}`, switchesText({ [key]: undefined })]),
+      ['an unknown switch', switchesText({ gateOff: true })],
+      ['the guard list of format 1', switchesText({ guardsOff: [] })],
+      ['dev mode as the boolean of format 1', switchesText({ devMode: true })],
+      ['confirmOff that is not a boolean', switchesText({ confirmOff: 1 })],
+      ['recordNothing that is not a boolean', switchesText({ recordNothing: 'no' })],
+      ['skipVerification that is not a boolean', switchesText({ skipVerification: 1 })],
+      ['off as a string', switchesText({ off: 'gate' })],
+      ['a first-party id in off', switchesText({ off: ['search'] })],
+      ['an id outside the grammar in off', switchesText({ off: ['../leases'] })],
+      ['an id twice in off', switchesText({ off: ['gate', 'leases', 'gate'] })],
+      ['a namespace no plugin holds in dev mode', switchesText({ devMode: ['ui'] })],
+      ['an id outside the grammar in dev mode', switchesText({ devMode: ['Search'] })],
+      ['an id twice in execAnyCommand', switchesText({ execAnyCommand: ['search', 'search'] })],
+      ['more ids in execAnyCommand than a list holds', switchesText({ execAnyCommand: many(MAX_LISTED + 1, i => `p${i}`) })],
+      ['an install id in removed', switchesText({ removed: ['gate'] })],
+      ['an allowlist entry that is not a hash', switchesText({ allowUnsigned: ['abc'] })],
+      ['an uppercase allowlist hash', switchesText({ allowUnsigned: ['A'.repeat(64)] })],
+      ['an unknown constant', switchesText({ limits: { all: { messagesPerMinute: 5 }, plugins: {} } })],
+      ['a limit of zero', switchesText({ limits: { all: {}, plugins: { search: { callsInFlight: 0 } } } })],
+      ['a negative limit', switchesText({ limits: { all: { callsInFlight: -64 }, plugins: {} } })],
+      ['limits for a namespace no plugin holds', switchesText({ limits: { all: {}, plugins: { plugin: { readyMs: 1 } } } })],
+      ['limits for constructor', switchesText({ limits: { all: {}, plugins: { constructor: { readyMs: 1 } } } })],
+      ['__proto__ inside the limits', limitsText.replace('"limits":{', '"limits":{"__proto__":{},')],
+      ['__proto__ in the limits for all plugins', limitsText.replace('"all":{', '"all":{"__proto__":{"readyMs":1},')],
+      ['__proto__ as a plugin in the limits', limitsText.replace('"plugins":{', '"plugins":{"__proto__":{"readyMs":1},')],
+      ['__proto__ in the limits for one plugin', limitsText.replace('"search":{', '"search":{"__proto__":{"readyMs":1},')],
+      ['a constant twice in the limits', limitsText.replace('"all":{', '"all":{"callsInFlight":64,')],
+      ['a duplicate switch', limitsText.replace('"confirmOff":true', '"confirmOff":false,"confirmOff":true')],
+    ],
+  },
+  {
+    name: 'vault',
+    file: vaultPath,
+    valid: { format: 2, ...vaultIn },
+    seed: () => store.writeVault(vaultIn),
+    edit: text => text.replace('notes"', 'other"'),
+    result: loaded => result(loaded, 'vault'),
+    absent: 'absent',
+    seeded: loaded => expect(loaded.state.vault).toEqual(vaultIn),
+    fellBack: loaded => expect(loaded.state.vault).toBeNull(),
+    rejected: [
+      ['a relative folder', JSON.stringify({ format: 2, folder: 'notes' })],
+      ['an empty folder', JSON.stringify({ format: 2, folder: '' })],
+      ['a folder that is not text', JSON.stringify({ format: 2, folder: ['/notes'] })],
+      ['a null folder', JSON.stringify({ format: 2, folder: null })],
+      ['no folder', JSON.stringify({ format: 2 })],
+      ['a folder with a control character', JSON.stringify({ format: 2, folder: `${notes}\u0000` })],
+      ['an unknown vault field', JSON.stringify({ format: 2, ...vaultIn, extra: 1 })],
+      ['a duplicate folder', JSON.stringify({ format: 2, ...vaultIn }).replace('{"format":2', '{"format":2,"folder":"/elsewhere"')],
     ],
   },
   {
     name: 'plugin entry',
     file: () => pluginPath('search'),
-    valid: { format: 1, ...pluginIn() },
+    valid: { format: 2, ...pluginIn() },
     seed: async () => { await addPlugin('search') },
     edit: text => text.replace('"class": 1', '"class": 0'),
     result: loaded => result(loaded, 'plugin-entry', 'search'),
@@ -543,20 +702,24 @@ const kinds: Kind[] = [
     seeded: loaded => expect(loaded.state.plugins.search).toMatchObject({ version: '1.0.0', class: 1, enabled: true }),
     fellBack: loaded => expect(loaded.state.plugins.search).toBeUndefined(),
     rejected: [
-      ['a missing field', JSON.stringify({ format: 1, ...pluginIn(), enabled: undefined })],
-      ['an unknown plugin field', JSON.stringify({ format: 1, ...pluginIn(), extra: 1 })],
-      ['an id inside the file, which the file name already gives', JSON.stringify({ format: 1, ...pluginIn(), id: 'other' })],
-      ['a content hash that is not a hash', JSON.stringify({ format: 1, ...pluginIn({ contentHash: 'abc' }) })],
-      ['an uppercase content hash', JSON.stringify({ format: 1, ...pluginIn({ contentHash: 'A'.repeat(64) }) })],
-      ['a class out of range', JSON.stringify({ format: 1, ...pluginIn({ class: 5 }) })],
-      ['a negative class', JSON.stringify({ format: 1, ...pluginIn({ class: -1 }) })],
-      ['a class that is not whole', JSON.stringify({ format: 1, ...pluginIn({ class: 1.5 }) })],
-      ['an empty version', JSON.stringify({ format: 1, ...pluginIn({ version: '' }) })],
-      ['an empty signer', JSON.stringify({ format: 1, ...pluginIn({ signer: '' }) })],
-      ['a signer that is not text or null', JSON.stringify({ format: 1, ...pluginIn({ signer: 5 }) })],
-      ['enabled that is not a boolean', JSON.stringify({ format: 1, ...pluginIn({ enabled: 'yes' }) })],
-      ['bytes that are not UTF-8', badUtf8('{"format":1,"version":"1.0.', `","contentHash":"${HASH}","signer":null,"granted":[],"class":1,"enabled":true}`)],
-      ...capabilityCases(capability => JSON.stringify({ format: 1, ...pluginIn({ granted: [capability] }) })),
+      ['a missing field', JSON.stringify({ format: 2, ...pluginIn(), enabled: undefined })],
+      ['an unknown plugin field', JSON.stringify({ format: 2, ...pluginIn(), extra: 1 })],
+      ['an id inside the file, which the file name already gives', JSON.stringify({ format: 2, ...pluginIn(), id: 'other' })],
+      ['a content hash that is not a hash', JSON.stringify({ format: 2, ...pluginIn({ contentHash: 'abc' }) })],
+      ['an uppercase content hash', JSON.stringify({ format: 2, ...pluginIn({ contentHash: 'A'.repeat(64) }) })],
+      ['a class out of range', JSON.stringify({ format: 2, ...pluginIn({ class: 5 }) })],
+      ['a negative class', JSON.stringify({ format: 2, ...pluginIn({ class: -1 }) })],
+      ['a class that is not whole', JSON.stringify({ format: 2, ...pluginIn({ class: 1.5 }) })],
+      ['a class as text', JSON.stringify({ format: 2, ...pluginIn({ class: '4' }) })],
+      ['an empty version', JSON.stringify({ format: 2, ...pluginIn({ version: '' }) })],
+      ['an empty signer', JSON.stringify({ format: 2, ...pluginIn({ signer: '' }) })],
+      ['a signer that is not text or null', JSON.stringify({ format: 2, ...pluginIn({ signer: 5 }) })],
+      ['enabled that is not a boolean', JSON.stringify({ format: 2, ...pluginIn({ enabled: 'yes' }) })],
+      ['more capabilities than core/api allows', JSON.stringify({
+        format: 2, ...pluginIn({ granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'storage' })) }),
+      })],
+      ['bytes that are not UTF-8', badUtf8('{"format":2,"version":"1.0.', `","contentHash":"${HASH}","signer":null,"granted":[],"class":1,"enabled":true}`)],
+      ...capabilityCases(capability => JSON.stringify({ format: 2, ...pluginIn({ granted: [capability] }) })),
     ],
   },
 ]
@@ -564,17 +727,26 @@ const kinds: Kind[] = [
 // Same rules for every kind of file: a failure shows in that file's check and falls back for that file alone
 describe.each(kinds)('the $name file', kind => {
   const validText = JSON.stringify(kind.valid)
+  const newerText = validText.replace('{"format":2', '{"format":3')
   const raw: [string, string | Buffer][] = [
     ['not JSON', 'hello'],
     ['an empty file', ''],
     ['a comment', `${validText} // note`],
     ['a trailing comma', validText.replace(/}$/, ',}')],
     ['a BOM', `\ufeff${validText}`],
-    ['a duplicate top level key', validText.replace('{"format":1', '{"format":2,"format":1')],
-    ['a duplicate key hidden by an escape', validText.replace('{"format":1', '{"format":2,"\\u0066ormat":1')],
-    ['__proto__ at the top', validText.replace('{"format":1', '{"__proto__":{"devMode":true},"format":1')],
+    ['a duplicate top level key', validText.replace('{"format":2', '{"format":3,"format":2')],
+    ['a duplicate key hidden by an escape', validText.replace('{"format":2', '{"format":3,"\\u0066ormat":2')],
+    ['__proto__ at the top', validText.replace('{"format":2', '{"__proto__":{"recordNothing":true},"format":2')],
     ['nesting too deep to parse', `${'['.repeat(200000)}${']'.repeat(200000)}`],
-    ['an unknown format', validText.replace('{"format":1', '{"format":2')],
+    ['format 1, which no reader takes', validText.replace('{"format":2', '{"format":1')],
+    ['format 0', validText.replace('{"format":2', '{"format":0')],
+    ['a negative format', validText.replace('{"format":2', '{"format":-3')],
+    ['a format that is not whole', validText.replace('{"format":2', '{"format":2.5')],
+    ['a format as text', validText.replace('{"format":2', '{"format":"3"')],
+    ['a format past the safe integers', validText.replace('{"format":2', '{"format":9007199254740993')],
+    ['no format', validText.replace('{"format":2,', '{')],
+    ['a list in place of the object', `[${validText}]`],
+    ['JSON null', 'null'],
     ['an unknown top level field', validText.replace(/}$/, ',"extra":1}')],
   ]
 
@@ -586,7 +758,7 @@ describe.each(kinds)('the $name file', kind => {
     kind.seeded(loaded)
   })
 
-  it('is absent when neither file exists, which is not suspect', async () => {
+  it('is absent when the file does not exist, which is not suspect', async () => {
     const loaded = await store.load()
     expect(kind.result(loaded)).toBe(kind.absent)
     expect(loaded.suspect).toBe(false)
@@ -683,25 +855,94 @@ describe.each(kinds)('the $name file', kind => {
     kind.seeded(loaded)
   })
 
-  it.each([...raw, ...kind.rejected].filter(([name]) => name !== 'bytes that are not UTF-8' || kind.name !== 'switches'))(
-    'fails closed on %s',
-    async (_name, bytes) => {
-      await plant(kind.file(), bytes)
-      const loaded = await store.load()
-      expect(kind.result(loaded)).toBe('invalid')
-      expect(loaded.suspect).toBe(true)
-      kind.fellBack(loaded)
-    },
-  )
+  it.each([...raw, ...kind.rejected])('fails closed on %s', async (_name, bytes) => {
+    await plant(kind.file(), bytes)
+    const loaded = await store.load()
+    expect(kind.result(loaded)).toBe('invalid')
+    expect(loaded.suspect).toBe(true)
+    kind.fellBack(loaded)
+  })
+
+  // A file a newer build wrote: this build runs on defaults and leaves the file to the build that reads that format
+  it('reads a later format as newer, with the defaults in memory and nothing suspect', async () => {
+    await plant(kind.file(), newerText)
+    const loaded = await store.load()
+    expect(kind.result(loaded)).toBe('newer')
+    expect(loaded.suspect).toBe(false)
+    kind.fellBack(loaded)
+  })
+
+  it('reads any whole format past 2 as newer, whatever else the file holds', async () => {
+    await plant(kind.file(), '{"format":4096,"anything":[1,{"x":null}]}')
+    expect(kind.result(await store.load())).toBe('newer')
+  })
+
+  it('still checks the hash of a newer file first', async () => {
+    await plant(kind.file(), newerText)
+    await writeFile(kind.file(), (await readFile(kind.file(), 'utf8')).replace('"format":3', '"format":4'))
+    const loaded = await store.load()
+    expect(kind.result(loaded)).toBe('hash-mismatch')
+    expect(loaded.suspect).toBe(true)
+  })
+
+  it('refuses to write a newer file for the rest of the run and leaves it as found', async () => {
+    await plant(kind.file(), newerText)
+    const before = await readFile(kind.file())
+    await store.load()
+    await expect(kind.seed()).rejects.toThrow(/newer format/)
+    expect(await readFile(kind.file())).toEqual(before)
+    expect(kind.result(await store.load())).toBe('newer')
+    // Still held with the file gone, so nothing this run writes takes the newer state's place
+    await rm(kind.file())
+    await expect(kind.seed()).rejects.toThrow(/newer format/)
+    // Even after a load that no longer finds it
+    await store.load()
+    await expect(kind.seed()).rejects.toThrow(/newer format/)
+  })
+
+  it('holds a newer file again in the next run, which loads before any write', async () => {
+    await plant(kind.file(), newerText)
+    await store.load()
+    store = new StateStore(dir)
+    expect(kind.result(await store.load())).toBe('newer')
+    await expect(kind.seed()).rejects.toThrow(/newer format/)
+  })
+})
+
+describe('newer formats', () => {
+  it('hold only the file that is newer, every other file still writes', async () => {
+    await plant(switchesPath(), JSON.stringify({ format: 3 }))
+    await store.load()
+    await store.writeVault(vaultIn)
+    await addPlugin('search')
+    const loaded = await store.load()
+    expect(result(loaded, 'switches')).toBe('newer')
+    expect(result(loaded, 'vault')).toBe('ok')
+    expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
+  })
+
+  it('refuse removing a plugin entry in a newer format', async () => {
+    await plant(pluginPath('search'), JSON.stringify({ format: 3 }))
+    await store.load()
+    await expect(store.removePlugin('search')).rejects.toThrow(/newer format/)
+    expect(await readdir(stateFile('plugins'))).toEqual(['search.json'])
+  })
+
+  it('hold a write queued behind the load that finds the newer file', async () => {
+    await plant(switchesPath(), JSON.stringify({ format: 3 }))
+    const [loaded, written] = await Promise.allSettled([store.load(), store.writeSwitches(switchesIn)])
+    expect(loaded.status === 'fulfilled' && result(loaded.value, 'switches')).toBe('newer')
+    expect(written.status).toBe('rejected')
+  })
 })
 
 // The limits the design accepts: detect only against a program that knows hetu, threats 24, 25 and 55
 describe('what the hash does not catch', () => {
   it('accepts an edit whose hash was rewritten too', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 1, ...noSwitches, devMode: true }))
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, recordNothing: true }))
     const loaded = await store.load()
-    expect(loaded.state.switches.devMode).toBe(true)
+    expect(loaded.state.switches.recordNothing).toBe(true)
     expect(loaded.suspect).toBe(false)
   })
 
@@ -712,7 +953,7 @@ describe('what the hash does not catch', () => {
     // The old file carries its own hash line, so a plain copy puts it back
     await writeFile(switchesPath(), oldFile)
     const loaded = await store.load()
-    expect(loaded.state.switches.devMode).toBe(true)
+    expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
     expect(loaded.suspect).toBe(false)
   })
 })
@@ -722,143 +963,236 @@ describe('files that fail alone', () => {
     const searchRoot = await addPlugin('search')
     const gitRoot = await addPlugin('git')
     await store.writeSwitches(switchesIn)
+    await store.writeVault(vaultIn)
     return { searchRoot, gitRoot }
   }
 
   const change = async (file: string) => writeFile(file, (await readFile(file, 'utf8')).replace('"version": "1.0.0"', '"version": "9.9.9"'))
+  // One byte more above the hash line
+  const tamper = async (file: string) => writeFile(file, (await readFile(file, 'utf8')).replace('{', '{ '))
 
-  it('leaves every other plugin loaded when one plugin entry is edited', async () => {
+  it('leaves every other plugin, the switches and the vault loaded when one plugin entry is edited', async () => {
     await setup()
     await change(pluginPath('search'))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(true)
     expect(result(loaded, 'plugin-entry', 'search')).toBe('hash-mismatch')
     expect(result(loaded, 'plugin-entry', 'git')).toBe('ok')
-    expect(result(loaded, 'plugin-files', 'git')).toBe('ok')
     expect(Object.keys(loaded.state.plugins)).toEqual(['git'])
     expect(loaded.state.plugins.git.enabled).toBe(true)
     expect(loaded.state.switches).toEqual(switchesIn)
+    expect(loaded.state.vault).toEqual(vaultIn)
   })
 
-  it('does not look at the code of a plugin whose entry failed', async () => {
+  it('leaves the plugins and the vault alone when the switches are edited', async () => {
     await setup()
-    await change(pluginPath('search'))
-    expect(result(await store.load(), 'plugin-files', 'search')).toBeUndefined()
-  })
-
-  it('leaves the plugins alone when the switches are edited', async () => {
-    await setup()
-    await writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"devMode": true', '"devMode": false'))
+    await tamper(switchesPath())
     const loaded = await store.load()
     expect(loaded.suspect).toBe(true)
     expect(result(loaded, 'switches')).toBe('hash-mismatch')
     expect(loaded.state.switches).toEqual(noSwitches)
+    expect(result(loaded, 'vault')).toBe('ok')
+    expect(loaded.state.vault).toEqual(vaultIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
     expect(loaded.state.plugins.git.enabled).toBe(true)
   })
 
-  it('does not reset the switches when a plugin file changes', async () => {
-    const { searchRoot } = await setup()
-    await writeFile(path.join(searchRoot, 'a.js'), 'changed')
+  it.each([
+    ['missing', () => rm(switchesPath())],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3 }))],
+    ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
+  ])('keeps the vault when the switches file is %s', async (_name, spoil) => {
+    await setup()
+    await spoil()
     const loaded = await store.load()
-    expect(loaded.suspect).toBe(true)
-    expect(result(loaded, 'plugin-files', 'search')).toBe('mismatch')
+    expect(loaded.state.switches).toEqual(noSwitches)
+    expect(result(loaded, 'vault')).toBe('ok')
+    expect(loaded.state.vault).toEqual(vaultIn)
+  })
+
+  it.each([
+    ['edited', () => tamper(vaultPath())],
+    ['missing', () => rm(vaultPath())],
+    ['in a newer format', () => plant(vaultPath(), JSON.stringify({ format: 3 }))],
+    ['relative inside', () => plant(vaultPath(), JSON.stringify({ format: 2, folder: 'notes' }))],
+  ])('keeps the switches and the plugins when the vault file is %s', async (_name, spoil) => {
+    await setup()
+    await spoil()
+    const loaded = await store.load()
+    expect(loaded.state.vault).toBeNull()
     expect(result(loaded, 'switches')).toBe('ok')
     expect(loaded.state.switches).toEqual(switchesIn)
+    expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
   })
 
   it('writing one file does not repair another bad one', async () => {
     await setup()
     await change(pluginPath('git'))
-    await writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"devMode": true', '"devMode": false'))
+    await tamper(switchesPath())
+    await tamper(vaultPath())
     await store.writeSwitches(switchesIn)
     const loaded = await store.load()
     expect(result(loaded, 'switches')).toBe('ok')
+    expect(result(loaded, 'vault')).toBe('hash-mismatch')
     expect(result(loaded, 'plugin-entry', 'git')).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
   })
 })
 
-describe('the plugin files check', () => {
-  async function setup() {
+// A failed check leaves a plugin out of what loads. A switch-off is the human's and only the human changes one
+describe('a failed check and a switch-off', () => {
+  it('reads entries only, with no check of any plugin code', async () => {
     const searchRoot = await addPlugin('search')
-    await addPlugin('git')
-    return searchRoot
-  }
-
-  it('leaves every plugin enabled when all of them match', async () => {
-    await setup()
+    await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     const loaded = await store.load()
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'vault', 'plugin-entry'])
     expect(loaded.suspect).toBe(false)
+  })
+
+  const codeChanges: [string, (root: string) => Promise<unknown>][] = [
+    ['a changed file', root => writeFile(path.join(root, 'a.js'), 'changed')],
+    ['a file dropped in', root => writeFile(path.join(root, 'extra.js'), 'new')],
+    ['the folder removed', root => rm(root, { recursive: true })],
+    ['a link in place of the folder', async root => {
+      const copy = await pluginFiles('elsewhere', { 'a.js': 'search' })
+      await rm(root, { recursive: true })
+      await symlink(copy, root, 'junction')
+    }],
+  ]
+
+  it.each(codeChanges)('keeps an entry with enabled true as true whatever the code holds, here %s', async (_name, spoil) => {
+    const root = await addPlugin('search')
+    await addPlugin('git')
+    await spoil(root)
+    const loaded = await store.load()
+    expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
     expect(loaded.state.plugins.search.enabled).toBe(true)
     expect(loaded.state.plugins.git.enabled).toBe(true)
   })
 
-  it('turns off only the changed plugin and keeps it listed', async () => {
-    const searchRoot = await setup()
-    await writeFile(path.join(searchRoot, 'a.js'), 'changed')
+  it('keeps enabled false as the human left it, which is no failed check', async () => {
+    await addPlugin('search', { enabled: false })
     const loaded = await store.load()
-    expect(loaded.suspect).toBe(true)
-    expect(result(loaded, 'plugin-files', 'search')).toBe('mismatch')
+    expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
     expect(loaded.state.plugins.search.enabled).toBe(false)
-    expect(loaded.state.plugins.search.version).toBe('1.0.0')
-    expect(loaded.state.plugins.git.enabled).toBe(true)
+    expect(loaded.suspect).toBe(false)
   })
 
-  it('catches a file dropped into the plugin', async () => {
-    const searchRoot = await setup()
-    await writeFile(path.join(searchRoot, 'extra.js'), 'new')
-    expect(result(await store.load(), 'plugin-files', 'search')).toBe('mismatch')
+  const switchesSpoiled: [string, () => Promise<unknown>][] = [
+    ['edited', async () => writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"confirmOff": false', '"confirmOff": true'))],
+    ['invalid', () => plant(switchesPath(), switchesText({ off: [...installIds, 'search'] }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: [...installIds] }))],
+    ['missing', () => rm(switchesPath())],
+  ]
+
+  it.each(switchesSpoiled)('reads a switches file that is %s as every install plugin on, never as one off', async (_name, spoil) => {
+    await store.writeSwitches({ ...noSwitches, off: [...installIds] })
+    await spoil()
+    const { state } = await store.load()
+    expect(state.switches).toEqual(noSwitches)
+    for (const id of installIds) expect(state.switches.off).not.toContain(id)
   })
 
-  it('catches a removed plugin folder', async () => {
-    const searchRoot = await setup()
-    await rm(searchRoot, { recursive: true })
+  it('leaves out a plugin whose entry is bad and touches no switch', async () => {
+    await store.writeSwitches(switchesIn)
+    await addPlugin('search')
+    await writeFile(pluginPath('search'), 'tampered')
     const loaded = await store.load()
-    expect(loaded.suspect).toBe(true)
-    expect(result(loaded, 'plugin-files', 'search')).toBe('missing')
-    expect(loaded.state.plugins.search.enabled).toBe(false)
+    expect(result(loaded, 'plugin-entry', 'search')).toBe('hash-missing')
+    expect(loaded.state.plugins.search).toBeUndefined()
+    expect(loaded.state.switches).toEqual(switchesIn)
+  })
+})
+
+// removed lives in the switches, so a switches file that didn't check out has lost the tombstones
+describe('the tombstones', () => {
+  it('are known when the switches file checked out', async () => {
+    await store.writeSwitches(switchesIn)
+    const loaded = await store.load()
+    expect(loaded.removedKnown).toBe(true)
+    expect(loaded.state.switches.removed).toEqual(['git'])
   })
 
-  it('catches a link swapped in for the plugin folder', async () => {
-    const searchRoot = await setup()
-    const copy = await pluginFiles('elsewhere', { 'a.js': 'search' })
-    await rm(searchRoot, { recursive: true })
-    await symlink(copy, searchRoot, 'junction')
-    const loaded = await store.load()
-    expect(result(loaded, 'plugin-files', 'search')).toBe('unreadable')
-    expect(loaded.state.plugins.search.enabled).toBe(false)
+  it('are known with nothing removed, when the file says so', async () => {
+    await store.writeSwitches(noSwitches)
+    expect((await store.load()).removedKnown).toBe(true)
   })
 
-  it('reports a change to a plugin that was already off', async () => {
-    const searchRoot = await addPlugin('search', { enabled: false })
-    await writeFile(path.join(searchRoot, 'a.js'), 'changed')
+  it.each([
+    ['missing, which only boot can tell from a first run', () => rm(switchesPath())],
+    ['edited', () => writeFile(switchesPath(), 'tampered')],
+    ['invalid', () => plant(switchesPath(), switchesText({ removed: ['vault'] }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, removed: ['git'] }))],
+    ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
+  ])('are not known when the switches file is %s', async (_name, spoil) => {
+    await store.writeSwitches(switchesIn)
+    await spoil()
     const loaded = await store.load()
-    expect(loaded.suspect).toBe(true)
-    expect(result(loaded, 'plugin-files', 'search')).toBe('mismatch')
+    expect(loaded.removedKnown).toBe(false)
+    expect(loaded.state.switches.removed).toEqual([])
+  })
+})
+
+describe('the vault folder', () => {
+  const folders: [string, string, boolean][] = [
+    ['win32', 'C:\\Users\\han\\notes', true],
+    ['win32', 'c:/Users/han/notes', true],
+    ['win32', 'D:\\', true],
+    ['win32', '\\\\server\\share\\notes', true],
+    ['win32', '//server/share/notes', true],
+    ['win32', '\\\\?\\C:\\Users\\han\\notes', true],
+    // Windows reads these against the drive or the folder that is current
+    ['win32', '\\Users\\han\\notes', false],
+    ['win32', '/Users/han/notes', false],
+    ['win32', 'C:notes', false],
+    ['win32', 'notes', false],
+    ['win32', '.\\notes', false],
+    // A third separator is no share: D:\work against these gives D:\notes
+    ['win32', '\\\\\\notes', false],
+    ['win32', '///notes', false],
+    ['darwin', '/Users/han/notes', true],
+    ['darwin', 'Users/han/notes', false],
+    ['darwin', 'C:\\Users\\han\\notes', false],
+    ['darwin', '~/notes', false],
+    ['linux', '/home/han/notes', true],
+    ['linux', './notes', false],
+  ]
+
+  it.each(folders)('on %s takes %j as absolute: %s', async (platform, folder, absolute) => {
+    const onPlatform = new StateStore(dir, platform)
+    if (absolute) {
+      await onPlatform.writeVault({ folder })
+      expect((await onPlatform.load()).state.vault).toEqual({ folder })
+    } else {
+      await expect(onPlatform.writeVault({ folder })).rejects.toThrow(/absolute/)
+    }
   })
 
-  it('checks each plugin against its own folder', async () => {
-    const searchRoot = await setup()
-    const gitRoot = path.join(dir, 'plugins', 'git')
-    await writeFile(path.join(searchRoot, 'a.js'), 'git')
-    await writeFile(path.join(gitRoot, 'a.js'), 'search')
-    const loaded = await store.load()
-    expect(result(loaded, 'plugin-files', 'search')).toBe('mismatch')
-    expect(result(loaded, 'plugin-files', 'git')).toBe('mismatch')
+  it('takes a folder of exactly the cap and refuses one character more', async () => {
+    const posix = new StateStore(dir, 'linux')
+    const folder = `/${'a'.repeat(MAX_FOLDER_LENGTH - 1)}`
+    await posix.writeVault({ folder })
+    expect((await posix.load()).state.vault).toEqual({ folder })
+    await expect(posix.writeVault({ folder: `${folder}a` })).rejects.toThrow(/too_big/)
+  })
+
+  it('reads a folder absolute only on another platform as invalid', async () => {
+    await plant(vaultPath(), JSON.stringify({ format: 2, folder: 'C:\\Users\\han\\notes' }))
+    expect(result(await new StateStore(dir, 'linux').load(), 'vault')).toBe('invalid')
+    await plant(vaultPath(), JSON.stringify({ format: 2, folder: '/home/han/notes' }))
+    expect(result(await new StateStore(dir, 'win32').load(), 'vault')).toBe('invalid')
   })
 })
 
 describe('names in the plugins folder', () => {
-  const entry = JSON.stringify({ format: 1, ...pluginIn() })
+  const entry = JSON.stringify({ format: 2, ...pluginIn() })
 
   it.each(['Evil', 'a b', '.hidden', 'trail.', 'a..b', '-a', '_a', 'a-', 'con', 'nul'])('ignores %j and reports it as invalid', async name => {
     await addPlugin('search')
     await plant(pluginPath(name), entry)
     const loaded = await store.load()
     expect(result(loaded, 'plugin-entry', name)).toBe('invalid')
-    expect(result(loaded, 'plugin-files', name)).toBeUndefined()
     expect(loaded.suspect).toBe(true)
     expect(Object.keys(loaded.state.plugins)).toEqual(['search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
@@ -878,7 +1212,7 @@ describe('names in the plugins folder', () => {
     await writeFile(stateFile('plugins', name), entry)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.checks.map(c => c.id)).toEqual([undefined, 'search', 'search'])
+    expect(loaded.checks.map(c => c.id)).toEqual([undefined, undefined, 'search'])
   })
 
   it('ignores files ending in .tmp, which are what a crashed write leaves', async () => {
@@ -888,7 +1222,7 @@ describe('names in the plugins folder', () => {
     await writeFile(stateFile('plugins', 'Evil.json.tmp'), entry)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.checks.map(c => c.id)).toEqual([undefined, 'search', 'search'])
+    expect(loaded.checks.map(c => c.id)).toEqual([undefined, undefined, 'search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
   })
 
@@ -898,17 +1232,20 @@ describe('names in the plugins folder', () => {
     expect(loaded.suspect).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
+      { check: 'vault', result: 'absent' },
     ])
   })
 
   it('fails closed when the folder can not be listed, without touching the other files', async () => {
     await store.writeSwitches(switchesIn)
+    await store.writeVault(vaultIn)
     await writeFile(stateFile('plugins'), 'not a folder')
     const loaded = await store.load()
     expect(result(loaded, 'plugin-entry')).toBe('unreadable')
     expect(loaded.suspect).toBe(true)
     expect(loaded.state.plugins).toEqual({})
     expect(loaded.state.switches).toEqual(switchesIn)
+    expect(loaded.state.vault).toEqual(vaultIn)
   })
 })
 
@@ -917,14 +1254,14 @@ describe('removing a plugin', () => {
     await expect(store.removePlugin('search')).resolves.toBeUndefined()
   })
 
-  // Reads like an uninstalled plugin, the same as a wiped file. The host's scan for a code folder with no entry (#66)
-  // is what asks about it
+  // Reads like an uninstalled plugin, the same as a wiped file. The loader's scan for a code folder with no entry asks
+  // about such a folder
   it('reads a deleted entry as no plugin at all, with no check of its own', async () => {
     await addPlugin('search')
     await rm(pluginPath('search'))
     const loaded = await store.load()
     expect(loaded.state.plugins.search).toBeUndefined()
-    expect(loaded.checks.map(c => c.check)).toEqual(['switches'])
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'vault'])
   })
 
   it('removes its entry and leaves the others', async () => {
@@ -947,16 +1284,17 @@ describe('removing a plugin', () => {
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.plugins).toEqual({})
   })
-
 })
 
 describe('loading', () => {
-  it('reads no files at all as a first run, nothing suspect', async () => {
+  it('reads no files at all as no switches and no vault, nothing suspect', async () => {
     const loaded = await store.load()
     expect(loaded.state).toEqual(defaultState())
     expect(loaded.suspect).toBe(false)
+    expect(loaded.removedKnown).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'absent' },
+      { check: 'vault', result: 'absent' },
     ])
   })
 
@@ -968,10 +1306,14 @@ describe('loading', () => {
   it('changes nothing on disk, however much is wrong', async () => {
     const searchRoot = await addPlugin('search')
     await addPlugin('git')
+    await addPlugin('mcp')
     await store.writeSwitches(switchesIn)
+    await store.writeVault(vaultIn)
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     await writeFile(switchesPath(), 'tampered')
+    await plant(vaultPath(), JSON.stringify({ format: 3 }))
     await writeFile(pluginPath('git'), 'tampered')
+    await plant(pluginPath('mcp'), JSON.stringify({ format: 1, ...pluginIn() }))
     await writeFile(stateFile('plugins', 'notes.txt'), 'x')
     const before = await snapshot()
     const loaded = await store.load()

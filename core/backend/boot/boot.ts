@@ -3,7 +3,7 @@ import { uptime } from 'node:os'
 import path from 'node:path'
 import { retried } from '../../lib/disk.ts'
 import { EventLog, type Opened } from '../../lib/event-log.ts'
-import { defaultState, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
+import { defaultSwitches, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
 
 export type BootOptions = {
   packaged: boolean
@@ -20,6 +20,11 @@ export type Booted = {
   state: SecurityState
   suspect: boolean
   checks: BootCheck[]
+  // False when this boot found the switches gone, failed or newer: removed may then miss a first-party plugin the human
+  // removed, so the reconcile can't tell a removed plugin from one never copied. A one-boot signal. Boot writes the
+  // defaults over a wipe and the next write replaces a failed file, after which a boot reads the empty removed as
+  // known. So the loader acts on false in the boot that sees it
+  removedKnown: boolean
   // The one writer of the state, passed on so no second store races it
   store: StateStore
   log: EventLog
@@ -150,14 +155,14 @@ export async function boot(options: BootOptions): Promise<Booted> {
   await mkdir(dataDir, { recursive: true })
   const release = await lock(dataDir)
   try {
-    return await checked(dataDir, dev, release)
+    return await checked(dataDir, dev, options.platform, release)
   } catch (err) {
     await release()
     throw err
   }
 }
 
-async function checked(dataDir: string, dev: boolean, release: () => Promise<void>): Promise<Booted> {
+async function checked(dataDir: string, dev: boolean, platform: string, release: () => Promise<void>): Promise<Booted> {
   const log = new EventLog(dataDir)
   let opened: Opened | null = null
   try {
@@ -166,13 +171,13 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
     // Notes stay usable with the log down, logHealthy says so
   }
 
-  const store = new StateStore(dataDir)
+  const store = new StateStore(dataDir, platform)
   const loaded = await store.load()
   const checks: BootCheck[] = loaded.checks.map(c => ({ ...c }))
   let suspect = loaded.suspect
 
   // A missing switches file is a new install only if nothing says hetu ran here before. A log that couldn't be opened
-  // says nothing, so a wipe then reads as a new install
+  // says nothing, so a wipe then reads as a new install. A missing vault file is a vault not picked yet, never gone
   const ranBefore = (opened !== null && (opened.lastSeq > 0 || opened.broken !== null))
     || checks.some(c => c.result !== 'absent')
   const missing = checks.filter(c => c.check === 'switches' && c.result === 'absent')
@@ -180,15 +185,17 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
     for (const check of missing) check.result = 'gone'
     if (missing.length > 0) suspect = true
   }
+  // A wipe takes the tombstones with the switches, a first run has none to lose
+  const removedKnown = loaded.removedKnown || (missing.length > 0 && !ranBefore)
 
-  // Defaults loosen nothing, every guard on, so they go in without a confirmation. Written so the next boot can tell a
-  // wipe from a new install, and before anything is logged, so a crash in between can't leave records that make the
-  // next boot read a new install as a wipe. A write that fails still does, once, accepted
+  // Defaults loosen nothing, every install plugin on, so they go in without a confirmation. Written so the next boot can
+  // tell a wipe from a new install. Written before anything is logged, so a crash in between can't leave records that
+  // make the next boot read a new install as a wipe. A write that fails still does, once, accepted
   const state = loaded.state
   const written: { file: string, error?: string }[] = []
   for (const check of missing) {
     try {
-      await store.writeSwitches(defaultState().switches)
+      await store.writeSwitches(defaultSwitches())
       written.push({ file: check.check })
     } catch (err) {
       written.push({ file: check.check, error: (err as NodeJS.ErrnoException).code ?? 'unknown' })
@@ -196,17 +203,21 @@ async function checked(dataDir: string, dev: boolean, release: () => Promise<voi
   }
 
   let healthy = opened !== null
-  for (const check of checks) {
-    const fields: Record<string, string> = { check: check.check, result: check.result }
-    if (check.id !== undefined) fields.id = check.id
-    healthy = await record(log, 'boot.check', fields) && healthy
-  }
-  if (suspect) healthy = await record(log, 'boot.suspect') && healthy
-  for (const { file, error } of written) {
-    healthy = await (error === undefined
-      ? record(log, 'boot.default-written', { file })
-      : record(log, 'boot.default-failed', { file, error })) && healthy
+  // With recording off nothing goes in, boot's floor records included. Only switches that checked out can turn it off
+  // and the defaults record, so a wipe or an edit is still recorded
+  if (!state.switches.recordNothing) {
+    for (const check of checks) {
+      const fields: Record<string, string> = { check: check.check, result: check.result }
+      if (check.id !== undefined) fields.id = check.id
+      healthy = await record(log, 'boot.check', fields) && healthy
+    }
+    if (suspect) healthy = await record(log, 'boot.suspect') && healthy
+    for (const { file, error } of written) {
+      healthy = await (error === undefined
+        ? record(log, 'boot.default-written', { file })
+        : record(log, 'boot.default-failed', { file, error })) && healthy
+    }
   }
 
-  return { state, suspect, checks, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release }
+  return { state, suspect, checks, removedKnown, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release }
 }

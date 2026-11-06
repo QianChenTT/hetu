@@ -7,7 +7,8 @@ import { frozen } from './plain.ts'
 export const MAX_FOLDER_LENGTH = 4096
 
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
-// A folder on this machine. The loader checks that the folder is absolute, core/api has no path module
+// A folder on this machine. The StateStore checks that the folder is absolute by the platform's rules, core/api has no
+// path module
 const folder = screenText(MAX_FOLDER_LENGTH)
 const on = z.boolean()
 
