@@ -279,28 +279,28 @@ describe('the floor', () => {
   })
 })
 
-describe('events.* and ui.*', () => {
-  it('answers unavailable until the bus and the mount serve them', async () => {
+// events.* is the bus's, which bus.test.ts covers
+describe('ui.*', () => {
+  it('answers unavailable until the mount serves it', async () => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
-    expect(code(await search.ask('events.subscribe', { topics: ['vault.changed'] }))).toBe('unavailable')
     expect(code(await search.ask('ui.panel', {}))).toBe('unavailable')
     expect(gate.asked).toEqual([])
   })
 
-  it('hands them to the part that serves them after the floor and the ceiling, which asks the gate itself', async () => {
+  it('hands it to the part that serves it after the floor and the ceiling, which asks the gate itself', async () => {
     const seen: Call[] = []
-    const events = async (call: Call) => { seen.push(call); return 'subscribed' }
-    const { carrier, connect, loader, gate } = harness({ served: { events } })
+    const ui = async (call: Call) => { seen.push(call); return 'mounted' }
+    const { carrier, connect, loader, gate } = harness({ served: { ui } })
     loader.slots.gate = 'failed'
     const search = connect(worker('search'))
-    expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toBe('subscribed')
-    expect(seen.map(call => [call.caller, call.action, call.args])).toEqual([[worker('search'), 'events.subscribe', { topics: ['vault.changed'] }]])
+    expect((await search.ask('ui.panel', { title: 'x' })).result).toBe('mounted')
+    expect(seen.map(call => [call.caller, call.action, call.args])).toEqual([[worker('search'), 'ui.panel', { title: 'x' }]])
     expect(gate.asked).toEqual([])
     const way = windowWay(carrier, { trusted })
-    expect(code(await way.ask('trusted', 'events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
+    expect(code(await way.ask('trusted', 'ui.panel', {}))).toBe('not-granted')
     loader.human.plugins.search = { argumentBytes: 64 }
-    expect(code(await search.ask('events.subscribe', { topics: ['x'.repeat(100)] }))).toBe('invalid')
+    expect(code(await search.ask('ui.panel', { title: 'x'.repeat(100) }))).toBe('invalid')
     expect(seen).toHaveLength(1)
   })
 })

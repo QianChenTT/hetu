@@ -74,6 +74,7 @@ export function holds(granted: readonly Capability[], access: Pick<Access, 'capa
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
     if (item.type === 'plugin.call') return access.scope.target !== undefined && item.targets.includes(access.scope.target)
+    if (item.type === 'events.subscribe') return (access.scope.topics ?? []).every(topic => item.topics.includes(topic))
     return true
   })
 }
@@ -270,6 +271,15 @@ export class Side {
   answer(callId: unknown, result: unknown): void {
     this.post({ v: 1, kind: 'reply', callId, ok: true, result })
   }
+
+  // Events and signals the bus pushed to this half, oldest first
+  events(): Message[] {
+    return this.inbox.filter(message => message.kind === 'event')
+  }
+
+  ack(seq: unknown): void {
+    this.post({ v: 1, kind: 'ack', seq })
+  }
 }
 
 export const code = (reply: Message) => (reply.refusal as { code?: string } | undefined)?.code ?? null
@@ -289,6 +299,8 @@ export function harness(over: Partial<CarrierOptions> = {}) {
   const asks: { ask: string, access: Access }[] = []
   loader.installed('vault')
   loader.installed('storage')
+  // The vault's manifest declares the two topics it publishes
+  loader.plugins.vault.topics = ['changed', 'outside']
   const carrier = new Carrier({
     loader,
     gate: () => gate,
@@ -321,6 +333,10 @@ export function windowWay(carrier: Carrier, senders: Record<string, Caller>) {
     replies,
     post(sender: string, message: unknown): void {
       receive(sender, message, reply => { replies.push(reply as Message) })
+    },
+    // Events go back the way the window's subscribe came, so they land among the replies
+    events(): Message[] {
+      return replies.filter(message => message.kind === 'event')
     },
     async ask(sender: string, action: string, args?: unknown, extra: object = {}): Promise<Message> {
       const mine = id++

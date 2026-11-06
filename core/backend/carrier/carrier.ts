@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import { coreActions, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
+import { coreActions, eventActions, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import {
-  answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes, refusalCodes,
-  requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
+  ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
+  refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -16,6 +16,7 @@ import {
   type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
+import { Bus, type Paths } from './bus.ts'
 import { countMessage, Limits, newRate, type Rate } from './limits.ts'
 import { AuditQueue, Coalesced, FloorLane } from './records.ts'
 import type { CarrierOptions, PluginInfo, Port, Served } from './seams.ts'
@@ -73,7 +74,8 @@ type Pending = {
 
 type Target =
   | { kind: 'core', spec: CoreAction }
-  | { kind: 'served', namespace: 'events' | 'ui' }
+  | { kind: 'events', action: string }
+  | { kind: 'served', namespace: 'ui' }
   | { kind: 'provider', provider: string, spec: ProviderAction }
   | { kind: 'plugin', target: string, name: string }
 
@@ -86,6 +88,9 @@ type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
 
 // What the audit record of a call names, read from the envelope once it parsed. parent is the live call it named
 type About = { id: number | null, action: string, onBehalf: string | undefined, parent: Pending | null }
+
+// Who the gate is asked for: a call, or a subscription the bus asks about again
+type Asker = { caller: Caller, onBehalf: string | undefined, action: string }
 
 type Shaped =
   | ({ ok: false, no: No } & About)
@@ -106,6 +111,29 @@ function keyOf(caller: Caller): string {
 
 function field(message: unknown, name: string): unknown {
   return typeof message === 'object' && message !== null ? (message as Record<string, unknown>)[name] : undefined
+}
+
+// The plugin id or core namespace an action or a topic starts with
+const namespaceOf = (name: string) => name.slice(0, name.indexOf('.'))
+
+// A subscriber as a floor record names it
+function whoOf(caller: Caller): Record<string, Field> {
+  if (caller.kind === 'plugin') return { plugin: caller.id, half: caller.half }
+  if (caller.kind === 'window') return { window: caller.role }
+  return { plugin: caller.plugin }
+}
+
+// A record's value holds at most MAX_TOPICS_TEXT characters, so the topics that fit, space separated, and how many
+// there were in all
+const MAX_TOPICS_TEXT = 4096
+function topicsOf(topics: readonly string[]): Record<string, Field> {
+  let listed = ''
+  for (const topic of topics) {
+    const next = listed === '' ? topic : `${listed} ${topic}`
+    if (next.length > MAX_TOPICS_TEXT) break
+    listed = next
+  }
+  return { topics: listed, count: topics.length }
 }
 
 // The caller's own id and action, read only to answer a call the shape step refused. An action outside the grammar is
@@ -158,6 +186,9 @@ export class Carrier {
   private readonly ports = new WeakSet<object>()
   private readonly inflight = new Map<string, { calls: number, bytes: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
+  private readonly bus: Bus
+  // The StateView number core.security last went out for
+  private announced: number | null | undefined = undefined
   private closed = false
 
   constructor(options: CarrierOptions) {
@@ -173,6 +204,16 @@ export class Carrier {
     this.coalesced = new Coalesced(this.lane)
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'))
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
+    this.bus = new Bus({
+      state: () => this.busState(),
+      canRead: (caller, path) => this.readable(caller, path),
+      recheck: (caller, topic) => this.recheck(caller, topic),
+      limit: (plugin, name) => this.limits.of(plugin, name),
+      // Coalesced, since a publisher's pace or a subscriber's own can make them
+      dropped: (caller, why) => this.coalesced.hit('events.dropped', { ...whoOf(caller), why }),
+      // One record each, since a change of the gate or the grants makes them
+      changed: (caller, change, topics) => this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }),
+    })
   }
 
   // The audit queue's pair, which the log plugin's handle wraps at step 13
@@ -189,6 +230,21 @@ export class Carrier {
   // The floor lane's backlog, for a log that came back
   flushFloor(): Promise<void> {
     return this.lane.flush()
+  }
+
+  // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
+  // StateView moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
+  // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
+  // starts, not a change
+  changed(): void {
+    if (this.closed) return
+    this.bus.sync()
+    this.bus.emit('core.status')
+    const view = this.view()
+    if (view === this.announced) return
+    const first = this.announced === undefined
+    this.announced = view
+    if (!first) this.bus.emit('core.security')
   }
 
   // Binds a plugin half to one end of a channel. The carrier starts the port, since a paused MessagePortMain emits
@@ -213,7 +269,9 @@ export class Carrier {
       const copy = structuredClone(message)
       queueMicrotask(() => {
         try {
-          receive(copy)
+          const result: unknown = receive(copy)
+          // An async receive fails later and an unhandled rejection would take main down
+          if (result instanceof Promise) result.catch(() => {})
         } catch {}
       })
     }, null)
@@ -229,7 +287,8 @@ export class Carrier {
   }
 
   // The way in for windows. check names the window that sent a message and runs before anything else, before any
-  // await. A sender it doesn't name is dropped unread. Step 12 gives the real check
+  // await. A sender it doesn't name is dropped unread. Step 12 gives the real check. answer must keep working after the
+  // reply, since the window's events go back on the answer of its newest subscribe
   window<S>(check: (sender: S) => Caller | null): (sender: S, message: unknown, answer: Send) => void {
     return (sender, message, answer) => {
       let named: unknown
@@ -250,13 +309,14 @@ export class Carrier {
     }
   }
 
-  // For the loader: a planned stop or a revoked incarnation. Calls delivered to the way answer code and the calls it
-  // made are given up. Not a crash, so nothing is reported
+  // For the loader: a planned stop or a revoked incarnation. Its subscriptions and credits go at once, calls delivered to
+  // the way answer code and the calls it made are given up. Not a crash, so nothing is reported
   end(caller: Caller, code: 'stopped' | 'crashed' = 'stopped'): void {
     const way = this.ways.get(keyOf(caller))
     if (way === undefined) return
     this.ways.delete(way.key)
     this.shut(way)
+    this.bus.drop(way)
     for (const pending of [...way.delivered.values()]) this.stop(pending, code)
     for (const pending of [...way.made.values()]) this.stop(pending, 'stopped')
   }
@@ -315,10 +375,11 @@ export class Carrier {
       if (kind === 'call') void this.call(way, message, answer)
       else if (kind === 'reply') this.answered(way, message)
       else if (kind === 'cancel') this.cancelled(way, message)
+      else if (kind === 'ack') this.acked(way, message)
       else if ((kind === 'ready' || kind === 'pong' || kind === 'stopped') && way.plugin !== null) {
         this.options.loader.heard(way.caller, kind)
       }
-      // Anything else, another v included, is dropped unread. Events and their acks come with the bus at step 5
+      // Anything else, another v and the kinds only the carrier sends included, is dropped unread
     } catch {}
   }
 
@@ -359,11 +420,13 @@ export class Carrier {
     } catch {}
   }
 
-  // The loader moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed, the
-  // calls it made are given up and their callees told
+  // Its subscriptions and credits go first, so nothing the loader changes on hearing of the crash is sent to the dead
+  // way. The loader moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
+  // the calls it made are given up and their callees told
   private dead(way: Way, reason: 'closed' | 'flood'): void {
     way.open = false
     if (this.ways.get(way.key) === way) this.ways.delete(way.key)
+    this.bus.drop(way)
     try {
       this.options.loader.crashed(way.caller, reason)
     } catch {}
@@ -414,7 +477,13 @@ export class Carrier {
     const namespace = action.slice(0, dot)
     let target: Target
     let args = parsed.data.args
-    if (namespace === 'events' || namespace === 'ui') {
+    if (namespace === 'events') {
+      const spec = eventActions[action]
+      const checked = spec?.args.safeParse(args)
+      if (spec === undefined || !checked?.success) return refuse('invalid')
+      target = { kind: 'events', action }
+      args = checked.data
+    } else if (namespace === 'ui') {
       target = { kind: 'served', namespace }
     } else if (isOne(coreNamespaces, namespace)) {
       const spec = coreActions[action]
@@ -451,7 +520,8 @@ export class Carrier {
       if (from === 'watchdog' && !(this.isWatchdog(way) && this.watchable(field(args, 'plugin')))) return { code: 'not-granted' }
       return { kind: 'core' }
     }
-    // The trusted window holds core actions only and never note content
+    if (target.kind === 'events') return this.eventsFloor(caller, target.action, args)
+    // The trusted window holds core actions and the core topics only and never note content
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }
     if (target.kind === 'provider') {
@@ -478,6 +548,36 @@ export class Carrier {
     if (typeof plugin !== 'string' || isOne(slotIds, plugin)) return false
     if (guardableActions.some(action => this.guardsFor(action).includes(plugin))) return false
     return this.info(plugin)?.place === 'sandboxed'
+  }
+
+  // 3 floor for events.*, which keeps identity rather than limits, so it holds with the gate off too. A plugin publishes
+  // only the topics its manifest declared, from any of its halves. core.* comes only from the carrier and goes only to
+  // windows. The trusted window hears nothing else. Publishing, a plugin hearing its own topics, a window hearing core.*
+  // and unsubscribing skip the gate. A subscribe to anything else is judged under events.subscribe on those topics
+  private eventsFloor(caller: Caller, action: string, args: unknown): Kind | No {
+    if (action === 'events.unsubscribe') return { kind: 'free' }
+    if (action === 'events.publish') {
+      return caller.kind === 'plugin' && this.declares(caller.id, field(args, 'topic') as string) ? { kind: 'free' } : { code: 'not-granted' }
+    }
+    const topics = [...new Set(field(args, 'topics') as string[])]
+    const core = topics.filter(topic => namespaceOf(topic) === 'core')
+    if (caller.kind !== 'window' && core.length > 0) return { code: 'not-granted' }
+    if (caller.kind === 'window' && caller.role === 'trusted' && core.length < topics.length) return { code: 'not-granted' }
+    const own = (topic: string) => caller.kind === 'plugin' && namespaceOf(topic) === caller.id
+    const gated = topics.filter(topic => namespaceOf(topic) !== 'core' && !own(topic))
+    if (gated.length === 0) return { kind: 'free' }
+    return { kind: 'power', capability: 'events.subscribe', scope: frozen({ topics: gated }) }
+  }
+
+  // Whether the plugin's manifest declared the topic, published as <id>.<name>
+  private declares(id: string, topic: string): boolean {
+    if (namespaceOf(topic) !== id) return false
+    try {
+      const declared = this.info(id)?.topics
+      return Array.isArray(declared) && declared.includes(topic.slice(id.length + 1))
+    } catch {
+      return false
+    }
   }
 
   // 4 ceiling: calls and bytes in flight, charged to the caller and to the root of its parent links
@@ -540,6 +640,8 @@ export class Carrier {
   }
 
   private async run(pending: Pending, target: Target, args: unknown, kind: Kind): Promise<void> {
+    // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
+    if (target.kind === 'events') return this.events(pending, args, kind)
     // 5 precheck, for calls with power only
     if (kind.kind === 'power') {
       const refused = this.judge(pending, 'raw', kind.capability, kind.scope)
@@ -569,15 +671,21 @@ export class Carrier {
   // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
   // needs-confirm with the request the prompt holds
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
-    const open = this.gateOpen()
     if (stage === 'raw') pending.gate = this.slot('gate')
+    return this.decideFor(pending, stage, capability, scope, true)
+  }
+
+  // The gate's answer for a call or for a subscription the bus asks about again. prompt is false for the bus, where an
+  // ask raises nothing and counts as a refusal, since no call waits on it and the human did nothing
+  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt: boolean): No | null {
+    const open = this.gateOpen()
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
     const gate = this.holder(() => this.options.gate())
     if (gate === null) return { code: 'policy-down' }
     const access: Access = frozen({
-      stage, caller: pending.caller, ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
-      action: pending.action, capability, scope,
+      stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
+      action: asker.action, capability, scope,
     })
     let allow: unknown, view: unknown, code: unknown, ask: unknown
     try {
@@ -591,7 +699,7 @@ export class Carrier {
       ask = fields.ask
     } catch (err) {
       this.fault('gate', stage === 'raw' ? 'precheck' : 'decide')
-      this.debugOf(pending, 'gate', err)
+      this.debugOf(asker, 'gate', err)
       return { code: 'policy-down' }
     }
     const current = this.view()
@@ -601,7 +709,7 @@ export class Carrier {
     if (view !== current) return { code: 'stale' }
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
-      const request = this.raise(ask, access)
+      const request = prompt ? this.raise(ask, access) : null
       return request === null ? { code: 'not-granted' } : { code: 'needs-confirm', request }
     }
     return { code: allow === false && code === 'switched-off' ? 'switched-off' : 'not-granted' }
@@ -643,6 +751,99 @@ export class Carrier {
       this.fault('gate', 'canRead')
       return no('policy-down')
     }
+  }
+
+  // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A
+  // subscribe made while the gate can't be asked stands rather than being refused, so what a plugin subscribed to at
+  // start isn't lost. With the gate off it passes as any call with power does. A subscribe whose gated topics all
+  // stand used no power yet, so its audit record names only the topics that went live and coalesces like a free call,
+  // and the standing ones go in an events.waiting record until asking again starts or ends them
+  private events(pending: Pending, args: unknown, kind: Kind): void {
+    const { way } = pending
+    if (pending.action === 'events.publish') {
+      this.bus.publish(field(args, 'topic') as string, field(args, 'path') as string | undefined)
+      return this.finish(pending, { ok: true, result: null })
+    }
+    const topics = [...new Set(field(args, 'topics') as string[])]
+    if (pending.action === 'events.unsubscribe') {
+      this.bus.unsubscribe(way, topics)
+      return this.finish(pending, { ok: true, result: null })
+    }
+    // The bus catches up with the gate first, so a standing subscription the gate now allows starts once
+    this.bus.sync()
+    if (!this.bus.fits(way, topics, this.limits.of(way.plugin, 'topicsPerHalf'))) return this.finish(pending, no('invalid', 'too-large'))
+    const gated = kind.kind === 'power' ? kind.scope.topics ?? [] : []
+    const down = gated.length > 0 && this.slot('gate') !== 'off' && !this.askable()
+    if (kind.kind === 'power' && !down) {
+      for (const stage of ['raw', 'canonical'] as const) {
+        const refused = this.judge(pending, stage, kind.capability, kind.scope)
+        if (refused !== null) return this.finish(pending, { ok: false, ...refused })
+      }
+      if (this.clock() >= pending.due) return this.stop(pending, 'timeout')
+    }
+    const free = new Set(topics.filter(topic => !gated.includes(topic)))
+    const holder = {
+      owner: way, caller: way.caller, plugin: way.plugin,
+      // A window has no way to push on but the answer to its own call
+      push: pending.answer,
+      alive: () => way.open && this.ways.get(way.key) === way,
+    }
+    const standing = this.bus.subscribe(holder, topics, free, down)
+    if (standing.length > 0) {
+      const live = topics.filter(topic => !standing.includes(topic))
+      pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
+      if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
+      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) })
+    }
+    this.finish(pending, { ok: true, result: { standing } })
+  }
+
+  // An ack names the way's own events, so a subscriber frees no credits but its own
+  private acked(way: Way, message: unknown): void {
+    const parsed = ackSchema.safeParse(message)
+    if (parsed.success) this.bus.ack(way, parsed.data.seq)
+  }
+
+  // What the bus delivers paths under. The key holds everything a subscription the gate holds depends on, so the bus
+  // asks again whenever it moves. canRead is true with the gate off by the human whatever the log, since deliveries
+  // are never logged, as filterReadable passes every path then. A gate that can't be asked is down
+  private busState(): { key: string, paths: Paths, view: number | null } {
+    const state = this.slot('gate')
+    const view = this.view()
+    const paths: Paths = state === 'off' ? 'all' : this.askable() ? 'ask' : 'none'
+    return { key: `${state} ${paths} ${view}`, paths, view }
+  }
+
+  // The gate can be asked: its slot is on, there is a holder and the StateView can be read. Otherwise every answer
+  // would be policy-down, so the bus holds paths back and a subscribe stands
+  private askable(): boolean {
+    return this.slot('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
+  }
+
+  // canRead on every delivery of a path: only an exact true counts and a throw is a no that is recorded
+  private readable(caller: Caller, path: string): boolean {
+    const gate = this.holder(() => this.options.gate())
+    if (gate === null) return false
+    try {
+      return gate.canRead(caller, path) === true
+    } catch {
+      this.fault('gate', 'canRead')
+      return false
+    }
+  }
+
+  // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
+  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault
+  private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' {
+    const asker: Asker = { caller, onBehalf: undefined, action: 'events.subscribe' }
+    const scope: Scope = frozen({ topics: [topic] })
+    for (const stage of ['raw', 'canonical'] as const) {
+      const refused = this.decideFor(asker, stage, 'events.subscribe', scope, false)
+      if (refused === null) continue
+      const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'
+      return none ? 'down' : 'refuse'
+    }
+    return 'allow'
   }
 
   private async serve(pending: Pending, served: Served | undefined, args: unknown): Promise<void> {
@@ -913,10 +1114,10 @@ export class Carrier {
   }
 
   // plugin is whose code threw, so the text can go to that plugin's own debug and not the caller's
-  private debugOf(pending: Pending, plugin: string | null, err: unknown): void {
+  private debugOf(asker: Asker, plugin: string | null, err: unknown): void {
     try {
       const text = err instanceof Error ? err.message : String(err)
-      this.options.debug?.({ plugin, caller: pending.caller, action: pending.action, text })
+      this.options.debug?.({ plugin, caller: asker.caller, action: asker.action, text })
     } catch {}
   }
 
