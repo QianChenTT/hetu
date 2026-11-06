@@ -7,5 +7,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder
 - `ids.ts`: plugin ids and names, reserved ids and the slot, provider and guard ids
 - `windows.ts`: what each window holds
-- `floor.ts`: the floor constants
+- `floor.ts`: the floor constants and the longest delay a timer takes, past which no time constant may be raised
+- `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema
+- `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states and the audit record
 - `plain.ts`: the plain data check for values the core passes on unread and the frozen tables with no prototype that the core looks keys up in

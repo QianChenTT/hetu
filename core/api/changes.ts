@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
-import { floorConstantNames } from './floor.ts'
+import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
 import { pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
 
@@ -35,13 +35,14 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal(switches), on }),
   // allowUnsigned trusts one fixed build, named by the content hash
   z.strictObject({ kind: z.literal('allowUnsigned'), hash: sha256Hex, on }),
-  // plugin null sets the constant for every plugin
+  // plugin null sets the constant for every plugin. A time stops at the longest delay a timer takes, so a raise past it
+  // is refused here rather than cut short where the timer runs
   z.strictObject({
     kind: z.literal('limit.set'),
     constant: z.enum(floorConstantNames),
     value: z.int().positive(),
     plugin: pluginId.nullable(),
-  }),
+  }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
 ])
 export type Change = z.infer<typeof change>
 export type ChangeKind = Change['kind']
