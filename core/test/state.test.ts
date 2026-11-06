@@ -40,8 +40,8 @@ const everyCapability = [
   { type: 'ui.statusBar' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },
-  { type: 'history', access: 'read' },
-  { type: 'history', access: 'commit' },
+  { type: 'history', access: 'read', paths: ['**'] },
+  { type: 'history', access: 'commit', paths: ['04 - Daily/**'] },
   { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
 ]
 
@@ -283,10 +283,10 @@ describe('writing', () => {
     expect(loaded.state.plugins.search.granted).toEqual(everyCapability)
   })
 
-  it('writes a plugin whose id has dots, dashes and underscores', async () => {
-    await addPlugin('my.plugin-x_2')
+  it('writes a plugin whose id has dashes and underscores', async () => {
+    await addPlugin('my-plugin-x_2')
     const loaded = await store.load()
-    expect(result(loaded, 'plugin-files', 'my.plugin-x_2')).toBe('ok')
+    expect(result(loaded, 'plugin-files', 'my-plugin-x_2')).toBe('ok')
     expect(loaded.suspect).toBe(false)
   })
 
@@ -412,6 +412,8 @@ describe('writing', () => {
       ['a guard name that is not a plugin id', () => store.writeSwitches({ ...switchesIn, guardsOff: ['../leases'] })],
       ['an allowlist entry that is not a hash', () => store.writeSwitches({ ...switchesIn, allowUnsigned: ['abc'] })],
       ['a plugin with an unknown capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'host.replace' }] }))],
+      // Entries are for folder plugins, which never hold an install-only type
+      ['a plugin with an install-only capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'guard.hook' }] }))],
       ['a plugin with an unknown field', () => store.writePlugin('search', pluginIn({ extra: 1 }))],
       ['a plugin that carries its own id', () => store.writePlugin('search', pluginIn({ id: 'search' }))],
       ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 1 }))],
@@ -433,9 +435,9 @@ describe('writing', () => {
     })
 
     const badIds = ['../evil', '..', 'a/b', 'a\\b', 'search.', '.search', 'Search', 'a b', 'a..b', '', 'evil\0',
-      'con', 'prn', 'aux', 'nul', 'com0', 'com9', 'lpt0', 'lpt1', 'lpt9', 'con.x', 'nul.json']
+      'con', 'prn', 'aux', 'nul', 'com0', 'com9', 'lpt0', 'lpt1', 'lpt9', 'con.x', 'nul.json', 'my.plugin', 'x.con']
 
-    it.each(['console', 'com10', 'lpt', 'auxiliary', 'x.con'])('takes %j, which only looks like a device name', async id => {
+    it.each(['console', 'com10', 'lpt', 'auxiliary', 'x-con'])('takes %j, which only looks like a device name', async id => {
       await store.writePlugin(id, pluginIn())
       expect(await readdir(stateFile('plugins'))).toContain(`${id}.json`)
     })
@@ -496,11 +498,12 @@ type Kind = {
 
 const capabilityCases = (wrap: (capability: object) => string): [string, string][] => [
   ['an unknown capability type', wrap({ type: 'vault.delete', paths: ['**'] })],
+  ['an install-only capability type', wrap({ type: 'guard.hook' })],
   ['a capability with the scope of another', wrap({ type: 'vault.read', hosts: ['example.com'] })],
   ['a capability with no scope', wrap({ type: 'net.fetch' })],
   ['an exec command as a string', wrap({ type: 'exec', commands: ['git status'], env: [] })],
   ['an empty exec command', wrap({ type: 'exec', commands: [[]], env: [] })],
-  ['an unknown history access', wrap({ type: 'history', access: 'rewrite' })],
+  ['an unknown history access', wrap({ type: 'history', access: 'rewrite', paths: ['**'] })],
   ['a duplicate key in a capability', wrap({ type: 'vault.read', paths: ['safe/**'] }).replace('"paths":["safe/**"]', '"paths":["safe/**"],"paths":["**"]')],
 ]
 

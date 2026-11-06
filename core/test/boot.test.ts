@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, firstPartyPath, resolveDataDir, type BootOptions, type Booted } from '../backend/boot/boot.ts'
 import { contentHash, stateDir, StateStore } from '../backend/boot/state.ts'
-import { EventLog } from '../backend/events/log.ts'
+import { EventLog } from '../lib/event-log.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 let base: string

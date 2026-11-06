@@ -1,1 +1,1 @@
-The event bus and the hash-chained event log
+The event bus. The hash-chained event log moved to `core/lib/event-log.ts`

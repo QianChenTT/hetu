@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
-import { syncDir } from '../backend/disk.ts'
-import { EventLog } from '../backend/events/log.ts'
+import { syncDir } from '../lib/disk.ts'
+import { EventLog } from '../lib/event-log.ts'
 
 const fake = vi.hoisted(() => ({
   readError: null as null | { match: string, code: string },

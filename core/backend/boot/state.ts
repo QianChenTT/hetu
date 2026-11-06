@@ -1,28 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { evaluate, parse } from '@humanwhocodes/momoa'
 import { z } from 'zod'
-import { retried, syncDir, writable } from '../disk.ts'
+import { folderCapability } from '../../api/capabilities.ts'
+import { pluginId } from '../../api/ids.ts'
+import { retried, syncDir, writable } from '../../lib/disk.ts'
+import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
-// Becomes a folder name under plugins/: no separators, no dot at either end for Windows to drop. Windows device names
-// are refused alone or before a dot on every platform, since tools such as PowerShell 5.1 can't delete such a folder
-const pluginId = z.string()
-  .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/)
-  .refine(id => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/.test(id), 'a Windows device name')
-
-// The fixed list from the core design, a new type needs a new core API version
-const capability = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal(['vault.read', 'vault.write']), paths: z.array(text) }),
-  z.strictObject({ type: z.literal('net.fetch'), hosts: z.array(text) }),
-  z.strictObject({ type: z.literal(['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar']) }),
-  z.strictObject({ type: z.literal('events.subscribe'), topics: z.array(text) }),
-  z.strictObject({ type: z.literal('storage') }),
-  z.strictObject({ type: z.literal('history'), access: z.enum(['read', 'commit']) }),
-  z.strictObject({ type: z.literal('exec'), commands: z.array(z.array(text).min(1)), env: z.array(text) }),
-])
 
 // What each file holds, in the shape callers see. The writers take exactly this shape and add the format number
 const switches = z.strictObject({
@@ -35,7 +21,7 @@ const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
   signer: text.nullable(), // null only for a plugin on allowUnsigned
-  granted: z.array(capability),
+  granted: z.array(folderCapability), // entries are for folder plugins only, which never hold an install-only type
   class: z.int().min(0).max(4),
   enabled: z.boolean(),
 })
@@ -96,36 +82,6 @@ export function stateDir(platform: string = process.platform, env: Record<string
   throw new Error(`no security state location on ${platform}`)
 }
 
-function sha256(bytes: Buffer | string): string {
-  return createHash('sha256').update(bytes).digest('hex')
-}
-
-type Node = ReturnType<typeof parse>['body']
-
-// JSON.parse keeps the last duplicate silently, so the approval screen and the loader could read different values
-function rejectBadKeys(node: Node): void {
-  if (node.type === 'Array') {
-    for (const element of node.elements) rejectBadKeys(element.value)
-  } else if (node.type === 'Object') {
-    const seen = new Set<string>()
-    for (const member of node.members) {
-      const name = member.name.type === 'String' ? member.name.value : member.name.name
-      if (seen.has(name)) throw new Error('duplicate key')
-      if (name === '__proto__') throw new Error('__proto__ key')
-      seen.add(name)
-      rejectBadKeys(member.value)
-    }
-  }
-}
-
-// One parser for the key check and the values, so the two can't disagree about the bytes
-function parseStrict<T extends z.ZodType>(bytes: Buffer, schema: T): z.output<T> {
-  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-  const document = parse(source)
-  rejectBadKeys(document.body)
-  return schema.parse(evaluate(document))
-}
-
 // A short hold by antivirus at boot would otherwise read as unreadable and suspect
 async function readIfExists(file: string): Promise<Buffer | null> {
   try {
@@ -134,43 +90,6 @@ async function readIfExists(file: string): Promise<Buffer | null> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
-}
-
-// A crash leaves the old file or the new one, never half of either
-async function replaceFile(file: string, bytes: Buffer | string): Promise<void> {
-  const temp = `${file}.${randomUUID()}.tmp`
-  try {
-    const handle = await open(temp, 'wx')
-    try {
-      await handle.writeFile(bytes)
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    await retried(() => rename(temp, file), file)
-  } catch (err) {
-    await rm(temp, { force: true })
-    throw err
-  }
-  await syncDir(path.dirname(file))
-}
-
-// The hash sits on a file's last line, over every byte before it, so one rename writes the state and its hash together
-// and nothing can leave a new file beside an old hash
-function withHash(body: Buffer): Buffer {
-  return Buffer.concat([body, Buffer.from(`${sha256(body)}\n`)])
-}
-
-// The body above the hash line, or why the file doesn't check out. A last line that isn't a hash means there is none,
-// one that is must be exactly the lowercase hash of the bytes before it with one newline after
-function checkHash(bytes: Buffer): { body: Buffer } | { result: 'hash-missing' | 'hash-mismatch' } {
-  const end = bytes.at(-1) === 0x0a ? bytes.length - 1 : bytes.length
-  const start = end > 0 ? bytes.lastIndexOf(0x0a, end - 1) + 1 : 0
-  const line = bytes.subarray(start, end).toString('latin1')
-  if (start === 0 || !/^[0-9a-f]{64}$/i.test(line)) return { result: 'hash-missing' }
-  const body = bytes.subarray(0, start)
-  if (end === bytes.length || line !== sha256(body)) return { result: 'hash-mismatch' }
-  return { body }
 }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing

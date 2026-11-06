@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'n
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EventLog } from '../backend/events/log.ts'
+import { EventLog } from '../lib/event-log.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')

@@ -1,8 +1,8 @@
 import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { uptime } from 'node:os'
 import path from 'node:path'
-import { retried } from '../disk.ts'
-import { EventLog, type Opened } from '../events/log.ts'
+import { retried } from '../../lib/disk.ts'
+import { EventLog, type Opened } from '../../lib/event-log.ts'
 import { defaultState, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
 
 export type BootOptions = {
