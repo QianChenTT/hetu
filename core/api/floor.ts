@@ -29,3 +29,10 @@ export const floorConstants = table({
 export type FloorConstant = keyof typeof floorConstants
 
 export const floorConstantNames = frozen(Object.keys(floorConstants) as FloorConstant[])
+
+// The longest delay a timer takes, about 24.8 days. Node fires a longer one at once, so a raised deadline would time
+// every call out
+export const MAX_TIMER_MS = 2 ** 31 - 1
+
+// The constants that are times in ms, none of which the human may raise past MAX_TIMER_MS
+export const timeConstants = frozen(floorConstantNames.filter(name => name.endsWith('Ms')))

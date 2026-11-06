@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { change, changeKinds, MAX_FOLDER_LENGTH } from '../api/changes.ts'
-import { floorConstantNames } from '../api/floor.ts'
+import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const HASH = 'a'.repeat(64)
@@ -136,8 +136,18 @@ describe('what each kind holds', () => {
       ['a value that is not whole', { constant: 'callsInFlight', value: 1.5 }],
       ['a value past the safe integers', { constant: 'callsInFlight', value: 2 ** 53 }],
       ['a value as text', { constant: 'callsInFlight', value: '64' }],
+      ['a deadline past the longest timer', { constant: 'callDeadlineMs', value: 2 ** 31 }],
+      ['a heartbeat past the longest timer', { constant: 'heartbeatMs', value: 2 ** 31 }],
     ])('refuses %s', (_name, over) => {
       expect(change.safeParse({ kind: 'limit.set', plugin: null, ...over }).success).toBe(false)
+    })
+
+    it('takes a time up to the longest timer and any other constant past it', () => {
+      for (const constant of timeConstants) {
+        expect(change.safeParse({ kind: 'limit.set', constant, value: MAX_TIMER_MS, plugin: 'search' }).success).toBe(true)
+      }
+      expect(timeConstants).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'floodMs'])
+      expect(change.safeParse({ kind: 'limit.set', constant: 'bytesInFlight', value: 2 ** 40, plugin: null }).success).toBe(true)
     })
   })
 })
