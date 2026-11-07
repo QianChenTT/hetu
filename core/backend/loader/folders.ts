@@ -8,7 +8,7 @@ import { retried, syncDir, writable } from '../../lib/disk.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
-// The loader's folders in the data folder, section 10's layout
+// The loader's folders in the data folder
 export const folders = {
   plugins: (dataDir: string, id: string) => path.join(dataDir, 'plugins', id),
   staging: (dataDir: string) => path.join(dataDir, 'staging'),
