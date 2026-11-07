@@ -4,7 +4,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
 import { EventLog } from '../lib/event-log.ts'
-import type { CarrierOptions, FloorLog } from '../backend/carrier/seams.ts'
+import { FloorLane } from '../backend/carrier/records.ts'
+import type { CarrierOptions, FloorLog, Landing } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -546,5 +547,78 @@ describe('record nothing', () => {
     loader.slots.gate = 'off'
     loader.slots.log = 'failed'
     expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+  })
+})
+
+// The loader applies a copy, a restore or an update only once its record is on disk, so each record says where it went
+describe('a floor record\'s landing', () => {
+  const laneOf = (log: FloorLog, options: { bound?: number, muted?: boolean } = {}) =>
+    new FloorLane(log, { bound: () => options.bound ?? 10, muted: () => options.muted ?? false, retryMs: 60_000 })
+
+  it('settles landed once the log appended it', async () => {
+    let append: () => void = () => {}
+    const log: FloorLog = { append: () => new Promise<void>(resolve => { append = resolve }), healthy: true }
+    let landing: Landing | 'waiting' = 'waiting'
+    const written = laneOf(log).write('plugin.copied', { plugin: 'git' })
+    void Promise.resolve(written).then(result => { landing = result })
+    await tick()
+    expect(landing).toBe('waiting')
+    append()
+    expect(await written).toBe('landed')
+  })
+
+  it('settles muted at once while the human turned recording off', async () => {
+    const log = new FakeLog()
+    expect(await laneOf(log, { muted: true }).write('plugin.copied', { plugin: 'git' })).toBe('muted')
+    expect(log.records).toEqual([])
+  })
+
+  it('settles lost when the backlog is full', async () => {
+    const log = new FakeLog()
+    log.failing = true
+    const lane = laneOf(log, { bound: 1 })
+    const first = lane.write('plugin.copied', { plugin: 'git' })
+    const second = lane.write('plugin.copied', { plugin: 'mcp' })
+    expect(await second).toBe('lost')
+    log.failing = false
+    await lane.flush()
+    expect(await first).toBe('landed')
+  })
+
+  it('settles lost when a healthy log refuses the record', async () => {
+    const log = new FakeLog()
+    log.refuses.add('plugin.copied')
+    const lane = laneOf(log)
+    const refused = lane.write('plugin.copied', { plugin: 'git' })
+    const after = lane.write('plugin.found', { plugin: 'search' })
+    expect(await refused).toBe('lost')
+    expect(await after).toBe('landed')
+  })
+
+  it('settles lost for records still waiting when the lane closes', async () => {
+    const log = new FakeLog()
+    log.failing = true
+    const lane = laneOf(log)
+    const waiting = lane.write('plugin.copied', { plugin: 'git' })
+    await tick()
+    lane.close()
+    expect(await waiting).toBe('lost')
+    expect(await lane.write('plugin.copied', { plugin: 'mcp' })).toBe('lost')
+  })
+
+  it('settles in the order the records were written', async () => {
+    const log = new FakeLog()
+    log.failing = true
+    const lane = laneOf(log)
+    const settled: string[] = []
+    const all = ['git', 'mcp', 'search'].map(plugin => Promise.resolve(lane.write('plugin.copied', { plugin })).then(result => {
+      settled.push(plugin)
+      return result
+    }))
+    await tick()
+    log.failing = false
+    await lane.flush()
+    expect(await Promise.all(all)).toEqual(['landed', 'landed', 'landed'])
+    expect(settled).toEqual(['git', 'mcp', 'search'])
   })
 })

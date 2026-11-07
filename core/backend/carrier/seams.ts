@@ -66,6 +66,10 @@ export type Served = (call: Call) => Promise<unknown>
 // refused that record, not that the log is down
 export type FloorLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
 
+// What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a
+// full backlog, refused by the log or still waiting when the lane closed
+export type Landing = 'landed' | 'muted' | 'lost'
+
 export type CarrierOptions = {
   loader: Loader
   // The holder's interface while the slot or role is on, else null
