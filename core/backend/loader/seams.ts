@@ -20,7 +20,7 @@ export type CarrierLink = {
   end(caller: Caller, code?: 'stopped' | 'crashed'): void
   // A lifecycle message down a half's own way: init, deps or stop. Dropped when the way is gone
   send(caller: Caller, message: unknown): void
-  // A floor record into the floor lane, never blocking. The promise answers S4-12: it settles with landed once that
+  // A floor record into the floor lane, never blocking. The promise settles with landed once that
   // one record is on disk. It settles at once with muted while the human turned recording off. It settles with lost
   // when the backlog dropped it, the log refused it or the lane closed with it still waiting. It never rejects. A copy,
   // an update or a restore applies only on landed or muted, so a record the log can't write yet holds the change back
@@ -28,7 +28,7 @@ export type CarrierLink = {
   record(event: string, fields: Record<string, Field>): Promise<Landing>
   // A slot state, a plugin state or the StateView changed, so the carrier asks the gate about live subscriptions again
   changed(): void
-  // The answer to S4-11. The six slot states have no stopping and the carrier reads anything else as failed, so
+  // Shutdown has begun. The six slot states have no stopping and the carrier reads anything else as failed, so
   // shutdown says so here instead. From this call on the carrier answers stopped where it would answer policy-down,
   // guard-down or unavailable for a slot, a guard or a provider that is down. It writes no slot change as a failure
   // either. The loader keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing

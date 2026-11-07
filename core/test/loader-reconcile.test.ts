@@ -254,7 +254,7 @@ describe('removing and restoring a first-party plugin', () => {
     expect(await exists(folderOf(next.dataDir, 'git'))).toBe(false)
   })
 
-  // The step 6 attack review's removed-first-party-comeback: the reconcile honoured the tombstone only with no entry
+  // A tombstone holds with an entry beside it, which a remove stopped between its two writes leaves
   it('keeps a removed first-party plugin out though an entry with the install\'s bytes sits beside its tombstone', async () => {
     const made = await harness({
       install: installWith({ git: gitFiles() }),

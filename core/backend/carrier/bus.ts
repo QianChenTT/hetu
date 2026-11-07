@@ -30,7 +30,7 @@ export type Holder = { owner: object, caller: Caller, plugin: string | null, pus
 type Subscription = {
   // Needs no gate: a plugin's own topic, or a core topic a window hears
   free: boolean
-  // false while it stands, made with the gate down or held back since, and waiting for the gate to allow it
+  // false while it stands, made with the gate down or held back since, waiting for the gate to allow it
   live: boolean
   // A path event may have been held back from it since the gate went down, so it reads again once the gate is up
   resync: boolean
@@ -168,12 +168,13 @@ export class Bus {
   }
 
   // Runs before anything the gate decides here, so a change the loader didn't report is still seen. While the gate is
-  // down every live path subscription is marked, since a path may be held back from it, and a gated subscription the
-  // gate didn't allow on the current StateView waits, path-less events included. Only an exact allow counts, so a
+  // down every live path subscription is marked, since a path may be held back from it. A gated subscription the gate
+  // didn't allow on the current StateView waits too, path-less events included. Only an exact allow counts, so a
   // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the StateView
-  // moved, the bus asks about every subscription the gate holds. A refused one ends with events.ended, one the gate gave
-  // no answer about waits and is asked again at every sync until it answers, and each subscriber with a marked or newly
-  // started subscription gets one events.dropped. With the gate off by the human nothing is asked and everything starts
+  // moved, the bus asks about every subscription the gate holds. A refused one ends with events.ended. One the gate
+  // gave no answer about waits and is asked again at every sync until it answers. Each subscriber with a marked or
+  // newly started subscription gets one events.dropped. With the gate off by the human nothing is asked and everything
+  // starts
   sync(): void {
     const { key, paths, view } = this.parts.state()
     if (key === this.key && !this.unsettled) return

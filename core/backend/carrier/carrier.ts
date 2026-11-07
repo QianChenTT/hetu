@@ -123,8 +123,8 @@ function whoOf(caller: Caller): Record<string, Field> {
   return { plugin: caller.plugin }
 }
 
-// A record's value holds at most MAX_TOPICS_TEXT characters, so the topics that fit, space separated, and how many
-// there were in all
+// A record's value holds at most MAX_TOPICS_TEXT characters, so a record names the topics that fit, space separated,
+// with how many there were in all
 const MAX_TOPICS_TEXT = 4096
 function topicsOf(topics: readonly string[]): Record<string, Field> {
   let listed = ''
@@ -756,8 +756,8 @@ export class Carrier {
   // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A
   // subscribe made while the gate can't be asked stands rather than being refused, so what a plugin subscribed to at
   // start isn't lost. With the gate off it passes as any call with power does. A subscribe whose gated topics all
-  // stand used no power yet, so its audit record names only the topics that went live and coalesces like a free call,
-  // and the standing ones go in an events.waiting record until asking again starts or ends them
+  // stand used no power yet, so its audit record names only the topics that went live and coalesces like a free call.
+  // The standing ones go in an events.waiting record until asking again starts or ends them
   private events(pending: Pending, args: unknown, kind: Kind): void {
     const { way } = pending
     if (pending.action === 'events.publish') {
