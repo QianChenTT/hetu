@@ -477,8 +477,8 @@ describe('deadlines and cancel', () => {
 })
 
 describe('filterReadable', () => {
-  async function incoming() {
-    const parts = plugins()
+  async function incoming(over: Partial<CarrierOptions> = {}) {
+    const parts = plugins(over)
     const id = parts.mcp.call('search.query', { text: 'x' })
     const got = await parts.search.delivered('search.query')
     return { ...parts, id, got }
@@ -539,6 +539,55 @@ describe('filterReadable', () => {
     const paths = Array.from({ length: MAX_FILTER_PATHS + 1 }, (_, i) => `notes/${i}.md`)
     expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('invalid')
     expect((await search.ask('core.filterReadable', { call: got.callId, paths: paths.slice(1) })).ok).toBe(true)
+  })
+
+  // Each canRead below takes a millisecond of main on the carrier's clock
+  async function timed(over: Partial<CarrierOptions> = {}) {
+    const clock = { now: 1000 }
+    const parts = await incoming({ clock: () => clock.now, ...over })
+    parts.gate.readable = () => {
+      clock.now += 1
+      return true
+    }
+    const paths = Array.from({ length: 40 }, (_, i) => `notes/${i}.md`)
+    const filter = () => parts.search.ask('core.filterReadable', { call: parts.got.callId, paths })
+    return { ...parts, clock, paths, filter }
+  }
+
+  it('answers throttled once the plugin spent its second of the gate\'s time, partway through a call too', async () => {
+    const { clock, paths, filter, gate } = await timed()
+    // 40 paths asked about on both sides, 80 ms of the 100
+    expect((await filter()).result).toEqual(paths)
+    // 80 more pass the budget partway, so the call keeps nothing it found
+    expect(code(await filter())).toBe('throttled')
+    const asked = gate.reads.length
+    expect(asked).toBeLessThan(160)
+    // Spent, so the next is refused without asking the gate
+    expect(code(await filter())).toBe('throttled')
+    expect(gate.reads).toHaveLength(asked)
+    // A new second starts afresh
+    clock.now += 1000
+    expect((await filter()).result).toEqual(paths)
+  })
+
+  it('takes the human\'s budget for the plugin', async () => {
+    const { loader, paths, filter } = await timed()
+    loader.human.plugins.search = { filterMsPerSecond: 200 }
+    expect((await filter()).result).toEqual(paths)
+    expect((await filter()).result).toEqual(paths)
+    expect(code(await filter())).toBe('throttled')
+  })
+
+  it('stops a grant shaped for the matcher\'s worst case within its budget instead of holding main', async () => {
+    const { search, got, gate } = await incoming()
+    const crafted = Array.from({ length: 85 }, () => '**/*a*b').join('/').slice(0, 511)
+    gate.grants.search = [{ type: 'vault.read', paths: Array(64).fill(crafted) }]
+    const deep = Array.from({ length: 256 }, () => 'a').join('/').slice(0, 511)
+    const started = performance.now()
+    const reply = await search.ask('core.filterReadable', { call: got.callId, paths: Array(MAX_FILTER_PATHS).fill(deep) })
+    expect(code(reply)).toBe('throttled')
+    // The budget is 100 ms. Unbounded the message held main for one to three seconds
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 })
 

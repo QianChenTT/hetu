@@ -192,6 +192,8 @@ export class Carrier {
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
   private readonly inflight = new Map<string, { calls: number, bytes: number }>()
+  // The gate's time each plugin's filterReadable calls took in the current second, by plugin or a window's way
+  private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly bus: Bus
   // The StateView number core.security last went out for
@@ -786,7 +788,10 @@ export class Carrier {
   }
 
   // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-  // read too, every path with the gate off and policy-down while the gate is starting or failed
+  // read too, every path with the gate off and policy-down while the gate is starting or failed. One message asks the
+  // gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
+  // slow, so the gate's time counts against the plugin per second. Past filterMsPerSecond the call answers throttled,
+  // partway through too, and keeps nothing it found
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)
     const paths = field(args, 'paths') as string[]
@@ -795,12 +800,30 @@ export class Carrier {
     if (state === 'off') return { ok: true, result: [...paths] }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
+    const budget = this.limits.of(way.plugin, 'filterMsPerSecond')
+    const started = this.clock()
+    const key = way.plugin ?? way.key
+    let spent = this.filtered.get(key)
+    if (spent === undefined || started - spent.second >= 1000 || started < spent.second) {
+      spent = { second: started, spent: 0 }
+      this.filtered.set(key, spent)
+    }
+    if (spent.spent >= budget) return no('throttled')
+    const kept: string[] = []
+    let asked = 0
     try {
-      return { ok: true, result: paths.filter(path => gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) }
+      for (const path of paths) {
+        if (gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) kept.push(path)
+        asked++
+        if (asked < paths.length && spent.spent + this.clock() - started >= budget) break
+      }
     } catch {
       this.fault('gate', 'canRead')
       return no('policy-down')
+    } finally {
+      spent.spent += this.clock() - started
     }
+    return asked < paths.length ? no('throttled') : { ok: true, result: kept }
   }
 
   // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A

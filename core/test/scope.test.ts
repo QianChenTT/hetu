@@ -334,6 +334,15 @@ describe('patterns that made glob libraries slow', () => {
     expect(performance.now() - started).toBeLessThan(50)
     expect(answer).toBe(false)
   })
+
+  // A grant may hold 64 scopes of a type, so a call's precheck may run 64 of the slow cases against one path
+  it('answers a grant of 64 such scopes against one 512 character path in well under 250 ms', () => {
+    const grants = Array.from({ length: 64 }, (_, i) => slow[i % slow.length])
+    const started = performance.now()
+    const answers = grants.map(([, grant, path]) => matches(grant, path))
+    expect(performance.now() - started).toBeLessThan(250)
+    expect(answers.every(answer => answer === false)).toBe(true)
+  })
 })
 
 // The same rules as a plain recursion over both levels, which the greedy walk must agree with on any input

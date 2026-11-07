@@ -19,6 +19,7 @@ export const floorConstants = table({
   heartbeatMisses: 3, // then unresponsive
   eventCredits: 256, // per subscriber
   topicsPerHalf: 64,
+  filterMsPerSecond: 100, // per plugin, the gate's time its core.filterReadable calls may take in a second
   auditQueue: 10000, // records
   floorBacklog: 1000, // records
   floodFactor: 10, // the flood cap: this many times the message rate
