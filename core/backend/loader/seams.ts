@@ -56,8 +56,9 @@ export type Runtime = {
   // Starts a worker from the verified bytes. The worker host page gets { id, incarnation, code } and the port. A throw
   // means it couldn't start
   startWorker(start: WorkerStart): void
-  // Imports a host half from the verified files and starts it on its link. Resolves with the roles the module holds.
-  // A throw or a rejection marks the half failed. root is where the files came from, for the import hook step 9 picks
+  // Imports a host half from the verified files and starts it on its link. Resolves with the roles the module holds. A
+  // throw or a rejection marks the half failed. root is where the files came from, for the import hook the Electron
+  // runtime picks
   startHost(start: HostStart): Promise<HostExports>
   // Ends a worker with terminate(). Ending one already dead decides nothing
   terminate(id: string, incarnation: number): void

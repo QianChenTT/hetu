@@ -3,8 +3,8 @@ import { firstPartyIds, installIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain } from './plain.ts'
 import { pathProblem } from './scope.ts'
 
-// The install list sits in the install folder under this name. The build writes it from step 9 with each install
-// plugin's version and hash, so tests write fixtures
+// The install list sits in the install folder under this name. The Electron build is to write it with each install
+// plugin's version and hash. Until it does, tests write fixtures
 export const INSTALL_LIST = 'hetu-install.json'
 export const INSTALL_LIST_FORMAT = 1
 // Refused unread past this size. The schema holds the parsed value to the same cap

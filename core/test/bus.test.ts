@@ -55,7 +55,7 @@ function setup(over: Partial<CarrierOptions> = {}) {
   return { ...parts, vaultHalf, way, trustedWay, search, mcp, git, edited, indexed }
 }
 
-describe('a gate outage end to end, step 5\'s proof', () => {
+describe('a gate outage end to end, the bus\'s proof', () => {
   it('holds every path back while the gate is down, keeps path-less events flowing and resyncs each path subscriber exactly once', async () => {
     const { carrier, connect, loader, search, mcp, git, way, trustedWay, edited, indexed } = setup()
     expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: [] })

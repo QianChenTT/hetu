@@ -279,7 +279,7 @@ export async function plant(file: string, body: string): Promise<void> {
 export type Listing = { files: Files, firstParty?: boolean, version?: string, hash?: string }
 
 // Writes an install folder: each plugin under plugins/<id> and the install list with each one's version and hash, as
-// the build will from step 9. hash replaces the real one, for a list that doesn't match its files
+// the Electron build is to. hash replaces the real one, for a list that doesn't match its files
 export async function writeInstall(dir: string, plugins: Record<string, Listing>): Promise<void> {
   const listed: Record<string, unknown> = {}
   for (const [id, plugin] of Object.entries(plugins)) {

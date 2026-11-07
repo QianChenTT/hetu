@@ -14,7 +14,7 @@ describe('the scope grammar', () => {
     expect(scope.safeParse(grant).success).toBe(true)
   })
 
-  // Every character the #66 brief refuses, whole, at the start of a segment and inside one
+  // Every character the scope grammar refuses, whole, at the start of a segment and inside one
   it.each(['\\', ':', '?', '[', ']', '{', '}', '(', ')', '!', '#'])('refuses %j anywhere in a scope', char => {
     for (const grant of [char, `notes/${char}`, `notes/a${char}b.md`, `${char}notes/**`]) {
       expect(scopeProblem(grant)).toBe('a character outside the grammar')

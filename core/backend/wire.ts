@@ -79,7 +79,7 @@ export function carrierOptions(
   }
 }
 
-// The core joined in step 6's order: the link, then the loader holding it, then the carrier asking the loader for
+// The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
 // every slot, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
   const link = new LinkToCarrier()

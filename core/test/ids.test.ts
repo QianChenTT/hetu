@@ -72,7 +72,7 @@ describe('slots, providers and guards', () => {
     expect(slotIds).toEqual(['gate', 'capabilities', 'log', 'watchdog'])
   })
 
-  it("names the provider of every namespace in section 4's table", () => {
+  it("names the provider of every namespace", () => {
     expect(providers).toEqual({
       vault: 'vault', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', log: 'log', net: 'net',
     })
@@ -108,7 +108,7 @@ describe('reserved ids', () => {
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify',
   ]
 
-  it('holds exactly the ids section 3 reserves', () => {
+  it('holds exactly the reserved ids', () => {
     expect(reservedIds).toEqual([...expected].sort())
   })
 

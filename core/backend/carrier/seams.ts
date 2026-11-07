@@ -7,7 +7,7 @@ import type { Field } from '../../lib/event-log.ts'
 // What the later parts give the carrier, each a small interface the tests fake. The carrier imports nothing from boot
 
 // One end of a channel as the carrier holds it. Node's MessagePort fits as it is. Electron's MessagePortMain wraps the
-// data in its message event, so the runtime adapts it at step 10
+// data in its message event, so the Electron runtime adapts it
 export type Port = {
   postMessage(message: unknown): void
   start(): void
@@ -16,8 +16,7 @@ export type Port = {
 }
 
 // A plugin as a call target or a provider. actions are the manifest's provides.actions and serves is the half that
-// answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads from
-// step 5
+// answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
 export type PluginInfo = {
   state: PluginState
   place: 'host' | 'sandboxed' | 'page'
@@ -33,7 +32,7 @@ type Values = Readonly<Partial<Record<FloorConstant, number>>>
 // constant whether it raises or lowers it. One for the plugin wins over one for all
 export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values>> }
 
-// What the loader owns, from step 6: lifecycle, the state and the StateView it pushes to the gate
+// What the loader owns: lifecycle, the state and the StateView it pushes to the gate
 export type Loader = {
   // The state of the install plugin holding a slot or a guard role
   slot(id: string): SlotState
@@ -50,7 +49,7 @@ export type Loader = {
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
 }
 
-// Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window at step 14
+// Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window
 export type Asks = { raise(ask: string, access: Access): string }
 
 // Where an error's text goes, never to a reply or a record. plugin is whose code threw: a provider, the gate or a
@@ -59,7 +58,7 @@ export type Asks = { raise(ask: string, access: Access): string }
 export type Debug = (entry: { plugin: string | null, caller: Caller, action: string, text: string }) => void
 
 // A namespace a later part serves with its own checks: ui.* the runtime and the mount. The bus serves events.* inside
-// the carrier since step 5
+// the carrier
 export type Served = (call: Call) => Promise<unknown>
 
 // The one EventLog boot opened, or something with its append. healthy still true after a failed append means the log
@@ -79,7 +78,8 @@ export type CarrierOptions = {
   watchdog: () => Watchdog | null
   log: FloorLog | null
   asks?: Asks
-  // Core actions the loader and the runtime serve: security.* from step 14, watchdog.stop and watchdog.restart from 6
+  // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
+  // the trusted window exists
   core?: Served
   served?: { ui?: Served }
   debug?: Debug

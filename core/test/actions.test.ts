@@ -108,7 +108,7 @@ describe('the bus\'s actions', () => {
 })
 
 describe('the provider actions', () => {
-  it('checks each against the capability section 4 names, the free ones against none', () => {
+  it('checks each against the capability it needs, the free ones against none', () => {
     expect(Object.fromEntries(Object.entries(providerActions).map(([action, spec]) => [action, spec.capability]))).toEqual({
       'vault.read': 'vault.read',
       'vault.write': 'vault.write',
@@ -245,7 +245,7 @@ describe('measuring plain data', () => {
 })
 
 describe('the state lists', () => {
-  it('has the six slot states of section 4\'s table and the plugin states of section 5', () => {
+  it('has the six slot states and the plugin lifecycle states', () => {
     expect(slotStates).toEqual(['on', 'off', 'starting', 'failed', 'absent', 'tampered'])
     expect(pluginStates).toEqual(['found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed'])
     expect(Object.isFrozen(slotStates) && Object.isFrozen(pluginStates)).toBe(true)

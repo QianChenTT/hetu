@@ -2,8 +2,8 @@ import { frozen, table } from './frozen.ts'
 
 const MiB = 1024 * 1024
 
-// Fixed constants that protect main, starting values step 10 measures. The watchdog may lower one per plugin and only
-// the human may raise one, per plugin or for all. A higher value is always the wider one
+// Fixed constants that protect main, starting values until they are measured in Electron. The watchdog may lower one
+// per plugin and only the human may raise one, per plugin or for all. A higher value is always the wider one
 export const floorConstants = table({
   messagesPerSecond: 1000, // per port
   callsInFlight: 64, // per caller

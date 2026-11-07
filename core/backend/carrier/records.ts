@@ -207,8 +207,8 @@ const callerKey = (caller: Caller) => JSON.stringify(caller)
 type Entry = { record: AuditRecord, key: string | null }
 
 // Audit records wait here for the log plugin, which takes them with next and acknowledges them with ack once they are
-// on disk. Its handle comes at step 13. Bounded: one past the bound is dropped and counted. Coalescing joins a record to
-// the one not yet taken with the same caller, onBehalf, root, action, code and gate state in the same second
+// on disk. Its handle comes with the log plugin. Bounded: one past the bound is dropped and counted. Coalescing joins a
+// record to the one not yet taken with the same caller, onBehalf, root, action, code and gate state in the same second
 export class AuditQueue {
   private readonly bound: () => number
   private readonly entries: Entry[] = []

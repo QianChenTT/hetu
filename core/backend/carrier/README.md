@@ -7,7 +7,7 @@ The carrier: the one path every call and event takes and the enforcement point o
 - `records.ts`: the floor lane straight through the one `EventLog` with its bounded backlog, the coalesced floor records and the bounded audit queue with `next` and `ack`
 - `seams.ts`: what the later parts give it, each a small interface the tests fake: the loader, the gate, the guards, the providers, the watchdog, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
 
-The bus, in the carrier since step 5:
+The bus, in the carrier:
 - `events.subscribe`, `events.unsubscribe` and `events.publish` are calls and take the eleven steps. The `event` and `ack` messages and the signals are shaped in `core/api/envelope.ts`
 - a plugin publishes only the `<id>.<name>` topics its manifest declared, from any of its halves. It hears its own for free. `core.status` and `core.security` come only from the carrier and go only to windows, with no path. The trusted window hears nothing else. These floor rules hold with the gate off
 - one subscription per half and topic, so a repeat replaces it, at most `topicsPerHalf` per half. A subscribe to another plugin's topics is judged at both stages under `events.subscribe` scoped by topics. One made while the gate can't be asked (starting, failed, absent, tampered, on with no holder or with the StateView unreadable) stands until the gate allows it

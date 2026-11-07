@@ -239,7 +239,7 @@ export class Carrier {
     })
   }
 
-  // The audit queue's pair, which the log plugin's handle wraps at step 13
+  // The audit queue's pair, which the log plugin's handle is to wrap
   readonly audit = {
     next: (max: number) => this.queue.next(max),
     ack: (seq: number) => this.queue.ack(seq),

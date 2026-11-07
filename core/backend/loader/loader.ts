@@ -37,7 +37,8 @@ export type LoaderOptions = {
   platform?: string
   // The guards expected on an action. Defaults to core/api's list, which is empty until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come at step 14
+  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
+  // trusted window
   raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
 }
 
@@ -218,7 +219,8 @@ export class Loader implements Seam {
 
   // An install plugin's slot or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
   // is tampered and every other way of not being ready is failed, so nothing reads as off that the human didn't switch
-  // off. Before the install list is read every slot is starting, as boot step 8 has it
+  // off. Before the install list is read every slot is starting, as every action with power answers starting while the
+  // core starts
   slot(id: string): SlotState {
     if (this.listResult === 'unread') return 'starting'
     if (this.listResult === 'absent') return 'absent'
@@ -321,8 +323,8 @@ export class Loader implements Seam {
 
   // ---- boot
 
-  // Boot steps 6 and 7, 9 and 10, then 12 to 16: the install checked and its host tier started, the first-party
-  // reconcile, the plugin folder scanned and the sandboxed tier started in graph order
+  // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
+  // scanned and the sandboxed tier started in graph order
   async start(): Promise<void> {
     await this.readInstall()
     this.replan()
@@ -513,8 +515,8 @@ export class Loader implements Seam {
 
   // ---- the plugin folder
 
-  // Boot step 13: every folder and every entry, each folder's bytes read and hashed once. An id no folder plugin may
-  // hold is refused reserved-id unread and kept apart, entry or folder
+  // The plugin folder scan: every folder and every entry, each folder's bytes read and hashed once. An id no folder
+  // plugin may hold is refused reserved-id unread and kept apart, entry or folder
   private async scan(): Promise<void> {
     const dir = path.join(this.dataDir, 'plugins')
     const found = new Set<string>()
@@ -1112,7 +1114,8 @@ export class Loader implements Seam {
   // ---- the state
 
   // Applies a change the trusted window confirmed, exactly as stored, through the one StateStore. A write that fails
-  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come at step 14
+  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come with the
+  // trusted window
   apply(input: Change): Promise<void> {
     return this.serial(() => this.applyNow(changeSchema.parse(input)))
   }
