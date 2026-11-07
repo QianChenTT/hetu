@@ -3,6 +3,7 @@ import type { DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
+import { type EventHandler, type EventOptions, Events, type Subscription } from './events.ts'
 import { attempt } from './refused.ts'
 import { type Handler, type IncomingCall, Serving } from './serving.ts'
 import { Sender, type Transport } from './transport.ts'
@@ -23,6 +24,11 @@ export type PluginContext = Client & {
   provide(name: string, handler: Handler): void
   // The paths of these the call's own caller may read too, only while the call is live
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]>
+  // Subscriptions to other plugins' topics and the core's. publish sends its own <id>.<name>
+  readonly events: {
+    on(topics: string | readonly string[], handler: EventHandler, options?: EventOptions): Promise<Subscription>
+    publish(name: string, path?: string): Promise<void>
+  }
   readonly try: typeof attempt
 }
 
@@ -58,6 +64,7 @@ class Half {
   private readonly stops: (() => void | Promise<void>)[] = []
   private ctx: PluginContext | null = null
   private serving: Serving | null = null
+  private events: Events | null = null
 
   constructor(spec: PluginSpec, transport: Transport, options: RunOptions) {
     const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
@@ -83,6 +90,7 @@ class Half {
     else if (kind === 'stop') void this.stop((message as { graceMs?: unknown }).graceMs)
     else if (kind === 'call') void this.serving!.deliver(message as Record<string, unknown>)
     else if (kind === 'cancel') this.serving!.cancel(message as Record<string, unknown>)
+    else if (kind === 'event') this.events!.receive(message as Record<string, unknown>)
   }
 
   private init(message: Record<string, unknown>): void {
@@ -92,7 +100,9 @@ class Half {
     this.phase = 'starting'
     const request = (action: string, args: unknown, options?: Parameters<Calls['request']>[2]) => this.calls.request(action, args, options)
     const serving = new Serving(id, this.post, request)
+    const events = new Events(id, this.post, request)
     this.serving = serving
+    this.events = events
     const ctx: PluginContext = {
       ...makeClient(request),
       id,
@@ -106,6 +116,10 @@ class Half {
       onStop: fn => { this.stops.push(fn) },
       provide: (name, handler) => serving.provide(name, handler),
       filterReadable: (call, paths) => serving.filterReadable(call, paths),
+      events: {
+        on: (topics, handler, options) => events.on(topics, handler, options),
+        publish: (name, path) => events.publish(name, path),
+      },
       try: attempt,
     }
     this.ctx = ctx
