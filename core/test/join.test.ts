@@ -1,11 +1,15 @@
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { boot } from '../backend/boot/boot.ts'
+import { boot, type Booted } from '../backend/boot/boot.ts'
+import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore } from '../backend/wire.ts'
 import { worker } from './carrier-fakes.ts'
-import { coreInstall, FakeRuntime, tempBase, writeInstall, type Listing } from './loader-fakes.ts'
+import {
+  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, tempBase, workerManifest, writeFolder, writeInstall,
+  type Files, type Listing, type Message,
+} from './loader-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -13,15 +17,40 @@ afterEach(async () => {
   for (const close of open.splice(0)) await close()
 })
 
-// The joined core over a real boot: a temp data folder, an install written from fixtures and the fake runtime
-async function joined(install: Record<string, Listing> = coreInstall()) {
+const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
+const exists = (file: string) => stat(file).then(() => true, () => false)
+
+async function until(check: () => boolean, ms = 2000): Promise<void> {
+  for (let waited = 0; !check(); waited += 5) {
+    if (waited > ms) throw new Error('nothing arrived in time')
+    await tick(5)
+  }
+}
+
+// The joined core over a real boot: a temp data folder holding approved folder plugins, an install written from
+// fixtures and the fake runtime. before runs on the booted core before anything starts
+async function joined(options: {
+  install?: Record<string, Listing>
+  folder?: Record<string, Files>
+  behave?: FakeRuntime['behave']
+  before?: (booted: Booted) => void
+} = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, install)
+  await writeInstall(installDir, options.install ?? coreInstall())
+  const store = new StateStore(dataDir)
+  await store.writeSwitches(defaultSwitches())
+  for (const [id, files] of Object.entries(options.folder ?? {})) {
+    const root = path.join(dataDir, 'plugins', id)
+    await writeFolder(root, files)
+    await store.writePlugin(id, await entryFor(root))
+  }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
+  options.before?.(booted)
   const runtime = new FakeRuntime()
+  runtime.behave = options.behave ?? {}
   const { loader, carrier } = wireCore({ booted, installDir, runtime })
   open.push(async () => {
     await loader.shutdown().catch(() => {})
@@ -58,5 +87,149 @@ describe('wiring the core', () => {
   it('refuses a link call made before the carrier exists', () => {
     const link = new LinkToCarrier()
     expect(() => link.send(worker('search'), { v: 1, kind: 'ping' })).toThrow('carrier')
+  })
+})
+
+// alpha serves alpha.hello and publishes alpha.changed, beta requires alpha, gamma publishes gamma.changed. The gate
+// allows everything, so what is under test is the path, not a grant
+describe('a plugin\'s life through the joined core', () => {
+  async function lives() {
+    const gate = allowAll()
+    const parts = await joined({
+      folder: {
+        alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} }, topics: ['changed'] } })),
+        beta: filesFor(workerManifest('beta', { requires: ['alpha'] })),
+        gamma: filesFor(workerManifest('gamma', { provides: { topics: ['changed'] } })),
+      },
+      behave: { gate: { exports: { gate } } },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, gate }
+  }
+
+  const events = (messages: Message[], topic: string) =>
+    messages.filter(message => message.kind === 'event' && message.topic === topic)
+
+  it('starts a verified plugin through the real carrier: init, deps, then ready', async () => {
+    const { loader, runtime } = await lives()
+    const alpha = runtime.half('alpha')
+    expect(alpha.got('init')).toHaveLength(1)
+    expect(alpha.got('init')[0]).toMatchObject({ v: 1, kind: 'init', id: 'alpha', incarnation: 1, deps: {} })
+    // A dependent learns its requirements' states in its init
+    expect(runtime.half('beta').got('init')[0]).toMatchObject({ kind: 'init', id: 'beta', deps: { alpha: 'ready' } })
+    expect(loader.plugin('alpha')?.state).toBe('ready')
+    expect(loader.plugin('beta')?.state).toBe('ready')
+  })
+
+  it('takes its call through the eleven steps and records it', async () => {
+    const { carrier, runtime } = await lives()
+    const alpha = runtime.half('alpha')
+    const asked = runtime.half('beta').ask('alpha.hello', { name: 'beta' })
+    await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
+    const delivered = alpha.inbox.find(message => message.kind === 'call' && message.action === 'alpha.hello')!
+    expect(delivered.caller).toEqual(worker('beta'))
+    alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: 'hello beta' })
+    expect((await asked)?.result).toBe('hello beta')
+    const records = carrier.audit.next(20).filter(record => record.action === 'alpha.hello')
+    expect(records.map(record => [record.caller, record.code])).toEqual([[worker('beta'), null]])
+  })
+
+  it('delivers its published event to a subscriber that may read it', async () => {
+    const { runtime } = await lives()
+    const beta = runtime.half('beta')
+    expect((await beta.ask('events.subscribe', { topics: ['alpha.changed'] }))?.result).toEqual({ standing: [] })
+    expect((await runtime.half('alpha').ask('events.publish', { topic: 'alpha.changed', path: 'notes/a.md' }))?.ok).toBe(true)
+    await until(() => events(beta.inbox, 'alpha.changed').length === 1)
+    expect(events(beta.inbox, 'alpha.changed')).toEqual([{ v: 1, kind: 'event', seq: 1, topic: 'alpha.changed', path: 'notes/a.md' }])
+  })
+
+  it('drops its subscriptions and credits when it stops', async () => {
+    const { loader, runtime } = await lives()
+    const alpha = runtime.half('alpha')
+    const first = runtime.half('beta')
+    await first.ask('events.subscribe', { topics: ['alpha.changed'] })
+    await alpha.ask('events.publish', { topic: 'alpha.changed' })
+    await until(() => events(first.inbox, 'alpha.changed').length === 1)
+    await loader.stop('beta', 'human')
+    await loader.restart('beta', 'human')
+    await until(() => loader.plugin('beta')?.state === 'ready')
+    const second = runtime.half('beta', 2)
+    await alpha.ask('events.publish', { topic: 'alpha.changed' })
+    await tick(30)
+    // The new incarnation holds no subscription from the old one
+    expect(events(second.inbox, 'alpha.changed')).toEqual([])
+    await second.ask('events.subscribe', { topics: ['alpha.changed'] })
+    await alpha.ask('events.publish', { topic: 'alpha.changed' })
+    await until(() => events(second.inbox, 'alpha.changed').length === 1)
+    // Its credits start afresh, so its events count from 1 again
+    expect(events(second.inbox, 'alpha.changed')[0].seq).toBe(1)
+    expect(events(first.inbox, 'alpha.changed')).toHaveLength(1)
+  })
+
+  it('drops them when it crashes, moves its dependents to waiting and refuses its old incarnation', async () => {
+    const { carrier, loader, runtime } = await lives()
+    const alpha = runtime.half('alpha')
+    await alpha.ask('events.subscribe', { topics: ['gamma.changed'] })
+    alpha.crash()
+    await until(() => loader.plugin('alpha')?.state === 'crashed')
+    expect(loader.plugin('beta')?.state).toBe('waiting')
+    await runtime.half('gamma').ask('events.publish', { topic: 'gamma.changed' })
+    await tick(30)
+    expect(events(alpha.inbox, 'gamma.changed')).toEqual([])
+    await loader.restart('alpha', 'human')
+    await until(() => loader.plugin('alpha')?.state === 'ready')
+    const second = runtime.half('alpha', 2)
+    // A message for the dead incarnation reaches nothing, the new one included
+    carrier.send(worker('alpha', 1), { v: 1, kind: 'stop', graceMs: 3000 })
+    await tick(30)
+    expect(second.got('stop')).toEqual([])
+    expect(alpha.closed).toBe(true)
+  })
+
+  it('restarts it as a new incarnation that starts with no subscriptions or credits', async () => {
+    const { loader, runtime } = await lives()
+    await runtime.half('alpha').ask('events.subscribe', { topics: ['gamma.changed'] })
+    runtime.half('alpha').crash()
+    await until(() => loader.plugin('alpha')?.state === 'crashed')
+    await loader.restart('alpha', 'human')
+    await until(() => loader.plugin('alpha')?.state === 'ready' && loader.plugin('beta')?.state === 'ready')
+    const second = runtime.half('alpha', 2)
+    const gamma = runtime.half('gamma')
+    await gamma.ask('events.publish', { topic: 'gamma.changed' })
+    await tick(30)
+    expect(events(second.inbox, 'gamma.changed')).toEqual([])
+    await second.ask('events.subscribe', { topics: ['gamma.changed'] })
+    await gamma.ask('events.publish', { topic: 'gamma.changed' })
+    await until(() => events(second.inbox, 'gamma.changed').length === 1)
+    expect(events(second.inbox, 'gamma.changed')[0].seq).toBe(1)
+    // Its dependent came back on its own as a new incarnation too
+    expect(runtime.half('beta', 2).got('init')).toHaveLength(1)
+  })
+
+  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real floor lane
+  it('holds a first-party copy back until its record landed', async () => {
+    let failing = true
+    const { carrier, loader, dataDir } = await joined({
+      install: { ...coreInstall(), git: { files: filesFor(workerManifest('git')), firstParty: true } },
+      before: booted => {
+        const append = booted.log.append.bind(booted.log)
+        booted.log.append = async (event, fields) => {
+          if (failing) throw new Error('disk full')
+          return append(event, fields)
+        }
+        Object.defineProperty(booted.log, 'healthy', { get: () => !failing, configurable: true })
+      },
+    })
+    const started = loader.start()
+    await tick(100)
+    expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(false)
+    expect(loader.plugin('git')).toBe(null)
+    failing = false
+    await carrier.flushFloor()
+    await started
+    await loader.settled()
+    expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(true)
+    expect(loader.plugin('git')?.state).toBe('ready')
   })
 })

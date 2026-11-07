@@ -10,8 +10,8 @@ describe('the carrier as the loader\'s link', () => {
     const { carrier, connect, loader } = harness()
     loader.sandboxed('search')
     const search = connect(worker('search'))
-    carrier.send(worker('search'), { v: 1, kind: 'stop', reason: 'human' })
-    expect(await search.waitFor(message => message.kind === 'stop')).toEqual({ v: 1, kind: 'stop', reason: 'human' })
+    carrier.send(worker('search'), { v: 1, kind: 'stop', graceMs: 3000 })
+    expect(await search.waitFor(message => message.kind === 'stop')).toEqual({ v: 1, kind: 'stop', graceMs: 3000 })
   })
 
   it('hands a host half a copy of the message on a later turn', async () => {
@@ -29,14 +29,14 @@ describe('the carrier as the loader\'s link', () => {
     const { carrier } = harness()
     const vault = hostHalf(carrier, host('vault'))
     carrier.end(host('vault'))
-    carrier.send(host('vault'), { v: 1, kind: 'stop', reason: 'human' })
+    carrier.send(host('vault'), { v: 1, kind: 'stop', graceMs: 3000 })
     await tick()
     expect(vault.inbox).toEqual([])
   })
 
   it('drops a message for a caller it never registered', () => {
     const { carrier } = harness()
-    expect(() => carrier.send(worker('ghost'), { v: 1, kind: 'stop', reason: 'human' })).not.toThrow()
+    expect(() => carrier.send(worker('ghost'), { v: 1, kind: 'stop', graceMs: 3000 })).not.toThrow()
   })
 
   // Only messages a half sends count against its rate. Twenty pings at a rate of 2 would be a flood if they counted
