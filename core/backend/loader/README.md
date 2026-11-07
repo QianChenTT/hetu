@@ -4,6 +4,6 @@ The loader, one of the four parts of the core: what may run, where, when and as 
 - `graph.ts`: the requires graph as a pure function: cycles refused, a dependent waiting on its first direct requirement that can't serve it and the order every start and stop follows
 - `verify.ts`: one read of a plugin folder, its hash and its manifest parsed from the bytes read, with what a read alone can refuse
 - `folders.ts`: the loader's folders in the data folder: staging, the swap that puts a copy or an update in place before its entry, the start markers and the marker of each install plugin's version from the last run
-- `seams.ts`: what it needs from the carrier beyond `register`, `handle` and `end` and from the runtime, each a small interface the tests fake. The join builds the carrier's side
+- `seams.ts`: what it needs from the carrier beyond `register`, `handle` and `end` and from the runtime, each a small interface the tests fake. The carrier gives it all. `core/backend/wire.ts` builds the two in order
 
 It imports `firstPartyPath` and the state's types from `boot` and nothing from the carrier but its seam types
