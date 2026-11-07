@@ -58,7 +58,8 @@ export type Asks = { raise(ask: string, access: Access): string }
 // provider's or the gate's text can name paths
 export type Debug = (entry: { plugin: string | null, caller: Caller, action: string, text: string }) => void
 
-// A namespace a later part serves with its own checks: events.* the bus from step 5 and ui.* the runtime and the mount
+// A namespace a later part serves with its own checks: ui.* the runtime and the mount. The bus serves events.* inside
+// the carrier since step 5
 export type Served = (call: Call) => Promise<unknown>
 
 // The one EventLog boot opened, or something with its append. healthy still true after a failed append means the log
@@ -76,7 +77,7 @@ export type CarrierOptions = {
   asks?: Asks
   // Core actions the loader and the runtime serve: security.* from step 14, watchdog.stop and watchdog.restart from 6
   core?: Served
-  served?: { events?: Served, ui?: Served }
+  served?: { ui?: Served }
   debug?: Debug
   // ms since the epoch, for deadlines and the times records carry
   now?: () => number

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coreActions, MAX_FILTER_PATHS, MAX_LEASE_PATHS, providerActions } from '../api/actions.ts'
+import { coreActions, coreTopics, eventActions, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, providerActions } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
@@ -21,7 +21,7 @@ describe('the core actions', () => {
     })
   })
 
-  it('lives only in the namespaces the core serves, none of them events or ui yet', () => {
+  it('lives only in the namespaces the core serves, none of them events, which the bus has, or ui yet', () => {
     for (const action of Object.keys(coreActions)) expect(coreNamespaces).toContain(namespace(action))
     expect(Object.keys(coreActions).some(action => ['events', 'ui'].includes(namespace(action)))).toBe(false)
   })
@@ -57,6 +57,53 @@ describe('the core actions', () => {
     ['watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 1.5 }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
+  })
+})
+
+describe('the bus\'s actions', () => {
+  it('serves subscribe, unsubscribe and publish in events, with the two topics the core sends', () => {
+    expect(Object.keys(eventActions)).toEqual(['events.subscribe', 'events.unsubscribe', 'events.publish'])
+    expect(coreTopics).toEqual(['core.status', 'core.security'])
+    expect(Object.isFrozen(eventActions) && Object.isFrozen(coreTopics)).toBe(true)
+    expect(Object.getPrototypeOf(eventActions)).toBeNull()
+    // Acknowledging is the ack message, never a call
+    expect(eventActions['events.ack']).toBeUndefined()
+  })
+
+  it.each([
+    ['events.subscribe', { topics: ['vault.changed'] }, true],
+    ['events.subscribe', { topics: ['core.status', 'core.security'] }, true],
+    ['events.subscribe', { topics: ['core.status', 'vault.changed'] }, true],
+    ['events.subscribe', { topics: ['file-explorer.opened'] }, true],
+    ['events.subscribe', { topics: Array.from({ length: MAX_CALL_TOPICS }, (_, i) => `p${i}.a`) }, true],
+    ['events.subscribe', { topics: Array.from({ length: MAX_CALL_TOPICS + 1 }, (_, i) => `p${i}.a`) }, false],
+    ['events.subscribe', { topics: [] }, false],
+    ['events.subscribe', { topics: ['core.secret'] }, false],
+    ['events.subscribe', { topics: ['events.dropped'] }, false],
+    ['events.subscribe', { topics: ['events.ended'] }, false],
+    ['events.subscribe', { topics: ['security.request'] }, false],
+    ['events.subscribe', { topics: ['watchdog.stop'] }, false],
+    ['events.subscribe', { topics: ['ui.panel'] }, false],
+    ['events.subscribe', { topics: ['plugin.call'] }, false],
+    ['events.subscribe', { topics: ['vault.*'] }, false],
+    ['events.subscribe', { topics: ['vault'] }, false],
+    ['events.subscribe', { topics: 'vault.changed' }, false],
+    ['events.subscribe', { topics: ['vault.changed'], paths: ['**'] }, false],
+    ['events.unsubscribe', { topics: ['vault.changed'] }, true],
+    ['events.unsubscribe', { topics: ['events.dropped'] }, false],
+    ['events.publish', { topic: 'search.indexed' }, true],
+    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md' }, true],
+    // The floor refuses a topic no manifest can declare, which shape leaves to it
+    ['events.publish', { topic: 'core.status' }, true],
+    ['events.publish', { topic: 'vault.changed', path: '' }, false],
+    ['events.publish', { topic: 'vault.changed', path: 'notes\\a.md' }, false],
+    ['events.publish', { topic: 'vault.changed', path: 'notes/../a.md' }, false],
+    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md', text: 'the note' }, false],
+    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md', version: 3 }, false],
+    ['events.publish', { topics: ['vault.changed'] }, false],
+    ['events.publish', { topic: 'vault' }, false],
+  ])('checks %s with %j', (action, args, ok) => {
+    expect(eventActions[action].args.safeParse(args).success).toBe(ok)
   })
 })
 

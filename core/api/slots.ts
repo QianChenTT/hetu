@@ -3,8 +3,9 @@ import type { Caller, Refusal, RefusalCode } from './envelope.ts'
 import { frozen } from './plain.ts'
 
 // What a call reaches as the gate and the guards judge it. paths are vault paths, the caller's own text at precheck and
-// canonical once the provider has prepared the call. target is the plugin a plugin call reaches
-export type Scope = { readonly paths?: readonly string[], readonly target?: string }
+// canonical once the provider has prepared the call. target is the plugin a plugin call reaches. topics are the topics
+// a subscribe names that the gate holds, each already canonical as written
+export type Scope = { readonly paths?: readonly string[], readonly target?: string, readonly topics?: readonly string[] }
 
 // A call as the carrier hands it to a provider, a callee or a core action. callId is the carrier's own and deadline is
 // in ms since the epoch, never later than the parent's

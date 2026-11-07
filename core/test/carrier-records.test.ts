@@ -503,6 +503,20 @@ describe('record nothing', () => {
     expect(carrier.audit.next(10)).toEqual([])
   })
 
+  // A coalesced record counts what follows its first, so a count made in the gap would land once recording is back on
+  it('counts no fault made while recording is off, so none lands once it is back on', async () => {
+    const log = new FakeLog()
+    const { carrier, connect, loader, gate } = harness({ log })
+    loader.nothing = true
+    gate.decision = () => { throw new Error('broken') }
+    const search = connect(worker('search'))
+    for (let i = 0; i < 3; i++) expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    loader.nothing = false
+    carrier.close()
+    await tick()
+    expect(log.records).toEqual([])
+  })
+
   it('records again once recording is back on, with nothing from the gap', async () => {
     const log = new FakeLog()
     const { carrier, connect, loader } = harness({ log })
