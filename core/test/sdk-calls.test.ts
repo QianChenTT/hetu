@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { Calls } from '../sdk/calls.ts'
+import { definePlugin, type PluginContext, run, type RunOptions } from '../sdk/plugin.ts'
 import { attempt, Refused } from '../sdk/refused.ts'
-import { cleanup, harness, worker } from './carrier-fakes.ts'
-import { clientOn } from './sdk-fakes.ts'
+import { Sender } from '../sdk/transport.ts'
+import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
+import { clientOn, sdkTransport } from './sdk-fakes.ts'
 
 afterEach(cleanup)
 
@@ -73,5 +76,101 @@ describe('a call through the SDK', () => {
     await client.leases.list().catch(() => {})
     const sent = transport.sent as { action: string, args: unknown }[]
     expect(sent.find(message => message.action === 'leases.list')?.args).toEqual({})
+  })
+})
+
+async function until(check: () => boolean, ms = 2000): Promise<void> {
+  for (let waited = 0; !check(); waited += 5) {
+    if (waited > ms) throw new Error('nothing arrived in time')
+    await tick(5)
+  }
+}
+
+// search as a running plugin, so the limits the runtime knows reach its calls
+async function plugin(limits: RunOptions['limits'] = {}) {
+  const parts = harness()
+  parts.loader.sandboxed('search')
+  parts.loader.sandboxed('mcp', { handle: {} })
+  parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
+  parts.vault.files.set('notes/a.md', 'hello')
+  let ctx: PluginContext | null = null
+  const transport = sdkTransport(parts.carrier, worker('search'))
+  run(definePlugin({ start: given => { ctx = given } }), transport, { limits })
+  parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
+  await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
+  return { ...parts, ctx: ctx!, transport, mcp: parts.connect(worker('mcp')) }
+}
+
+describe('what a call hides', () => {
+  it('retries a call refused starting until the provider is ready', async () => {
+    const { ctx, loader } = await plugin()
+    loader.installed('vault', 'starting')
+    setTimeout(() => loader.installed('vault', 'ready'), 100)
+    expect(await ctx.vault.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
+  })
+
+  it('gives up on starting at the call\'s deadline with the last refusal', async () => {
+    const { ctx, loader } = await plugin()
+    loader.installed('vault', 'starting')
+    const started = Date.now()
+    await expect(ctx.vault.read({ path: 'notes/a.md' }, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('retries a call refused throttled', async () => {
+    const parts = await plugin()
+    parts.loader.human.plugins.search = { callsInFlight: 1 }
+    let release: () => void = () => {}
+    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const reads = [1, 2, 3].map(() => parts.ctx.vault.read({ path: 'notes/a.md' }))
+    setTimeout(() => release(), 100)
+    expect(await Promise.all(reads)).toEqual([{ text: 'hello' }, { text: 'hello' }, { text: 'hello' }])
+  })
+
+  it('keeps no more calls in flight than callsInFlight', async () => {
+    const parts = await plugin({ callsInFlight: 2 })
+    let release: () => void = () => {}
+    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const reads = [1, 2, 3, 4, 5].map(() => parts.ctx.vault.read({ path: 'notes/a.md' }))
+    await tick(60)
+    expect(parts.vault.prepared).toHaveLength(2)
+    release()
+    expect(await Promise.all(reads)).toHaveLength(5)
+  })
+
+  it('paces its messages under messagesPerSecond', { timeout: 10_000 }, async () => {
+    const parts = await plugin({ messagesPerSecond: 20 })
+    parts.loader.human.plugins.search = { messagesPerSecond: 20 }
+    const selves = Array.from({ length: 40 }, () => parts.ctx.call('core', 'self', {}, { timeoutMs: 6000 }))
+    const results = await Promise.all(selves)
+    expect(results.every(result => (result as { id?: string }).id === 'search')).toBe(true)
+    expect(parts.loader.crashes).toEqual([])
+  })
+
+  it('settles a call whose reply never came', async () => {
+    const calls = new Calls(new Sender(() => {}, 1000), { callsInFlight: 64, callDeadlineMs: 30000 })
+    const started = Date.now()
+    await expect(calls.request('core.self', {}, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'timeout', action: 'core.self' })
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
+  it('cancels a call when its signal aborts', async () => {
+    const { ctx, mcp } = await plugin()
+    const controller = new AbortController()
+    const pending = ctx.call('mcp', 'handle', {}, { signal: controller.signal }).catch((err: unknown) => err)
+    const delivery = await mcp.delivered('mcp.handle')
+    const reason = new Error('superseded')
+    controller.abort(reason)
+    expect(await pending).toBe(reason)
+    await mcp.waitFor(message => message.kind === 'cancel' && message.callId === delivery.callId)
+  })
+
+  it('rejects at once for a signal already aborted', async () => {
+    const { ctx, transport } = await plugin()
+    const before = transport.sent.length
+    const reason = new Error('gone')
+    await expect(ctx.vault.read({ path: 'notes/a.md' }, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
+    await tick(20)
+    expect(transport.sent.length).toBe(before)
   })
 })

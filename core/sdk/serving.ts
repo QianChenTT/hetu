@@ -73,14 +73,15 @@ export class Serving {
     if (typeof callId !== 'string' || typeof action !== 'string' || this.live.has(callId)) return
     const controller = new AbortController()
     this.live.set(callId, controller)
+    const due = typeof deadline === 'number' ? deadline : 0
     const call: IncomingCall = Object.freeze({
       callId,
       caller: caller as Caller,
       action,
       ...(typeof onBehalf === 'string' ? { onBehalf } : {}),
-      deadline: typeof deadline === 'number' ? deadline : 0,
+      deadline: due,
       signal: controller.signal,
-      ctx: makeClient(this.request, callId),
+      ctx: makeClient(this.request, { callId, deadline: due }),
     })
     const answer = await this.answer(call, args)
     this.live.delete(callId)

@@ -1,10 +1,11 @@
+import { floorConstants } from '../api/floor.ts'
 import type { DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
 import { attempt } from './refused.ts'
 import { type Handler, type IncomingCall, Serving } from './serving.ts'
-import type { Transport } from './transport.ts'
+import { Sender, type Transport } from './transport.ts'
 
 // What start and stop get: the calls, the plugin's own facts from init and the hooks around its life
 export type PluginContext = Client & {
@@ -58,10 +59,13 @@ class Half {
   private ctx: PluginContext | null = null
   private serving: Serving | null = null
 
-  constructor(spec: PluginSpec, transport: Transport) {
+  constructor(spec: PluginSpec, transport: Transport, options: RunOptions) {
+    const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
+    const sender = new Sender(message => transport.post(message), limit('messagesPerSecond'))
     this.spec = spec
-    this.post = message => transport.post(message)
-    this.calls = new Calls(this.post)
+    // Every message the half sends goes through the pacing, lifecycle answers included
+    this.post = message => sender.send(message)
+    this.calls = new Calls(sender, { callsInFlight: limit('callsInFlight'), callDeadlineMs: limit('callDeadlineMs') })
   }
 
   receive(message: unknown): void {
@@ -151,7 +155,6 @@ class Half {
 
 // Runs a plugin on its transport. The runtime calls this, never the plugin
 export function run(plugin: Plugin, transport: Transport, options: RunOptions = {}): void {
-  void options
-  const half = new Half(plugin.spec, transport)
+  const half = new Half(plugin.spec, transport, options)
   transport.listen(message => half.receive(message))
 }
