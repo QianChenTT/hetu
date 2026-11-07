@@ -54,6 +54,7 @@ header.top .lede{max-width:68ch;color:var(--muted)}
 .sw.sandbox{background:var(--sandbox-soft);border-color:var(--sandbox)}
 .sw.outside{background:var(--outside-soft);border-color:var(--outside)}
 .sw.disk{background:var(--disk-soft);border-color:var(--disk)}
+.sw.proc{background:var(--danger-soft);border-color:var(--danger)}
 .ln{width:22px;height:0;border-top:2px solid var(--muted)}
 .ln.opt{border-top-style:dashed}
 .ln.att{border-top:2px dashed var(--danger)}
@@ -155,6 +156,7 @@ tr.flowrow:hover td{background:var(--bg)}
 .pill.sandbox{color:var(--sandbox);border-color:var(--sandbox);background:var(--sandbox-soft)}
 .pill.outside{color:var(--outside);border-color:var(--outside);background:var(--outside-soft)}
 .pill.disk{color:var(--disk);border-color:var(--disk);background:var(--disk-soft)}
+.pill.proc{color:var(--danger);border-color:var(--danger);background:var(--danger-soft)}
 .pill.proc{color:var(--danger);border-color:var(--danger);background:var(--danger-soft)}
 .grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .card{border:1px solid var(--rule);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:6px;min-width:0}

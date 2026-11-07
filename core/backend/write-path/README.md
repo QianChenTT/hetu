@@ -1,1 +1,1 @@
-The only way to write a note: path checks, version checks, guard hooks and the file write
+The only way to write a note, becoming the vault plugin: the canonical path, the per-path lock, the version check, the guard step and the file write, plus the watcher for writes made around hetu. Moves to `plugins/vault`
