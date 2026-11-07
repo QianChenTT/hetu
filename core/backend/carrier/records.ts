@@ -124,28 +124,38 @@ export class FloorLane {
   }
 }
 
-// Floor records a plugin can trigger, one per event and fields per second with a count: the first at once and the rest
-// when its second is over. Nothing counts while the human turned recording off, so no count from the gap lands after it
+// Joins a later hit's fields into the fields the record at the end of the second carries, null before the first later hit
+export type Join = (held: Record<string, Field> | null, next: Record<string, Field>) => Record<string, Field>
+
+// Floor records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
+// when its second is over. The key is the whole fields unless the caller names one. A plugin that picks part of the
+// fields, such as the topics of a subscribe, would otherwise make a key per message, so those name a key without it
+// and join what the later hits carried. Nothing counts while the human turned recording off, so no count from the gap
+// lands after it
 export class Coalesced {
   private readonly lane: FloorLane
-  private readonly open = new Map<string, { event: string, fields: Record<string, Field>, count: number, timer: ReturnType<typeof setTimeout> }>()
+  private readonly open = new Map<string, {
+    event: string, fields: Record<string, Field>, later: Record<string, Field> | null, join: Join | null, count: number,
+    timer: ReturnType<typeof setTimeout>,
+  }>()
 
   constructor(lane: FloorLane) {
     this.lane = lane
   }
 
-  hit(event: string, fields: Record<string, Field>): void {
+  hit(event: string, fields: Record<string, Field>, keyed?: { by: Record<string, Field>, join: Join }): void {
     if (!this.lane.recording) return
-    const key = JSON.stringify([event, fields])
+    const key = JSON.stringify([event, keyed?.by ?? fields])
     const found = this.open.get(key)
     if (found !== undefined) {
       found.count++
+      if (found.join !== null) found.later = found.join(found.later, fields)
       return
     }
     this.lane.write(event, { ...fields, count: 1 })
     const timer = setTimeout(() => this.end(key), 1000)
     timer.unref?.()
-    this.open.set(key, { event, fields, count: 0, timer })
+    this.open.set(key, { event, fields, later: null, join: keyed?.join ?? null, count: 0, timer })
   }
 
   private end(key: string): void {
@@ -153,7 +163,7 @@ export class Coalesced {
     if (found === undefined) return
     this.open.delete(key)
     clearTimeout(found.timer)
-    if (found.count > 0) this.lane.write(found.event, { ...found.fields, count: found.count })
+    if (found.count > 0) this.lane.write(found.event, { ...(found.later ?? found.fields), count: found.count })
   }
 
   close(): void {

@@ -18,7 +18,7 @@ import {
 import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, Limits, newRate, type Rate } from './limits.ts'
-import { AuditQueue, Coalesced, FloorLane } from './records.ts'
+import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
@@ -134,6 +134,13 @@ function topicsOf(topics: readonly string[]): Record<string, Field> {
     listed = next
   }
   return { topics: listed, count: topics.length }
+}
+
+// The topics later subscribes in the same second left standing, in the order first seen, for the one record that ends
+// the second. Topic names hold no spaces
+const joinTopics: Join = (held, next) => {
+  const named = (fields: Record<string, Field> | null) => (fields === null || fields.topics === '' ? [] : String(fields.topics).split(' '))
+  return { ...next, ...topicsOf([...new Set([...named(held), ...named(next)])]) }
 }
 
 // The caller's own id and action, read only to answer a call the shape step refused. An action outside the grammar is
@@ -836,7 +843,8 @@ export class Carrier {
       const live = topics.filter(topic => !standing.includes(topic))
       pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
       if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
-      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) })
+      // Counted per half, since the topics are the plugin's to pick
+      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
     }
     this.finish(pending, { ok: true, result: { standing } })
   }
