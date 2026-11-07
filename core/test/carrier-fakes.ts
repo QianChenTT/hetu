@@ -167,7 +167,7 @@ export class FakeVault implements Provider {
     return { text: this.files.get(path) }
   }
 
-  release(call: Call): void {
+  release(call: Call, _prepared: Prepared): void {
     this.released.push(call.callId)
   }
 }

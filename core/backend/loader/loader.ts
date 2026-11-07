@@ -1298,8 +1298,11 @@ export class Loader implements Seam {
   // ---- staged updates
 
   // An update staged beside the old version, resolved against the live graph before anything changes. One that closes
-  // a cycle is refused. One that would stop running plugins, itself or its dependents, needs a Confirm naming them and
-  // is raised as plugin.update. A first-party copy changes only with the install
+  // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
+  // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
+  // stops, itself and its dependents included: only a class 0 update may load on its own and nothing reads a plugin's
+  // class before the capabilities plugin does. The signer is checked against the pin once provenance exists. A
+  // first-party copy changes only with the install
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into
     if (this.closing) return Promise.reject({ code: 'stopped' })
@@ -1312,6 +1315,7 @@ export class Loader implements Seam {
     if (isOne(firstPartyIds, id)) return { outcome: 'refused', reason: 'reserved-id' }
     const read = await readPlugin(dir, id, 'folder')
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
+    if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }
     const nodes: Node[] = [...this.known.values()].map(other => {
       const entry = { ...k.entry!, contentHash: read.hash!, version: read.manifest!.version }
       const next = other === k ? { ...k, read, entry, held: null } : other
@@ -1320,19 +1324,17 @@ export class Loader implements Seam {
     const after = plan(nodes)
     const verdict = after.verdicts.get(id)!
     if (verdict.kind === 'refused' && verdict.reason === 'cycle') return { outcome: 'refused', reason: 'cycle' }
-    const stops = [...this.known.values()]
+    const stopping = new Set([...this.known.values()]
       .filter(other => other.live !== null && after.verdicts.get(other.id)?.kind !== 'start')
-      .map(other => other.id)
-      .sort()
+      .map(other => other.id))
+    // Applying stops the running incarnation with what requires it before the new one starts
+    if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
+    const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    if (stops.length > 0) {
-      try {
-        this.raise?.({ kind: 'plugin.update', plugin: id, stops })
-      } catch {}
-      return { outcome: 'confirm', stops }
-    }
-    await this.applyStaged(id)
-    return { outcome: 'applied' }
+    try {
+      this.raise?.({ kind: 'plugin.update', plugin: id, stops })
+    } catch {}
+    return { outcome: 'confirm', stops }
   }
 
   // Once plugin.updated has landed: the folder swapped, the entry written last, then the old incarnation stops with its
@@ -1350,7 +1352,11 @@ export class Loader implements Seam {
     const to = read.manifest!.version
     const landing = await this.landing(id, 'plugin.updated', { plugin: id, from: old.version, to })
     if (landing === 'lost') throw new Error('the update record did not land')
-    await swapIn(this.dataDir, id, staged.dir)
+    // The bytes that were hashed go in, staged again from memory, never the folder they were read from, which may have
+    // changed while the Confirm waited. That folder goes once applied, when it sits in hetu's own staging
+    await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
+    const relative = path.relative(folders.staging(this.dataDir), staged.dir)
+    if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
     const entry: Plugin = { ...old, version: to, contentHash: read.hash! }
     await this.store.writePlugin(id, entry)
     this.state.plugins[id] = entry
