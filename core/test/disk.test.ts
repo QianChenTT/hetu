@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { retried, syncDir, writable } from '../backend/disk.ts'
+import { retried, syncDir, writable } from '../lib/disk.ts'
 
 const platform = process.platform
 const pretend = (name: string) => Object.defineProperty(process, 'platform', { value: name })

@@ -1,75 +1,140 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { evaluate, parse } from '@humanwhocodes/momoa'
 import { z } from 'zod'
-import { retried, syncDir, writable } from '../disk.ts'
+import { folderCapabilities, screenText } from '../../api/capabilities.ts'
+import { MAX_FOLDER_LENGTH } from '../../api/changes.ts'
+import { floorConstantNames } from '../../api/floor.ts'
+import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { retried, syncDir, writable } from '../../lib/disk.ts'
+import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
+
+// The format this build reads and writes. A file in a later one belongs to a newer build. From format 3 on, boot keeps
+// a reader for the format before
+export const FORMAT = 2
+// Entries in one list or map of the switches that names plugins. More than one machine runs, since each community
+// plugin gets a renderer of about 70 MB
+export const MAX_LISTED = 256
 
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
-// Becomes a folder name under plugins/: no separators, no dot at either end for Windows to drop. Windows device names
-// are refused alone or before a dot on every platform, since tools such as PowerShell 5.1 can't delete such a folder
-const pluginId = z.string()
-  .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/)
-  .refine(id => !/^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/.test(id), 'a Windows device name')
 
-// The fixed list from the core design, a new type needs a new core API version
-const capability = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal(['vault.read', 'vault.write']), paths: z.array(text) }),
-  z.strictObject({ type: z.literal('net.fetch'), hosts: z.array(text) }),
-  z.strictObject({ type: z.literal(['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar']) }),
-  z.strictObject({ type: z.literal('events.subscribe'), topics: z.array(text) }),
-  z.strictObject({ type: z.literal('storage') }),
-  z.strictObject({ type: z.literal('history'), access: z.enum(['read', 'commit']) }),
-  z.strictObject({ type: z.literal('exec'), commands: z.array(z.array(text).min(1)), env: z.array(text) }),
-])
+const installId = z.enum(installIds)
+const firstPartyId = z.enum(firstPartyIds)
+// An id some plugin can hold: an install or first-party id, or one the reserved list leaves to community plugins. The
+// namespaces the core serves, cache included, name no plugin
+const anyPlugin = pluginId.refine(
+  id => !isReservedId(id) || installId.safeParse(id).success || firstPartyId.safeParse(id).success,
+  'an id no plugin holds',
+)
+
+// No entry twice, so a list reads one way
+function list<T extends z.ZodType<string>>(item: T) {
+  return z.array(item)
+    .max(MAX_LISTED, { abort: true })
+    .refine(items => new Set(items).size === items.length, 'an entry twice')
+}
+
+// No prototype, so a plugin id can't find Object's own members in place of an entry
+function table<T extends object>(entries: T): T {
+  return Object.assign(Object.create(null), entries)
+}
+
+// A record drops an own __proto__ key without a word, so a write would lose the entry instead of refusing the input
+const noProtoKey = z.unknown().superRefine((input, ctx) => {
+  if (typeof input === 'object' && input !== null && Object.hasOwn(input, '__proto__')) {
+    ctx.addIssue({ code: 'custom', message: 'a __proto__ key' })
+  }
+})
+
+function map<T extends z.ZodType<object>>(record: T) {
+  return noProtoKey.pipe(record).transform(entries => table(entries))
+}
+
+// The human's value per floor constant, above the fixed value or below
+const values = map(z.partialRecord(z.enum(floorConstantNames), z.int().positive()))
+const limits = z.strictObject({
+  all: values,
+  plugins: map(z.record(anyPlugin, values).refine(
+    entries => Object.keys(entries).length <= MAX_LISTED,
+    `more than ${MAX_LISTED} plugins`,
+  )),
+})
 
 // What each file holds, in the shape callers see. The writers take exactly this shape and add the format number
 const switches = z.strictObject({
-  guardsOff: z.array(pluginId), // a guard not named here is on, so a lost entry can't read as off
-  devMode: z.boolean(),
+  off: list(installId), // an install plugin not named here is on, so a lost entry can't read as off
+  devMode: list(anyPlugin), // load unhashed with live reload
   skipVerification: z.boolean(),
-  allowUnsigned: z.array(sha256Hex),
+  allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
+  confirmOff: z.boolean(), // only for changes made in the trusted window's own plugin list
+  removed: list(firstPartyId), // tombstones, which the reconcile never copies back
+  execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
+  limits,
+  recordNothing: z.boolean(),
 })
 const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
   signer: text.nullable(), // null only for a plugin on allowUnsigned
-  granted: z.array(capability),
-  class: z.int().min(0).max(4),
-  enabled: z.boolean(),
+  granted: folderCapabilities, // entries are for folder plugins only, which never hold an install-only type
+  class: z.int().min(0).max(4).nullable(), // null until classified, which counts as 4
+  enabled: z.boolean(), // the human's switch, which no check changes
 })
 
-const format = z.literal(1)
+// Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against
+// whichever drive is current, which Node's isAbsolute takes as absolute
+function absoluteOn(platform: string, folder: string): boolean {
+  if (platform === 'win32') return /^(?:[a-z]:[\\/]|[\\/]{2}[^\\/])/i.test(folder)
+  return path.posix.isAbsolute(folder)
+}
+
+function vaultFor(platform: string) {
+  return z.strictObject({
+    folder: screenText(MAX_FOLDER_LENGTH).refine(folder => absoluteOn(platform, folder), 'not an absolute path'),
+  })
+}
+
+const format = z.literal(FORMAT)
 const switchesFile = z.strictObject({ format, ...switches.shape })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
 
 export type Switches = z.infer<typeof switches>
 export type Plugin = z.infer<typeof plugin>
-export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches }
+export type Vault = z.infer<ReturnType<typeof vaultFor>>
+// vault is null until a folder is picked
+export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches, vault: Vault | null }
 
-export type FileResult = 'ok' | 'absent' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable'
-export type FilesResult = 'ok' | 'mismatch' | 'missing' | 'unreadable'
+// newer is a file in a later format, read no further and never written over
+export type FileResult = 'ok' | 'absent' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable' | 'newer'
 // id is the plugin and is left out when the plugins folder itself can't be listed
 export type Check = {
-  check: 'switches' | 'plugin-entry' | 'plugin-files'
+  check: 'switches' | 'vault' | 'plugin-entry'
   id?: string
-  result: FileResult | FilesResult
+  result: FileResult
 }
 
-// state is what to run with. After a failed check state differs from the files and must not be written back as is
-export type Loaded = { state: SecurityState; suspect: boolean; checks: Check[] }
+// state is what to run with. After a failed check state differs from the files and must not be written back as is.
+// removedKnown is true only when removed came from a switches file that checked out. With that file absent, failed or
+// newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
+export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean }
 
-// No prototype, so a plugin id can't find Object's own members in place of an entry
-function table<T>(entries: Record<string, T> = {}): Record<string, T> {
-  return Object.assign(Object.create(null), entries)
+// Loosens nothing: every install plugin on, empty lists, false switches and no raised limits
+export function defaultSwitches(): Switches {
+  return {
+    off: [],
+    devMode: [],
+    skipVerification: false,
+    allowUnsigned: [],
+    confirmOff: false,
+    removed: [],
+    execAnyCommand: [],
+    limits: { all: table({}), plugins: table({}) },
+    recordNothing: false,
+  }
 }
 
 export function defaultState(): SecurityState {
-  return {
-    plugins: table(),
-    switches: { guardsOff: [], devMode: false, skipVerification: false, allowUnsigned: [] },
-  }
+  return { plugins: table({}), switches: defaultSwitches(), vault: null }
 }
 
 function absolute(value: string | undefined, name: string): string {
@@ -96,36 +161,6 @@ export function stateDir(platform: string = process.platform, env: Record<string
   throw new Error(`no security state location on ${platform}`)
 }
 
-function sha256(bytes: Buffer | string): string {
-  return createHash('sha256').update(bytes).digest('hex')
-}
-
-type Node = ReturnType<typeof parse>['body']
-
-// JSON.parse keeps the last duplicate silently, so the approval screen and the loader could read different values
-function rejectBadKeys(node: Node): void {
-  if (node.type === 'Array') {
-    for (const element of node.elements) rejectBadKeys(element.value)
-  } else if (node.type === 'Object') {
-    const seen = new Set<string>()
-    for (const member of node.members) {
-      const name = member.name.type === 'String' ? member.name.value : member.name.name
-      if (seen.has(name)) throw new Error('duplicate key')
-      if (name === '__proto__') throw new Error('__proto__ key')
-      seen.add(name)
-      rejectBadKeys(member.value)
-    }
-  }
-}
-
-// One parser for the key check and the values, so the two can't disagree about the bytes
-function parseStrict<T extends z.ZodType>(bytes: Buffer, schema: T): z.output<T> {
-  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-  const document = parse(source)
-  rejectBadKeys(document.body)
-  return schema.parse(evaluate(document))
-}
-
 // A short hold by antivirus at boot would otherwise read as unreadable and suspect
 async function readIfExists(file: string): Promise<Buffer | null> {
   try {
@@ -136,45 +171,17 @@ async function readIfExists(file: string): Promise<Buffer | null> {
   }
 }
 
-// A crash leaves the old file or the new one, never half of either
-async function replaceFile(file: string, bytes: Buffer | string): Promise<void> {
-  const temp = `${file}.${randomUUID()}.tmp`
-  try {
-    const handle = await open(temp, 'wx')
-    try {
-      await handle.writeFile(bytes)
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    await retried(() => rename(temp, file), file)
-  } catch (err) {
-    await rm(temp, { force: true })
-    throw err
-  }
-  await syncDir(path.dirname(file))
+// A later build's file. Any other format, 1 included, has no reader here and reads as invalid
+function laterFormat(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'format')) return false
+  const found = (value as { format: unknown }).format
+  return typeof found === 'number' && Number.isSafeInteger(found) && found > FORMAT
 }
 
-// The hash sits on a file's last line, over every byte before it, so one rename writes the state and its hash together
-// and nothing can leave a new file beside an old hash
-function withHash(body: Buffer): Buffer {
-  return Buffer.concat([body, Buffer.from(`${sha256(body)}\n`)])
-}
-
-// The body above the hash line, or why the file doesn't check out. A last line that isn't a hash means there is none,
-// one that is must be exactly the lowercase hash of the bytes before it with one newline after
-function checkHash(bytes: Buffer): { body: Buffer } | { result: 'hash-missing' | 'hash-mismatch' } {
-  const end = bytes.at(-1) === 0x0a ? bytes.length - 1 : bytes.length
-  const start = end > 0 ? bytes.lastIndexOf(0x0a, end - 1) + 1 : 0
-  const line = bytes.subarray(start, end).toString('latin1')
-  if (start === 0 || !/^[0-9a-f]{64}$/i.test(line)) return { result: 'hash-missing' }
-  const body = bytes.subarray(0, start)
-  if (end === bytes.length || line !== sha256(body)) return { result: 'hash-mismatch' }
-  return { body }
-}
+type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T> }
 
 // Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
-async function readChecked<T extends z.ZodType>(file: string, schema: T): Promise<{ result: FileResult; value?: z.output<T> }> {
+async function readChecked<T extends z.ZodType>(file: string, schema: T): Promise<Read<T>> {
   let bytes: Buffer | null
   try {
     bytes = await readIfExists(file)
@@ -185,49 +192,21 @@ async function readChecked<T extends z.ZodType>(file: string, schema: T): Promis
   if (bytes === null) return { result: 'absent' }
   const checked = checkHash(bytes)
   if ('result' in checked) return checked
+  let value: unknown
   try {
-    return { result: 'ok', value: parseStrict(checked.body, schema) }
+    value = parseStrict(checked.body, z.unknown())
   } catch {
     return { result: 'invalid' }
   }
+  if (laterFormat(value)) return { result: 'newer' }
+  const parsed = schema.safeParse(value)
+  return parsed.success ? { result: 'ok', value: parsed.data } : { result: 'invalid' }
 }
 
 // The format number belongs to the file, not to what runs
-function withoutFormat<T extends { format: 1 }>(file: T): Omit<T, 'format'> {
+function withoutFormat<T extends { format: typeof FORMAT }>(file: T): Omit<T, 'format'> {
   const { format, ...rest } = file
   return rest
-}
-
-async function listFiles(dir: string, prefix: string, files: string[]): Promise<void> {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    const rel = prefix + entry.name
-    if (entry.isDirectory()) await listFiles(path.join(dir, entry.name), `${rel}/`, files)
-    else if (entry.isFile()) files.push(rel)
-    else throw new Error(`not a file or folder: ${rel}`) // a link would pull in bytes from outside the plugin
-  }
-}
-
-// Path and size frame each file, so moving bytes across a file boundary changes the hash
-export async function contentHash(root: string): Promise<string> {
-  const stat = await lstat(root)
-  if (!stat.isDirectory()) throw new Error('plugin folder is not a folder')
-  const files: string[] = []
-  await listFiles(root, '', files)
-  const digest = createHash('sha256')
-  for (const rel of files.sort()) {
-    const file = path.join(root, rel)
-    const bytes = await retried(() => readFile(file), file, 'read')
-    digest.update(`${rel}\0${bytes.length}\0`).update(bytes)
-  }
-  return digest.digest('hex')
-}
-
-async function checkPluginFiles(root: string, expected: string): Promise<FilesResult> {
-  try {
-    return (await contentHash(root)) === expected ? 'ok' : 'mismatch'
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable'
-  }
 }
 
 // What Finder and Explorer leave in a folder the user only looked at. Never read, so they can't stand in for an entry
@@ -251,10 +230,18 @@ function sortEntryNames(names: string[]): { ids: string[]; invalid: string[] } {
 // catches edits by anything that doesn't know hetu, not one that rewrites the hash or restores an old copy
 export class StateStore {
   private readonly dir: string
+  private readonly vault: ReturnType<typeof vaultFor>
+  private readonly vaultFile: z.ZodType<Vault & { format: typeof FORMAT }>
+  // Files a load found in a later format. Held for the rest of the run, so an older build never writes over a newer
+  // state
+  private readonly newer = new Set<string>()
   private tail: Promise<unknown> = Promise.resolve()
 
-  constructor(dir: string) {
+  // platform gives the rules the vault folder must be absolute by
+  constructor(dir: string, platform: string = process.platform) {
     this.dir = dir
+    this.vault = vaultFor(platform)
+    this.vaultFile = z.strictObject({ format, ...this.vault.shape })
   }
 
   private file(...parts: string[]) {
@@ -268,9 +255,15 @@ export class StateStore {
     return run
   }
 
+  // Checked inside the queue, so a write queued behind a load meets what that load found
+  private refuseNewer(file: string): void {
+    if (this.newer.has(file)) throw new Error(`${path.basename(file)} is in a newer format than this build writes`)
+  }
+
   private async put(file: string, content: object): Promise<void> {
-    const bytes = withHash(Buffer.from(`${JSON.stringify(content, null, 2)}\n`))
+    const bytes = withHash(Buffer.from(`${JSON.stringify({ format: FORMAT, ...content }, null, 2)}\n`))
     await this.serial(async () => {
+      this.refuseNewer(file)
       await mkdir(path.dirname(file), { recursive: true })
       // A folder in the way is left for manual cleanup and the write fails closed, with the old file as it was
       await writable(file)
@@ -279,17 +272,22 @@ export class StateStore {
   }
 
   async writeSwitches(input: unknown): Promise<void> {
-    await this.put(this.file('switches.json'), { format: 1, ...switches.parse(input) })
+    await this.put(this.file('switches.json'), switches.parse(input))
+  }
+
+  async writeVault(input: unknown): Promise<void> {
+    await this.put(this.file('vault.json'), this.vault.parse(input))
   }
 
   async writePlugin(id: string, input: unknown): Promise<void> {
     const entry = plugin.parse(input)
-    await this.put(this.file('plugins', `${pluginId.parse(id)}.json`), { format: 1, ...entry })
+    await this.put(this.file('plugins', `${pluginId.parse(id)}.json`), entry)
   }
 
   async removePlugin(id: string): Promise<void> {
     const file = this.file('plugins', `${pluginId.parse(id)}.json`)
     await this.serial(async () => {
+      this.refuseNewer(file)
       // No target for the read-only check: rm deletes a read-only file by itself, and a folder throws EISDIR, no lock
       await retried(() => rm(file, { force: true }))
       await syncDir(path.dirname(file))
@@ -301,20 +299,35 @@ export class StateStore {
     return this.serial(() => this.read())
   }
 
+  private async checkFile<T extends z.ZodType>(file: string, schema: T): Promise<Read<T>> {
+    const read = await readChecked(file, schema)
+    if (read.result === 'newer') this.newer.add(file)
+    return read
+  }
+
   private async read(): Promise<Loaded> {
     const state = defaultState()
     const checks: Check[] = []
 
-    const switchesRead = await readChecked(this.file('switches.json'), switchesFile)
+    // A bad or missing switches file never touches the vault and a bad vault file never touches the switches
+    const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile)
     checks.push({ check: 'switches', result: switchesRead.result })
     if (switchesRead.value) state.switches = withoutFormat(switchesRead.value)
 
+    // Absent is a vault not picked yet
+    const vaultRead = await this.checkFile(this.file('vault.json'), this.vaultFile)
+    checks.push({ check: 'vault', result: vaultRead.result })
+    if (vaultRead.value) state.vault = withoutFormat(vaultRead.value)
+
     await this.readPlugins(state, checks)
 
-    const suspect = checks.some(c => c.result !== 'ok' && c.result !== 'absent')
-    return { state, suspect, checks }
+    // A newer file is a newer build's state under an older build, which the banner shows, not tampering
+    const suspect = checks.some(c => c.result !== 'ok' && c.result !== 'absent' && c.result !== 'newer')
+    return { state, suspect, checks, removedKnown: switchesRead.result === 'ok' }
   }
 
+  // Entries only. The plugin files check is the loader's, which reads the bytes that run, so nothing here changes
+  // enabled
   private async readPlugins(state: SecurityState, checks: Check[]): Promise<void> {
     let names: string[] = []
     try {
@@ -325,15 +338,10 @@ export class StateStore {
     const { ids, invalid } = sortEntryNames(names)
     for (const id of invalid) checks.push({ check: 'plugin-entry', id, result: 'invalid' })
     for (const id of ids) {
-      const read = await readChecked(this.file('plugins', `${id}.json`), pluginFile)
+      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile)
       checks.push({ check: 'plugin-entry', id, result: read.result })
       // With no valid entry there is no hash to check the code against, so the plugin is left out
-      if (!read.value) continue
-      const entry = withoutFormat(read.value)
-      const files = await checkPluginFiles(path.join(this.dir, 'plugins', id), entry.contentHash)
-      checks.push({ check: 'plugin-files', id, result: files })
-      if (files !== 'ok') entry.enabled = false
-      state.plugins[id] = entry
+      if (read.value) state.plugins[id] = withoutFormat(read.value)
     }
   }
 }

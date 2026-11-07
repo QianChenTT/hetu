@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { retried, syncDir, writable } from '../disk.ts'
+import { retried, syncDir, writable } from './disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
 // and the record's own names can't be overwritten. It catches mistakes under these names only, not note text under

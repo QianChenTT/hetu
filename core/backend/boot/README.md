@@ -1,1 +1,1 @@
-The boot loader, the one part that isn't a plugin: loads the program and sets it up with security, signing and plugin checks
+Boot, one of the four parts of the core: sets up trust for one run before any plugin exists. Takes the folder lock, opens the one event log, loads the state files and checks each one's hash line, tells a wipe from a first run and writes the default switches and the `boot.*` records. Never reads or hashes plugin code, the loader checks that
