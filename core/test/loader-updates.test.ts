@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
@@ -30,13 +30,19 @@ async function stage(dataDir: string, files: Files): Promise<string> {
 }
 
 describe('a staged update', () => {
-  it('applies once its record has landed: the folder swapped, the entry written last, the old incarnation stopped and the new one started', async () => {
-    const made = await running()
+  it('applies once confirmed and its record has landed: the folder swapped, the entry written last, the old incarnation stopped and the new one started', async () => {
+    const raised: unknown[] = []
+    const made = await running({ loader: { raise: request => { raised.push(request) } } })
     const next = worker('alpha', { version: '1.1.0' })
     const dir = await stage(made.dataDir, next)
     const hash = await hashOf(dir)
-    const outcome = await made.loader.update('alpha', dir)
-    expect(outcome).toEqual({ outcome: 'applied' })
+    // Only a class 0 update may load on its own and nothing reads a class yet, so every update waits for a Confirm
+    // naming what it stops: the plugin itself and what requires it
+    expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
+    expect(raised).toEqual([{ kind: 'plugin.update', plugin: 'alpha', stops: ['alpha', 'beta'] }])
+    expect(made.link.events('plugin.updated')).toEqual([])
+    expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
+    await made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })
     await made.loader.settled()
     expect(made.link.events('plugin.updated')).toEqual([{ plugin: 'alpha', from: '1.0.0', to: '1.1.0' }])
     expect(await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))).toBe(hash)
@@ -95,7 +101,8 @@ describe('a staged update', () => {
     let land!: (landing: Landing) => void
     made.link.landing = event => event === 'plugin.updated' ? new Promise(resolve => { land = resolve }) : 'landed'
     const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
-    const updating = made.loader.update('alpha', dir)
+    await made.loader.update('alpha', dir)
+    const updating = made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })
     await until(() => made.link.events('plugin.updated').length === 1)
     await new Promise(resolve => setTimeout(resolve, 20))
     expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.0.0')
@@ -115,7 +122,8 @@ describe('a staged update', () => {
       return new Promise<Landing>(() => {})
     }
     const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
-    await expect(made.loader.update('alpha', dir)).rejects.toThrow()
+    await made.loader.update('alpha', dir)
+    await expect(made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow()
     expect(signal?.aborted).toBe(true)
     expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.0.0')
     expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
@@ -128,7 +136,8 @@ describe('a staged update', () => {
     const writePlugin = made.store.writePlugin.bind(made.store)
     made.store.writePlugin = async () => { throw new Error('the disk went away') }
     const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
-    await expect(made.loader.update('alpha', dir)).rejects.toThrow('the disk went away')
+    await made.loader.update('alpha', dir)
+    await expect(made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow('the disk went away')
     made.store.writePlugin = writePlugin
     expect(stateOf(made.loader, 'alpha')).toBe('ready')
     expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
@@ -140,11 +149,41 @@ describe('a staged update', () => {
     expect(reasonOf(next.loader, 'beta')).toBe('dependency:alpha:refused')
   })
 
-  it('applies to a plugin switched off without starting it', async () => {
+  it('applies to a plugin switched off without starting it, once confirmed with nothing to stop', async () => {
     const made = await running({ entries: { alpha: signed({ enabled: false }), beta: signed() } })
     const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
-    expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'applied' })
+    expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: [] })
+    expect(made.link.events('plugin.updated')).toEqual([])
+    await made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })
+    expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.1.0')
     expect(stateOf(made.loader, 'alpha')).toBe('off')
     expect(made.runtime.order()).not.toContain('alpha')
+  })
+
+  // An old release with a known hole can't be swapped back in. Going back is a remove and a new approval
+  it.each([['the same', '1.0.0'], ['an older', '0.9.0']])('is refused for %s version, and nothing changes', async (_name, version) => {
+    const made = await running()
+    const dir = await stage(made.dataDir, worker('alpha', { version }))
+    expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'refused', reason: 'not-newer' })
+    await expect(made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow()
+    expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.0.0')
+  })
+
+  it('puts in place the bytes it hashed, whatever the staged folder holds by the Confirm', async () => {
+    const made = await running()
+    const next = worker('alpha', { version: '1.1.0' })
+    const dir = await stage(made.dataDir, next)
+    const hash = await hashOf(dir)
+    await made.loader.update('alpha', dir)
+    await writeFile(path.join(dir, 'worker.js'), 'swapped()')
+    await made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })
+    await made.loader.settled()
+    expect(await readFile(path.join(made.dataDir, 'plugins', 'alpha', 'worker.js'), 'utf8')).toBe(next['worker.js'])
+    expect(await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))).toBe(hash)
+    expect(made.runtime.started.filter(start => start.id === 'alpha').at(-1)?.code).toBe(next['worker.js'])
+    expect(await readdir(path.join(made.dataDir, 'staging'))).toEqual([])
+    const again = await harness({ base: made.base, install: undefined })
+    await again.loader.start()
+    expect(stateOf(again.loader, 'alpha')).toBe('ready')
   })
 })
