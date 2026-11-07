@@ -1,6 +1,6 @@
-import type { Refusal } from '../api/envelope.ts'
+import type { Refusal, RefusalCode } from '../api/envelope.ts'
 import { VERSION } from '../api/version.ts'
-import { refusedFrom } from './refused.ts'
+import { Refused, refusedFrom } from './refused.ts'
 
 // onBehalf names one of the caller's own clients, which grants nothing. timeoutMs shortens the call's deadline
 export type CallOptions = { signal?: AbortSignal, timeoutMs?: number, onBehalf?: string }
@@ -15,12 +15,15 @@ export class Calls {
   private readonly send: (message: unknown) => void
   private readonly pending = new Map<number, Pending>()
   private next = 1
+  // Set once the half stopped, after which no call goes out
+  private closed: RefusalCode | null = null
 
   constructor(send: (message: unknown) => void) {
     this.send = send
   }
 
   request(action: string, args: unknown, options: RequestOptions = {}): Promise<unknown> {
+    if (this.closed !== null) return Promise.reject(new Refused(this.closed, action))
     return new Promise((resolve, reject) => {
       const id = this.next++
       this.pending.set(id, { action, resolve, reject })
@@ -29,6 +32,14 @@ export class Calls {
       if (options.onBehalf !== undefined) message.onBehalf = options.onBehalf
       this.send(message)
     })
+  }
+
+  // Settles every call still waiting with code and refuses any made after
+  close(code: RefusalCode): void {
+    this.closed = code
+    const pending = [...this.pending.values()]
+    this.pending.clear()
+    for (const call of pending) call.reject(new Refused(code, call.action))
   }
 
   // A reply to one of the half's calls. One for no call pending, a stale or a doubled one, is dropped
