@@ -968,8 +968,12 @@ describe('files that fail alone', () => {
   }
 
   const change = async (file: string) => writeFile(file, (await readFile(file, 'utf8')).replace('"version": "1.0.0"', '"version": "9.9.9"'))
-  // One byte more above the hash line
-  const tamper = async (file: string) => writeFile(file, (await readFile(file, 'utf8')).replace('{', '{ '))
+  // One byte more above the hash line: a space after the first brace
+  const tamper = async (file: string) => {
+    const text = await readFile(file, 'utf8')
+    const at = text.indexOf('{') + 1
+    await writeFile(file, `${text.slice(0, at)} ${text.slice(at)}`)
+  }
 
   it('leaves every other plugin, the switches and the vault loaded when one plugin entry is edited', async () => {
     await setup()
