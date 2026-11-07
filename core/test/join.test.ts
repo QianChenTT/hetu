@@ -97,6 +97,24 @@ describe('wiring the core', () => {
     expect(asLink).toBe(carrier)
   })
 
+  it('ends its start with core.ready, which holds every slot\'s state', async () => {
+    const { carrier, loader, dataDir } = await joined()
+    await loader.start()
+    await carrier.flushFloor()
+    const records = await floorRecords(dataDir)
+    expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
+    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', log: 'on', capabilities: 'absent', watchdog: 'absent' })
+  })
+
+  it('writes no core.ready when shutdown began during the start', async () => {
+    const { carrier, loader, dataDir } = await joined()
+    const started = loader.start()
+    await loader.shutdown()
+    await started
+    await carrier.flushFloor()
+    expect(await floorEvents(dataDir)).not.toContain('core.ready')
+  })
+
   it('refuses a link call made before the carrier exists', () => {
     const link = new LinkToCarrier()
     expect(() => link.send(worker('search'), { v: 1, kind: 'ping' })).toThrow('carrier')

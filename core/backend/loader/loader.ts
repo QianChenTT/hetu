@@ -324,7 +324,8 @@ export class Loader implements Seam {
   // ---- boot
 
   // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
-  // scanned and the sandboxed tier started in graph order
+  // scanned and the sandboxed tier started in graph order. core.ready closes it with every slot's state, unless a
+  // shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.replan()
@@ -334,6 +335,7 @@ export class Loader implements Seam {
     await this.scan()
     this.replan()
     await this.settled()
+    if (!this.closing) this.note('core.ready', Object.fromEntries(slotIds.map(id => [id, this.slot(id)])))
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start
