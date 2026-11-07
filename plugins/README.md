@@ -1,1 +1,3 @@
-One package per plugin with up to two entry points, a half in the hidden renderer and a half in the editor
+One package per plugin with one manifest and one identity. Its entries say where each half runs: `worker` in a hidden renderer and `frames` in a window. Install plugins may also have `host` in the main process and `page` in a window. The manifest names `requires` and `provides`, install plugins also `guards` and `node`. The first host-level plugins are log, gate, capabilities, watchdog, storage, vault, leases, history, exec, net and http. Editor core and hidden marks run in-page. Git, search, the file explorer and artifacts run sandboxed
+
+`search/` is the first one here: first-party search, built on `@hetu/sdk` and tested on its fake core
