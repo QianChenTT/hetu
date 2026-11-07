@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  # Daemon tests and the typecheck of both workspaces. Windows too, since it is hetu's main target
+  # The tests and the typecheck of every workspace. Windows too, since it is hetu's main target
   test:
     strategy:
       fail-fast: false
@@ -35,6 +35,20 @@ jobs:
         run: npm ci --ignore-scripts
       - name: typecheck
         run: npm run typecheck
+      # A runner's volumes may make no 8.3 short names, and the canonicaliser's tests need them to prove that a short
+      # name like GIT~1 can't reach .git. The probe folder fails the step if it gets no short name of its own
+      - name: turn on 8.3 short names
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          fsutil behavior set disable8dot3 2
+          fsutil 8dot3name set C: 0
+          fsutil 8dot3name set D: 0
+          $dir = Join-Path $env:TEMP 'short-name-probe-folder'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $short = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($dir).ShortName
+          if ($short -notmatch '~') { throw "no 8.3 short name was made for $dir" }
+          Write-Output "short name: $short"
       - name: run tests
         run: npm test
 
