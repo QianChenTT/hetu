@@ -1,0 +1,1 @@
+The trusted page, a fixed core page and the only place a Confirm counts: the pending security change, the plugin list and the switches. No plugins and no note content

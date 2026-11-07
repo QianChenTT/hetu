@@ -1,1 +1,0 @@
-The exec runner and the shadow repo, becoming two host-level plugins. `plugins/exec` runs a plugin's exact commands with an environment built from empty. `plugins/history` runs git plumbing against the hetu-owned shadow repo

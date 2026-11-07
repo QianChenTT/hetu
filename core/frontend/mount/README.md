@@ -1,1 +1,3 @@
-The window shell: the window preload, the port handoff, the frame mount, the generic bridge and the banner. A view frame gets its port only on its first load. Hidden marks becomes its own in-page plugin, compiled in from the install
+The window shell: the window preload, the port handoff, the frame mount, the banner and the generic bridge. A view frame gets its port only on its first load
+
+The bridge is how plugins reach the editor, shaped like CodeMirror. It carries only the verbs a plugin was granted and holds no power of its own. The CodeMirror adapter belongs to the editor core plugin. Editor core and hidden marks are in-page plugins in `plugins/`, compiled into the editor page from the install

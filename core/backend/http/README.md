@@ -1,1 +1,0 @@
-The way in for agents, becoming a host-level plugin that runs in its own `utilityProcess` with a port to the carrier: the loopback listener with its Host and Origin checks and the OAuth server. Agent calls go to the MCP plugin, the agents' caller. Moves to `plugins/http`

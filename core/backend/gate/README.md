@@ -1,1 +1,0 @@
-The gate, a host-level plugin in the gate slot: the policy the carrier asks about every call with power, at precheck, decide and `canRead`. It never routes and never calls a handler. A missing or crashed gate fails closed. With the gate switched off by the human, calls with power pass, still logged. Moves to `plugins/gate`
