@@ -549,30 +549,67 @@ describe('filterReadable', () => {
       clock.now += 1
       return true
     }
-    const paths = Array.from({ length: 40 }, (_, i) => `notes/${i}.md`)
-    const filter = () => parts.search.ask('core.filterReadable', { call: parts.got.callId, paths })
-    return { ...parts, clock, paths, filter }
+    const named = (count: number, from = 0) => Array.from({ length: count }, (_, i) => `notes/${from + i}.md`)
+    const paths = named(40)
+    const filter = (asked = paths, call = parts.got.callId) => parts.search.ask('core.filterReadable', { call, paths: asked })
+    return { ...parts, clock, named, paths, filter }
   }
 
-  it('answers throttled once the plugin spent its second of the gate\'s time, partway through a call too', async () => {
+  it('answers throttled once the caller spent its second of the gate\'s time, partway through a call too', async () => {
     const { clock, paths, filter, gate } = await timed()
     // 40 paths asked about on both sides, 80 ms of the 100
     expect((await filter()).result).toEqual(paths)
-    // 80 more pass the budget partway, so the call keeps nothing it found
+    // 80 more pass the budget partway
     expect(code(await filter())).toBe('throttled')
-    const asked = gate.reads.length
-    expect(asked).toBeLessThan(160)
+    expect(gate.reads).toHaveLength(100)
     // Spent, so the next is refused without asking the gate
     expect(code(await filter())).toBe('throttled')
-    expect(gate.reads).toHaveLength(asked)
-    // A new second starts afresh
+    expect(gate.reads).toHaveLength(100)
+    // A new second goes on where the throttled call stopped, asking nothing twice
     clock.now += 1000
     expect((await filter()).result).toEqual(paths)
+    expect(gate.reads).toHaveLength(160)
   })
 
-  it('takes the human\'s budget for the plugin', async () => {
+  it('finishes a call bigger than the budget across tries', async () => {
+    const { clock, named, filter, gate } = await timed()
+    const many = named(150)
+    expect(code(await filter(many))).toBe('throttled')
+    clock.now += 1000
+    expect(code(await filter(many))).toBe('throttled')
+    clock.now += 1000
+    expect((await filter(many)).result).toEqual(many)
+    expect(gate.reads).toHaveLength(300)
+  })
+
+  it('starts over when the StateView moved or the paths changed since the throttled try', async () => {
+    const { clock, named, filter, gate, loader } = await timed()
+    const many = named(150)
+    expect(code(await filter(many))).toBe('throttled')
+    // A narrowing between tries must not leave answers from before it standing
+    loader.current = 2
+    clock.now += 1000
+    expect(code(await filter(many))).toBe('throttled')
+    expect(gate.reads.slice(100, 102).map(read => read.path)).toEqual(['notes/0.md', 'notes/0.md'])
+    // Other paths for the same call are another question
+    clock.now += 1000
+    expect(code(await filter(named(150, 1000)))).toBe('throttled')
+    expect(gate.reads[200].path).toBe('notes/1000.md')
+  })
+
+  it('counts the gate\'s time against the caller, so one that floods a plugin leaves the other callers theirs', async () => {
+    const { filter, gate, git, search, named } = await timed()
+    gate.grants.git = [{ type: 'plugin.call', targets: ['search'] }, { type: 'vault.read', paths: ['notes/**'] }]
+    expect(code(await filter(named(80)))).toBe('throttled')
+    git.call('search.query', { text: 'x' })
+    for (let waited = 0; deliveries(search, 'search.query').length < 2 && waited < 2000; waited += 5) await tick(5)
+    const second = deliveries(search, 'search.query')[1] as unknown as { callId: string }
+    expect((await filter(named(40), second.callId)).result).toEqual(named(40))
+  })
+
+  it('takes the human\'s budget for the caller', async () => {
     const { loader, paths, filter } = await timed()
-    loader.human.plugins.search = { filterMsPerSecond: 200 }
+    loader.human.plugins.mcp = { filterMsPerSecond: 200 }
     expect((await filter()).result).toEqual(paths)
     expect((await filter()).result).toEqual(paths)
     expect(code(await filter())).toBe('throttled')
