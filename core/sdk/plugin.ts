@@ -57,7 +57,7 @@ type Phase = 'init' | 'starting' | 'ready' | 'failed' | 'stopping' | 'stopped'
 // One half of a plugin on its transport: init, start, ready, the heartbeat and the stop, with the calls inside
 class Half {
   private readonly spec: PluginSpec
-  private readonly post: (message: unknown) => void
+  private readonly post: (message: unknown, onFail?: (error: unknown) => void) => void
   private readonly calls: Calls
   private phase: Phase = 'init'
   private deps: Record<string, unknown> = {}
@@ -71,7 +71,7 @@ class Half {
     const sender = new Sender(message => transport.post(message), limit('messagesPerSecond'))
     this.spec = spec
     // Every message the half sends goes through the pacing, lifecycle answers included
-    this.post = message => sender.send(message)
+    this.post = (message, onFail) => sender.send(message, onFail)
     this.calls = new Calls(sender, { callsInFlight: limit('callsInFlight'), callDeadlineMs: limit('callDeadlineMs') })
   }
 
@@ -86,7 +86,10 @@ class Half {
     }
     if (kind === 'reply') this.calls.reply(message)
     else if (kind === 'deps') this.readDeps((message as { deps?: unknown }).deps)
-    else if (kind === 'ping') this.post({ v: VERSION, kind: 'pong' })
+    else if (kind === 'ping') {
+      this.post({ v: VERSION, kind: 'pong' })
+      this.events?.resendAck()
+    }
     else if (kind === 'stop') void this.stop((message as { graceMs?: unknown }).graceMs)
     else if (kind === 'call') void this.serving!.deliver(message as Record<string, unknown>)
     else if (kind === 'cancel') this.serving!.cancel(message as Record<string, unknown>)
@@ -164,6 +167,7 @@ class Half {
     this.phase = 'stopped'
     this.post({ v: VERSION, kind: 'stopped' })
     this.calls.close('stopped')
+    this.events?.close()
   }
 }
 

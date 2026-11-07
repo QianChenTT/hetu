@@ -4,7 +4,7 @@ import { definePlugin, type PluginContext, run, type RunOptions } from '../sdk/p
 import { attempt, Refused } from '../sdk/refused.ts'
 import { Sender } from '../sdk/transport.ts'
 import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
-import { clientOn, sdkTransport } from './sdk-fakes.ts'
+import { clientOn, sdkTransport, type TransportOptions } from './sdk-fakes.ts'
 
 afterEach(cleanup)
 
@@ -87,14 +87,14 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 }
 
 // search as a running plugin, so the limits the runtime knows reach its calls
-async function plugin(limits: RunOptions['limits'] = {}) {
+async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions = {}) {
   const parts = harness()
   parts.loader.sandboxed('search')
   parts.loader.sandboxed('mcp', { handle: {} })
   parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
   parts.vault.files.set('notes/a.md', 'hello')
   let ctx: PluginContext | null = null
-  const transport = sdkTransport(parts.carrier, worker('search'))
+  const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport, { limits })
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
@@ -172,5 +172,50 @@ describe('what a call hides', () => {
     await expect(ctx.vault.read({ path: 'notes/a.md' }, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
     await tick(20)
     expect(transport.sent.length).toBe(before)
+  })
+})
+
+describe('a call that runs out of time or can\'t go out', () => {
+  it('never sends a call whose deadline passed while it waited its turn', async () => {
+    const parts = await plugin({ callsInFlight: 1 })
+    let release: () => void = () => {}
+    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const first = parts.ctx.vault.read({ path: 'notes/a.md' })
+    const started = Date.now()
+    await expect(parts.ctx.vault.read({ path: 'notes/a.md' }, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'timeout' })
+    expect(Date.now() - started).toBeLessThan(400)
+    release()
+    await first
+    await tick(50)
+    expect(parts.vault.prepared).toHaveLength(1)
+  })
+
+  it('cancels a call it gives up on at its own timeoutMs', async () => {
+    const { ctx, mcp } = await plugin()
+    const started = Date.now()
+    const settled = ctx.call('mcp', 'handle', {}, { timeoutMs: 100 }).catch((err: unknown) => err)
+    const delivery = await mcp.delivered('mcp.handle')
+    expect(await settled).toMatchObject({ code: 'timeout', action: 'mcp.handle' })
+    expect(Date.now() - started).toBeLessThan(500)
+    await mcp.waitFor(message => message.kind === 'cancel' && message.callId === delivery.callId)
+  })
+
+  it('refuses args that can\'t cross as invalid, at once and with nothing sent', async () => {
+    const { ctx, transport } = await plugin()
+    const before = transport.sent.length
+    const started = Date.now()
+    await expect(ctx.call('mcp', 'handle', { run: () => 1 })).rejects.toMatchObject({ code: 'invalid', action: 'mcp.handle' })
+    expect(Date.now() - started).toBeLessThan(100)
+    expect(transport.sent.length).toBe(before)
+  })
+
+  it('settles a call whose message a port can\'t copy and keeps the others going', async () => {
+    const parts = await plugin({ callsInFlight: 1 }, { clone: true })
+    const first = parts.ctx.call('mcp', 'handle', {})
+    const bad = parts.ctx.call('mcp', 'handle', new Proxy({}, {})).catch((err: unknown) => err)
+    const delivery = await parts.mcp.delivered('mcp.handle')
+    parts.mcp.answer(delivery.callId, 'one')
+    expect(await first).toBe('one')
+    expect(await bad).toMatchObject({ code: 'invalid', action: 'mcp.handle' })
   })
 })

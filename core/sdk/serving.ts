@@ -1,6 +1,7 @@
 import type { Caller, ReasonCode, RefusalCode } from '../api/envelope.ts'
 import { VERSION } from '../api/version.ts'
 import { type Client, makeClient, type Request } from './client.ts'
+import { isPlain } from './plain.ts'
 import { Refused } from './refused.ts'
 
 // A call another plugin or a window made to one of the plugin's own actions, as the carrier delivered it. caller is
@@ -19,40 +20,17 @@ export type IncomingCall = {
 // args come from another plugin as it wrote them, so the handler checks them
 export type Handler = (call: IncomingCall, args: unknown) => unknown
 
-// Deeper than any call needs, the same cap as core/api's
-const MAX_DEPTH = 64
-const badKeys = new Set(['__proto__', 'constructor', 'prototype'])
-
-// Whether a value can cross as a result: plain objects with Object's prototype or none, arrays, strings, finite
-// numbers, booleans, null and undefined, nothing reached twice and nothing deeper than 64. The carrier refuses the
-// rest anyway. Some of it can't even be posted, so the SDK answers failed at once
-export function isPlain(value: unknown): boolean {
-  const seen = new Set<object>()
-  const walk = (item: unknown, depth: number): boolean => {
-    if (item === null || item === undefined) return true
-    if (typeof item === 'string' || typeof item === 'boolean') return true
-    if (typeof item === 'number') return Number.isFinite(item)
-    if (typeof item !== 'object' || depth > MAX_DEPTH || seen.has(item)) return false
-    seen.add(item)
-    if (Array.isArray(item)) return item.every(entry => walk(entry, depth + 1))
-    const prototype = Object.getPrototypeOf(item)
-    if (prototype !== Object.prototype && prototype !== null) return false
-    return Object.keys(item).every(key => !badKeys.has(key) && walk((item as Record<string, unknown>)[key], depth + 1))
-  }
-  return walk(value, 1)
-}
-
 type Answer = { ok: true, result: unknown } | { ok: false, refusal: { code: RefusalCode, action: string, reason?: ReasonCode } }
 
 // The plugin's own actions: a handler per <id>.<name> and the calls being served
 export class Serving {
   private readonly id: string
-  private readonly send: (message: unknown) => void
+  private readonly send: (message: unknown, onFail?: () => void) => void
   private readonly request: Request
   private readonly handlers = new Map<string, Handler>()
   private readonly live = new Map<string, AbortController>()
 
-  constructor(id: string, send: (message: unknown) => void, request: Request) {
+  constructor(id: string, send: (message: unknown, onFail?: () => void) => void, request: Request) {
     this.id = id
     this.send = send
     this.request = request
@@ -85,7 +63,10 @@ export class Serving {
     })
     const answer = await this.answer(call, args)
     this.live.delete(callId)
-    this.send({ v: VERSION, kind: 'reply', callId, ...answer })
+    // An answer a port can't copy, such as a Proxy over plain data, goes again as failed
+    this.send({ v: VERSION, kind: 'reply', callId, ...answer }, () => {
+      this.send({ v: VERSION, kind: 'reply', callId, ...refused('failed', call.action) })
+    })
   }
 
   // The carrier gave a call up. Its handler hears it through the signal and its answer is no longer read

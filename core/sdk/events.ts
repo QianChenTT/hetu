@@ -21,6 +21,11 @@ const dropped: BusSignal = 'events.dropped'
 const ended: BusSignal = 'events.ended'
 // Handled events between acks while a burst lasts, a quarter of the floor's eventCredits
 const ACK_EVERY = 64
+// The last ack goes again a second after it was sent, then after 2, 4, 8 and 16 s. It goes on every ping too. The
+// carrier drops a message over the rate unread. A lost ack that freed the last credits would hold the bus back for
+// good. A repeat the bus already has changes nothing
+const RESEND_FIRST_MS = 1000
+const RESENDS = 5
 
 type Entry = { readonly handler: EventHandler, readonly options: EventOptions, readonly topics: ReadonlySet<string> }
 
@@ -47,6 +52,9 @@ export class Events {
   private lastSeq = 0
   private ackedSeq = 0
   private ackTimer: ReturnType<typeof setTimeout> | null = null
+  private resendTimer: ReturnType<typeof setTimeout> | null = null
+  private resends = 0
+  private closed = false
 
   constructor(id: string, send: (message: unknown) => void, request: Request) {
     this.id = id
@@ -147,9 +155,37 @@ export class Events {
 
   private ack(): void {
     this.handled = 0
-    if (this.lastSeq <= this.ackedSeq) return
+    if (this.lastSeq <= this.ackedSeq || this.closed) return
     this.ackedSeq = this.lastSeq
     this.send({ v: VERSION, kind: 'ack', seq: this.lastSeq })
+    this.resends = 0
+    this.resendLater()
+  }
+
+  // The last ack again, from its timer and on each ping
+  resendAck(): void {
+    if (this.closed || this.ackedSeq === 0) return
+    this.send({ v: VERSION, kind: 'ack', seq: this.ackedSeq })
+  }
+
+  // No ack goes out once the half stopped
+  close(): void {
+    this.closed = true
+    for (const handle of [this.ackTimer, this.resendTimer]) if (handle !== null) clearTimeout(handle)
+    this.ackTimer = null
+    this.resendTimer = null
+  }
+
+  private resendLater(): void {
+    if (this.resendTimer !== null) clearTimeout(this.resendTimer)
+    this.resendTimer = null
+    if (this.closed || this.resends >= RESENDS) return
+    this.resendTimer = setTimeout(() => {
+      this.resendTimer = null
+      this.resendAck()
+      this.resends++
+      this.resendLater()
+    }, RESEND_FIRST_MS * 2 ** this.resends)
   }
 
   private resync(topics: readonly string[]): void {

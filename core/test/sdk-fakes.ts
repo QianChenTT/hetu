@@ -5,9 +5,13 @@ import { Calls } from '../sdk/calls.ts'
 import { makeClient } from '../sdk/client.ts'
 import { Sender, type Transport } from '../sdk/transport.ts'
 
+// How the way behaves. drop loses a message the half posted, as the carrier does one over the rate. clone copies each
+// message the way a port does, which throws on what can't cross
+export type TransportOptions = { drop?: (message: Record<string, unknown>) => boolean, clone?: boolean }
+
 // An SDK half's way on an in-process handle, as the loader gives a host half its link. What the carrier sends before
-// listen waits for it. sent keeps every message the half posted, oldest first
-export function sdkTransport(carrier: Carrier, caller: Caller): Transport & { sent: unknown[] } {
+// listen waits for it. sent keeps every message the half posted, oldest first, the lost ones too
+export function sdkTransport(carrier: Carrier, caller: Caller, options: TransportOptions = {}): Transport & { sent: unknown[] } {
   const held: unknown[] = []
   const sent: unknown[] = []
   let listener: ((message: unknown) => void) | null = null
@@ -18,7 +22,9 @@ export function sdkTransport(carrier: Carrier, caller: Caller): Transport & { se
   return {
     sent,
     post(message) {
+      if (options.clone === true) structuredClone(message)
       sent.push(message)
+      if (options.drop?.(message as Record<string, unknown>) === true) return
       handle.post(message)
     },
     listen(next) {

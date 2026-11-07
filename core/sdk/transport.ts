@@ -10,14 +10,15 @@ const SHARE = 0.9
 
 // Every message a half sends, in order, at most 90% of perSecond in any second, the rest held until there is room. The
 // carrier counts a way's messages in one-second windows from when they arrive and drops one over the rate unread, so
-// staying under the rate in every sliding second keeps each of those windows under it
+// staying under the rate in every sliding second keeps each of those windows under it. A post that throws, as a port's
+// does for a value it can't copy, goes to that message's onFail and the rest keep their order
 export class Sender {
   private readonly post: (message: unknown) => void
   private readonly budget: number
   private readonly clock: () => number
   // When each of the last budget messages went out, oldest first
   private readonly times: number[] = []
-  private readonly held: unknown[] = []
+  private readonly held: { message: unknown, onFail: ((error: unknown) => void) | undefined }[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(post: (message: unknown) => void, perSecond: number, clock: () => number = () => performance.now()) {
@@ -26,8 +27,8 @@ export class Sender {
     this.clock = clock
   }
 
-  send(message: unknown): void {
-    this.held.push(message)
+  send(message: unknown, onFail?: (error: unknown) => void): void {
+    this.held.push({ message, onFail })
     if (this.timer === null) this.flush()
   }
 
@@ -41,7 +42,13 @@ export class Sender {
         return
       }
       this.times.push(now)
-      this.post(this.held.shift())
+      const { message, onFail } = this.held.shift()!
+      try {
+        this.post(message)
+      } catch (err) {
+        if (onFail === undefined) console.error('hetu: a message could not be sent', err)
+        else onFail(err)
+      }
     }
   }
 }

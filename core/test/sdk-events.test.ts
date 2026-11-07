@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { definePlugin, type PluginContext, run } from '../sdk/plugin.ts'
 import type { Refused } from '../sdk/refused.ts'
 import { cleanup, harness, host, hostHalf, tick, worker } from './carrier-fakes.ts'
-import { sdkTransport } from './sdk-fakes.ts'
+import { sdkTransport, type TransportOptions } from './sdk-fakes.ts'
 
 afterEach(() => {
   cleanup()
@@ -19,7 +19,7 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 type Sent = { kind: string, action?: string, args?: { topics?: string[] }, seq?: number }
 
 // search subscribes to the vault's topics and publishes its own indexed. The vault publishes from its host handle
-async function listening() {
+async function listening(way: TransportOptions = {}) {
   const parts = harness()
   parts.loader.sandboxed('search')
   parts.loader.plugins.search.topics = ['indexed']
@@ -27,7 +27,7 @@ async function listening() {
   parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['vault.changed', 'vault.outside'] }]
   parts.gate.grants.git = [{ type: 'vault.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['search.indexed'] }]
   let ctx: PluginContext | null = null
-  const transport = sdkTransport(parts.carrier, worker('search'))
+  const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport)
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
@@ -145,5 +145,33 @@ describe('events through the SDK', () => {
     await publish('notes/a.md')
     await publish('notes/b.md')
     await until(() => seen.length === 2)
+  })
+})
+
+describe('an ack the carrier lost', () => {
+  // The carrier drops a message over the rate unread. Losing the ack that frees the last credits would hold the bus
+  // back for the rest of the run
+  it('goes again, so the bus catches up and sends a resync', async () => {
+    let lost = false
+    const { ctx, loader, publish } = await listening({
+      drop: message => {
+        if (lost || message.kind !== 'ack' || message.seq !== 4) return false
+        lost = true
+        return true
+      },
+    })
+    loader.human.plugins.search = { eventCredits: 4 }
+    const seen: string[] = []
+    const resyncs: string[][] = []
+    await ctx.events.on('vault.changed', event => { seen.push(event.path!) }, { onResync: topics => { resyncs.push(topics) } })
+    // A burst past the credits, so the one ack that would free them is the one lost
+    await Promise.all(Array.from({ length: 6 }, (_, i) => publish(`notes/${i}.md`)))
+    await until(() => seen.length === 4)
+    await tick(100)
+    expect(lost).toBe(true)
+    expect(seen).toHaveLength(4)
+    await until(() => resyncs.length === 1, 4000)
+    await publish('notes/after.md')
+    await until(() => seen.includes('notes/after.md'), 2000)
   })
 })
