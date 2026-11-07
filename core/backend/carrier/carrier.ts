@@ -1067,10 +1067,12 @@ export class Carrier {
     this.finish(pending, no('failed'))
   }
 
-  // Every call ends here once. The reply never waits on the record
+  // Every call ends here once. The reply never waits on the record. Its live sub-calls end with it, so nothing done
+  // under a call outlives it: a callee that wants to keep working after it answers makes its own calls
   private finish(pending: Pending, outcome: Outcome): void {
     if (pending.done) return
     pending.done = true
+    for (const child of [...pending.children]) this.stop(child, 'stopped')
     if (pending.timer !== null) clearTimeout(pending.timer)
     for (const [principal] of pending.charged) {
       const load = this.inflight.get(principal)
