@@ -4,7 +4,7 @@ import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, Debug, Landing, Port } from './carrier/seams.ts'
+import type { Asks, CarrierOptions, Debug, Landing, Port } from './carrier/seams.ts'
 import { Loader } from './loader/loader.ts'
 import type { CarrierLink, Runtime } from './loader/seams.ts'
 
@@ -61,6 +61,24 @@ export class LinkToCarrier implements CarrierLink {
   }
 }
 
+// What the carrier asks the loader for: every slot, guard and provider from the loader's roles and the watchdog's core
+// actions from its serve. wireCore and the loader's tests both build the carrier from it, so the tests run the wiring
+// that ships
+export function carrierOptions(
+  loader: Loader,
+  rest: Omit<CarrierOptions, 'loader' | 'gate' | 'guards' | 'providers' | 'watchdog' | 'core'>,
+): CarrierOptions {
+  return {
+    loader,
+    gate: () => loader.role('gate', 'gate'),
+    guards: id => loader.role(id, 'guard'),
+    providers: id => loader.role(id, 'provider'),
+    watchdog: () => loader.role('watchdog', 'watchdog'),
+    core: loader.serve,
+    ...rest,
+  }
+}
+
 // The core joined in step 6's order: the link, then the loader holding it, then the carrier asking the loader for
 // every slot, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
@@ -72,18 +90,12 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     runtime: options.runtime,
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })
-  const carrier = new Carrier({
-    loader,
-    gate: () => loader.role('gate', 'gate'),
-    guards: id => loader.role(id, 'guard'),
-    providers: id => loader.role(id, 'provider'),
-    watchdog: () => loader.role('watchdog', 'watchdog'),
+  const carrier = new Carrier(carrierOptions(loader, {
     log: options.booted.log,
-    core: loader.serve,
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),
-  })
+  }))
   link.carrier = carrier
   return { loader, carrier }
 }

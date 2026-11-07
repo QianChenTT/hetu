@@ -221,6 +221,18 @@ describe('a planned stop', () => {
     expect(made.loader.list().find(row => row.id === 'alpha')).toMatchObject({ state: 'stopped', reason: 'human' })
   })
 
+  // Only the watchdog or the human stops or restarts a plugin
+  it('changes nothing for a stopped no stop asked for', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    made.runtime.half('alpha').send({ v: 1, kind: 'stopped' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
+    expect(made.link.events('plugin.stopped')).toEqual([])
+    expect(made.runtime.terminated).toEqual([])
+  })
+
   it('reads a close during a planned stop as that stop ending, not a crash', async () => {
     const made = await harness({
       folder: { alpha: worker('alpha') },
@@ -293,6 +305,23 @@ describe('restarts', () => {
     await expect(made.loader.serve(call('watchdog.stop', { plugin: 'gate' }))).rejects.toEqual({ code: 'not-found' })
     await expect(made.loader.serve(call('watchdog.stop', { plugin: 'alpha' }))).resolves.toBe(null)
     expect(stateOf(made.loader, 'alpha')).toBe('stopped')
+  })
+
+  it('has the watchdog holding its slot hear how many messages a plugin sent over its rate', async () => {
+    const samples: unknown[] = []
+    const made = await harness({
+      ...plugins(),
+      folder: { mapper: worker('mapper') },
+      entries: { mapper: signed() },
+      behave: { gate: { exports: { gate: allowAll() } }, watchdog: { exports: { watchdog: { sample: sample => { samples.push(sample) } } } } },
+    })
+    await made.loader.start()
+    expect(made.loader.slot('watchdog')).toBe('on')
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 2, plugin: 'mapper' })
+    const half = made.runtime.half('mapper')
+    for (let i = 0; i < 6; i++) half.send({ v: 1, kind: 'call', id: 500 + i, action: 'core.self', args: {} })
+    await until(() => samples.length === 1)
+    expect(samples[0]).toEqual({ kind: 'dropped', caller: { kind: 'plugin', id: 'mapper', half: 'worker', incarnation: 1 }, count: 1 })
   })
 })
 

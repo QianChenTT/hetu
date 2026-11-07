@@ -12,6 +12,7 @@ import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
 import { Loader, type LoaderOptions } from '../backend/loader/loader.ts'
 import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, WorkerStart } from '../backend/loader/seams.ts'
+import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 
@@ -306,17 +307,9 @@ export const coreInstall = (): Record<string, Listing> => ({
   gate: { files: filesFor(hostManifest('gate')) },
 })
 
-// A real carrier over the loader, as the join will build it: the slot holders' roles come from the loader
+// A real carrier over the loader, built from the options wireCore builds it from, with no floor log
 export function wire(loader: Loader, link: FakeLink): Carrier {
-  const carrier = new Carrier({
-    loader,
-    gate: () => loader.role('gate', 'gate'),
-    guards: id => loader.role(id, 'guard'),
-    providers: id => loader.role(id, 'provider'),
-    watchdog: () => loader.role('watchdog', 'watchdog'),
-    log: null,
-    core: loader.serve,
-  })
+  const carrier = new Carrier(carrierOptions(loader, { log: null }))
   link.carrier?.close()
   link.carrier = carrier
   return carrier
