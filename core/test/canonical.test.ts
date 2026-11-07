@@ -9,20 +9,20 @@ import { onWindows } from './hold.ts'
 
 const run = promisify(execFile)
 
-// A vault and a folder beside the vault, where every link out points
+// A luoshu and a folder beside the luoshu, where every link out points
 let base: string
-let vault: string
+let luoshu: string
 let outside: string
 
 beforeEach(async () => {
   base = await mkdtemp(path.join(tmpdir(), 'hetu-canonical-'))
-  vault = path.join(base, 'vault')
+  luoshu = path.join(base, 'luoshu')
   outside = path.join(base, 'outside')
-  await mkdir(path.join(vault, 'notes'), { recursive: true })
-  await mkdir(path.join(vault, '.git'))
+  await mkdir(path.join(luoshu, 'notes'), { recursive: true })
+  await mkdir(path.join(luoshu, '.git'))
   await mkdir(outside)
-  await writeFile(path.join(vault, 'notes', 'a.md'), 'note a')
-  await writeFile(path.join(vault, '.git', 'config'), '[core]\n')
+  await writeFile(path.join(luoshu, 'notes', 'a.md'), 'note a')
+  await writeFile(path.join(luoshu, '.git', 'config'), '[core]\n')
   await writeFile(path.join(outside, 'secret.md'), 'secret')
 })
 
@@ -30,20 +30,20 @@ afterEach(async () => {
   await rm(base, { recursive: true, force: true })
 })
 
-// The answer for a path that resolves to these names inside the vault. The key has tests of its own
+// The answer for a path that resolves to these names inside the luoshu. The key has tests of its own
 async function resolved(relative: string) {
-  return { ok: true, absolute: path.join(await realpath(vault), ...relative.split('/')), relative, key: expect.any(String) }
+  return { ok: true, absolute: path.join(await realpath(luoshu), ...relative.split('/')), relative, key: expect.any(String) }
 }
 const invalid = (rule: StringRule): NotCanonical => ({ ok: false, code: 'invalid', rule })
 const notGranted = (rule: DiskRule): NotCanonical => ({ ok: false, code: 'not-granted', rule })
 
 // A junction on Windows, which needs no admin rights. Elsewhere the type is ignored for a plain link
-const linkFolder = (target: string, name: string) => symlink(target, path.join(vault, name), 'junction')
+const linkFolder = (target: string, name: string) => symlink(target, path.join(luoshu, name), 'junction')
 
 // A file link on Windows needs admin rights or developer mode, so the test skips on a Windows without either
 async function linkFile(target: string, name: string, skip: TestContext['skip']) {
   try {
-    await symlink(target, path.join(vault, name), 'file')
+    await symlink(target, path.join(luoshu, name), 'file')
   } catch (err) {
     if (onWindows && (err as NodeJS.ErrnoException).code === 'EPERM') skip('file links need admin rights or developer mode')
     throw err
@@ -51,11 +51,11 @@ async function linkFile(target: string, name: string, skip: TestContext['skip'])
 }
 
 // macOS and Windows ignore case by default, Linux doesn't
-const ignoresCase = () => stat(path.join(vault, 'NOTES', 'A.MD')).then(() => true, () => false)
+const ignoresCase = () => stat(path.join(luoshu, 'NOTES', 'A.MD')).then(() => true, () => false)
 
 describe('the string rules', () => {
-  // A vault that isn't there, so any look at the disk would answer not-granted instead
-  const nowhere = () => path.join(base, 'no-vault')
+  // A luoshu that isn't there, so any look at the disk would answer not-granted instead
+  const nowhere = () => path.join(base, 'no-luoshu')
 
   const refused: [string, StringRule][] = [
     ['', 'empty'],
@@ -132,7 +132,7 @@ describe('the string rules', () => {
   it('takes 512 characters and refuses 513', async () => {
     const longest = [...Array.from({ length: 7 }, () => 'n'.repeat(63)), 'n'.repeat(64)].join('/')
     expect(longest).toHaveLength(512)
-    expect(await canonical(vault, longest)).not.toMatchObject({ code: 'invalid' })
+    expect(await canonical(luoshu, longest)).not.toMatchObject({ code: 'invalid' })
     expect(await canonical(nowhere(), `${longest}n`)).toEqual(invalid('too-long'))
   })
 
@@ -153,7 +153,7 @@ describe('the string rules', () => {
     'notes/\ud83d\ude00.md',
   ]
   it.each(allowed)('lets %j through, close to a refused name but not one', async input => {
-    expect(await canonical(vault, input)).toEqual(await resolved(input))
+    expect(await canonical(luoshu, input)).toEqual(await resolved(input))
   })
 })
 
@@ -171,65 +171,65 @@ describe('.. tricks', () => {
     ['.. /outside/secret.md', 'trailing'],
     ['../', 'dot-segment'],
   ])('refuses %j as %s', async (input, rule) => {
-    expect(await canonical(vault, input)).toEqual(invalid(rule))
+    expect(await canonical(luoshu, input)).toEqual(invalid(rule))
   })
 
-  it.each(['..notes/x.md', '..%2f..%2foutside/secret.md', '%2e%2e/secret.md'])('keeps %j as one name inside the vault', async input => {
-    expect(await canonical(vault, input)).toEqual(await resolved(input))
+  it.each(['..notes/x.md', '..%2f..%2foutside/secret.md', '%2e%2e/secret.md'])('keeps %j as one name inside the luoshu', async input => {
+    expect(await canonical(luoshu, input)).toEqual(await resolved(input))
   })
 
   it('refuses a relative link that climbs out and resolves one that climbs back in', async () => {
     await linkFolder('..', 'up')
-    expect(await canonical(vault, 'up/outside/secret.md')).toEqual(notGranted('outside'))
-    expect(await canonical(vault, 'up/outside/new.md')).toEqual(notGranted('outside'))
-    expect(await canonical(vault, 'up/vault/notes/a.md')).toEqual(await resolved('notes/a.md'))
+    expect(await canonical(luoshu, 'up/outside/secret.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'up/outside/new.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'up/luoshu/notes/a.md')).toEqual(await resolved('notes/a.md'))
   })
 })
 
 describe('resolving on the disk', () => {
   it('gives the real path of a note that exists', async () => {
-    expect(await canonical(vault, 'notes/a.md')).toEqual(await resolved('notes/a.md'))
+    expect(await canonical(luoshu, 'notes/a.md')).toEqual(await resolved('notes/a.md'))
   })
 
   it('keeps the names that do not exist yet for a write', async () => {
-    expect(await canonical(vault, 'notes/new.md')).toEqual(await resolved('notes/new.md'))
-    expect(await canonical(vault, 'notes/new/deeper/x.md')).toEqual(await resolved('notes/new/deeper/x.md'))
-    expect(await canonical(vault, 'fresh/x.md')).toEqual(await resolved('fresh/x.md'))
+    expect(await canonical(luoshu, 'notes/new.md')).toEqual(await resolved('notes/new.md'))
+    expect(await canonical(luoshu, 'notes/new/deeper/x.md')).toEqual(await resolved('notes/new/deeper/x.md'))
+    expect(await canonical(luoshu, 'fresh/x.md')).toEqual(await resolved('fresh/x.md'))
   })
 
   it('reads names below a file as not there yet, so perform finds nothing', async () => {
-    expect(await canonical(vault, 'notes/a.md/x.md')).toEqual(await resolved('notes/a.md/x.md'))
+    expect(await canonical(luoshu, 'notes/a.md/x.md')).toEqual(await resolved('notes/a.md/x.md'))
   })
 
-  it('resolves a vault folder that is itself a link, every path comes out under the real one', async () => {
+  it('resolves a luoshu folder that is itself a link, every path comes out under the real one', async () => {
     const through = path.join(base, 'through')
-    await symlink(vault, through, 'junction')
+    await symlink(luoshu, through, 'junction')
     expect(await canonical(through, 'notes/a.md')).toEqual(await resolved('notes/a.md'))
     expect(await canonical(through, 'notes/new.md')).toEqual(await resolved('notes/new.md'))
   })
 
   // A volume root's real path ends in a separator: / on macOS and Linux, the drive root on Windows
-  it('resolves a note when the vault is the root of a volume', async () => {
-    const real = path.join(await realpath(vault), 'notes', 'a.md')
+  it('resolves a note when the luoshu is the root of a volume', async () => {
+    const real = path.join(await realpath(luoshu), 'notes', 'a.md')
     const { root } = path.parse(real)
     const relative = real.slice(root.length).split(path.sep).join('/')
     expect(await canonical(root, relative)).toEqual({ ok: true, absolute: real, relative, key: expect.any(String) })
   })
 
-  it('refuses every path when the vault folder is gone', async () => {
+  it('refuses every path when the luoshu folder is gone', async () => {
     expect(await canonical(path.join(base, 'gone'), 'notes/a.md')).toEqual(notGranted('unresolved'))
   })
 
   // chmod sets no folder ACL on Windows and root reads every folder anyway
   it.skipIf(onWindows)('refuses a path through a folder that can not be read', async ({ skip }) => {
     if (process.getuid?.() === 0) skip('root reads every folder')
-    const locked = path.join(vault, 'locked')
+    const locked = path.join(luoshu, 'locked')
     await mkdir(locked)
     await writeFile(path.join(locked, 'x.md'), 'x')
     await chmod(locked, 0o000)
     try {
-      expect(await canonical(vault, 'locked/x.md')).toEqual(notGranted('unresolved'))
-      expect(await canonical(vault, 'locked/new.md')).toEqual(notGranted('unresolved'))
+      expect(await canonical(luoshu, 'locked/x.md')).toEqual(notGranted('unresolved'))
+      expect(await canonical(luoshu, 'locked/new.md')).toEqual(notGranted('unresolved'))
     } finally {
       await chmod(locked, 0o755)
     }
@@ -237,15 +237,15 @@ describe('resolving on the disk', () => {
 
   it('gives the names as the disk holds them on a volume that ignores case', async ({ skip }) => {
     if (!await ignoresCase()) skip('this volume keeps case apart')
-    expect(await canonical(vault, 'NOTES/A.MD')).toEqual(await resolved('notes/a.md'))
+    expect(await canonical(luoshu, 'NOTES/A.MD')).toEqual(await resolved('notes/a.md'))
     // A name that doesn't exist yet keeps the caller's spelling
-    expect(await canonical(vault, 'Notes/New.md')).toEqual(await resolved('notes/New.md'))
+    expect(await canonical(luoshu, 'Notes/New.md')).toEqual(await resolved('notes/New.md'))
   })
 })
 
 describe('the key for locks and leases', () => {
   async function keyFor(input: string) {
-    const answer = await canonical(vault, input)
+    const answer = await canonical(luoshu, input)
     if (!answer.ok) throw new Error(`${input} refused as ${answer.rule}`)
     return answer.key
   }
@@ -268,95 +268,95 @@ describe('the key for locks and leases', () => {
   })
 
   it('leaves relative in the caller\'s spelling, the key is for locks and leases only', async () => {
-    expect(await canonical(vault, 'notes/New.md')).toMatchObject({ relative: 'notes/New.md', key: 'notes/new.md' })
+    expect(await canonical(luoshu, 'notes/New.md')).toMatchObject({ relative: 'notes/New.md', key: 'notes/new.md' })
   })
 })
 
 describe('links', () => {
-  it('refuses a folder link out of the vault, for a note there, a new one and the link itself', async () => {
+  it('refuses a folder link out of the luoshu, for a note there, a new one and the link itself', async () => {
     await linkFolder(outside, 'out')
-    expect(await canonical(vault, 'out/secret.md')).toEqual(notGranted('outside'))
-    expect(await canonical(vault, 'out/new.md')).toEqual(notGranted('outside'))
-    expect(await canonical(vault, 'out/new/deeper.md')).toEqual(notGranted('outside'))
-    expect(await canonical(vault, 'out')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'out/secret.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'out/new.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'out/new/deeper.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'out')).toEqual(notGranted('outside'))
   })
 
-  it('refuses a file link out of the vault', async ({ skip }) => {
+  it('refuses a file link out of the luoshu', async ({ skip }) => {
     await linkFile(path.join(outside, 'secret.md'), 'secret.md', skip)
-    expect(await canonical(vault, 'secret.md')).toEqual(notGranted('outside'))
+    expect(await canonical(luoshu, 'secret.md')).toEqual(notGranted('outside'))
   })
 
-  // A folder whose name starts with the vault's is still outside the vault
-  it('refuses a link into a folder beside the vault whose name starts with the vault\'s', async () => {
-    await mkdir(path.join(base, 'vault-copy'))
-    await linkFolder(path.join(base, 'vault-copy'), 'copy')
-    expect(await canonical(vault, 'copy/a.md')).toEqual(notGranted('outside'))
+  // A folder whose name starts with the luoshu's is still outside the luoshu
+  it('refuses a link into a folder beside the luoshu whose name starts with the luoshu\'s', async () => {
+    await mkdir(path.join(base, 'luoshu-copy'))
+    await linkFolder(path.join(base, 'luoshu-copy'), 'copy')
+    expect(await canonical(luoshu, 'copy/a.md')).toEqual(notGranted('outside'))
   })
 
-  // On a volume that keeps case apart VAULT is another folder, which a folded comparison would read as the vault
-  it('refuses a link to a folder named like the vault in another case, on a volume that keeps case apart', async ({ skip }) => {
+  // On a volume that keeps case apart LUOSHU is another folder, which a folded comparison would read as the luoshu
+  it('refuses a link to a folder named like the luoshu in another case, on a volume that keeps case apart', async ({ skip }) => {
     if (await ignoresCase()) skip('this volume ignores case')
-    await mkdir(path.join(base, 'VAULT'))
-    await writeFile(path.join(base, 'VAULT', 'secret.md'), 'secret')
-    await linkFolder(path.join(base, 'VAULT'), 'upper')
-    expect(await canonical(vault, 'upper/secret.md')).toEqual(notGranted('outside'))
+    await mkdir(path.join(base, 'LUOSHU'))
+    await writeFile(path.join(base, 'LUOSHU', 'secret.md'), 'secret')
+    await linkFolder(path.join(base, 'LUOSHU'), 'upper')
+    expect(await canonical(luoshu, 'upper/secret.md')).toEqual(notGranted('outside'))
   })
 
   it('follows a chain of links to where it ends', async () => {
     await linkFolder(outside, 'second')
-    await linkFolder(path.join(vault, 'second'), 'first')
-    expect(await canonical(vault, 'first/secret.md')).toEqual(notGranted('outside'))
+    await linkFolder(path.join(luoshu, 'second'), 'first')
+    expect(await canonical(luoshu, 'first/secret.md')).toEqual(notGranted('outside'))
   })
 
-  it('gives where a link inside the vault points, the object the gate then judges', async () => {
-    await linkFolder(path.join(vault, 'notes'), 'alias')
-    expect(await canonical(vault, 'alias/a.md')).toEqual(await resolved('notes/a.md'))
-    expect(await canonical(vault, 'alias/new.md')).toEqual(await resolved('notes/new.md'))
+  it('gives where a link inside the luoshu points, the object the gate then judges', async () => {
+    await linkFolder(path.join(luoshu, 'notes'), 'alias')
+    expect(await canonical(luoshu, 'alias/a.md')).toEqual(await resolved('notes/a.md'))
+    expect(await canonical(luoshu, 'alias/new.md')).toEqual(await resolved('notes/new.md'))
   })
 
-  it('refuses a link to the vault itself but resolves the paths below it', async () => {
-    await linkFolder(vault, 'self')
-    expect(await canonical(vault, 'self')).toEqual(notGranted('root'))
-    expect(await canonical(vault, 'self/notes/a.md')).toEqual(await resolved('notes/a.md'))
+  it('refuses a link to the luoshu itself but resolves the paths below it', async () => {
+    await linkFolder(luoshu, 'self')
+    expect(await canonical(luoshu, 'self')).toEqual(notGranted('root'))
+    expect(await canonical(luoshu, 'self/notes/a.md')).toEqual(await resolved('notes/a.md'))
   })
 
   // The old daemon skipped the real path check when realpath failed, so a write followed this link out
   it('refuses a file link to nowhere, a write through it would create its target outside', async ({ skip }) => {
     await linkFile(path.join(outside, 'planted.md'), 'ghost.md', skip)
-    expect(await canonical(vault, 'ghost.md')).toEqual(notGranted('unresolved'))
+    expect(await canonical(luoshu, 'ghost.md')).toEqual(notGranted('unresolved'))
   })
 
   it('refuses a path through a folder link to nowhere', async () => {
     await linkFolder(path.join(outside, 'none'), 'ghost')
-    expect(await canonical(vault, 'ghost/new.md')).toEqual(notGranted('unresolved'))
+    expect(await canonical(luoshu, 'ghost/new.md')).toEqual(notGranted('unresolved'))
   })
 
   it('refuses a link loop', async () => {
-    await linkFolder(path.join(vault, 'loop'), 'loop')
-    expect(await canonical(vault, 'loop/x.md')).toEqual(notGranted('unresolved'))
+    await linkFolder(path.join(luoshu, 'loop'), 'loop')
+    expect(await canonical(luoshu, 'loop/x.md')).toEqual(notGranted('unresolved'))
   })
 })
 
 describe('.git', () => {
   it.each(['.git', '.git/config', '.git/hooks/pre-commit', 'notes/.git/config', 'notes/sub/.git'])('refuses %j', async input => {
-    expect(await canonical(vault, input)).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, input)).toEqual(notGranted('git'))
   })
 
   it.each(['.GIT/config', '.Git/config', '.gIT/hooks/new', 'notes/.GiT/config'])('refuses %j, case folded', async input => {
-    expect(await canonical(vault, input)).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, input)).toEqual(notGranted('git'))
   })
 
   it('refuses .GIT on a volume that ignores case, where it opens the real .git', async ({ skip }) => {
     if (!await ignoresCase()) skip('this volume keeps case apart')
-    expect(await readFile(path.join(vault, '.GIT', 'config'), 'utf8')).toBe('[core]\n')
-    expect(await canonical(vault, '.GIT/config')).toEqual(notGranted('git'))
+    expect(await readFile(path.join(luoshu, '.GIT', 'config'), 'utf8')).toBe('[core]\n')
+    expect(await canonical(luoshu, '.GIT/config')).toEqual(notGranted('git'))
   })
 
-  it('refuses a link inside the vault that points at .git', async () => {
-    await linkFolder(path.join(vault, '.git'), 'repo')
-    expect(await canonical(vault, 'repo')).toEqual(notGranted('git'))
-    expect(await canonical(vault, 'repo/config')).toEqual(notGranted('git'))
-    expect(await canonical(vault, 'repo/hooks/post-checkout')).toEqual(notGranted('git'))
+  it('refuses a link inside the luoshu that points at .git', async () => {
+    await linkFolder(path.join(luoshu, '.git'), 'repo')
+    expect(await canonical(luoshu, 'repo')).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, 'repo/config')).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, 'repo/hooks/post-checkout')).toEqual(notGranted('git'))
   })
 
   it.each([
@@ -366,7 +366,7 @@ describe('.git', () => {
     ['a right-to-left override', '.gi\u202et'],
     ['two zero width joiners', 'notes/.g\u200di\u200dt/config'],
   ])('refuses .git with %s in it, which HFS+ reads as .git', async (_, input) => {
-    expect(await canonical(vault, input)).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, input)).toEqual(notGranted('git'))
   })
 
   // Each code point git's protectHFS skips, in a folder with no .git for HFS+ to open, so a range cut short shows
@@ -377,25 +377,25 @@ describe('.git', () => {
     ]
     for (const code of skipped) {
       const input = `notes/.g${String.fromCharCode(code)}it/config`
-      expect(await canonical(vault, input), `U+${code.toString(16)}`).toEqual(notGranted('git'))
+      expect(await canonical(luoshu, input), `U+${code.toString(16)}`).toEqual(notGranted('git'))
     }
   })
 
   // JS uppercases a dotless i to I but APFS opens no .git for that spelling. An NTFS that did would resolve to .git
   // and fail this test on Windows
   it.each(['.gitignore', '.github/x.md', 'notes.git', 'git/config', '.g\u0131t/config'])('lets %j through, not .git', async input => {
-    expect(await canonical(vault, input)).toEqual(await resolved(input))
+    expect(await canonical(luoshu, input)).toEqual(await resolved(input))
   })
 })
 
-describe('hetu\'s own folders in the vault', () => {
+describe('hetu\'s own folders in the luoshu', () => {
   beforeEach(async () => {
-    await mkdir(path.join(vault, 'data', 'state'), { recursive: true })
-    await writeFile(path.join(vault, 'data', 'state', 'switches.json'), '{}')
-    await mkdir(path.join(vault, 'app'))
-    await writeFile(path.join(vault, 'app', 'main.js'), '')
+    await mkdir(path.join(luoshu, 'data', 'state'), { recursive: true })
+    await writeFile(path.join(luoshu, 'data', 'state', 'switches.json'), '{}')
+    await mkdir(path.join(luoshu, 'app'))
+    await writeFile(path.join(luoshu, 'app', 'main.js'), '')
   })
-  const folders = (): CanonicalOptions => ({ dataDir: path.join(vault, 'data'), installDir: path.join(vault, 'app') })
+  const folders = (): CanonicalOptions => ({ dataDir: path.join(luoshu, 'data'), installDir: path.join(luoshu, 'app') })
 
   it.each<[string, DiskRule]>([
     ['data', 'data'],
@@ -405,41 +405,41 @@ describe('hetu\'s own folders in the vault', () => {
     ['app/main.js', 'install'],
     ['app/new/x.js', 'install'],
   ])('refuses %j as inside the %s folder', async (input, rule) => {
-    expect(await canonical(vault, input, folders())).toEqual(notGranted(rule))
+    expect(await canonical(luoshu, input, folders())).toEqual(notGranted(rule))
   })
 
   it.each(['database.md', 'data-notes/x.md', 'app.md', 'apps/x.js', 'notes/a.md'])('lets %j beside those folders through', async input => {
-    expect(await canonical(vault, input, folders())).toEqual(await resolved(input))
+    expect(await canonical(luoshu, input, folders())).toEqual(await resolved(input))
   })
 
-  it('refuses a link inside the vault into the data folder', async () => {
-    await linkFolder(path.join(vault, 'data'), 'd')
-    expect(await canonical(vault, 'd/state/switches.json', folders())).toEqual(notGranted('data'))
+  it('refuses a link inside the luoshu into the data folder', async () => {
+    await linkFolder(path.join(luoshu, 'data'), 'd')
+    expect(await canonical(luoshu, 'd/state/switches.json', folders())).toEqual(notGranted('data'))
   })
 
   it('finds the folders when they are given through a link', async () => {
     const through = path.join(base, 'through')
-    await symlink(vault, through, 'junction')
+    await symlink(luoshu, through, 'junction')
     const options = { dataDir: path.join(through, 'data'), installDir: path.join(through, 'app') }
-    expect(await canonical(vault, 'data/state/switches.json', options)).toEqual(notGranted('data'))
-    expect(await canonical(vault, 'app/main.js', options)).toEqual(notGranted('install'))
+    expect(await canonical(luoshu, 'data/state/switches.json', options)).toEqual(notGranted('data'))
+    expect(await canonical(luoshu, 'app/main.js', options)).toEqual(notGranted('install'))
   })
 
   it('refuses another case of the data folder on a volume that ignores case', async ({ skip }) => {
     if (!await ignoresCase()) skip('this volume keeps case apart')
-    expect(await canonical(vault, 'DATA/state/switches.json', folders())).toEqual(notGranted('data'))
+    expect(await canonical(luoshu, 'DATA/state/switches.json', folders())).toEqual(notGranted('data'))
   })
 
   it('refuses every path when a folder passed in can not be resolved', async () => {
     const gone = path.join(base, 'gone')
-    expect(await canonical(vault, 'notes/a.md', { dataDir: gone })).toEqual(notGranted('data'))
-    expect(await canonical(vault, 'notes/a.md', { installDir: gone })).toEqual(notGranted('install'))
-    expect(await canonical(vault, 'notes/a.md', { dataDir: '' })).toEqual(notGranted('data'))
+    expect(await canonical(luoshu, 'notes/a.md', { dataDir: gone })).toEqual(notGranted('data'))
+    expect(await canonical(luoshu, 'notes/a.md', { installDir: gone })).toEqual(notGranted('install'))
+    expect(await canonical(luoshu, 'notes/a.md', { dataDir: '' })).toEqual(notGranted('data'))
   })
 
   it('lets those paths through when the caller passes no folders', async () => {
-    expect(await canonical(vault, 'data/state/switches.json')).toEqual(await resolved('data/state/switches.json'))
-    expect(await canonical(vault, 'app/main.js')).toEqual(await resolved('app/main.js'))
+    expect(await canonical(luoshu, 'data/state/switches.json')).toEqual(await resolved('data/state/switches.json'))
+    expect(await canonical(luoshu, 'app/main.js')).toEqual(await resolved('app/main.js'))
   })
 })
 
@@ -457,36 +457,36 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
   }
 
   it('expands an 8.3 short name and refuses the one for .git', async ({ skip }) => {
-    await mkdir(path.join(vault, 'Long folder name'))
-    const git = await shortName(vault, '.git')
-    const long = await shortName(vault, 'Long folder name')
+    await mkdir(path.join(luoshu, 'Long folder name'))
+    const git = await shortName(luoshu, '.git')
+    const long = await shortName(luoshu, 'Long folder name')
     if (git === null || long === null) {
       // A volume can have short names off, which on CI would leave GIT~1 unproven behind a green run
       if (process.env.CI) throw new Error('no 8.3 short names on this CI volume, GIT~1 unproven')
       return skip('this volume makes no 8.3 short names')
     }
-    expect(await readFile(path.join(vault, git, 'config'), 'utf8')).toBe('[core]\n')
-    expect(await canonical(vault, `${git}/config`)).toEqual(notGranted('git'))
-    expect(await canonical(vault, `${git}/hooks/new`)).toEqual(notGranted('git'))
-    expect(await canonical(vault, `${long}/x.md`)).toEqual(await resolved('Long folder name/x.md'))
+    expect(await readFile(path.join(luoshu, git, 'config'), 'utf8')).toBe('[core]\n')
+    expect(await canonical(luoshu, `${git}/config`)).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, `${git}/hooks/new`)).toEqual(notGranted('git'))
+    expect(await canonical(luoshu, `${long}/x.md`)).toEqual(await resolved('Long folder name/x.md'))
   })
 
   it('refuses ::$INDEX_ALLOCATION, which opens .git as its folder stream', async () => {
-    expect(await readFile(path.join(vault, '.git::$INDEX_ALLOCATION', 'config'), 'utf8')).toBe('[core]\n')
-    expect(await canonical(vault, '.git::$INDEX_ALLOCATION/config')).toEqual(invalid('colon'))
+    expect(await readFile(path.join(luoshu, '.git::$INDEX_ALLOCATION', 'config'), 'utf8')).toBe('[core]\n')
+    expect(await canonical(luoshu, '.git::$INDEX_ALLOCATION/config')).toEqual(invalid('colon'))
   })
 
   it('refuses ::$DATA, which opens the note itself', async () => {
-    expect(await readFile(path.join(vault, 'notes', 'a.md::$DATA'), 'utf8')).toBe('note a')
-    expect(await canonical(vault, 'notes/a.md::$DATA')).toEqual(invalid('colon'))
+    expect(await readFile(path.join(luoshu, 'notes', 'a.md::$DATA'), 'utf8')).toBe('note a')
+    expect(await canonical(luoshu, 'notes/a.md::$DATA')).toEqual(invalid('colon'))
   })
 
   it('refuses trailing dots and spaces, which Windows drops to open the name without them', async () => {
-    const type = async (file: string) => (await run('cmd.exe', ['/d', '/c', 'type', file], { cwd: vault })).stdout
+    const type = async (file: string) => (await run('cmd.exe', ['/d', '/c', 'type', file], { cwd: luoshu })).stdout
     expect(await type('notes\\a.md.')).toBe('note a')
     expect(await type('.git.\\config')).toBe('[core]\n')
-    expect(await canonical(vault, 'notes/a.md.')).toEqual(invalid('trailing'))
-    expect(await canonical(vault, 'notes/a.md ')).toEqual(invalid('trailing'))
-    expect(await canonical(vault, '.git./config')).toEqual(invalid('trailing'))
+    expect(await canonical(luoshu, 'notes/a.md.')).toEqual(invalid('trailing'))
+    expect(await canonical(luoshu, 'notes/a.md ')).toEqual(invalid('trailing'))
+    expect(await canonical(luoshu, '.git./config')).toEqual(invalid('trailing'))
   })
 })

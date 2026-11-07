@@ -37,7 +37,7 @@ export const slotIds = frozen(['gate', 'capabilities', 'log', 'watchdog'] as con
 
 // The plugin that serves each provider namespace
 export const providers = table({
-  vault: 'vault',
+  luoshu: 'luoshu',
   leases: 'leases',
   history: 'history',
   exec: 'exec',
@@ -51,16 +51,16 @@ export const providers = table({
 export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin'] as const)
 
 // The actions a guard may hook
-export const guardableActions = frozen(['vault.write'] as const)
+export const guardableActions = frozen(['luoshu.write'] as const)
 export type GuardableAction = typeof guardableActions[number]
 
 // The guards expected on each guardable action, in the order they answer. Empty until leases ships with #77, since an
 // expected guard that isn't running refuses every write
-export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({ 'vault.write': [] })
+export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({ 'luoshu.write': [] })
 
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
-  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'vault', 'leases', 'history', 'exec', 'http', 'net',
+  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
   'editor-core', 'hidden-marks',
 ] as const)
 

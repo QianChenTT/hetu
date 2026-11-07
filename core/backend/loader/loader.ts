@@ -108,7 +108,7 @@ type Staged = { dir: string, read: Read }
 // Section 6's order for install plugins: the slot holders with the log first, then the providers, then the guard and
 // the rest. A requirement still starts before its dependent
 export const bootOrder = frozen([
-  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'vault', 'history', 'exec', 'net', 'leases', 'http',
+  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http',
   'editor-core', 'hidden-marks',
 ] as const)
 
@@ -1163,9 +1163,9 @@ export class Loader implements Seam {
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
         return this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
       }
-      case 'vault.set':
-        await this.store.writeVault({ folder: change.folder })
-        this.state = { ...this.state, vault: { folder: change.folder } }
+      case 'luoshu.set':
+        await this.store.writeLuoshu({ folder: change.folder })
+        this.state = { ...this.state, luoshu: { folder: change.folder } }
         return this.bump()
       default:
         throw new Error(`${change.kind} comes with a later step`)

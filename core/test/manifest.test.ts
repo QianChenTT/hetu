@@ -11,11 +11,11 @@ const search = {
   version: '1.2.0',
   api: '^1',
   entries: { worker: 'dist/worker.js', frames: { panel: 'dist/panel.html' } },
-  requires: ['vault'],
+  requires: ['luoshu'],
   provides: { actions: { query: {} }, topics: ['indexed'] },
   capabilities: [
-    { type: 'vault.read', paths: ['**'] },
-    { type: 'events.subscribe', topics: ['vault.changed', 'vault.outside'] },
+    { type: 'luoshu.read', paths: ['**'] },
+    { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
     { type: 'ui.panel' },
   ],
 }
@@ -28,7 +28,7 @@ const leases = {
   entries: { host: 'host.js' },
   provides: { actions: { acquire: {}, renew: {}, release: {}, list: {} } },
   capabilities: [{ type: 'guard.hook' }],
-  guards: ['vault.write'],
+  guards: ['luoshu.write'],
   node: ['fs', 'fs/promises', 'node_modules_free'],
 }
 const both = [['folder', folderManifest], ['install', installManifest]] as const
@@ -98,14 +98,14 @@ describe('a manifest', () => {
     ['a frame named page', { ...minimal, entries: { frames: { page: 'p.html' } } }],
     ['a frame name that is not a name', { ...minimal, entries: { frames: { 'my panel': 'p.html' } } }],
     ['a dotted requirement', { ...minimal, requires: ['my.plugin'] }],
-    ['a requirement with a version range', { ...minimal, requires: { vault: '^1' } }],
+    ['a requirement with a version range', { ...minimal, requires: { luoshu: '^1' } }],
     ['an action name that is not a name', { ...minimal, provides: { actions: { 'search.query': {} } } }],
     ['an action open to a dotted caller', { ...minimal, provides: { actions: { handle: { from: ['my.http'] } } } }],
     ['an action with an unknown field', { ...minimal, provides: { actions: { handle: { to: ['x'] } } } }],
     ['a topic given with its namespace', { ...minimal, provides: { topics: ['search.indexed'] } }],
     ['an unknown provides field', { ...minimal, provides: { verbs: ['x'] } }],
     ['an unknown capability type', { ...minimal, capabilities: [{ type: 'watchdog.control' }] }],
-    ['a scope outside the grammar', { ...minimal, capabilities: [{ type: 'vault.read', paths: ['notes/../**'] }] }],
+    ['a scope outside the grammar', { ...minimal, capabilities: [{ type: 'luoshu.read', paths: ['notes/../**'] }] }],
     // Never the class, the signer, the tier or a second id
     ['a class', { ...minimal, class: 0 }],
     ['a signer', { ...minimal, signer: 'github.com/someone' }],
@@ -130,7 +130,7 @@ describe('install-only fields and types', () => {
   it.each([
     ['a host entry', { ...minimal, entries: { host: 'host.js' } }],
     ['a page entry', { ...minimal, entries: { worker: 'w.js', page: 'page.js' } }],
-    ['guards', { ...minimal, capabilities: [{ type: 'guard.hook' }], guards: ['vault.write'] }],
+    ['guards', { ...minimal, capabilities: [{ type: 'guard.hook' }], guards: ['luoshu.write'] }],
     ['Node built-ins', { ...minimal, node: ['fs'] }],
     ['guard.hook', { ...minimal, capabilities: [{ type: 'guard.hook' }] }],
   ])('refuses %s from the plugin folder and takes it from the install', (_name, value) => {
@@ -144,7 +144,7 @@ describe('install-only fields and types', () => {
   })
 
   it('refuses a guard on an action no guard may hook', () => {
-    expect(installManifest.safeParse({ ...leases, guards: ['vault.read'] }).success).toBe(false)
+    expect(installManifest.safeParse({ ...leases, guards: ['luoshu.read'] }).success).toBe(false)
   })
 
   // Host halves run with Node in main, so their entries keep to the plugin's own folder like any other
@@ -176,15 +176,15 @@ describe('size caps', () => {
 
   it('caps the scopes per type across entries', () => {
     const half = () => many(32, i => `notes/${i}/**`)
-    expect(folderManifest.safeParse({ ...minimal, capabilities: [{ type: 'vault.read', paths: half() }, { type: 'vault.read', paths: half() }] }).success).toBe(true)
+    expect(folderManifest.safeParse({ ...minimal, capabilities: [{ type: 'luoshu.read', paths: half() }, { type: 'luoshu.read', paths: half() }] }).success).toBe(true)
     expect(folderManifest.safeParse({
-      ...minimal, capabilities: [{ type: 'vault.read', paths: half() }, { type: 'vault.read', paths: [...half(), '**'] }],
+      ...minimal, capabilities: [{ type: 'luoshu.read', paths: half() }, { type: 'luoshu.read', paths: [...half(), '**'] }],
     }).success).toBe(false)
   })
 
   it('refuses a value reached twice, which no JSON file holds', () => {
     const paths = ['notes/**']
-    expect(folderManifest.safeParse({ ...minimal, capabilities: [{ type: 'vault.read', paths }, { type: 'vault.write', paths }] }).success).toBe(false)
+    expect(folderManifest.safeParse({ ...minimal, capabilities: [{ type: 'luoshu.read', paths }, { type: 'luoshu.write', paths }] }).success).toBe(false)
   })
 
   it.each(both)(`refuses a manifest past ${MAX_MANIFEST_BYTES} bytes from the %s whose every list is within its own cap`, (_from, schema) => {
@@ -192,8 +192,8 @@ describe('size caps', () => {
     const big = {
       ...minimal,
       capabilities: [
-        { type: 'vault.read', paths: long('read') },
-        { type: 'vault.write', paths: long('write') },
+        { type: 'luoshu.read', paths: long('read') },
+        { type: 'luoshu.write', paths: long('write') },
         { type: 'history', access: 'read', paths: long('history') },
       ],
     }

@@ -137,18 +137,18 @@ describe('a dead incarnation', () => {
   it('is refused: a failed host half\'s late ready counts for nothing and its handle reaches nothing', async () => {
     const made = await harness({
       ...plugins(),
-      install: { ...coreInstall(), vault: host('vault') },
-      behave: { gate: { exports: { gate: allowAll() } }, vault: { ready: false } },
+      install: { ...coreInstall(), luoshu: host('luoshu') },
+      behave: { gate: { exports: { gate: allowAll() } }, luoshu: { ready: false } },
       limits: { readyMs: 40 },
     })
     await made.loader.start()
-    expect(stateOf(made.loader, 'vault')).toBe('failed')
-    const dead = made.runtime.half('vault', 1, 'host')
-    expect(made.link.ended).toContainEqual({ caller: { kind: 'plugin', id: 'vault', half: 'host', incarnation: 1 }, code: 'crashed' })
+    expect(stateOf(made.loader, 'luoshu')).toBe('failed')
+    const dead = made.runtime.half('luoshu', 1, 'host')
+    expect(made.link.ended).toContainEqual({ caller: { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 }, code: 'crashed' })
     dead.ready()
     expect(await dead.ask('core.self', undefined, 100)).toBe(null)
     await tick(20)
-    expect(stateOf(made.loader, 'vault')).toBe('failed')
+    expect(stateOf(made.loader, 'luoshu')).toBe('failed')
     // A live half's same call is answered, so it is the incarnation that is refused
     expect((await made.runtime.half('gate', 1, 'host').ask('core.self'))?.ok).toBe(true)
   })
@@ -369,7 +369,7 @@ describe('the heartbeat', () => {
 describe('shutdown', () => {
   it('tells the carrier first, then stops sandboxed plugins in reverse graph order and host plugins in reverse with the log last', async () => {
     const made = await harness({
-      install: { ...coreInstall(), storage: host('storage'), vault: host('vault') },
+      install: { ...coreInstall(), storage: host('storage'), luoshu: host('luoshu') },
       folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },
       entries: { alpha: signed(), beta: signed() },
     })
@@ -378,7 +378,7 @@ describe('shutdown', () => {
     const lines = made.link.timeline.slice(made.link.timeline.indexOf('stopping'))
     expect(lines[0]).toBe('stopping')
     expect(lines[1]).toBe('record core.stopping')
-    expect(lines.filter(line => line.startsWith('stop '))).toEqual(['stop beta', 'stop alpha', 'stop vault', 'stop storage', 'stop gate', 'stop log'])
+    expect(lines.filter(line => line.startsWith('stop '))).toEqual(['stop beta', 'stop alpha', 'stop luoshu', 'stop storage', 'stop gate', 'stop log'])
     for (const row of made.loader.list()) expect(row).toMatchObject({ state: 'stopped', reason: 'shutdown' })
     // A guard or a slot stopped for shutdown reads failed to the loader's own seam, which the carrier answers stopped
     expect(made.loader.slot('gate')).toBe('failed')

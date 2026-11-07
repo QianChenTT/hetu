@@ -9,15 +9,15 @@ const many = (n: number, make: (i: number) => string) => Array.from({ length: n 
 
 // One of every type
 const everyType = [
-  { type: 'vault.read', paths: ['**'] },
-  { type: 'vault.write', paths: ['04 - Daily/**'] },
+  { type: 'luoshu.read', paths: ['**'] },
+  { type: 'luoshu.write', paths: ['04 - Daily/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
   { type: 'ui.panel' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
   { type: 'ui.statusBar' },
   { type: 'ui.keys' },
-  { type: 'events.subscribe', topics: ['vault.changed', 'search.indexed'] },
+  { type: 'events.subscribe', topics: ['luoshu.changed', 'search.indexed'] },
   { type: 'storage' },
   { type: 'history', access: 'read', paths: ['**'] },
   { type: 'history', access: 'commit', paths: ['notes/**'] },
@@ -30,7 +30,7 @@ const everyType = [
 describe('the fixed list', () => {
   it('keeps every type state.ts had and adds guard.hook, plugin.call, ui.keys and log.read', () => {
     expect(capabilityTypes).toEqual([
-      'vault.read', 'vault.write', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
+      'luoshu.read', 'luoshu.write', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
       'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
     ])
   })
@@ -47,7 +47,7 @@ describe('the fixed list', () => {
     expect(capabilities.parse(everyType)).toEqual(everyType)
   })
 
-  it.each(['watchdog.control', 'vault.delete', 'host.replace', 'ui.*', 'exec.any', ''])('refuses the type %j', type => {
+  it.each(['watchdog.control', 'luoshu.delete', 'host.replace', 'ui.*', 'exec.any', ''])('refuses the type %j', type => {
     expect(capability.safeParse({ type }).success).toBe(false)
   })
 
@@ -76,18 +76,18 @@ describe('the fixed list', () => {
 describe('scopes', () => {
   // The P23 shapes from the attack walk: any text used to pass
   it.each([
-    ['vault.read', { type: 'vault.read', paths: ['**/../x'] }],
-    ['vault.read', { type: 'vault.read', paths: ['C:/**'] }],
-    ['vault.write', { type: 'vault.write', paths: ['notes/{a,b}/**'] }],
-    ['vault.write', { type: 'vault.write', paths: [''] }],
+    ['luoshu.read', { type: 'luoshu.read', paths: ['**/../x'] }],
+    ['luoshu.read', { type: 'luoshu.read', paths: ['C:/**'] }],
+    ['luoshu.write', { type: 'luoshu.write', paths: ['notes/{a,b}/**'] }],
+    ['luoshu.write', { type: 'luoshu.write', paths: [''] }],
     ['history', { type: 'history', access: 'read', paths: ['/notes/**'] }],
   ])('holds %s paths to the scope grammar', (_type, granted) => {
     expect(capability.safeParse(granted).success).toBe(false)
   })
 
   it('takes topics as <namespace>.<name> and no wildcard', () => {
-    expect(capability.safeParse({ type: 'events.subscribe', topics: ['vault.changed'] }).success).toBe(true)
-    for (const topic of ['changed', 'vault.*', 'vault.changed.x', 'Vault.changed', '']) {
+    expect(capability.safeParse({ type: 'events.subscribe', topics: ['luoshu.changed'] }).success).toBe(true)
+    for (const topic of ['changed', 'luoshu.*', 'luoshu.changed.x', 'Luoshu.changed', '']) {
       expect(capability.safeParse({ type: 'events.subscribe', topics: [topic] }).success).toBe(false)
     }
   })
@@ -137,14 +137,14 @@ describe('scopes', () => {
 describe('size caps', () => {
   it(`takes ${MAX_SCOPES_PER_TYPE} scopes in one entry and refuses one more`, () => {
     const paths = many(MAX_SCOPES_PER_TYPE, i => `notes/${i}/**`)
-    expect(capability.safeParse({ type: 'vault.read', paths }).success).toBe(true)
-    expect(capability.safeParse({ type: 'vault.read', paths: [...paths, 'more/**'] }).success).toBe(false)
+    expect(capability.safeParse({ type: 'luoshu.read', paths }).success).toBe(true)
+    expect(capability.safeParse({ type: 'luoshu.read', paths: [...paths, 'more/**'] }).success).toBe(false)
   })
 
   // A grant change holds one capability and a state entry an uncapped list, so this is the only cap there
   it.each([
     ['net.fetch hosts', (n: number) => ({ type: 'net.fetch', hosts: many(n, i => `h${i}.example`) })],
-    ['events.subscribe topics', (n: number) => ({ type: 'events.subscribe', topics: many(n, i => `vault.t${i}`) })],
+    ['events.subscribe topics', (n: number) => ({ type: 'events.subscribe', topics: many(n, i => `luoshu.t${i}`) })],
     ['exec env', (n: number) => ({ type: 'exec', commands: [['git']], env: many(n, i => `VAR${i}`) })],
     ['exec commands', (n: number) => ({ type: 'exec', commands: many(n, i => `tool${i}`).map(tool => [tool]), env: [] })],
     ['plugin.call targets', (n: number) => ({ type: 'plugin.call', targets: many(n, i => `p${i}`) })],
@@ -156,9 +156,9 @@ describe('size caps', () => {
 
   it('counts scopes per type across the whole list, so splitting a type gets nothing past the cap', () => {
     const half = many(MAX_SCOPES_PER_TYPE / 2, i => `notes/${i}/**`)
-    expect(capabilities.safeParse([{ type: 'vault.read', paths: half }, { type: 'vault.read', paths: half }]).success).toBe(true)
+    expect(capabilities.safeParse([{ type: 'luoshu.read', paths: half }, { type: 'luoshu.read', paths: half }]).success).toBe(true)
     expect(capabilities.safeParse([
-      { type: 'vault.read', paths: half }, { type: 'vault.read', paths: half }, { type: 'vault.read', paths: ['**'] },
+      { type: 'luoshu.read', paths: half }, { type: 'luoshu.read', paths: half }, { type: 'luoshu.read', paths: ['**'] },
     ]).success).toBe(false)
     expect(capabilities.safeParse([
       { type: 'history', access: 'read', paths: [...half, 'a/**'] }, { type: 'history', access: 'commit', paths: half },
@@ -167,7 +167,7 @@ describe('size caps', () => {
 
   it('counts each type apart from the others', () => {
     const all = many(MAX_SCOPES_PER_TYPE, i => `notes/${i}/**`)
-    expect(capabilities.safeParse([{ type: 'vault.read', paths: all }, { type: 'vault.write', paths: all }]).success).toBe(true)
+    expect(capabilities.safeParse([{ type: 'luoshu.read', paths: all }, { type: 'luoshu.write', paths: all }]).success).toBe(true)
   })
 
   it('counts exec commands and env apart', () => {
@@ -210,7 +210,7 @@ describe('install-only types', () => {
 
 describe('keys that reach Object', () => {
   it.each([
-    ['__proto__ in an entry', '{"type":"vault.read","paths":["**"],"__proto__":{"paths":["**"]}}'],
+    ['__proto__ in an entry', '{"type":"luoshu.read","paths":["**"],"__proto__":{"paths":["**"]}}'],
     ['__proto__ in a scope-less entry', '{"type":"storage","__proto__":{}}'],
     ['constructor in an entry', '{"type":"log.read","constructor":1}'],
     ['prototype in an entry', '{"type":"exec","commands":[["git"]],"env":[],"prototype":1}'],

@@ -18,21 +18,21 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 
 type Sent = { kind: string, action?: string, args?: { topics?: string[] }, seq?: number }
 
-// search subscribes to the vault's topics and publishes its own indexed. The vault publishes from its host handle
+// search subscribes to the luoshu's topics and publishes its own indexed. The luoshu publishes from its host handle
 async function listening(way: TransportOptions = {}) {
   const parts = harness()
   parts.loader.sandboxed('search')
   parts.loader.plugins.search.topics = ['indexed']
   parts.loader.sandboxed('git')
-  parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['vault.changed', 'vault.outside'] }]
-  parts.gate.grants.git = [{ type: 'vault.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['search.indexed'] }]
+  parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }]
+  parts.gate.grants.git = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['search.indexed'] }]
   let ctx: PluginContext | null = null
   const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport)
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
-  const vault = hostHalf(parts.carrier, host('vault'))
-  const publish = (path?: string, topic = 'vault.changed') => vault.ask('events.publish', path === undefined ? { topic } : { topic, path })
+  const luoshu = hostHalf(parts.carrier, host('luoshu'))
+  const publish = (path?: string, topic = 'luoshu.changed') => luoshu.ask('events.publish', path === undefined ? { topic } : { topic, path })
   const sent = () => transport.sent as Sent[]
   const subscribes = () => sent().filter(message => message.action === 'events.subscribe').map(message => message.args!.topics)
   return { ...parts, ctx: ctx!, transport, publish, sent, subscribes }
@@ -43,8 +43,8 @@ describe('events through the SDK', () => {
     const { ctx, publish } = await listening()
     const changed: (string | undefined)[] = []
     const outside: (string | undefined)[] = []
-    await ctx.events.on('vault.changed', event => { changed.push(event.path) })
-    await ctx.events.on('vault.outside', event => { outside.push(event.path) })
+    await ctx.events.on('luoshu.changed', event => { changed.push(event.path) })
+    await ctx.events.on('luoshu.outside', event => { outside.push(event.path) })
     for (const path of ['notes/a.md', 'notes/b.md', 'notes/c.md']) await publish(path)
     await until(() => changed.length === 3)
     expect(changed).toEqual(['notes/a.md', 'notes/b.md', 'notes/c.md'])
@@ -55,9 +55,9 @@ describe('events through the SDK', () => {
     const { ctx, publish, sent, subscribes } = await listening()
     const first: string[] = []
     const second: string[] = []
-    const one = await ctx.events.on('vault.changed', event => { first.push(event.path!) })
-    const two = await ctx.events.on('vault.changed', event => { second.push(event.path!) })
-    expect(subscribes()).toEqual([['vault.changed']])
+    const one = await ctx.events.on('luoshu.changed', event => { first.push(event.path!) })
+    const two = await ctx.events.on('luoshu.changed', event => { second.push(event.path!) })
+    expect(subscribes()).toEqual([['luoshu.changed']])
     await publish('notes/a.md')
     await until(() => first.length === 1 && second.length === 1)
     await one.off()
@@ -66,26 +66,26 @@ describe('events through the SDK', () => {
     await until(() => second.length === 2)
     expect(first).toEqual(['notes/a.md'])
     await two.off()
-    expect(sent().filter(message => message.action === 'events.unsubscribe').map(message => message.args!.topics)).toEqual([['vault.changed']])
+    expect(sent().filter(message => message.action === 'events.unsubscribe').map(message => message.args!.topics)).toEqual([['luoshu.changed']])
   })
 
   it('subscribes to core topics in a call of their own', async () => {
     const { ctx, subscribes } = await listening()
-    await ctx.events.on(['core.status', 'vault.changed'], () => {}).catch(() => {})
-    expect(subscribes().sort()).toEqual([['core.status'], ['vault.changed']])
+    await ctx.events.on(['core.status', 'luoshu.changed'], () => {}).catch(() => {})
+    expect(subscribes().sort()).toEqual([['core.status'], ['luoshu.changed']])
   })
 
   it('reports the topics the bus keeps standing', async () => {
     const { ctx, loader } = await listening()
     loader.slots.gate = 'starting'
-    const subscription = await ctx.events.on('vault.changed', () => {})
-    expect(subscription.standing).toEqual(['vault.changed'])
+    const subscription = await ctx.events.on('luoshu.changed', () => {})
+    expect(subscription.standing).toEqual(['luoshu.changed'])
   })
 
   it('acknowledges once a batch is handled and once when idle', async () => {
     const { ctx, publish, sent } = await listening()
     const seen: string[] = []
-    await ctx.events.on('vault.changed', event => { seen.push(event.path!) })
+    await ctx.events.on('luoshu.changed', event => { seen.push(event.path!) })
     await Promise.all(['notes/a.md', 'notes/b.md', 'notes/c.md'].map(path => publish(path)))
     await until(() => seen.length === 3)
     await tick(30)
@@ -99,7 +99,7 @@ describe('events through the SDK', () => {
     const held = new Promise<void>(resolve => { release = resolve })
     const seen: string[] = []
     const resyncs: string[][] = []
-    await ctx.events.on('vault.changed', async event => {
+    await ctx.events.on('luoshu.changed', async event => {
       seen.push(event.path!)
       if (seen.length === 1) await held
     }, { onResync: topics => { resyncs.push(topics) } })
@@ -109,20 +109,20 @@ describe('events through the SDK', () => {
     release()
     await until(() => resyncs.length === 1)
     expect(seen).toEqual(['notes/0.md', 'notes/1.md', 'notes/2.md', 'notes/3.md'])
-    expect(resyncs).toEqual([['vault.changed']])
+    expect(resyncs).toEqual([['luoshu.changed']])
   })
 
   it('subscribes again once when the bus ends a subscription and reports the refusal', async () => {
     const { carrier, ctx, gate, loader, subscribes } = await listening()
     const ended: { refused: Refused, topics: string[] }[] = []
-    await ctx.events.on('vault.changed', () => {}, { onEnded: (refused, topics) => { ended.push({ refused, topics }) } })
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    await ctx.events.on('luoshu.changed', () => {}, { onEnded: (refused, topics) => { ended.push({ refused, topics }) } })
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     loader.current = 2
     carrier.changed()
     await until(() => ended.length === 1)
     expect(ended[0].refused.code).toBe('not-granted')
-    expect(ended[0].topics).toEqual(['vault.changed'])
-    expect(subscribes()).toEqual([['vault.changed'], ['vault.changed']])
+    expect(ended[0].topics).toEqual(['luoshu.changed'])
+    expect(subscribes()).toEqual([['luoshu.changed'], ['luoshu.changed']])
   })
 
   it('publishes its own topic with a path', async () => {
@@ -138,7 +138,7 @@ describe('events through the SDK', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const { ctx, publish } = await listening()
     const seen: string[] = []
-    await ctx.events.on('vault.changed', event => {
+    await ctx.events.on('luoshu.changed', event => {
       seen.push(event.path!)
       if (seen.length === 1) throw new Error('a bug')
     })
@@ -163,7 +163,7 @@ describe('an ack the carrier lost', () => {
     loader.human.plugins.search = { eventCredits: 4 }
     const seen: string[] = []
     const resyncs: string[][] = []
-    await ctx.events.on('vault.changed', event => { seen.push(event.path!) }, { onResync: topics => { resyncs.push(topics) } })
+    await ctx.events.on('luoshu.changed', event => { seen.push(event.path!) }, { onResync: topics => { resyncs.push(topics) } })
     // A burst past the credits, so the one ack that would free them is the one lost
     await Promise.all(Array.from({ length: 6 }, (_, i) => publish(`notes/${i}.md`)))
     await until(() => seen.length === 4)

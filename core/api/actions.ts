@@ -18,7 +18,7 @@ const path = z.string().superRefine((value, ctx) => {
   const problem = pathProblem(value)
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
 })
-// A path a callee read, which a link in the vault can give a name outside the grammar. filterReadable drops such a path
+// A path a callee read, which a link in the luoshu can give a name outside the grammar. filterReadable drops such a path
 // rather than failing the call, since it matches no grant
 const readPath = z.string().min(1).max(MAX_SCOPE_LENGTH)
 const nothing = z.strictObject({}).optional()
@@ -107,16 +107,16 @@ const key = z.strictObject({ key: localName })
 const keyed = z.strictObject({ key: localName, value: z.unknown() })
 
 const providerTable = {
-  'vault.read': { capability: 'vault.read', args: z.strictObject({ path }), scope: 'path', write: false },
+  'luoshu.read': { capability: 'luoshu.read', args: z.strictObject({ path }), scope: 'path', write: false },
   // baseVersion is the hash of the bytes the writer read, left out for a note that doesn't exist yet
-  'vault.write': {
-    capability: 'vault.write',
+  'luoshu.write': {
+    capability: 'luoshu.write',
     args: z.strictObject({ path, text: z.string(), baseVersion: sha256.optional() }),
     scope: 'path',
     write: true,
   },
   'leases.acquire': {
-    capability: 'vault.write',
+    capability: 'luoshu.write',
     args: z.strictObject({ paths: z.array(path).min(1).max(MAX_LEASE_PATHS) }),
     scope: 'paths',
     write: true,
@@ -139,7 +139,7 @@ export const providerActions = lookup<ProviderAction>(providerTable)
 type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
 export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
 
-// What an action answers with where that is settled: the carrier's own actions and the vault's, which keep the daemon's
+// What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
 export type ActionResults = {
   'core.self': Caller
@@ -147,7 +147,7 @@ export type ActionResults = {
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null
   'events.publish': null
-  'vault.read': { text: string, version: string }
-  'vault.write': { version: string }
+  'luoshu.read': { text: string, version: string }
+  'luoshu.write': { version: string }
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown

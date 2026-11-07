@@ -13,7 +13,7 @@ import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
 import { type FakeMode, holds, ModeGate } from './gate.ts'
-import { MemoryStorage, MemoryVault } from './providers.ts'
+import { MemoryStorage, MemoryLuoshu } from './providers.ts'
 
 export { holds }
 export type { FakeMode }
@@ -21,8 +21,8 @@ export type { FakeMode }
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }
 
-// manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the vault at start
-// latencyMs is how long the vault, storage and cache take to answer each call, so a plugin meets a save or a read that
+// manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the luoshu at start
+// latencyMs is how long the luoshu, storage and cache take to answer each call, so a plugin meets a save or a read that
 // takes time. limits are the human's values for all, read each time, so a test may change them while the plugin runs
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
@@ -38,7 +38,7 @@ type Manifest = {
 }
 
 // The plugins the fake core runs itself, each a host plugin serving its namespace
-const providers = { vault: ['changed', 'outside'], storage: [] as string[] } as const
+const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
 const TESTER = 'tester'
 
 // A manifest with a host or page entry is an install plugin's, checked as one
@@ -165,18 +165,18 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
   }
 }
 
-// A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the vault, storage and
+// A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the luoshu, storage and
 // cache in memory and test callers with the grants each test names. One plugin runs on it at a time
 export class FakeCore {
   readonly mode: FakeMode
   readonly floor: { event: string, fields: Record<string, Field> }[] = []
-  readonly vault: {
+  readonly luoshu: {
     write(path: string, text: string, options?: { outside?: boolean }): Promise<void>
     remove(path: string, options?: { outside?: boolean }): Promise<void>
     read(path: string): string | undefined
-    // The next vault call a plugin makes answers this code, as a vault that is busy, down or starting would
+    // The next luoshu call a plugin makes answers this code, as a luoshu that is busy, down or starting would
     refuseNext(code: RefusalCode): void
-    // The most vault calls in flight at once since a test last asked
+    // The most luoshu calls in flight at once since a test last asked
     busiest(): number
   }
   // The human's limits for all, which the carrier reads on each use
@@ -187,9 +187,9 @@ export class FakeCore {
   private readonly loader: FakeLoader
   private readonly gate: ModeGate
   private readonly carrier: Carrier
-  private readonly memory: MemoryVault
+  private readonly memory: MemoryLuoshu
   private readonly storage: MemoryStorage
-  private readonly vaultWay: Way
+  private readonly luoshuWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
   private readonly missing: Set<string>
@@ -212,26 +212,26 @@ export class FakeCore {
     for (const [id, topics] of Object.entries(providers)) {
       if (!this.missing.has(id)) this.infos(id, { state: 'ready', place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [...topics] })
     }
-    this.memory = new MemoryVault(path => this.publish('vault.changed', path), options.latencyMs ?? 0)
+    this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     this.carrier = new Carrier({
       loader: this.loader,
       gate: () => this.gate,
       guards: () => null,
-      providers: id => (id === 'vault' ? this.memory : id === 'storage' ? this.storage : null),
+      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       watchdog: () => null,
       log: { append: async (event, fields = {}) => { this.floor.push({ event, fields }) }, healthy: true },
     })
-    this.vaultWay = new Way(this.carrier, { kind: 'plugin', id: 'vault', half: 'host', incarnation: 1 })
-    this.vault = {
+    this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
+    this.luoshu = {
       write: async (path, text, options = {}) => {
         this.memory.notes.set(path, text)
-        await this.publish(options.outside === true ? 'vault.outside' : 'vault.changed', path)
+        await this.publish(options.outside === true ? 'luoshu.outside' : 'luoshu.changed', path)
       },
       remove: async (path, options = {}) => {
         this.memory.notes.delete(path)
-        await this.publish(options.outside === true ? 'vault.outside' : 'vault.changed', path)
+        await this.publish(options.outside === true ? 'luoshu.outside' : 'luoshu.changed', path)
       },
       read: path => this.memory.notes.get(path),
       refuseNext: code => { this.memory.refusals.push(code) },
@@ -278,7 +278,7 @@ export class FakeCore {
     this.lastStop = 'human'
   }
 
-  // A call from another plugin. as names it, tester by default, granted plugin.call on the plugin and vault.read
+  // A call from another plugin. as names it, tester by default, granted plugin.call on the plugin and luoshu.read
   // on ** unless grants names its grants
   call(action: string, args: unknown = {}, options: { as?: string, grants?: Capability[] } = {}): Promise<FakeReply> {
     const id = options.as ?? TESTER
@@ -292,7 +292,7 @@ export class FakeCore {
     if (options.grants !== undefined || !this.gate.grants.has(id)) {
       this.gate.grants.set(id, options.grants ?? [
         { type: 'plugin.call', targets: [this.manifest.id] },
-        { type: 'vault.read', paths: ['**'] },
+        { type: 'luoshu.read', paths: ['**'] },
       ])
     }
     return way.ask(action, args, floorConstants.callDeadlineMs + 1000)
@@ -352,8 +352,8 @@ export class FakeCore {
     if (info !== undefined) this.loader.infos.set(this.manifest.id, { ...info, state })
   }
 
-  private async publish(topic: 'vault.changed' | 'vault.outside', path: string): Promise<void> {
-    await this.vaultWay.ask('events.publish', { topic, path }, floorConstants.callDeadlineMs)
+  private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string): Promise<void> {
+    await this.luoshuWay.ask('events.publish', { topic, path }, floorConstants.callDeadlineMs)
   }
 }
 

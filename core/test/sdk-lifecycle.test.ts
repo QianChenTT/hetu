@@ -24,7 +24,7 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 function running(spec: PluginSpec, first: object | null = init()) {
   const parts = harness()
   parts.loader.sandboxed('search')
-  parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+  parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
   const transport = sdkTransport(parts.carrier, worker('search'))
   run(definePlugin(spec), transport)
   if (first !== null) parts.carrier.send(worker('search'), first)
@@ -52,11 +52,11 @@ describe('a plugin\'s life through the SDK', () => {
 
   it('reads its requires and plugin.call targets from deps', async () => {
     let ctx: PluginContext | null = null
-    const { send } = running({ start: given => { ctx = given } }, init({ deps: { vault: 'ready', mcp: 'starting', git: 'unavailable' } }))
+    const { send } = running({ start: given => { ctx = given } }, init({ deps: { luoshu: 'ready', mcp: 'starting', git: 'unavailable' } }))
     await until(() => ctx !== null)
-    expect(['vault', 'mcp', 'git', 'other'].map(id => ctx!.has(id))).toEqual([true, true, false, false])
-    send({ v: 1, kind: 'deps', deps: { vault: 'unavailable', mcp: 'ready' } })
-    await until(() => !ctx!.has('vault'))
+    expect(['luoshu', 'mcp', 'git', 'other'].map(id => ctx!.has(id))).toEqual([true, true, false, false])
+    send({ v: 1, kind: 'deps', deps: { luoshu: 'unavailable', mcp: 'ready' } })
+    await until(() => !ctx!.has('luoshu'))
     expect(ctx!.has('mcp')).toBe(true)
   })
 
@@ -122,15 +122,15 @@ describe('a plugin\'s life through the SDK', () => {
     let pending: Promise<unknown> | null = null
     const parts = running({
       start: ctx => {
-        pending = ctx.vault.read({ path: 'notes/a.md' }).catch((err: unknown) => err)
+        pending = ctx.luoshu.read({ path: 'notes/a.md' }).catch((err: unknown) => err)
       },
     })
-    parts.vault.hold.prepare = new Promise(() => {})
+    parts.luoshu.hold.prepare = new Promise(() => {})
     await until(() => parts.heard().includes('ready') && pending !== null)
     parts.send({ v: 1, kind: 'stop', graceMs: 3000 })
     const settled = await pending
     expect(settled).toBeInstanceOf(Refused)
-    expect(settled).toMatchObject({ code: 'stopped', action: 'vault.read' })
+    expect(settled).toMatchObject({ code: 'stopped', action: 'luoshu.read' })
   })
 
   it('ignores every message before init', async () => {

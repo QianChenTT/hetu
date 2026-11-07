@@ -71,9 +71,9 @@ describe('the bus\'s actions', () => {
   })
 
   it.each([
-    ['events.subscribe', { topics: ['vault.changed'] }, true],
+    ['events.subscribe', { topics: ['luoshu.changed'] }, true],
     ['events.subscribe', { topics: ['core.status', 'core.security'] }, true],
-    ['events.subscribe', { topics: ['core.status', 'vault.changed'] }, true],
+    ['events.subscribe', { topics: ['core.status', 'luoshu.changed'] }, true],
     ['events.subscribe', { topics: ['file-explorer.opened'] }, true],
     ['events.subscribe', { topics: Array.from({ length: MAX_CALL_TOPICS }, (_, i) => `p${i}.a`) }, true],
     ['events.subscribe', { topics: Array.from({ length: MAX_CALL_TOPICS + 1 }, (_, i) => `p${i}.a`) }, false],
@@ -85,23 +85,23 @@ describe('the bus\'s actions', () => {
     ['events.subscribe', { topics: ['watchdog.stop'] }, false],
     ['events.subscribe', { topics: ['ui.panel'] }, false],
     ['events.subscribe', { topics: ['plugin.call'] }, false],
-    ['events.subscribe', { topics: ['vault.*'] }, false],
-    ['events.subscribe', { topics: ['vault'] }, false],
-    ['events.subscribe', { topics: 'vault.changed' }, false],
-    ['events.subscribe', { topics: ['vault.changed'], paths: ['**'] }, false],
-    ['events.unsubscribe', { topics: ['vault.changed'] }, true],
+    ['events.subscribe', { topics: ['luoshu.*'] }, false],
+    ['events.subscribe', { topics: ['luoshu'] }, false],
+    ['events.subscribe', { topics: 'luoshu.changed' }, false],
+    ['events.subscribe', { topics: ['luoshu.changed'], paths: ['**'] }, false],
+    ['events.unsubscribe', { topics: ['luoshu.changed'] }, true],
     ['events.unsubscribe', { topics: ['events.dropped'] }, false],
     ['events.publish', { topic: 'search.indexed' }, true],
-    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md' }, true],
+    ['events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }, true],
     // The floor refuses a topic no manifest can declare, which shape leaves to it
     ['events.publish', { topic: 'core.status' }, true],
-    ['events.publish', { topic: 'vault.changed', path: '' }, false],
-    ['events.publish', { topic: 'vault.changed', path: 'notes\\a.md' }, false],
-    ['events.publish', { topic: 'vault.changed', path: 'notes/../a.md' }, false],
-    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md', text: 'the note' }, false],
-    ['events.publish', { topic: 'vault.changed', path: 'notes/a.md', version: 3 }, false],
-    ['events.publish', { topics: ['vault.changed'] }, false],
-    ['events.publish', { topic: 'vault' }, false],
+    ['events.publish', { topic: 'luoshu.changed', path: '' }, false],
+    ['events.publish', { topic: 'luoshu.changed', path: 'notes\\a.md' }, false],
+    ['events.publish', { topic: 'luoshu.changed', path: 'notes/../a.md' }, false],
+    ['events.publish', { topic: 'luoshu.changed', path: 'notes/a.md', text: 'the note' }, false],
+    ['events.publish', { topic: 'luoshu.changed', path: 'notes/a.md', version: 3 }, false],
+    ['events.publish', { topics: ['luoshu.changed'] }, false],
+    ['events.publish', { topic: 'luoshu' }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(eventActions[action].args.safeParse(args).success).toBe(ok)
   })
@@ -110,9 +110,9 @@ describe('the bus\'s actions', () => {
 describe('the provider actions', () => {
   it('checks each against the capability it needs, the free ones against none', () => {
     expect(Object.fromEntries(Object.entries(providerActions).map(([action, spec]) => [action, spec.capability]))).toEqual({
-      'vault.read': 'vault.read',
-      'vault.write': 'vault.write',
-      'leases.acquire': 'vault.write',
+      'luoshu.read': 'luoshu.read',
+      'luoshu.write': 'luoshu.write',
+      'leases.acquire': 'luoshu.write',
       'leases.renew': null,
       'leases.release': null,
       'leases.list': null,
@@ -133,39 +133,39 @@ describe('the provider actions', () => {
 
   it('keeps writes one audit record each and the guardable action among them', () => {
     const writes = Object.entries(providerActions).filter(([, spec]) => spec.write).map(([action]) => action)
-    expect(writes).toEqual(['vault.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete'])
+    expect(writes).toEqual(['luoshu.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete'])
     for (const action of guardableActions) expect(providerActions[action].write).toBe(true)
   })
 
   it('takes the raw scope from the argument it names', () => {
-    expect(providerActions['vault.read'].scope).toBe('path')
+    expect(providerActions['luoshu.read'].scope).toBe('path')
     expect(providerActions['leases.acquire'].scope).toBe('paths')
     expect(providerActions['log.history'].scope).toBeNull()
   })
 
   it.each([
-    ['vault.read', { path: 'notes/a.md' }, true],
-    ['vault.read', { path: '' }, false],
-    ['vault.read', { path: 'a'.repeat(513) }, false],
-    ['vault.read', { path: 'a.md', follow: true }, false],
+    ['luoshu.read', { path: 'notes/a.md' }, true],
+    ['luoshu.read', { path: '' }, false],
+    ['luoshu.read', { path: 'a'.repeat(513) }, false],
+    ['luoshu.read', { path: 'a.md', follow: true }, false],
     // Spellings no canonical path holds, refused at shape. A trailing dot and a device name are the canonicaliser's
-    ['vault.read', { path: 'notes\\a.md' }, false],
-    ['vault.read', { path: 'notes/a:b.md' }, false],
-    ['vault.read', { path: `notes/a${String.fromCharCode(7)}.md` }, false],
-    ['vault.read', { path: 'notes//a.md' }, false],
-    ['vault.read', { path: 'notes/./a.md' }, false],
-    ['vault.read', { path: 'notes/../a.md' }, false],
-    ['vault.read', { path: '/notes/a.md' }, false],
-    ['vault.read', { path: 'C:/notes/a.md' }, false],
-    ['vault.read', { path: `notes/${String.fromCharCode(0xd800)}.md` }, false],
-    ['vault.read', { path: 'notes/a.md.' }, true],
-    ['vault.read', { path: 'notes/con' }, true],
-    ['vault.write', { path: 'a.md', text: 'x' }, true],
-    ['vault.write', { path: 'a.md', text: 'x', baseVersion: 'f'.repeat(64) }, true],
-    ['vault.write', { path: 'a.md', text: 'x', baseVersion: 'F'.repeat(64) }, false],
-    ['vault.write', { path: 'a.md' }, false],
-    ['vault.write', { path: 'a.md', text: 42 }, false],
-    ['vault.write', { path: 'notes\\a.md', text: 'x' }, false],
+    ['luoshu.read', { path: 'notes\\a.md' }, false],
+    ['luoshu.read', { path: 'notes/a:b.md' }, false],
+    ['luoshu.read', { path: `notes/a${String.fromCharCode(7)}.md` }, false],
+    ['luoshu.read', { path: 'notes//a.md' }, false],
+    ['luoshu.read', { path: 'notes/./a.md' }, false],
+    ['luoshu.read', { path: 'notes/../a.md' }, false],
+    ['luoshu.read', { path: '/notes/a.md' }, false],
+    ['luoshu.read', { path: 'C:/notes/a.md' }, false],
+    ['luoshu.read', { path: `notes/${String.fromCharCode(0xd800)}.md` }, false],
+    ['luoshu.read', { path: 'notes/a.md.' }, true],
+    ['luoshu.read', { path: 'notes/con' }, true],
+    ['luoshu.write', { path: 'a.md', text: 'x' }, true],
+    ['luoshu.write', { path: 'a.md', text: 'x', baseVersion: 'f'.repeat(64) }, true],
+    ['luoshu.write', { path: 'a.md', text: 'x', baseVersion: 'F'.repeat(64) }, false],
+    ['luoshu.write', { path: 'a.md' }, false],
+    ['luoshu.write', { path: 'a.md', text: 42 }, false],
+    ['luoshu.write', { path: 'notes\\a.md', text: 'x' }, false],
     ['leases.acquire', { paths: ['a.md'] }, true],
     ['leases.acquire', { paths: [] }, false],
     ['leases.acquire', { paths: Array.from({ length: MAX_LEASE_PATHS + 1 }, (_, i) => `${i}.md`) }, false],
@@ -185,7 +185,7 @@ describe('the provider actions', () => {
 })
 
 describe('the envelope beside a request', () => {
-  const call = { v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'a.md' } }
+  const call = { v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'a.md' } }
 
   it('leaves args to the carrier, which measures them against the caller\'s own cap', () => {
     const big = { ...call, args: 'x'.repeat(MiB + 1) }

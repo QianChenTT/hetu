@@ -14,32 +14,32 @@ describe('shape', () => {
   ])('answers %s invalid with the caller\'s own id', async (_name, extra) => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
-    const reply = await search.ask('vault.read', { path: 'a.md' }, extra)
-    expect(reply.refusal).toEqual({ code: 'invalid', action: 'vault.read' })
+    const reply = await search.ask('luoshu.read', { path: 'a.md' }, extra)
+    expect(reply.refusal).toEqual({ code: 'invalid', action: 'luoshu.read' })
     expect(gate.asked).toEqual([])
   })
 
   it('never echoes an action outside the grammar', async () => {
     const { connect } = harness()
     const search = connect(worker('search'))
-    const reply = await search.ask('Vault.read\u202e', {})
+    const reply = await search.ask('Luoshu.read\u202e', {})
     expect(reply.refusal).toEqual({ code: 'invalid', action: '' })
   })
 
   it.each([
     ['a core action with no schema', 'core.load', undefined],
     ['a plugin namespace action', 'plugin.call', { target: 'search' }],
-    ['a provider action with no schema', 'vault.frobnicate', { path: 'a.md' }],
+    ['a provider action with no schema', 'luoshu.frobnicate', { path: 'a.md' }],
     ['a provider with no actions yet', 'history.read', { paths: ['a.md'] }],
-    ['a provider action with a field outside its schema', 'vault.read', { path: 'a.md', follow: true }],
-    ['a provider action with a field missing', 'vault.write', { path: 'a.md' }],
+    ['a provider action with a field outside its schema', 'luoshu.read', { path: 'a.md', follow: true }],
+    ['a provider action with a field missing', 'luoshu.write', { path: 'a.md' }],
     ['a storage key outside the grammar', 'storage.get', { key: '../other/key' }],
   ])('refuses %s invalid', async (_name, action, args) => {
-    const { connect, gate, vault } = harness()
+    const { connect, gate, luoshu } = harness()
     const search = connect(worker('search'))
     expect(code(await search.ask(action, args))).toBe('invalid')
     expect(gate.asked).toEqual([])
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   // A bad spelling answers invalid before precheck, so a caller holding the grant can tell it from a missing grant
@@ -53,14 +53,14 @@ describe('shape', () => {
     ['a drive letter', 'C:/notes/a.md'],
     ['a lone surrogate', `notes/${String.fromCharCode(0xd800)}.md`],
   ])('answers a path with %s invalid before precheck, a grant to every path held', async (_name, path) => {
-    const { connect, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'vault.write', paths: ['**'] }]
+    const { connect, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }]
     const search = connect(worker('search'))
-    expect((await search.ask('vault.read', { path })).refusal).toEqual({ code: 'invalid', action: 'vault.read' })
-    expect(code(await search.ask('vault.write', { path, text: 'x' }))).toBe('invalid')
+    expect((await search.ask('luoshu.read', { path })).refusal).toEqual({ code: 'invalid', action: 'luoshu.read' })
+    expect(code(await search.ask('luoshu.write', { path, text: 'x' }))).toBe('invalid')
     expect(code(await search.ask('leases.acquire', { paths: ['notes/a.md', path] }))).toBe('invalid')
     expect(gate.asked).toEqual([])
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('refuses a second call under an id still in flight', async () => {
@@ -89,7 +89,7 @@ describe('shape', () => {
   it('answers a call refused at shape under id 0', async () => {
     const { connect } = harness()
     const search = connect(worker('search'))
-    search.post({ v: 1, kind: 'call', id: 0, action: 'vault.read', args: { path: 'a.md' }, chain: [] })
+    search.post({ v: 1, kind: 'call', id: 0, action: 'luoshu.read', args: { path: 'a.md' }, chain: [] })
     expect(code(await search.reply(0))).toBe('invalid')
   })
 
@@ -117,7 +117,7 @@ describe('the floor', () => {
     const seen: Call[] = []
     const { carrier, connect, gate } = harness({ core: async call => { seen.push(call); return null } })
     for (const id of ['mcp', 'search']) expect(code(await connect(worker(id)).ask(action, args))).toBe('not-granted')
-    expect(code(await hostHalf(carrier, host('vault')).ask(action, args))).toBe('not-granted')
+    expect(code(await hostHalf(carrier, host('luoshu')).ask(action, args))).toBe('not-granted')
     expect(seen).toEqual([])
     expect(gate.asked).toEqual([])
   })
@@ -165,7 +165,7 @@ describe('the floor', () => {
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.stop', { plugin: 'search' })).ok).toBe(true)
     expect((await watchdog.ask('watchdog.restart', { plugin: 'search' })).ok).toBe(true)
-    for (const plugin of ['vault', 'gate', 'log', 'capabilities', 'guarding', 'ghost']) {
+    for (const plugin of ['luoshu', 'gate', 'log', 'capabilities', 'guarding', 'ghost']) {
       expect(code(await watchdog.ask('watchdog.stop', { plugin }))).toBe('not-granted')
     }
     // The watchdog's id on a port, or on a worker half, is not the slot's holder
@@ -182,7 +182,7 @@ describe('the floor', () => {
     const seen: Call[] = []
     const { carrier, loader } = harness({ core: async call => { seen.push(call); return null } })
     loader.sandboxed('search')
-    for (const id of ['vault', 'history', 'exec']) {
+    for (const id of ['luoshu', 'history', 'exec']) {
       expect(code(await hostHalf(carrier, host(id)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     }
     expect(seen).toEqual([])
@@ -219,15 +219,15 @@ describe('the floor', () => {
   })
 
   it('holds the trusted window to core actions, with the gate on or off', async () => {
-    const { carrier, loader, vault } = harness()
-    vault.files.set('notes/a.md', 'x')
+    const { carrier, loader, luoshu } = harness()
+    luoshu.files.set('notes/a.md', 'x')
     const way = windowWay(carrier, { trusted })
     for (const gate of ['on', 'off'] as const) {
       loader.slots.gate = gate
-      expect(code(await way.ask('trusted', 'vault.read', { path: 'notes/a.md' }))).toBe('not-granted')
+      expect(code(await way.ask('trusted', 'luoshu.read', { path: 'notes/a.md' }))).toBe('not-granted')
       expect(code(await way.ask('trusted', 'storage.get', { key: 'drafts' }))).toBe('not-granted')
     }
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('lets the free actions skip the gate, with the gate failed', async () => {
@@ -250,17 +250,17 @@ describe('the floor', () => {
     const { connect, loader, gate, providers } = harness()
     loader.installed('leases')
     providers.leases = { prepare: async () => ({ scope: {} }), perform: async call => call.action }
-    gate.grants.mcp = [{ type: 'vault.write', paths: ['notes/**'] }]
+    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const mcp = connect(worker('mcp'))
     expect((await mcp.ask('leases.renew')).result).toBe('leases.renew')
     expect((await mcp.ask('leases.release')).result).toBe('leases.release')
     expect((await mcp.ask('leases.list')).result).toBe('leases.list')
     expect(gate.asked).toEqual([])
     expect((await mcp.ask('leases.acquire', { paths: ['notes/a.md'] })).ok).toBe(true)
-    expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([['raw', 'vault.write'], ['canonical', 'vault.write']])
+    expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([['raw', 'luoshu.write'], ['canonical', 'luoshu.write']])
   })
 
-  // Acquire takes the vault's per-path lock, so a path the grant doesn't cover must not reach prepare
+  // Acquire takes the luoshu's per-path lock, so a path the grant doesn't cover must not reach prepare
   it('prechecks every path a lease names before prepare', async () => {
     const { connect, loader, gate, providers } = harness()
     loader.installed('leases')
@@ -272,7 +272,7 @@ describe('the floor', () => {
       },
       perform: async () => null,
     }
-    gate.grants.mcp = [{ type: 'vault.write', paths: ['notes/**'] }]
+    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     expect(code(await connect(worker('mcp')).ask('leases.acquire', { paths: ['notes/a.md', 'secret/b.md'] }))).toBe('not-granted')
     expect(prepared).toEqual([])
     expect(gate.asked[0].scope).toEqual({ paths: ['notes/a.md', 'secret/b.md'] })
@@ -307,52 +307,52 @@ describe('ui.*', () => {
 
 describe('the gate slot', () => {
   it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
-    const { carrier, connect, loader, gate, vault } = harness()
+    const { carrier, connect, loader, gate, luoshu } = harness()
     loader.slots.gate = state
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     loader.sandboxed('git', { log: {} })
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(code(await search.ask('git.log'))).toBe('policy-down')
-    // Windows get no vault access
+    // Windows get no luoshu access
     const way = windowWay(carrier, { 'editor-1': editor })
-    expect(code(await way.ask('editor-1', 'vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await way.ask('editor-1', 'luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(gate.asked).toEqual([])
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('answers starting while the gate starts, so the SDK retries', async () => {
     const { connect, loader, gate } = harness()
     loader.slots.gate = 'starting'
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('starting')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
     expect(gate.asked).toEqual([])
   })
 
   it('treats a gate that is on with no holder to ask as down', async () => {
     const { connect } = harness({ gate: () => null })
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
   // Read as off, the gate and every guard would pass everything
   it('refuses policy-down when the loader can not give the slot states', async () => {
-    const { connect, loader, vault } = harness()
-    vault.files.set('a.md', 'x')
+    const { connect, loader, luoshu } = harness()
+    luoshu.files.set('a.md', 'x')
     loader.slot = () => { throw new Error('no state') }
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
-    expect(code(await search.ask('vault.write', { path: 'a.md', text: 'y' }))).toBe('policy-down')
-    expect(vault.prepared).toEqual([])
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.write', { path: 'a.md', text: 'y' }))).toBe('policy-down')
+    expect(luoshu.prepared).toEqual([])
   })
 
   it.each(['on', 'off'] as const)('passes calls with power while the gate is off and the log is %s', async log => {
-    const { connect, loader, gate, vault } = harness()
+    const { connect, loader, gate, luoshu } = harness()
     loader.slots.gate = 'off'
     loader.slots.log = log
     loader.sandboxed('git', { log: {} })
-    vault.files.set('secret/a.md', 'x')
+    luoshu.files.set('secret/a.md', 'x')
     const search = connect(worker('search'))
     const git = connect(worker('git'))
-    expect((await search.ask('vault.read', { path: 'secret/a.md' })).result).toEqual({ text: 'x' })
+    expect((await search.ask('luoshu.read', { path: 'secret/a.md' })).result).toEqual({ text: 'x' })
     const id = search.call('git.log')
     const delivered = await git.delivered('git.log')
     git.answer(delivered.callId, [])
@@ -361,54 +361,54 @@ describe('the gate slot', () => {
   })
 
   it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is off and the log is %s', async log => {
-    const { connect, loader, vault } = harness()
+    const { connect, loader, luoshu } = harness()
     loader.slots.gate = 'off'
     loader.slots.log = log
-    vault.files.set('a.md', 'x')
+    luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     // Free calls have no power and still pass
     expect((await search.ask('storage.get', { key: 'index' })).ok).toBe(true)
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('answers starting while the gate is off and the log starts', async () => {
     const { connect, loader } = harness()
     loader.slots.gate = 'off'
     loader.slots.log = 'starting'
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('starting')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
   })
 
   it.each(['failed', 'absent', 'starting'] as const)('passes calls with power while the gate is off and recording is off, the log %s', async log => {
-    const { connect, loader, vault } = harness()
+    const { connect, loader, luoshu } = harness()
     loader.slots.gate = 'off'
     loader.slots.log = log
     loader.nothing = true
-    vault.files.set('a.md', 'x')
-    expect((await connect(worker('search')).ask('vault.read', { path: 'a.md' })).ok).toBe(true)
+    luoshu.files.set('a.md', 'x')
+    expect((await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
   it('never lets recording off pass a call while the gate is failed', async () => {
     const { connect, loader } = harness()
     loader.slots.gate = 'failed'
     loader.nothing = true
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
   it('reads the gate slot again after prepare, so a gate that failed meanwhile refuses', async () => {
-    const { connect, loader, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('a.md', 'x')
+    const { connect, loader, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     let open!: () => void
-    vault.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
     const search = connect(worker('search'))
-    const id = search.call('vault.read', { path: 'a.md' })
-    for (let i = 0; i < 100 && vault.prepared.length === 0; i++) await tick(2)
+    const id = search.call('luoshu.read', { path: 'a.md' })
+    for (let i = 0; i < 100 && luoshu.prepared.length === 0; i++) await tick(2)
     loader.slots.gate = 'failed'
     open()
     expect(code(await search.reply(id))).toBe('policy-down')
-    expect(vault.performed).toEqual([])
-    expect(vault.released).toHaveLength(1)
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.released).toHaveLength(1)
   })
 })
 
@@ -419,28 +419,28 @@ describe('precheck', () => {
     ['no allow', { view: 1 }],
     ['null', null],
     ['a promise', Promise.resolve({ allow: true, view: 1 })],
-    ['an ask at the raw stage', { ask: 'vault.read **', view: 1 }],
+    ['an ask at the raw stage', { ask: 'luoshu.read **', view: 1 }],
   ])('counts only an exact allow: true, refusing %s', async (_name, decision) => {
-    const { connect, gate, vault } = harness()
+    const { connect, gate, luoshu } = harness()
     gate.decision = () => decision
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('not-granted')
-    expect(vault.prepared).toEqual([])
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('not-granted')
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('refuses one call policy-down when the gate throws and records the fault, the next call decided again', async () => {
-    const { carrier, connect, gate, log, debug, vault } = harness()
-    vault.files.set('a.md', 'x')
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    const { carrier, connect, gate, log, debug, luoshu } = harness()
+    luoshu.files.set('a.md', 'x')
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let throws = true
     gate.decision = access => {
       if (throws) throw new Error('grant table at /secret/path broke')
       return gate.granted(access)
     }
     const search = connect(worker('search'))
-    const reply = await search.ask('vault.read', { path: 'a.md' })
-    expect(reply.refusal).toEqual({ code: 'policy-down', action: 'vault.read' })
+    const reply = await search.ask('luoshu.read', { path: 'a.md' })
+    expect(reply.refusal).toEqual({ code: 'policy-down', action: 'luoshu.read' })
     throws = false
-    expect((await search.ask('vault.read', { path: 'a.md' })).ok).toBe(true)
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
     await tick()
     expect(log.events('fault')).toEqual([{ event: 'fault', fields: { plugin: 'gate', step: 'precheck', count: 1 } }])
     // The gate's own text, for the gate's debug and not the caller's
@@ -454,65 +454,65 @@ describe('precheck', () => {
       if (access.stage === 'canonical') throw new Error('broken')
       return { allow: true, view: 1 }
     }
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     carrier.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'decide', count: 1 }])
   })
 
   it('refuses policy-down when the StateView number can not be read, an allow included', async () => {
-    const { connect, loader, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('a.md', 'x')
+    const { connect, loader, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     loader.view = () => { throw new Error('no view') }
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     gate.decision = () => ({ allow: false, view: 1 })
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
-    expect(vault.performed).toEqual([])
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(luoshu.performed).toEqual([])
   })
 
   it('refuses policy-down when the StateView number is not a whole number', async () => {
     const { connect, loader, gate } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     loader.view = () => '1' as never
-    expect(code(await connect(worker('search')).ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
   it('refuses an answer made on an older StateView as stale', async () => {
-    const { connect, loader, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('a.md', 'x')
+    const { connect, loader, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     loader.current = 5
     gate.decision = () => ({ allow: true, view: 4 })
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('stale')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('stale')
     gate.decision = () => ({ allow: true, view: 5 })
-    expect((await search.ask('vault.read', { path: 'a.md' })).ok).toBe(true)
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
   it('passes switched-off on and makes anything else a plain not-granted', async () => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
     gate.decision = () => ({ allow: false, code: 'switched-off', view: 1 })
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('switched-off')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('switched-off')
     gate.decision = () => ({ allow: false, code: 'policy-down', view: 1 })
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('not-granted')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('not-granted')
     // Only beside allow: false
     gate.decision = () => ({ code: 'switched-off', view: 1 })
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('not-granted')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('not-granted')
   })
 
   it('gives a caller with no grant the same answer for a note that exists and one that does not, touching neither', async () => {
-    const { connect, vault } = harness()
-    vault.files.set('notes/there.md', 'secret')
+    const { connect, luoshu } = harness()
+    luoshu.files.set('notes/there.md', 'secret')
     const search = connect(worker('search'))
-    const there = await search.ask('vault.read', { path: 'notes/there.md' })
-    const missing = await search.ask('vault.read', { path: 'notes/missing.md' })
-    expect(there.refusal).toEqual({ code: 'not-granted', action: 'vault.read' })
+    const there = await search.ask('luoshu.read', { path: 'notes/there.md' })
+    const missing = await search.ask('luoshu.read', { path: 'notes/missing.md' })
+    expect(there.refusal).toEqual({ code: 'not-granted', action: 'luoshu.read' })
     expect(missing.refusal).toEqual(there.refusal)
     expect(Object.keys(there).sort()).toEqual(Object.keys(missing).sort())
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('gives a caller with no grant the same answer for a declared action, an undeclared one and an absent plugin', async () => {

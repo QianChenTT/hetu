@@ -22,7 +22,7 @@ function scopes<T extends z.ZodType>(item: T) {
 
 // The fixed list. A new type needs a new core API version and a plugin can't invent one
 export const capabilityTypes = frozen([
-  'vault.read', 'vault.write', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
+  'luoshu.read', 'luoshu.write', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
   'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
 ] as const)
 
@@ -31,7 +31,7 @@ export const capabilityTypes = frozen([
 export const installOnlyTypes = frozen(['guard.hook'] as const)
 
 export const capability = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal(['vault.read', 'vault.write']), paths: scopes(scope) }),
+  z.strictObject({ type: z.literal(['luoshu.read', 'luoshu.write']), paths: scopes(scope) }),
   z.strictObject({ type: z.literal('net.fetch'), hosts: scopes(text) }),
   z.strictObject({ type: z.literal(['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys']) }),
   z.strictObject({ type: z.literal('events.subscribe'), topics: scopes(qualifiedName) }),

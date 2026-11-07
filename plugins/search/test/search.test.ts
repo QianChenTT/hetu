@@ -38,7 +38,7 @@ describe('search with the grants its manifest asks for', () => {
   it('indexes a note it hears about and finds it', async () => {
     const fake = core()
     expect(await fake.start(search)).toEqual({ state: 'ready' })
-    await fake.vault.write('notes/a.md', 'The quick brown fox')
+    await fake.luoshu.write('notes/a.md', 'The quick brown fox')
     await finds(fake, 'quick fox', ['notes/a.md'])
     expect(await query(fake, 'slow fox')).toEqual([])
   })
@@ -46,26 +46,26 @@ describe('search with the grants its manifest asks for', () => {
   it('answers only what the caller may read', async () => {
     const fake = core()
     await fake.start(search)
-    await fake.vault.write('public/a.md', 'fox')
-    await fake.vault.write('private/b.md', 'fox', { outside: true })
+    await fake.luoshu.write('public/a.md', 'fox')
+    await fake.luoshu.write('private/b.md', 'fox', { outside: true })
     await finds(fake, 'fox', ['private/b.md', 'public/a.md'])
-    const narrow = { grants: [{ type: 'plugin.call' as const, targets: ['search'] }, { type: 'vault.read' as const, paths: ['public/**'] }] }
+    const narrow = { grants: [{ type: 'plugin.call' as const, targets: ['search'] }, { type: 'luoshu.read' as const, paths: ['public/**'] }] }
     expect(await query(fake, 'fox', narrow)).toEqual(['public/a.md'])
   })
 
   it('forgets a note that is gone', async () => {
     const fake = core()
     await fake.start(search)
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
-    await fake.vault.remove('notes/a.md')
+    await fake.luoshu.remove('notes/a.md')
     await finds(fake, 'fox', [])
   })
 
   it('keeps its index across a restart through the cache', async () => {
     const fake = core()
     await fake.start(search)
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
     await fake.stop()
     expect(await fake.start(search)).toEqual({ state: 'ready' })
@@ -75,31 +75,31 @@ describe('search with the grants its manifest asks for', () => {
   it('keeps a note through a read that fails for a while, then reads it again', async () => {
     const fake = core()
     await fake.start(search)
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
-    fake.vault.refuseNext('unavailable')
-    await fake.vault.write('notes/a.md', 'alpha fox again')
+    fake.luoshu.refuseNext('unavailable')
+    await fake.luoshu.write('notes/a.md', 'alpha fox again')
     await tick(100)
     expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
     await finds(fake, 'alpha', ['notes/a.md'], 4000)
   })
 
-  it('indexes a note whose first read failed once the vault answers again', async () => {
+  it('indexes a note whose first read failed once the luoshu answers again', async () => {
     const fake = core()
     await fake.start(search)
-    fake.vault.refuseNext('starting')
-    fake.vault.refuseNext('unavailable')
-    await fake.vault.write('notes/b.md', 'otter')
+    fake.luoshu.refuseNext('starting')
+    fake.luoshu.refuseNext('unavailable')
+    await fake.luoshu.write('notes/b.md', 'otter')
     await finds(fake, 'otter', ['notes/b.md'], 4000)
   })
 
   it('forgets a note it may no longer read', async () => {
     const fake = core()
     await fake.start(search)
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
-    fake.vault.refuseNext('not-granted')
-    await fake.vault.write('notes/a.md', 'fox')
+    fake.luoshu.refuseNext('not-granted')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', [])
   })
 
@@ -107,14 +107,14 @@ describe('search with the grants its manifest asks for', () => {
     const fake = fakeCore({ manifest, latencyMs: 5 })
     cores.push(fake)
     await fake.start(search)
-    for (let i = 0; i < 100; i++) await fake.vault.write(`notes/${i}.md`, `fox ${i}`)
+    for (let i = 0; i < 100; i++) await fake.luoshu.write(`notes/${i}.md`, `fox ${i}`)
     await until(async () => (await query(fake, 'fox')).length === 100, 10_000)
-    fake.vault.busiest()
+    fake.luoshu.busiest()
     // One event at a time, so a burst drops some and a resync of every note search knows follows
     fake.limits.eventCredits = 1
-    for (let i = 0; i < 5; i++) await fake.vault.write(`notes/${i}.md`, `fox again ${i}`)
+    for (let i = 0; i < 5; i++) await fake.luoshu.write(`notes/${i}.md`, `fox again ${i}`)
     await tick(500)
-    const peak = fake.vault.busiest()
+    const peak = fake.luoshu.busiest()
     // Unbatched, the SDK put 64 reads in flight at once, all it may
     expect(peak).toBeGreaterThan(8)
     expect(peak).toBeLessThanOrEqual(17)
@@ -133,7 +133,7 @@ describe('search with every grant', () => {
   it('indexes and finds', async () => {
     const fake = core('allow-all')
     await fake.start(search)
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
   })
 })
@@ -142,7 +142,7 @@ describe('search with no grant', () => {
   it('stays up when its subscribe is refused and answers with nothing', async () => {
     const fake = core('deny-all')
     expect(await fake.start(search)).toEqual({ state: 'ready' })
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await tick(30)
     expect(await query(fake, 'fox')).toEqual([])
   })
@@ -158,12 +158,12 @@ describe('search while the gate is down', () => {
   })
 })
 
-describe('search while the vault is missing', () => {
-  it('waits for the vault and starts with lastStop once it is back', async () => {
+describe('search while the luoshu is missing', () => {
+  it('waits for the luoshu and starts with lastStop once it is back', async () => {
     const fake = core('dependency-missing')
-    expect(await fake.start(search)).toEqual({ state: 'waiting', reason: 'dependency:vault:absent' })
+    expect(await fake.start(search)).toEqual({ state: 'waiting', reason: 'dependency:luoshu:absent' })
     expect(await fake.restore()).toEqual({ state: 'ready' })
-    await fake.vault.write('notes/a.md', 'fox')
+    await fake.luoshu.write('notes/a.md', 'fox')
     await finds(fake, 'fox', ['notes/a.md'])
   })
 })

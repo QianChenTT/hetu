@@ -15,8 +15,8 @@ function plugins(over: Partial<CarrierOptions> = {}) {
   loader.sandboxed('git', { log: {} })
   loader.sandboxed('mcp', { handle: { from: ['http'] } })
   gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
-  gate.grants.mcp = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'vault.read', paths: ['notes/**'] }]
-  gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }, { type: 'vault.read', paths: ['notes/**', 'private/**'] }]
+  gate.grants.mcp = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+  gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }, { type: 'luoshu.read', paths: ['notes/**', 'private/**'] }]
   return { ...parts, http: connect(worker('http')), mcp: connect(worker('mcp')), search: connect(worker('search')), git: connect(worker('git')) }
 }
 
@@ -159,7 +159,7 @@ describe('plugin.call', () => {
     const got = await search.delivered('search.query')
     search.post({
       v: 1, kind: 'reply', callId: got.callId, ok: false,
-      refusal: { code: 'needs-confirm', action: 'vault.write', reason: 'declined', request: 'fake-request' },
+      refusal: { code: 'needs-confirm', action: 'luoshu.write', reason: 'declined', request: 'fake-request' },
     })
     expect((await mcp.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query' })
   })
@@ -254,12 +254,12 @@ describe('parent', () => {
   })
 
   it('hands a provider the parent of a sub-call', async () => {
-    const { http, mcp, vault } = plugins()
-    vault.files.set('notes/a.md', 'x')
+    const { http, mcp, luoshu } = plugins()
+    luoshu.files.set('notes/a.md', 'x')
     http.call('mcp.handle')
     const parent = await mcp.delivered('mcp.handle')
-    expect((await mcp.ask('vault.read', { path: 'notes/a.md' }, { parent: parent.callId })).ok).toBe(true)
-    expect(vault.prepared[0].parent).toBe(parent.callId)
+    expect((await mcp.ask('luoshu.read', { path: 'notes/a.md' }, { parent: parent.callId })).ok).toBe(true)
+    expect(luoshu.prepared[0].parent).toBe(parent.callId)
   })
 
   // The parent's timer may not have run yet, say when a host half kept main busy past the deadline
@@ -403,22 +403,22 @@ describe('deadlines and cancel', () => {
   })
 
   it('lets go of no lock for a prepare that refused after its call was stopped', async () => {
-    const { connect, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    const { connect, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let open!: () => void
     const held = new Promise<void>(resolve => { open = resolve })
-    vault.prepare = async () => {
+    luoshu.prepare = async () => {
       await held
       return { code: 'not-found' } as never
     }
     const search = connect(worker('search'))
-    const id = search.call('vault.read', { path: 'a.md' })
+    const id = search.call('luoshu.read', { path: 'a.md' })
     await tick(10)
     search.post({ v: 1, kind: 'cancel', id })
     expect(code(await search.reply(id))).toBe('stopped')
     open()
     await tick(10)
-    expect(vault.released).toEqual([])
+    expect(luoshu.released).toEqual([])
   })
 
   // Past the longest delay a timer takes, Node would fire the timer at once
@@ -465,15 +465,15 @@ describe('deadlines and cancel', () => {
   ])('performs no provider call that %s ran past its deadline and lets go of the lock', async (_name, slow) => {
     let clock = 1_000_000
     const parts = harness({ clock: () => clock, guardsFor: () => ['leases'] })
-    const { connect, gate, vault, loader } = parts
-    gate.grants.search = [{ type: 'vault.write', paths: ['**'] }]
+    const { connect, gate, luoshu, loader } = parts
+    gate.grants.search = [{ type: 'luoshu.write', paths: ['**'] }]
     loader.slots.leases = 'off'
     loader.human.plugins.search = { callDeadlineMs: 5000 }
     slow(parts, () => { clock += 5000 })
-    expect(code(await connect(worker('search')).ask('vault.write', { path: 'a.md', text: 'x' }))).toBe('timeout')
-    expect(vault.performed).toEqual([])
-    expect(vault.files.size).toBe(0)
-    expect(vault.released).toHaveLength(1)
+    expect(code(await connect(worker('search')).ask('luoshu.write', { path: 'a.md', text: 'x' }))).toBe('timeout')
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.files.size).toBe(0)
+    expect(luoshu.released).toHaveLength(1)
   })
 
   it('delivers no plugin call the gate ran past its deadline', async () => {
@@ -489,18 +489,18 @@ describe('deadlines and cancel', () => {
   })
 
   it('leaves a provider call to finish when it is cancelled and lets go of the lock it took', async () => {
-    const { mcp, vault } = plugins()
-    vault.files.set('notes/a.md', 'x')
+    const { mcp, luoshu } = plugins()
+    luoshu.files.set('notes/a.md', 'x')
     let open!: () => void
-    vault.hold.prepare = new Promise<void>(resolve => { open = resolve })
-    const id = mcp.call('vault.read', { path: 'notes/a.md' })
-    for (let i = 0; i < 100 && vault.prepared.length === 0; i++) await tick(2)
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    const id = mcp.call('luoshu.read', { path: 'notes/a.md' })
+    for (let i = 0; i < 100 && luoshu.prepared.length === 0; i++) await tick(2)
     mcp.post({ v: 1, kind: 'cancel', id })
     expect(code(await mcp.reply(id))).toBe('stopped')
     open()
     await tick(10)
-    expect(vault.performed).toEqual([])
-    expect(vault.released).toHaveLength(1)
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.released).toHaveLength(1)
   })
 })
 
@@ -627,7 +627,7 @@ describe('filterReadable', () => {
 
   it('counts the gate\'s time against the caller, so one that floods a plugin leaves the other callers theirs', async () => {
     const { filter, gate, git, search, named } = await timed()
-    gate.grants.git = [{ type: 'plugin.call', targets: ['search'] }, { type: 'vault.read', paths: ['notes/**'] }]
+    gate.grants.git = [{ type: 'plugin.call', targets: ['search'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
     expect(code(await filter(named(80)))).toBe('throttled')
     git.call('search.query', { text: 'x' })
     for (let waited = 0; deliveries(search, 'search.query').length < 2 && waited < 2000; waited += 5) await tick(5)
@@ -646,7 +646,7 @@ describe('filterReadable', () => {
   it('stops a grant shaped for the matcher\'s worst case within its budget instead of holding main', async () => {
     const { search, got, gate } = await incoming()
     const crafted = Array.from({ length: 85 }, () => '**/*a*b').join('/').slice(0, 511)
-    gate.grants.search = [{ type: 'vault.read', paths: Array(64).fill(crafted) }]
+    gate.grants.search = [{ type: 'luoshu.read', paths: Array(64).fill(crafted) }]
     const deep = Array.from({ length: 256 }, () => 'a').join('/').slice(0, 511)
     const started = performance.now()
     const reply = await search.ask('core.filterReadable', { call: got.callId, paths: Array(MAX_FILTER_PATHS).fill(deep) })
@@ -658,16 +658,16 @@ describe('filterReadable', () => {
 
 describe('calls a provider holds', () => {
   it('ignores a reply the provider\'s own handle sends for a call it is performing, which only perform answers', async () => {
-    const { carrier, connect, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('a.md', 'x')
+    const { carrier, connect, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     let open!: () => void
-    vault.hold.perform = new Promise<void>(resolve => { open = resolve })
-    const own = hostHalf(carrier, host('vault'))
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const own = hostHalf(carrier, host('luoshu'))
     const search = connect(worker('search'))
-    const id = search.call('vault.read', { path: 'a.md' })
-    for (let i = 0; i < 100 && vault.performed.length === 0; i++) await tick(2)
-    const { callId } = vault.performed[0].call
+    const id = search.call('luoshu.read', { path: 'a.md' })
+    for (let i = 0; i < 100 && luoshu.performed.length === 0; i++) await tick(2)
+    const { callId } = luoshu.performed[0].call
     own.handle.post({ v: 1, kind: 'reply', callId, ok: true, result: 'forged' })
     // The provider may hang its own sub-calls under the call
     expect((await own.ask('core.self', undefined, { parent: callId })).ok).toBe(true)

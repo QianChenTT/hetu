@@ -93,7 +93,7 @@ function absoluteOn(platform: string, folder: string): boolean {
   return path.posix.isAbsolute(folder)
 }
 
-function vaultFor(platform: string) {
+function luoshuFor(platform: string) {
   return z.strictObject({
     folder: screenText(MAX_FOLDER_LENGTH).refine(folder => absoluteOn(platform, folder), 'not an absolute path'),
   })
@@ -105,15 +105,15 @@ const pluginFile = z.strictObject({ format, ...plugin.shape })
 
 export type Switches = z.infer<typeof switches>
 export type Plugin = z.infer<typeof plugin>
-export type Vault = z.infer<ReturnType<typeof vaultFor>>
-// vault is null until a folder is picked
-export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches, vault: Vault | null }
+export type Luoshu = z.infer<ReturnType<typeof luoshuFor>>
+// luoshu is null until a folder is picked
+export type SecurityState = { plugins: Record<string, Plugin>, switches: Switches, luoshu: Luoshu | null }
 
 // newer is a file in a later format, read no further and never written over
 export type FileResult = 'ok' | 'absent' | 'hash-missing' | 'hash-mismatch' | 'invalid' | 'unreadable' | 'newer'
 // id is the plugin and is left out when the plugins folder itself can't be listed
 export type Check = {
-  check: 'switches' | 'vault' | 'plugin-entry'
+  check: 'switches' | 'luoshu' | 'plugin-entry'
   id?: string
   result: FileResult
 }
@@ -139,7 +139,7 @@ export function defaultSwitches(): Switches {
 }
 
 export function defaultState(): SecurityState {
-  return { plugins: table({}), switches: defaultSwitches(), vault: null }
+  return { plugins: table({}), switches: defaultSwitches(), luoshu: null }
 }
 
 function absolute(value: string | undefined, name: string): string {
@@ -235,18 +235,18 @@ function sortEntryNames(names: string[]): { ids: string[]; invalid: string[] } {
 // catches edits by anything that doesn't know hetu, not one that rewrites the hash or restores an old copy
 export class StateStore {
   private readonly dir: string
-  private readonly vault: ReturnType<typeof vaultFor>
-  private readonly vaultFile: z.ZodType<Vault & { format: typeof FORMAT }>
+  private readonly luoshu: ReturnType<typeof luoshuFor>
+  private readonly luoshuFile: z.ZodType<Luoshu & { format: typeof FORMAT }>
   // Files a load found in a later format. Held for the rest of the run, so an older build never writes over a newer
   // state
   private readonly newer = new Set<string>()
   private tail: Promise<unknown> = Promise.resolve()
 
-  // platform gives the rules the vault folder must be absolute by
+  // platform gives the rules the luoshu folder must be absolute by
   constructor(dir: string, platform: string = process.platform) {
     this.dir = dir
-    this.vault = vaultFor(platform)
-    this.vaultFile = z.strictObject({ format, ...this.vault.shape })
+    this.luoshu = luoshuFor(platform)
+    this.luoshuFile = z.strictObject({ format, ...this.luoshu.shape })
   }
 
   private file(...parts: string[]) {
@@ -280,8 +280,8 @@ export class StateStore {
     await this.put(this.file('switches.json'), switches.parse(input))
   }
 
-  async writeVault(input: unknown): Promise<void> {
-    await this.put(this.file('vault.json'), this.vault.parse(input))
+  async writeLuoshu(input: unknown): Promise<void> {
+    await this.put(this.file('luoshu.json'), this.luoshu.parse(input))
   }
 
   async writePlugin(id: string, input: unknown): Promise<void> {
@@ -314,15 +314,15 @@ export class StateStore {
     const state = defaultState()
     const checks: Check[] = []
 
-    // A bad or missing switches file never touches the vault and a bad vault file never touches the switches
+    // A bad or missing switches file never touches the luoshu and a bad luoshu file never touches the switches
     const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile)
     checks.push({ check: 'switches', result: switchesRead.result })
     if (switchesRead.value) state.switches = withoutFormat(switchesRead.value)
 
-    // Absent is a vault not picked yet
-    const vaultRead = await this.checkFile(this.file('vault.json'), this.vaultFile)
-    checks.push({ check: 'vault', result: vaultRead.result })
-    if (vaultRead.value) state.vault = withoutFormat(vaultRead.value)
+    // Absent is a luoshu not picked yet
+    const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile)
+    checks.push({ check: 'luoshu', result: luoshuRead.result })
+    if (luoshuRead.value) state.luoshu = withoutFormat(luoshuRead.value)
 
     await this.readPlugins(state, checks)
 

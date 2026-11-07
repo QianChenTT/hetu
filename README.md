@@ -18,6 +18,10 @@ Many security decisions in hetu are still handed to the user: approving a plugin
 
 The daemon, its MCP tools, leases, the commit per write and outside-write detection run today. The plugin core is designed and being built, see the [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
 
+## Names
+
+Hetu and Luoshu are the two diagrams of an old Chinese story, the Yellow River Chart and the Luo River Writing. hetu is the app. **luoshu** is the folder of notes it keeps and the plugin that serves it, what other notes apps call a vault. Plugins read and write notes through `luoshu.read` and `luoshu.write` and hear about changes on `luoshu.changed`. The old daemon still says vault until the core replaces it
+
 ## Layout
 
 - [core/](core/): the core, the four parts that can't be switched off (boot, loader, carrier and runtime), being built here. Each folder's README says what it holds and where it moves

@@ -63,7 +63,7 @@ describe('the install list', () => {
 })
 
 describe('the lifecycle messages', () => {
-  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 1, deps: { vault: 'ready' }, lastStop: 'dependency:vault:crashed', previousVersion: '1.0.0' }
+  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 1, deps: { luoshu: 'ready' }, lastStop: 'dependency:luoshu:crashed', previousVersion: '1.0.0' }
 
   it('carries the id, the API version, the dependencies, lastStop and previousVersion in init', () => {
     expect(init.parse(sent)).toEqual(sent)
@@ -73,10 +73,10 @@ describe('the lifecycle messages', () => {
   it.each([
     ['another API version', { ...sent, api: 2 }],
     ['incarnation 0', { ...sent, incarnation: 0 }],
-    ['a dependency state of its own', { ...sent, deps: { vault: 'crashed' } }],
-    ['a reason outside the fixed list', { ...sent, lastStop: 'the vault plugin is down' }],
-    ['a dependency reason naming no plugin id', { ...sent, lastStop: 'dependency:My.Vault:crashed' }],
-    ['a dependency reason with a why of its own', { ...sent, lastStop: 'dependency:vault:sad' }],
+    ['a dependency state of its own', { ...sent, deps: { luoshu: 'crashed' } }],
+    ['a reason outside the fixed list', { ...sent, lastStop: 'the luoshu plugin is down' }],
+    ['a dependency reason naming no plugin id', { ...sent, lastStop: 'dependency:My.Luoshu:crashed' }],
+    ['a dependency reason with a why of its own', { ...sent, lastStop: 'dependency:luoshu:sad' }],
     ['another envelope version', { ...sent, v: 2 }],
     ['a field it does not know', { ...sent, grants: [] }],
   ])('refuses init with %s', (_name, message) => {
@@ -84,8 +84,8 @@ describe('the lifecycle messages', () => {
   })
 
   it('names only the direct requirement in a dependency reason', () => {
-    expect(dependencyReason('vault', 'off')).toBe('dependency:vault:off')
-    expect(reason.safeParse(dependencyReason('vault', 'off')).success).toBe(true)
+    expect(dependencyReason('luoshu', 'off')).toBe('dependency:luoshu:off')
+    expect(reason.safeParse(dependencyReason('luoshu', 'off')).success).toBe(true)
     expect(reason.safeParse('cycle').success).toBe(true)
     expect(reason.safeParse('dependency:con:off').success).toBe(false)
   })

@@ -10,20 +10,20 @@ afterEach(cleanup)
 
 describe('ports bound by closure', () => {
   it('names the caller from the port, never from the message', async () => {
-    const { connect, gate, vault } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('notes/a.md', 'hello')
+    const { connect, gate, luoshu } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('notes/a.md', 'hello')
     const search = connect(worker('search'))
-    const reply = await search.ask('vault.read', { path: 'notes/a.md' })
+    const reply = await search.ask('luoshu.read', { path: 'notes/a.md' })
     expect(reply.ok).toBe(true)
     expect(gate.asked.map(access => access.caller)).toEqual([worker('search'), worker('search')])
-    expect(vault.prepared[0].caller).toEqual(worker('search'))
+    expect(luoshu.prepared[0].caller).toEqual(worker('search'))
   })
 
   it('refuses a call that names a caller, and the gate never hears the claim', async () => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
-    const reply = await search.ask('vault.read', { path: 'notes/a.md' }, { caller: host('gate') })
+    const reply = await search.ask('luoshu.read', { path: 'notes/a.md' }, { caller: host('gate') })
     expect(code(reply)).toBe('invalid')
     expect(gate.asked).toEqual([])
   })
@@ -74,7 +74,7 @@ describe('ports bound by closure', () => {
     const { port1, port2 } = new MessageChannel()
     try {
       expect(() => carrier.register(port1, worker('search'))).toThrow()
-      expect(() => carrier.handle(host('vault'), () => {})).toThrow()
+      expect(() => carrier.handle(host('luoshu'), () => {})).toThrow()
     } finally {
       port1.close()
       port2.close()
@@ -82,28 +82,28 @@ describe('ports bound by closure', () => {
   })
 
   it('refuses a port a plugin passes in a call, transferred or not', async () => {
-    const { connect, vault, gate } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    const { connect, luoshu, gate } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     const search = connect(worker('search'))
     const forged = new MessageChannel()
     const nested = new MessageChannel()
-    search.port.postMessage({ v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'a.md', reply: forged.port2 } }, [forged.port2])
+    search.port.postMessage({ v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'a.md', reply: forged.port2 } }, [forged.port2])
     search.port.postMessage({ v: 1, kind: 'call', id: 2, action: 'search.query', args: [{ deep: { port: nested.port2 } }] }, [nested.port2])
     expect(code(await search.reply(1))).toBe('invalid')
     expect(code(await search.reply(2))).toBe('invalid')
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
     expect(gate.asked).toEqual([])
     forged.port1.close()
     nested.port1.close()
   })
 
   it('reaches nothing through a channel it never registered', async () => {
-    const { gate, vault } = harness()
+    const { gate, luoshu } = harness()
     const { port1, port2 } = new MessageChannel()
-    port2.postMessage({ v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'notes/a.md' } })
+    port2.postMessage({ v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'notes/a.md' } })
     await tick()
     expect(gate.asked).toEqual([])
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
     port1.close()
     port2.close()
   })
@@ -119,15 +119,15 @@ describe('ports bound by closure', () => {
   it('drops a message of another version or kind unread, with no reply', async () => {
     const { connect, gate, loader } = harness()
     const search = connect(worker('search'))
-    search.post({ v: 2, kind: 'call', id: 101, action: 'vault.read', args: { path: 'a.md' } })
-    search.post({ v: '1', kind: 'call', id: 102, action: 'vault.read', args: { path: 'a.md' } })
+    search.post({ v: 2, kind: 'call', id: 101, action: 'luoshu.read', args: { path: 'a.md' } })
+    search.post({ v: '1', kind: 'call', id: 102, action: 'luoshu.read', args: { path: 'a.md' } })
     search.post({ v: 1, kind: 'hello', id: 103 })
     search.post({ v: 2, kind: 'ready' })
     // Kinds only the carrier sends, so a plugin can't hand another an event
     search.post({ v: 1, kind: 'init' })
     search.post({ v: 1, kind: 'deps' })
     search.post({ v: 1, kind: 'event', seq: 1, topic: 'core.status' })
-    search.post({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'] })
+    search.post({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed'] })
     const sentinel = search.call('core.self')
     await search.reply(sentinel)
     await tick()
@@ -180,17 +180,17 @@ describe('the end of a way in', () => {
 
 describe('host handles', () => {
   it('binds a host half by closure and copies each message, so a change after posting reaches nothing', async () => {
-    const { carrier, gate, vault } = harness()
-    gate.grants.history = [{ type: 'vault.read', paths: ['notes/**'] }]
-    vault.files.set('notes/a.md', 'x')
+    const { carrier, gate, luoshu } = harness()
+    gate.grants.history = [{ type: 'luoshu.read', paths: ['notes/**'] }]
+    luoshu.files.set('notes/a.md', 'x')
     const got: Message[] = []
     const handle = carrier.handle(host('history'), message => { got.push(message as Message) })
-    const message = { v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'notes/a.md' } }
+    const message = { v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'notes/a.md' } }
     handle.post(message)
     message.args.path = 'secret/b.md'
     for (let i = 0; i < 50 && got.length === 0; i++) await tick(2)
     expect(got[0].ok).toBe(true)
-    expect(vault.prepared[0].args).toEqual({ path: 'notes/a.md' })
+    expect(luoshu.prepared[0].args).toEqual({ path: 'notes/a.md' })
     expect(gate.asked[0].caller).toEqual(host('history'))
   })
 
@@ -198,7 +198,7 @@ describe('host handles', () => {
     const { carrier, gate } = harness()
     const got: Message[] = []
     const handle = carrier.handle(host('history'), message => { got.push(message as Message) })
-    handle.post({ v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'a.md', f: () => 1 } })
+    handle.post({ v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'a.md', f: () => 1 } })
     handle.post({ v: 1, kind: 'call', id: 2, action: 'core.self' })
     for (let i = 0; i < 50 && got.length === 0; i++) await tick(2)
     expect(got.map(reply => reply.id)).toEqual([2])
@@ -208,16 +208,16 @@ describe('host handles', () => {
   it('reads a host half\'s message only after post returns', () => {
     const { carrier, gate } = harness()
     const handle = carrier.handle(host('history'), () => {})
-    handle.post({ v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'a.md' } })
+    handle.post({ v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'a.md' } })
     expect(gate.asked).toEqual([])
   })
 
   it('hands a host half a copy of what it is sent, never the provider\'s own object', async () => {
-    const { carrier, gate, vault } = harness()
-    gate.grants.history = [{ type: 'vault.read', paths: ['**'] }]
+    const { carrier, gate, luoshu } = harness()
+    gate.grants.history = [{ type: 'luoshu.read', paths: ['**'] }]
     const kept = { text: 'x' }
-    vault.perform_ = () => kept
-    const reply = await hostHalf(carrier, host('history')).ask('vault.read', { path: 'a.md' })
+    luoshu.perform_ = () => kept
+    const reply = await hostHalf(carrier, host('history')).ask('luoshu.read', { path: 'a.md' })
     expect(reply.result).toEqual({ text: 'x' })
     expect(reply.result).not.toBe(kept)
   })
@@ -247,27 +247,27 @@ describe('host handles', () => {
 
   // A handle has no close, so after its incarnation was revoked only the shut way stands between it and the steps
   it('acts on nothing a host half posts after its incarnation was ended', async () => {
-    const { carrier, gate, vault } = harness()
-    gate.grants.history = [{ type: 'vault.write', paths: ['**'] }]
+    const { carrier, gate, luoshu } = harness()
+    gate.grants.history = [{ type: 'luoshu.write', paths: ['**'] }]
     const half = hostHalf(carrier, host('history'))
     carrier.end(host('history'))
-    half.handle.post({ v: 1, kind: 'call', id: 1, action: 'vault.write', args: { path: 'a.md', text: 'x' } })
+    half.handle.post({ v: 1, kind: 'call', id: 1, action: 'luoshu.write', args: { path: 'a.md', text: 'x' } })
     await tick(20)
     expect(gate.asked).toEqual([])
-    expect(vault.files.size).toBe(0)
+    expect(luoshu.files.size).toBe(0)
     expect(half.inbox).toEqual([])
   })
 })
 
 describe('the window way in', () => {
   it('drops a sender the check does not name, unread and unanswered', async () => {
-    const { carrier, gate, vault } = harness()
+    const { carrier, gate, luoshu } = harness()
     const way = windowWay(carrier, { 'editor-1': editor })
-    way.post('frame-in-editor', { v: 1, kind: 'call', id: 1, action: 'vault.read', args: { path: 'notes/a.md' } })
+    way.post('frame-in-editor', { v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'notes/a.md' } })
     await tick()
     expect(way.replies).toEqual([])
     expect(gate.asked).toEqual([])
-    expect(vault.prepared).toEqual([])
+    expect(luoshu.prepared).toEqual([])
   })
 
   it('runs the sender check before anything else, in the same turn as the message', () => {
@@ -299,12 +299,12 @@ describe('the window way in', () => {
   })
 
   it('answers a named window with the window as the caller', async () => {
-    const { carrier, gate, vault } = harness()
-    vault.files.set('notes/a.md', 'x')
+    const { carrier, gate, luoshu } = harness()
+    luoshu.files.set('notes/a.md', 'x')
     const way = windowWay(carrier, { 'editor-1': editor, trusted: trusted })
     expect((await way.ask('editor-1', 'core.self')).result).toEqual(editor)
     expect((await way.ask('trusted', 'core.self')).result).toEqual(trusted)
-    expect((await way.ask('editor-1', 'vault.read', { path: 'notes/a.md' })).ok).toBe(true)
+    expect((await way.ask('editor-1', 'luoshu.read', { path: 'notes/a.md' })).ok).toBe(true)
     expect(gate.asked[0].caller).toEqual(editor)
   })
 
