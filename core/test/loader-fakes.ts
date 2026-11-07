@@ -42,7 +42,7 @@ export class FakeLink implements CarrierLink {
   // What the loader asked of the carrier, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
-  landing: (event: string, fields: Record<string, Field>) => Landing | Promise<Landing> = () => 'landed'
+  landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
   changes = 0
   stopped = 0
   limits: Partial<Record<FloorConstant, number>> = {}
@@ -85,10 +85,10 @@ export class FakeLink implements CarrierLink {
     })
   }
 
-  record(event: string, fields: Record<string, Field>): Promise<Landing> {
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     this.records.push({ event, fields })
     this.timeline.push(`record ${event}${typeof fields.plugin === 'string' ? ` ${fields.plugin}` : ''}`)
-    return Promise.resolve(this.landing(event, fields))
+    return Promise.resolve(this.landing(event, fields, signal))
   }
 
   changed(): void {

@@ -661,4 +661,41 @@ describe('a floor record\'s landing', () => {
     expect(await Promise.all(all)).toEqual(['landed', 'landed', 'landed'])
     expect(settled).toEqual(['git', 'mcp', 'search'])
   })
+
+  it('takes out a record its waiter gave up on while the log can\'t write, so it never lands, and keeps the rest', async () => {
+    const log = new FakeLog()
+    log.failing = true
+    const lane = laneOf(log)
+    const giveUp = new AbortController()
+    const withdrawn = lane.write('plugin.updated', { plugin: 'git' }, giveUp.signal)
+    const after = lane.write('plugin.found', { plugin: 'search' })
+    await tick()
+    giveUp.abort()
+    expect(await withdrawn).toBe('lost')
+    expect(lane.waiting).toBe(1)
+    log.failing = false
+    await lane.flush()
+    expect(await after).toBe('landed')
+    expect(log.records.map(record => record.event)).toEqual(['plugin.found'])
+  })
+
+  it('settles lost at once for a waiter that gave up before the write', async () => {
+    const log = new FakeLog()
+    const giveUp = new AbortController()
+    giveUp.abort()
+    expect(await laneOf(log).write('plugin.updated', { plugin: 'git' }, giveUp.signal)).toBe('lost')
+    expect(log.records).toEqual([])
+  })
+
+  // An append under way can't be called back, so its record may still land after the waiter gave up
+  it('lands a record already being written when its waiter gives up', async () => {
+    const { log, appends } = heldLog()
+    const lane = laneOf(log)
+    const giveUp = new AbortController()
+    const writing = lane.write('plugin.updated', { plugin: 'git' }, giveUp.signal)
+    await tick()
+    giveUp.abort()
+    appends[0].resolve()
+    expect(await writing).toBe('landed')
+  })
 })

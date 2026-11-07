@@ -212,6 +212,22 @@ describe('a copy and its record', () => {
     expect(made.loader.plugin('git')).toBe(null)
   })
 
+  it('gives up on plugin.copied at the deadline, withdraws it and starts the rest', async () => {
+    const made = await harness({ install: installWith({ git: gitFiles() }) })
+    made.link.limits.readyMs = 100
+    let signal: AbortSignal | undefined
+    made.link.landing = (event, _fields, given) => {
+      if (event !== 'plugin.copied') return 'landed'
+      signal = given
+      return new Promise<Landing>(() => {})
+    }
+    await made.loader.start()
+    expect(signal?.aborted).toBe(true)
+    expect(await exists(folderOf(made.dataDir, 'git'))).toBe(false)
+    expect(await readdir(path.join(made.dataDir, 'staging'))).toEqual([])
+    expect(made.loader.plugin('git')).toBe(null)
+  })
+
   it('applies at once while the human turned recording off, with nothing recorded at all', async () => {
     const made = await harness({ install: installWith({ git: gitFiles() }), switches: { recordNothing: true } })
     made.link.landing = () => new Promise<Landing>(() => {})
@@ -287,6 +303,28 @@ describe('removing and restoring a first-party plugin', () => {
     expect(stateOf(made.loader, 'git')).toBe('ready')
     expect(made.link.events('plugin.restored')).toEqual([{ plugin: 'git', version: '1.0.0' }])
     expect(await hashOf(folderOf(made.dataDir, 'git'))).toBe(await hashOf(path.join(made.installDir, 'plugins', 'git')))
+  })
+
+  it('gives up on plugin.restored at the deadline, withdraws it and applies the next change', async () => {
+    const made = await harness({
+      install: installWith({ git: gitFiles() }),
+      folder: { git: gitFiles() },
+      entries: { git: async root => firstPartyEntry(await hashOf(root), { enabled: true }) },
+    })
+    await writeFile(path.join(folderOf(made.dataDir, 'git'), 'worker.js'), 'edited()')
+    await made.loader.start()
+    made.link.limits.readyMs = 100
+    let signal: AbortSignal | undefined
+    made.link.landing = (event, _fields, given) => {
+      if (event !== 'plugin.restored') return 'landed'
+      signal = given
+      return new Promise<Landing>(() => {})
+    }
+    await expect(made.loader.apply({ kind: 'plugin.restore', plugin: 'git' })).rejects.toThrow()
+    expect(signal?.aborted).toBe(true)
+    expect(reasonOf(made.loader, 'git')).toBe('tampered')
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    expect((await new StateStore(made.dataDir).load()).state.switches.confirmOff).toBe(true)
   })
 
   it('refuses to restore over a community plugin holding the id', async () => {

@@ -358,6 +358,23 @@ describe('an app update to an install plugin', () => {
     expect(made.runtime.order()).toEqual(['log', 'gate'])
   })
 
+  it('starts the plugin by its ready deadline when plugin.updated never lands, withdrawing the record, and the next start finds the change again', async () => {
+    const made = await harness()
+    await writeInstalled(made.dataDir, { gate: { version: '0.9.0', hash: 'c'.repeat(64) } })
+    made.link.limits.readyMs = 300
+    let signal: AbortSignal | undefined
+    made.link.landing = (event, _fields, given) => {
+      if (event !== 'plugin.updated') return 'landed'
+      signal = given
+      return new Promise<Landing>(() => {})
+    }
+    await made.loader.start()
+    expect(made.runtime.order()).toEqual(['log', 'gate'])
+    expect(signal?.aborted).toBe(true)
+    expect(made.runtime.half('gate', 1, 'host').got('init')[0].previousVersion).toBe(null)
+    expect((await readInstalled(made.dataDir)).gate.version).toBe('0.9.0')
+  })
+
   it('applies nothing of the update when its record is lost, so the next start finds the change again', async () => {
     const made = await harness()
     await writeInstalled(made.dataDir, { gate: { version: '0.9.0', hash: 'c'.repeat(64) } })

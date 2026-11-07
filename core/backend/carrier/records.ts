@@ -3,14 +3,19 @@ import type { AuditRecord } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { FloorLog, Landing } from './seams.ts'
 
-// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none
-type FloorRecord = { event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void }
+// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none. writing is
+// set while its append is under way, when it can no longer be taken out. done drops the listener on the waiter's signal
+type FloorRecord = {
+  event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void, writing?: boolean, done?: () => void,
+}
 
 // Floor records go straight through the one EventLog in the order they were made, ahead of the audit queue and with
 // the log plugin off. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
 // counted and the count lands as floor.dropped once the backlog has. A write never blocks and never throws. Nothing is
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
-// the record's fate is known, for the loader, which applies some changes only once their record is on disk
+// the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
+// that gives up aborts its signal: a record still waiting then comes out and settles lost, so the log never shows a
+// change that didn't apply. One whose append is under way can't be called back and may still land
 export class FloorLane {
   private readonly log: FloorLog | null
   private readonly bound: () => number
@@ -44,15 +49,29 @@ export class FloorLane {
     return !this.closed && !this.muted()
   }
 
-  write(event: string, fields: Record<string, Field> = {}): Promise<Landing> {
+  write(event: string, fields: Record<string, Field> = {}, signal?: AbortSignal): Promise<Landing> {
     if (this.closed) return Promise.resolve('lost')
     if (this.muted()) return Promise.resolve('muted')
+    if (signal?.aborted) return Promise.resolve('lost')
     if (this.backlog.length >= this.bound()) {
       this.overflowed++
       return Promise.resolve('lost')
     }
-    return new Promise(landed => {
-      this.backlog.push({ event, fields: { ...fields }, landed })
+    return new Promise(settle => {
+      const record: FloorRecord = { event, fields: { ...fields } }
+      const withdraw = () => {
+        const at = this.backlog.indexOf(record)
+        if (at === -1 || record.writing) return
+        this.backlog.splice(at, 1)
+        record.landed?.('lost')
+      }
+      signal?.addEventListener('abort', withdraw, { once: true })
+      record.done = () => signal?.removeEventListener('abort', withdraw)
+      record.landed = landing => {
+        record.done?.()
+        settle(landing)
+      }
+      this.backlog.push(record)
       void this.pump()
     })
   }
@@ -72,9 +91,11 @@ export class FloorLane {
       while (this.backlog.length > 0) {
         const [first] = this.backlog
         let landing: Landing = 'landed'
+        first.writing = true
         try {
           await log.append(first.event, first.fields)
         } catch {
+          first.writing = false
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
             if (this.closed) this.abandon()

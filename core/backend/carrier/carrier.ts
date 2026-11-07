@@ -359,9 +359,10 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost
-  record(event: string, fields: Record<string, Field>): Promise<Landing> {
-    return this.lane.write(event, fields)
+  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost. A record
+  // still waiting when signal aborts comes out and settles lost
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
+    return this.lane.write(event, fields, signal)
   }
 
   // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop

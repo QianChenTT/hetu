@@ -471,7 +471,7 @@ export class Loader implements Seam {
   // Applies only once its record has landed, so the copy's floor record is on disk before the entry widens anything
   private async copy(id: string, read: Read, listed: Listed, event: string, enabled: boolean, previous: string | null): Promise<boolean> {
     const dir = await stage(this.dataDir, id, read.files)
-    const landing = await this.record(event, { plugin: id, version: listed.version })
+    const landing = await this.landing(id, event, { plugin: id, version: listed.version })
     if (landing === 'lost') {
       await clear(dir).catch(() => {})
       return false
@@ -879,7 +879,7 @@ export class Loader implements Seam {
   // it replaced. A record that never lands leaves the marker as it was, so the next start tries again
   private async applyInstalled(k: Known): Promise<void> {
     const from = k.updated!
-    const landing = await this.record('plugin.updated', { plugin: k.id, from, to: k.listed!.version })
+    const landing = await this.landing(k.id, 'plugin.updated', { plugin: k.id, from, to: k.listed!.version })
     if (landing === 'lost') return
     k.updated = null
     await clear(folders.cache(this.dataDir, k.id)).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
@@ -1337,7 +1337,7 @@ export class Loader implements Seam {
     const { read } = staged
     const old = k.entry
     const to = read.manifest!.version
-    const landing = await this.record('plugin.updated', { plugin: id, from: old.version, to })
+    const landing = await this.landing(id, 'plugin.updated', { plugin: id, from: old.version, to })
     if (landing === 'lost') throw new Error('the update record did not land')
     await swapIn(this.dataDir, id, staged.dir)
     const entry: Plugin = { ...old, version: to, contentHash: read.hash! }
@@ -1388,6 +1388,29 @@ export class Loader implements Seam {
       return Promise.resolve(this.link.record(event, fields)).catch(() => 'lost' as const)
     } catch {
       return Promise.resolve('lost')
+    }
+  }
+
+  // A record a change waits on, for at most the plugin's readyMs, so a log that can't write never holds a start or
+  // the change queue behind it. Past that the wait gives up and the record counts as lost: the lane takes it out if
+  // it still waits, so the log never shows a change that didn't apply. One whose write was under way may land late
+  private async landing(plugin: string, event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
+    if (this.state.switches.recordNothing) return 'muted'
+    const giveUp = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const due = new Promise<'lost'>(resolve => {
+      timer = setTimeout(() => {
+        giveUp.abort()
+        resolve('lost')
+      }, this.limitOf(plugin, 'readyMs'))
+      timer.unref?.()
+    })
+    try {
+      return await Promise.race([Promise.resolve(this.link.record(event, fields, giveUp.signal)).catch(() => 'lost' as const), due])
+    } catch {
+      return 'lost'
+    } finally {
+      if (timer !== null) clearTimeout(timer)
     }
   }
 

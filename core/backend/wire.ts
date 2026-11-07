@@ -44,8 +44,8 @@ export class LinkToCarrier implements CarrierLink {
     this.to.send(caller, message)
   }
 
-  record(event: string, fields: Record<string, Field>): Promise<Landing> {
-    return this.to.record(event, fields)
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
+    return this.to.record(event, fields, signal)
   }
 
   changed(): void {
