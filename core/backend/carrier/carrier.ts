@@ -232,7 +232,8 @@ export class Carrier {
   // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
   // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
   // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
-  // gate to the end and records no subscription change. Audit records keep queueing until close counts them
+  // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
+  // holds. Audit records keep queueing until close counts them
   stopping(): void {
     this.shutting = true
   }

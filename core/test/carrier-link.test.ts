@@ -119,6 +119,22 @@ describe('shutdown', () => {
     expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('policy-down')
   })
 
+  // A change the human confirmed just before Quit still applies during shutdown. A narrowing ends what it removed
+  it('ends a subscription a change applied during shutdown no longer grants', async () => {
+    const { carrier, gate, loader, search } = setup()
+    gate.grants.search.push({ type: 'events.subscribe', topics: ['vault.changed'] })
+    expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: [] })
+    carrier.stopping()
+    gate.grants.search = gate.grants.search.filter(grant => grant.type !== 'events.subscribe')
+    loader.current = 2
+    carrier.changed()
+    const vault = hostHalf(carrier, host('vault'))
+    await vault.ask('events.publish', { topic: 'vault.changed' })
+    await vault.ask('events.publish', { topic: 'vault.changed', path: 'notes/a.md' })
+    await tick(30)
+    expect(search.events().filter(event => event.topic === 'vault.changed')).toEqual([])
+  })
+
   it('writes no events.waiting or events.ended while shutdown takes the gate down', async () => {
     const { carrier, gate, loader, log, search } = setup()
     gate.grants.search.push({ type: 'events.subscribe', topics: ['vault.changed'] })

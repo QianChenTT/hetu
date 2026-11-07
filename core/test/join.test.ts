@@ -321,10 +321,22 @@ describe('shutdown through the joined core', () => {
     expect(dropped.map(record => [record.why, record.count])).toEqual([['shutdown', 2]])
   })
 
-  it('refuses a security change once shutdown began', async () => {
-    const { loader } = await quitting()
+  // The Confirm behind it already landed, so a narrowing confirmed just before Quit must outlast the run
+  it('keeps a security change applied while shutdown runs', async () => {
+    const { dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+    const alpha = runtime.half('alpha')
+    const shutdown = loader.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    await loader.apply({ kind: 'plugin.off', plugin: 'alpha' })
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+    expect((await new StateStore(dataDir).load()).state.plugins.alpha.enabled).toBe(false)
+  })
+
+  it('refuses an update once shutdown began', async () => {
+    const { installDir, loader } = await quitting()
     await loader.shutdown()
-    await expect(loader.apply({ kind: 'plugin.off', plugin: 'alpha' })).rejects.toMatchObject({ code: 'stopped' })
+    await expect(loader.update('alpha', installDir)).rejects.toMatchObject({ code: 'stopped' })
   })
 })
 
