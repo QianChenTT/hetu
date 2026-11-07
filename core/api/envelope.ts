@@ -4,9 +4,9 @@ import { floorConstants } from './floor.ts'
 import { localName, MAX_QUALIFIED_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { frozen, plainData } from './plain.ts'
 import { pathProblem } from './scope.ts'
+import { VERSION } from './version.ts'
 
-// The one version of the envelope. A message with another v is refused before any other field is read
-export const VERSION = 1
+export { VERSION }
 export const MAX_LABEL_LENGTH = 512
 
 // What travels on a port. Every message carries v and a kind
