@@ -96,6 +96,34 @@ describe('plugin.call', () => {
     expect((await mcp.reply(id)).result).toEqual(['a.md'])
   })
 
+  // Codes such as policy-down or switched-off describe the core's own state for the caller's call. A plugin that sends
+  // one passes for the core, so its refusal keeps only a code a plugin may give
+  it.each([
+    ['not-found', 'not-found'], ['invalid', 'invalid'], ['not-granted', 'not-granted'], ['unavailable', 'unavailable'],
+    ['throttled', 'throttled'], ['timeout', 'timeout'], ['stale', 'stale'], ['failed', 'failed'],
+    ['policy-down', 'failed'], ['switched-off', 'failed'], ['needs-confirm', 'failed'], ['guard-down', 'failed'],
+    ['guard-refused', 'failed'], ['starting', 'failed'], ['stopped', 'failed'], ['crashed', 'failed'], ['tampered', 'failed'],
+  ])('passes a callee\'s %s on as %s', async (sent, answered) => {
+    const { mcp, search } = plugins()
+    const id = mcp.call('search.query', { text: 'x' })
+    const got = await search.delivered('search.query')
+    search.post({ v: 1, kind: 'reply', callId: got.callId, ok: false, refusal: { code: sent, action: 'search.query' } })
+    expect(code(await mcp.reply(id))).toBe(answered)
+  })
+
+  it('keeps a callee\'s too-large and drops any other reason', async () => {
+    const { mcp, search } = plugins()
+    const first = mcp.call('search.query', { text: 'x' })
+    const one = await search.delivered('search.query')
+    search.post({ v: 1, kind: 'reply', callId: one.callId, ok: false, refusal: { code: 'invalid', action: 'search.query', reason: 'too-large' } })
+    expect((await mcp.reply(first)).refusal).toEqual({ code: 'invalid', action: 'search.query', reason: 'too-large' })
+    const second = mcp.call('search.query', { text: 'y' })
+    await search.waitFor(message => message.kind === 'call' && message.callId !== one.callId)
+    const two = search.inbox.filter(message => message.kind === 'call').at(-1)!
+    search.post({ v: 1, kind: 'reply', callId: two.callId, ok: false, refusal: { code: 'failed', action: 'search.query', reason: 'declined' } })
+    expect((await mcp.reply(second)).refusal).toEqual({ code: 'failed', action: 'search.query' })
+  })
+
   it('ignores a reply from a new incarnation for a call the old one was given', async () => {
     const { mcp, search, connect, loader } = plugins()
     const id = mcp.call('search.query')
@@ -125,7 +153,7 @@ describe('plugin.call', () => {
     expect(mcp.repliesTo(one)).toHaveLength(1)
   })
 
-  it('hands on a callee\'s refusal code and reason, never a request id it made up', async () => {
+  it('hands on neither a needs-confirm nor a request id a callee made up', async () => {
     const { mcp, search } = plugins()
     const id = mcp.call('search.query')
     const got = await search.delivered('search.query')
@@ -133,7 +161,7 @@ describe('plugin.call', () => {
       v: 1, kind: 'reply', callId: got.callId, ok: false,
       refusal: { code: 'needs-confirm', action: 'vault.write', reason: 'declined', request: 'fake-request' },
     })
-    expect((await mcp.reply(id)).refusal).toEqual({ code: 'needs-confirm', action: 'search.query', reason: 'declined' })
+    expect((await mcp.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query' })
   })
 
   it('fails a callee result past its cap with too-large', async () => {

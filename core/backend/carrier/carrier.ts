@@ -3,7 +3,7 @@ import { coreActions, eventActions, providerActions, type CoreAction, type Provi
 import type { CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
-  refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
+  calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -976,14 +976,15 @@ export class Carrier {
     const release = () => {
       if (prepared === null) return
       try {
-        provider.release?.(call, given as Prepared)
+        provider.release?.(call, prepared)
       } catch {}
     }
     if (pending.done) return release()
     if (prepared === null) return this.finish(pending, { ok: false, ...(refusalIn(given) ?? { code: 'failed' }) })
     pending.scope = prepared.scope
 
-    // Nothing awaits from here to perform, so the gate and the guards judge the object perform gets
+    // Nothing awaits from here to perform, and perform gets the frozen copy the gate and the guards judge, never the
+    // object prepare gave, which could answer another path when read again
     if (kind.kind === 'power') {
       const refused = this.judge(pending, 'canonical', kind.capability, prepared.scope)
       if (refused !== null) {
@@ -1004,7 +1005,7 @@ export class Carrier {
 
     let result: unknown
     try {
-      result = await provider.perform(call, given as Prepared)
+      result = await provider.perform(call, prepared)
     } catch (err) {
       return this.thrown(pending, id, 'perform', err)
     }
@@ -1084,9 +1085,11 @@ export class Carrier {
     const pending = typeof callId === 'string' ? way.delivered.get(callId) : undefined
     if (pending === undefined || pending.done || pending.callee !== way) return
     if (!parsed.success) return this.finish(pending, no('failed'))
+    // A plugin answers for itself, so a code that describes the core's state reaches the caller as failed
     if (!parsed.data.ok) {
       const { code, reason } = parsed.data.refusal
-      return this.finish(pending, { ok: false, code, ...(reason !== undefined ? { reason } : {}) })
+      if (!isOne(calleeRefusalCodes, code)) return this.finish(pending, no('failed'))
+      return this.finish(pending, { ok: false, code, ...(reason === 'too-large' ? { reason } : {}) })
     }
     this.result(pending, way.plugin, parsed.data.result)
   }

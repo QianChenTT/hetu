@@ -58,6 +58,12 @@ export const refusalCodes = frozen([
 ] as const)
 export type RefusalCode = typeof refusalCodes[number]
 
+// The refusals a plugin may answer a call with. The others describe the core's own state for the caller's call, which
+// only the carrier gives, so a plugin's refusal with one of them reaches its caller as failed
+export const calleeRefusalCodes = frozen([
+  'invalid', 'not-granted', 'not-found', 'unavailable', 'throttled', 'timeout', 'stale', 'failed',
+] as const satisfies readonly RefusalCode[])
+
 // Fixed, so a reason never carries another principal's id, path or lease (the A-05 lesson)
 export const reasonCodes = frozen(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id'] as const)
 export type ReasonCode = typeof reasonCodes[number]
