@@ -30,18 +30,26 @@ export const token = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 // reaches the callee, guards and the audit and grants nothing
 const label = screenText(MAX_LABEL_LENGTH)
 
-// A call as the caller sends one, exactly these fields. The sender comes from the way in, never from the message. id
-// is the caller's own number for matching the reply and parent names a live call delivered on the same port
-export const request = z.strictObject({
+const requestFields = {
   v: z.literal(VERSION),
   kind: z.literal('call'),
   id: z.int().nonnegative(),
   action: qualifiedName,
-  args: plainData(floorConstants.argumentBytes),
   parent: token.optional(),
   onBehalf: label.optional(),
-})
+}
+
+// A call as the caller sends one, exactly these fields. The sender comes from the way in, never from the message. id
+// is the caller's own number for matching the reply and parent names a live call delivered on the same port
+export const request = z.strictObject({ ...requestFields, args: plainData(floorConstants.argumentBytes) })
 export type Request = z.infer<typeof request>
+
+// The same envelope with args left unread. The carrier measures args against the caller's own cap, which the human may
+// raise and the watchdog may lower
+export const requestEnvelope = z.strictObject({ ...requestFields, args: z.unknown() })
+
+// A caller giving up on a call of its own, named by the id it sent
+export const cancel = z.strictObject({ v: z.literal(VERSION), kind: z.literal('cancel'), id: z.int().nonnegative() })
 
 export const refusalCodes = frozen([
   'invalid', 'not-granted', 'not-found', 'needs-confirm', 'switched-off', 'unavailable', 'starting', 'policy-down',
@@ -82,3 +90,29 @@ export const caller = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('content'), plugin: pluginId, token }),
 ])
 export type Caller = z.infer<typeof caller>
+
+// A call as the callee gets it. callId names it in the callee's answer and as the parent of the callee's sub-calls.
+// deadline is in ms since the epoch. args were measured against the caller's cap on the way in
+export const delivery = z.strictObject({
+  v: z.literal(VERSION),
+  kind: z.literal('call'),
+  callId: token,
+  caller,
+  action: qualifiedName,
+  args: z.unknown(),
+  deadline: z.int().nonnegative(),
+  onBehalf: label.optional(),
+})
+export type Delivery = z.infer<typeof delivery>
+
+// The callee's answer to a delivered call. The carrier measures the result against the callee's own cap and builds the
+// refusal the caller gets from the code and reason only, so a callee can't hand on a request id the core never made
+const answerHead = { v: z.literal(VERSION), kind: z.literal('reply'), callId: token }
+export const answer = z.discriminatedUnion('ok', [
+  z.strictObject({ ...answerHead, ok: z.literal(true), result: z.unknown() }),
+  z.strictObject({ ...answerHead, ok: z.literal(false), refusal }),
+])
+export type Answer = z.infer<typeof answer>
+
+// The carrier telling a callee that a call delivered to it was given up, so its answer is no longer read
+export const cancelled = z.strictObject({ v: z.literal(VERSION), kind: z.literal('cancel'), callId: token })

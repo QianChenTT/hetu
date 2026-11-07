@@ -3,7 +3,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../../api/changes.ts'
-import { floorConstantNames } from '../../api/floor.ts'
+import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
 import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
@@ -50,8 +50,13 @@ function map<T extends z.ZodType<object>>(record: T) {
   return noProtoKey.pipe(record).transform(entries => table(entries))
 }
 
-// The human's value per floor constant, above the fixed value or below
-const values = map(z.partialRecord(z.enum(floorConstantNames), z.int().positive()))
+// The human's value per floor constant, above the fixed value or below. A time stops at the longest delay a timer
+// takes, as limit.set has it
+const values = map(z.partialRecord(z.enum(floorConstantNames), z.int().positive()).refine(
+  entries => Object.entries(entries).every(([name, value]) =>
+    !(timeConstants as readonly string[]).includes(name) || value <= MAX_TIMER_MS),
+  `a time past ${MAX_TIMER_MS} ms`,
+))
 const limits = z.strictObject({
   all: values,
   plugins: map(z.record(anyPlugin, values).refine(

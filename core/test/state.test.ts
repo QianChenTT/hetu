@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CAPABILITIES } from '../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
+import { MAX_TIMER_MS } from '../api/floor.ts'
 import { installIds } from '../api/ids.ts'
 import {
   defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,
@@ -331,6 +332,17 @@ describe('writing', () => {
     expect((await store.load()).state.switches).toEqual(switches)
   })
 
+  it('takes a time up to the longest timer and a size past it', async () => {
+    const switches = {
+      ...switchesIn,
+      limits: { all: { callDeadlineMs: MAX_TIMER_MS, argumentBytes: MAX_TIMER_MS + 1 }, plugins: { search: { readyMs: MAX_TIMER_MS } } },
+    }
+    await store.writeSwitches(switches)
+    const loaded = await store.load()
+    expect(result(loaded, 'switches')).toBe('ok')
+    expect(loaded.state.switches).toEqual(switches)
+  })
+
   it('writes a plugin whose id has dashes and underscores', async () => {
     await addPlugin('my-plugin-x_2')
     const loaded = await store.load()
@@ -491,6 +503,8 @@ describe('writing', () => {
       ['a limit that is not whole', limits({ all: { readyMs: 1.5 } })],
       ['a limit as text', limits({ all: { readyMs: '100' } })],
       ['a limit past the safe integers', limits({ all: { readyMs: 2 ** 53 } })],
+      ['a time past the longest timer', limits({ all: { callDeadlineMs: MAX_TIMER_MS + 1 } })],
+      ['a time past the longest timer for one plugin', forPlugin({ floodMs: MAX_TIMER_MS + 1 })],
       ['a limit that is null', forPlugin({ readyMs: null })],
       ['limits with no value for all', switches({ limits: { plugins: {} } })],
       ['limits with an unknown field', limits({ watchdog: {} })],
@@ -660,6 +674,7 @@ const kinds: Kind[] = [
       ['an unknown constant', switchesText({ limits: { all: { messagesPerMinute: 5 }, plugins: {} } })],
       ['a limit of zero', switchesText({ limits: { all: {}, plugins: { search: { callsInFlight: 0 } } } })],
       ['a negative limit', switchesText({ limits: { all: { callsInFlight: -64 }, plugins: {} } })],
+      ['a time past the longest timer', switchesText({ limits: { all: {}, plugins: { search: { heartbeatMs: MAX_TIMER_MS + 1 } } } })],
       ['limits for a namespace no plugin holds', switchesText({ limits: { all: {}, plugins: { plugin: { readyMs: 1 } } } })],
       ['limits for constructor', switchesText({ limits: { all: {}, plugins: { constructor: { readyMs: 1 } } } })],
       ['__proto__ inside the limits', limitsText.replace('"limits":{', '"limits":{"__proto__":{},')],
