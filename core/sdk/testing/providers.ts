@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { RefusalCode } from '../../api/envelope.ts'
 import type { Call, Prepared, Provider } from '../../api/slots.ts'
 
 // A note's version: the SHA-256 hex of its UTF-8 bytes, as the vault plugin keeps it
@@ -10,6 +11,8 @@ export function versionOf(text: string): string {
 // the note's or one given for a note that doesn't exist yet. It tells changed of each path it wrote
 export class MemoryVault implements Provider {
   readonly notes = new Map<string, string>()
+  // Codes the next calls answer with, one each, for a test that needs the vault to fail for a while
+  readonly refusals: RefusalCode[] = []
   private readonly changed: (path: string) => Promise<void>
 
   constructor(changed: (path: string) => Promise<void>) {
@@ -22,6 +25,8 @@ export class MemoryVault implements Provider {
   }
 
   async perform(call: Call, prepared: Prepared): Promise<unknown> {
+    const refusal = this.refusals.shift()
+    if (refusal !== undefined) throw { code: refusal }
     const path = prepared.scope.paths![0]
     const current = this.notes.get(path)
     if (call.action === 'vault.read') {

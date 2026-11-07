@@ -135,3 +135,14 @@ describe('the fake core', () => {
     expect((await fake.call('reader.read', { path: 'notes/a.md' })).ok).toBe(false)
   })
 })
+
+describe('a vault that fails for a while', () => {
+  it('refuses the next vault call with the code a test names, then answers again', async () => {
+    const fake = core()
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    fake.vault.refuseNext('unavailable')
+    await expect(box.ctx!.vault.read({ path: 'notes/a.md' })).rejects.toMatchObject({ code: 'unavailable' })
+    expect(await box.ctx!.vault.read({ path: 'notes/a.md' })).toMatchObject({ text: 'a' })
+  })
+})

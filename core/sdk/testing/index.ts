@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import type { Capability } from '../../api/capabilities.ts'
-import type { Caller, Refusal } from '../../api/envelope.ts'
+import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
 import { floorConstants } from '../../api/floor.ts'
 import { dependencyReason } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest } from '../../api/manifest.ts'
@@ -167,6 +167,8 @@ export class FakeCore {
     write(path: string, text: string, options?: { outside?: boolean }): Promise<void>
     remove(path: string, options?: { outside?: boolean }): Promise<void>
     read(path: string): string | undefined
+    // The next vault call a plugin makes answers this code, as a vault that is busy, down or starting would
+    refuseNext(code: RefusalCode): void
   }
 
   private readonly manifest: Manifest
@@ -219,6 +221,7 @@ export class FakeCore {
         await this.publish(options.outside === true ? 'vault.outside' : 'vault.changed', path)
       },
       read: path => this.memory.notes.get(path),
+      refuseNext: code => { this.memory.refusals.push(code) },
     }
   }
 

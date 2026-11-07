@@ -32,7 +32,7 @@ async function query(fake: FakeCore, text: unknown, grants?: Parameters<FakeCore
   return reply.ok ? (reply.result as { paths: string[] }).paths : reply.refusal.code
 }
 
-const finds = (fake: FakeCore, text: string, paths: string[]) => until(async () => JSON.stringify(await query(fake, text)) === JSON.stringify(paths))
+const finds = (fake: FakeCore, text: string, paths: string[], ms?: number) => until(async () => JSON.stringify(await query(fake, text)) === JSON.stringify(paths), ms)
 
 describe('search with the grants its manifest asks for', () => {
   it('indexes a note it hears about and finds it', async () => {
@@ -70,6 +70,37 @@ describe('search with the grants its manifest asks for', () => {
     await fake.stop()
     expect(await fake.start(search)).toEqual({ state: 'ready' })
     expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
+  })
+
+  it('keeps a note through a read that fails for a while, then reads it again', async () => {
+    const fake = core()
+    await fake.start(search)
+    await fake.vault.write('notes/a.md', 'fox')
+    await finds(fake, 'fox', ['notes/a.md'])
+    fake.vault.refuseNext('unavailable')
+    await fake.vault.write('notes/a.md', 'alpha fox again')
+    await tick(100)
+    expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
+    await finds(fake, 'alpha', ['notes/a.md'], 4000)
+  })
+
+  it('indexes a note whose first read failed once the vault answers again', async () => {
+    const fake = core()
+    await fake.start(search)
+    fake.vault.refuseNext('starting')
+    fake.vault.refuseNext('unavailable')
+    await fake.vault.write('notes/b.md', 'otter')
+    await finds(fake, 'otter', ['notes/b.md'], 4000)
+  })
+
+  it('forgets a note it may no longer read', async () => {
+    const fake = core()
+    await fake.start(search)
+    await fake.vault.write('notes/a.md', 'fox')
+    await finds(fake, 'fox', ['notes/a.md'])
+    fake.vault.refuseNext('not-granted')
+    await fake.vault.write('notes/a.md', 'fox')
+    await finds(fake, 'fox', [])
   })
 
   it('refuses a query that isn\'t { text: string }', async () => {
