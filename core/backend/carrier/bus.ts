@@ -70,9 +70,15 @@ export class Bus {
   private view: number | null = null
   // A subscription the gate gave no answer about waits, so the next sync asks again though the key didn't move
   private unsettled = false
+  // Shutdown began: subscriptions stay as they are until their ways end, asked about and recorded no more
+  private frozen = false
 
   constructor(parts: BusParts) {
     this.parts = parts
+  }
+
+  freeze(): void {
+    this.frozen = true
   }
 
   // Whether the half's subscriptions stay within its cap once these topics are added. A topic it holds counts once
@@ -176,6 +182,7 @@ export class Bus {
   // newly started subscription gets one events.dropped. With the gate off by the human nothing is asked and everything
   // starts
   sync(): void {
+    if (this.frozen) return
     const { key, paths, view } = this.parts.state()
     if (key === this.key && !this.unsettled) return
     const moved = key !== this.key

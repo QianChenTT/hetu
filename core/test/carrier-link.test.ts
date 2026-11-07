@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, FakeLog, harness, host, hostHalf, tick, worker } from './carrier-fakes.ts'
+import { cleanup, code, FakeGuard, FakeLog, harness, host, hostHalf, tick, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -70,5 +70,68 @@ describe('the carrier as the loader\'s link', () => {
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'readyMs', value: 5000 })).ok).toBe(true)
     expect(carrier.limit('search', 'readyMs')).toBe(5000)
+  })
+})
+
+// The loader reports a slot or guard stopping for shutdown as failed, so nothing passes unguarded. Once the loader says
+// shutdown began, what is down answers stopped rather than reading as a failure
+describe('shutdown', () => {
+  // A call with power, a guarded write and a read from a provider, each meeting what shutdown takes down
+  function setup() {
+    const parts = harness({ guardsFor: () => ['leases'] })
+    const { connect, gate, guards, loader } = parts
+    loader.slots.leases = 'on'
+    guards.leases = new FakeGuard()
+    gate.grants.mcp = [{ type: 'vault.write', paths: ['notes/**'] }]
+    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    return { ...parts, mcp: connect(worker('mcp')), search: connect(worker('search')) }
+  }
+
+  it('answers stopped for a call with power once shutdown began and the gate reads failed', async () => {
+    const { carrier, loader, search } = setup()
+    carrier.stopping()
+    loader.slots.gate = 'failed'
+    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('stopped')
+  })
+
+  it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {
+    const { carrier, loader, mcp, vault } = setup()
+    carrier.stopping()
+    loader.slots.leases = 'failed'
+    expect(code(await mcp.ask('vault.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
+    expect(vault.performed).toEqual([])
+  })
+
+  it('answers stopped for a provider that is gone once shutdown began', async () => {
+    const { carrier, providers, search } = setup()
+    carrier.stopping()
+    delete (providers as Record<string, unknown>).vault
+    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('stopped')
+  })
+
+  it('answers policy-down, guard-down and unavailable for the same calls before shutdown', async () => {
+    const { loader, mcp, providers, search } = setup()
+    loader.slots.leases = 'failed'
+    expect(code(await mcp.ask('vault.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    delete (providers as Record<string, unknown>).vault
+    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('unavailable')
+    loader.slots.gate = 'failed'
+    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('policy-down')
+  })
+
+  it('writes no events.waiting or events.ended while shutdown takes the gate down', async () => {
+    const { carrier, gate, loader, log, search } = setup()
+    gate.grants.search.push({ type: 'events.subscribe', topics: ['vault.changed'] })
+    expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: [] })
+    carrier.stopping()
+    loader.slots.gate = 'failed'
+    loader.current = 2
+    carrier.changed()
+    const vault = hostHalf(carrier, host('vault'))
+    await vault.ask('events.publish', { topic: 'vault.changed', path: 'notes/a.md' })
+    carrier.close()
+    await tick()
+    expect(log.events('events.waiting')).toEqual([])
+    expect(log.events('events.ended')).toEqual([])
   })
 })

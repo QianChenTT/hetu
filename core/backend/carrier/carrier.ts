@@ -190,6 +190,8 @@ export class Carrier {
   // The StateView number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
+  // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
+  private shutting = false
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -222,6 +224,20 @@ export class Carrier {
     ack: (seq: number) => this.queue.ack(seq),
   }
 
+  // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
+  // or provider that is down answers stopped where it would answer policy-down, guard-down or unavailable. A gate that
+  // throws or a guard that answers late still answers as a fault
+  stopping(): void {
+    this.shutting = true
+    // Every way ends before the gate stops, so nothing is asked again and no subscription change is recorded
+    this.bus.freeze()
+  }
+
+  // The answer for something that is down: what it is outside shutdown, stopped once shutdown began
+  private down(code: 'policy-down' | 'guard-down' | 'unavailable'): RefusalCode {
+    return this.shutting ? 'stopped' : code
+  }
+
   // A floor record from the core: boot, the loader and the carrier itself
   floor(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
@@ -237,7 +253,7 @@ export class Carrier {
   // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
   // starts, not a change
   changed(): void {
-    if (this.closed) return
+    if (this.closed || this.shutting) return
     this.bus.sync()
     this.bus.emit('core.status')
     const view = this.view()
@@ -679,11 +695,11 @@ export class Carrier {
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
-    if (gate !== 'off') return 'policy-down'
+    if (gate !== 'off') return this.down('policy-down')
     if (this.muted()) return 'pass'
     const log = this.slot('log')
     if (log === 'on' || log === 'off') return 'pass'
-    return log === 'starting' ? 'starting' : 'policy-down'
+    return log === 'starting' ? 'starting' : this.down('policy-down')
   }
 
   // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
@@ -701,7 +717,7 @@ export class Carrier {
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
     const gate = this.holder(() => this.options.gate())
-    if (gate === null) return { code: 'policy-down' }
+    if (gate === null) return { code: this.down('policy-down') }
     const access: Access = frozen({
       stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
       action: asker.action, capability, scope,
@@ -722,7 +738,7 @@ export class Carrier {
       return { code: 'policy-down' }
     }
     const current = this.view()
-    if (current === null) return { code: 'policy-down' }
+    if (current === null) return { code: this.down('policy-down') }
     // An answer with no view isn't an answer at all. One on an older view is stale
     if (!Number.isSafeInteger(view)) return { code: 'not-granted' }
     if (view !== current) return { code: 'stale' }
@@ -763,7 +779,7 @@ export class Carrier {
     const state = this.slot('gate')
     if (state === 'off') return { ok: true, result: [...paths] }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
-    if (gate === null) return no('policy-down')
+    if (gate === null) return no(this.down('policy-down'))
     try {
       return { ok: true, result: paths.filter(path => gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) }
     } catch {
@@ -882,7 +898,7 @@ export class Carrier {
     const info = this.info(id)
     if (info?.state === 'starting') return this.finish(pending, no('starting'))
     const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
-    if (provider === null) return this.finish(pending, no('unavailable'))
+    if (provider === null) return this.finish(pending, no(this.down('unavailable')))
     const call = this.callOf(pending, args)
     // The provider's own handle may name this call as the parent of its sub-calls
     const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
@@ -945,7 +961,7 @@ export class Carrier {
       if (state === 'off') continue
       if (state === 'starting') return 'starting'
       const guard = state === 'on' ? this.holder(() => this.options.guards(id)) : null
-      if (guard === null) return 'guard-down'
+      if (guard === null) return this.down('guard-down')
       const call: GuardCall = frozen({
         callId: pending.callId, caller: pending.caller,
         ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
