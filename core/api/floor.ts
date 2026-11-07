@@ -1,4 +1,4 @@
-import { frozen, table } from './plain.ts'
+import { frozen, table } from './frozen.ts'
 
 const MiB = 1024 * 1024
 
