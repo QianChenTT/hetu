@@ -115,14 +115,14 @@ function renderIntro(){
   panel.replaceChildren();
   panel.appendChild(h("span","eyebrow","How to read it"));
   panel.appendChild(h("h2",null,"Pick a box, an arrow or a scenario"));
-  var p=h("p",null,"The daemon in the middle-left holds all power. Everything in teal is sandboxed and can only ask the capability gate. The security state on the right keeps you in the loop: only hetu writes it, only after a Confirm click you make in the trusted window and it checks each file's hash at every start.");p.style.color="var(--muted)";panel.appendChild(p);
+  var p=h("p",null,"The core in the middle-left is the one path every call takes: the carrier names the caller, asks the gate and routes. The host-level plugins below it hold the real power and come only from the install. Everything in teal is sandboxed and holds one channel, to the carrier. The security state on the right keeps you in the loop: only hetu writes it, only after a Confirm click you make in the trusted window and it checks each file's hash at every start.");p.style.color="var(--muted)";panel.appendChild(p);
   var ul=h("ul");["Hover a box to light up every flow it has","Click to pin it and read its role, checks and threats","Choose a scenario above to step through a sequence","Every flow is also listed in the table below the map"].forEach(function(s){ul.appendChild(h("li",null,s))});panel.appendChild(ul);
   panel.appendChild(h("span","eyebrow","Counts"));
   var m=h("p",null,N.length+" components · "+E.length+" flows · "+S.length+" scenarios");m.className="mono";panel.appendChild(m);
 }
 function renderNode(id){
   var n=byId[id];panel.replaceChildren();
-  var k=h("span","eyebrow kind");k.appendChild(h("span","pill "+n.cls,({core:"Trusted core",sandbox:"Sandboxed",outside:"Outside hetu",disk:"Disk and OS",proc:"Outside the sandbox"})[n.cls]));panel.appendChild(k);
+  var k=h("span","eyebrow kind");k.appendChild(h("span","pill "+n.cls,({core:"Trusted base",sandbox:"Sandboxed",outside:"Outside hetu",disk:"Disk and OS",proc:"Outside the sandbox"})[n.cls]));panel.appendChild(k);
   panel.appendChild(h("h2",null,n.l.join(" ")));
   if(n.sub.length){var s=h("p",null,n.sub.join(" · "));s.style.color="var(--muted)";panel.appendChild(s)}
   panel.appendChild(h("p",null,n.role));

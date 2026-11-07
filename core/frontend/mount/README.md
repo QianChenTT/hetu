@@ -1,1 +1,1 @@
-Privileged frontend plugins compiled in from the install, such as hidden marks, and the thin mount that starts sandboxed plugin halves with the grants the loader hands it
+The window shell: the window preload, the port handoff, the frame mount, the generic bridge and the banner. A view frame gets its port only on its first load. Hidden marks becomes its own in-page plugin, compiled in from the install
