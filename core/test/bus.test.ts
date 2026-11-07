@@ -184,7 +184,7 @@ describe('a gate outage end to end, step 5\'s proof', () => {
     expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
   })
 
-  // S5-RACE-2: one rule for whether the gate can be asked, so the bus and a subscribe never disagree
+  // One rule for whether the gate can be asked, so the bus and a subscribe never disagree
   it('stands a subscribe while the gate is on with no holder, as the bus holds paths back then', async () => {
     let holder = true
     let held: FakeGate | null = null
@@ -217,8 +217,8 @@ describe('a gate outage end to end, step 5\'s proof', () => {
     }
   })
 
-  // S5A-1 and S5-RACE-1: a gate that throws when asked again gave no answer, so nothing it holds hears anything until it
-  // answers, and the bus asks again at every sync rather than waiting for the key to move
+  // A gate that throws when asked again gave no answer, so nothing it holds hears anything until it answers. The bus
+  // asks again at every sync rather than waiting for the key to move
   it('holds back every subscription the gate throws on when asked again and starts them at the next sync it answers', async () => {
     const { carrier, loader, gate, search, mcp, edited, log } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
@@ -230,7 +230,7 @@ describe('a gate outage end to end, step 5\'s proof', () => {
     carrier.changed()
     await edited('notes/a.md')
     await settle()
-    // Neither started nor ended, and the live one waits too, since the gate gave no answer
+    // Neither started nor ended. The live one waits too, since the gate gave no answer
     expect(search.events()).toEqual([])
     expect(mcp.events()).toEqual([])
     gate.decision = null
@@ -327,7 +327,7 @@ describe('asking again', () => {
     expect(asks).toEqual([])
   })
 
-  // S5S-3: the gate hasn't caught up with the StateView yet, which refuses nothing, so the join's order can't end them
+  // An answer on an older StateView means the gate hasn't caught up yet, which refuses nothing
   it('holds back a subscription the gate answers on an older StateView and starts it once the gate answers on this one', async () => {
     const { carrier, loader, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
@@ -360,8 +360,8 @@ describe('asking again', () => {
     expect(paths(ghost.events())).toEqual(['secret/a.md'])
   })
 
-  // S5A-2 A: no gate ever allowed what was taken with the gate off, so a gate switched back on that fails at start
-  // holds it back, path-less events included
+  // No gate ever allowed what was taken with the gate off, so a gate switched back on that fails at start holds it
+  // back, path-less events included
   it('holds back what was taken with the gate off when the gate switched back on fails, until the gate judges it', async () => {
     const { carrier, loader, connect, indexed } = setup()
     loader.slots.gate = 'off'
@@ -385,7 +385,7 @@ describe('asking again', () => {
     expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
   })
 
-  // S5A-2 B and S5-RACE-3: a narrowing never asks the gate, so a StateView that moves while the gate is down holds back
+  // A narrowing never asks the gate, so a StateView that moves while the gate is down holds back
   // everything the gate allowed on the old one. What it didn't touch starts again once the gate answers
   it('holds back what the gate allowed on an older StateView when the StateView moves while the gate is down', async () => {
     const { carrier, loader, gate, git, search, indexed, edited } = setup()
@@ -438,8 +438,8 @@ describe('the gate off by the human', () => {
     expect((await mcp.ask('events.unsubscribe', { topics: ['vault.changed'] })).ok).toBe(true)
   })
 
-  // S5S-2: canRead is true with the gate off by the human, and deliveries are never logged, so the log's tie to calls
-  // with power doesn't reach them, as filterReadable passes every path then too
+  // canRead is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
+  // power doesn't reach them, as filterReadable passes every path then too
   it('delivers every path with the log down, since only calls with power need the log', async () => {
     const { carrier, loader, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['vault.changed'] })
@@ -574,7 +574,7 @@ describe('core.*', () => {
     expect(vaultHalf.inbox.filter(message => message.kind === 'event')).toEqual([])
   })
 
-  // S4-9: the floor let the trusted window reach no events.* at all, so core.* could never reach it by subscription
+  // core.* reaches the trusted window by subscription, so the floor lets it subscribe to the core topics only
   it('lets the trusted window hear the core topics and nothing else, with the gate failed', async () => {
     const { carrier, loader, trustedWay, gate } = setup()
     loader.slots.gate = 'failed'
@@ -595,7 +595,7 @@ describe('core.*', () => {
     expect(trustedWay.events().map(message => message.seq ?? message.topic)).toEqual([1, 2, 'events.dropped', 3])
   })
 
-  // S5S-4: the first StateView the carrier reads is where it starts, so the first changed() sends no core.security
+  // The first StateView the carrier reads is where it starts, so the first changed() sends no core.security
   it('sends core.status to the windows on every change and core.security once per new StateView, never a path', async () => {
     const { carrier, loader, way } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'core.security'] })
@@ -1362,8 +1362,8 @@ describe('records', () => {
     ])
   })
 
-  // S5S-1: a subscribe that only stands used no power, so the log never shows one passing a failed gate, and what the
-  // gate later decides about it is recorded with the topics
+  // A subscribe that only stands used no power, so the log never shows one passing a failed gate. What the gate later
+  // decides about it is recorded with the topics
   it('records what stands apart from the call, then what asking again started, held back or ended, with the topics', async () => {
     const clock = 1_000_000
     const { carrier, loader, gate, log, search, mcp, connect, git } = setup({ now: () => clock })
