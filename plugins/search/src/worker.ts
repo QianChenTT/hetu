@@ -12,7 +12,7 @@ const LAST_RETRY_MS = 30_000
 // Reads again for a resync or a retry go this many at a time, so they never fill the calls search may have in flight
 // and a query never waits behind them
 const BATCH = 16
-// Refusals that mean the note is gone or no longer search's to read. Any other is passing: the gate or the vault is
+// Refusals that mean the note is gone or no longer search's to read. Any other is passing: the gate or the luoshu is
 // starting, busy or down
 const gone = new Set(['not-found', 'not-granted', 'switched-off'])
 
@@ -63,7 +63,7 @@ async function start(ctx: PluginContext): Promise<void> {
   // Reads the note again. One that is gone or that search may no longer read leaves the index. One whose read failed
   // for a passing reason keeps its entry and is read again later
   async function refresh(path: string): Promise<void> {
-    const read = await ctx.try(ctx.vault.read({ path }))
+    const read = await ctx.try(ctx.luoshu.read({ path }))
     if (!read.ok) {
       if (gone.has(read.refused.code)) {
         retries.delete(path)
@@ -90,7 +90,7 @@ async function start(ctx: PluginContext): Promise<void> {
 
   // A path-less event names no note, so it waits for the resync that follows. A refused subscribe leaves search
   // answering from the index it has
-  await ctx.try(ctx.events.on(['vault.changed', 'vault.outside'], event => (event.path === undefined ? undefined : refresh(event.path)), {
+  await ctx.try(ctx.events.on(['luoshu.changed', 'luoshu.outside'], event => (event.path === undefined ? undefined : refresh(event.path)), {
     onResync: () => {
       readAgain([...index.paths(), ...retries])
     },

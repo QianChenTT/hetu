@@ -51,20 +51,20 @@ const switchesIn = {
 }
 // Absolute by the rules of the platform the tests run on
 const notes = onWindows ? 'C:\\Users\\han\\notes' : '/home/han/notes'
-const vaultIn = { folder: notes }
+const luoshuIn = { folder: notes }
 const pluginIn = (over: object = {}) => ({
   version: '1.0.0',
   contentHash: HASH,
   signer: 'github.com/someone/search/.github/workflows/release.yml',
-  granted: [{ type: 'vault.read', paths: ['**'] }],
+  granted: [{ type: 'luoshu.read', paths: ['**'] }],
   class: 1,
   enabled: true,
   ...over,
 })
 // Every type a folder plugin may hold, so each schema has to accept every one
 const everyCapability = [
-  { type: 'vault.read', paths: ['**'] },
-  { type: 'vault.write', paths: ['04 - Daily/**'] },
+  { type: 'luoshu.read', paths: ['**'] },
+  { type: 'luoshu.write', paths: ['04 - Daily/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
   { type: 'ui.panel' },
   { type: 'ui.decoration' },
@@ -84,7 +84,7 @@ let dir: string
 let store: StateStore
 const stateFile = (...parts: string[]) => path.join(dir, 'state', ...parts)
 const switchesPath = () => stateFile('switches.json')
-const vaultPath = () => stateFile('vault.json')
+const luoshuPath = () => stateFile('luoshu.json')
 const pluginPath = (id: string) => stateFile('plugins', `${id}.json`)
 // A state file is its JSON and then one line holding the hash of every byte above it
 const hashLine = (body: Buffer | string) => `${sha256(body)}\n`
@@ -143,9 +143,9 @@ afterEach(async () => {
 })
 
 describe('defaults', () => {
-  it('loosen nothing: every install plugin on, empty lists, false switches, no raised limits and no vault', () => {
+  it('loosen nothing: every install plugin on, empty lists, false switches, no raised limits and no luoshu', () => {
     expect(defaultSwitches()).toEqual(noSwitches)
-    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, vault: null })
+    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, luoshu: null })
   })
 
   it('hands out a new object each time, so a caller can not change the next default', () => {
@@ -155,7 +155,7 @@ describe('defaults', () => {
     changed.switches.limits.all.callsInFlight = 1000
     changed.switches.limits.plugins.search = { readyMs: 1 }
     changed.plugins.search = pluginIn() as never
-    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, vault: null })
+    expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, luoshu: null })
   })
 
   it('keeps every table free of a prototype, so a name every object has finds nothing', () => {
@@ -228,26 +228,26 @@ describe('stateDir', () => {
 describe('writing', () => {
   async function writeAll() {
     await store.writeSwitches(switchesIn)
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     await store.writePlugin('search', pluginIn())
   }
 
   it('puts each file where the layout says and nothing else', async () => {
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json', 'vault.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['luoshu.json', 'plugins', 'switches.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
   it('gives each file format 2 and its own content', async () => {
     await writeAll()
     expect(await jsonOf(switchesPath())).toEqual({ format: 2, ...switchesIn })
-    expect(await jsonOf(vaultPath())).toEqual({ format: 2, ...vaultIn })
+    expect(await jsonOf(luoshuPath())).toEqual({ format: 2, ...luoshuIn })
     expect(await jsonOf(pluginPath('search'))).toEqual({ format: 2, ...pluginIn() })
   })
 
   it('ends every file with one line holding the hash of the exact bytes above it', async () => {
     await writeAll()
-    for (const file of [switchesPath(), vaultPath(), pluginPath('search')]) {
+    for (const file of [switchesPath(), luoshuPath(), pluginPath('search')]) {
       const body = await bodyOf(file)
       expect(body.endsWith('}\n')).toBe(true)
       expect(await hashOf(file)).toBe(hashLine(body))
@@ -259,16 +259,16 @@ describe('writing', () => {
     await addPlugin('search')
     await addPlugin('git')
     await store.writeSwitches(switchesIn)
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.vault).toEqual(vaultIn)
+    expect(loaded.state.luoshu).toEqual(luoshuIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
     expect(loaded.state.plugins.search).toEqual(pluginIn({ contentHash: hashFiles(await readFiles(path.join(dir, 'plugins', 'search'))) }))
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
-      { check: 'vault', result: 'ok' },
+      { check: 'luoshu', result: 'ok' },
       { check: 'plugin-entry', id: 'git', result: 'ok' },
       { check: 'plugin-entry', id: 'search', result: 'ok' },
     ])
@@ -280,12 +280,12 @@ describe('writing', () => {
     const { state } = await store.load()
     state.switches.off.push('history')
     await store.writeSwitches(state.switches)
-    await store.writeVault(state.vault)
+    await store.writeLuoshu(state.luoshu)
     await store.writePlugin('search', state.plugins.search)
     const again = await store.load()
     expect(again.suspect).toBe(false)
     expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'leases', 'history'] })
-    expect(again.state.vault).toEqual(vaultIn)
+    expect(again.state.luoshu).toEqual(luoshuIn)
     expect(again.state.plugins.search).toEqual(state.plugins.search)
   })
 
@@ -362,7 +362,7 @@ describe('writing', () => {
   it('leaves no temp files behind', async () => {
     await writeAll()
     await writeAll()
-    expect((await readdir(stateFile())).sort()).toEqual(['plugins', 'switches.json', 'vault.json'])
+    expect((await readdir(stateFile())).sort()).toEqual(['luoshu.json', 'plugins', 'switches.json'])
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
@@ -433,10 +433,10 @@ describe('writing', () => {
     })
 
     it('waits out a short hold at load rather than reading the file as unreadable', async () => {
-      await store.writeVault(vaultIn)
-      const holder = await holdOpen(vaultPath(), 'None')
+      await store.writeLuoshu(luoshuIn)
+      const holder = await holdOpen(luoshuPath(), 'None')
       const [loaded] = await Promise.all([store.load(), releaseAfter(holder, 300)])
-      expect(result(loaded, 'vault')).toBe('ok')
+      expect(result(loaded, 'luoshu')).toBe('ok')
       expect(loaded.suspect).toBe(false)
     })
 
@@ -493,7 +493,7 @@ describe('writing', () => {
       ['more ids in execAnyCommand than a list holds', switches({ execAnyCommand: tooMany })],
       ['an allowlist entry that is not a hash', switches({ allowUnsigned: ['abc'] })],
       ['an uppercase allowlist hash', switches({ allowUnsigned: ['A'.repeat(64)] })],
-      ['an install id in removed', switches({ removed: ['vault'] })],
+      ['an install id in removed', switches({ removed: ['luoshu'] })],
       ['a community plugin in removed', switches({ removed: ['my-plugin'] })],
       ['an id twice in removed', switches({ removed: ['git', 'git'] })],
       ['an unknown constant for all plugins', limits({ all: { callsPerSecond: 10 } })],
@@ -518,16 +518,16 @@ describe('writing', () => {
       ['__proto__ in the limits for all plugins', limits({ all: proto('{"__proto__":{"readyMs":1}}') })],
       ['__proto__ as a plugin in the limits', limits({ plugins: proto('{"__proto__":{"readyMs":1}}') })],
       ['__proto__ in the limits for one plugin', forPlugin(proto('{"__proto__":{"readyMs":1}}'))],
-      ['a relative vault folder', () => store.writeVault({ folder: 'notes' })],
-      ['an empty vault folder', () => store.writeVault({ folder: '' })],
-      ['a vault folder that is not text', () => store.writeVault({ folder: 5 })],
-      ['a vault folder past the cap', () => store.writeVault({ folder: notes + 'a'.repeat(MAX_FOLDER_LENGTH) })],
-      ['a vault folder with a control character', () => store.writeVault({ folder: `${notes}\u0007` })],
-      ['a vault folder with a bidi override', () => store.writeVault({ folder: `${notes}\u202egnp.exe` })],
-      ['a vault with no folder', () => store.writeVault({})],
-      ['a vault with an unknown field', () => store.writeVault({ ...vaultIn, extra: 1 })],
-      ['a vault that carries a format', () => store.writeVault({ ...vaultIn, format: 2 })],
-      ['__proto__ inside the vault', () => store.writeVault(proto(`{"folder":${JSON.stringify(notes)},"__proto__":{}}`))],
+      ['a relative luoshu folder', () => store.writeLuoshu({ folder: 'notes' })],
+      ['an empty luoshu folder', () => store.writeLuoshu({ folder: '' })],
+      ['a luoshu folder that is not text', () => store.writeLuoshu({ folder: 5 })],
+      ['a luoshu folder past the cap', () => store.writeLuoshu({ folder: notes + 'a'.repeat(MAX_FOLDER_LENGTH) })],
+      ['a luoshu folder with a control character', () => store.writeLuoshu({ folder: `${notes}\u0007` })],
+      ['a luoshu folder with a bidi override', () => store.writeLuoshu({ folder: `${notes}\u202egnp.exe` })],
+      ['a luoshu with no folder', () => store.writeLuoshu({})],
+      ['a luoshu with an unknown field', () => store.writeLuoshu({ ...luoshuIn, extra: 1 })],
+      ['a luoshu that carries a format', () => store.writeLuoshu({ ...luoshuIn, format: 2 })],
+      ['__proto__ inside the luoshu', () => store.writeLuoshu(proto(`{"folder":${JSON.stringify(notes)},"__proto__":{}}`))],
       ['a plugin with an unknown capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'host.replace' }] }))],
       // Entries are for folder plugins, which never hold an install-only type
       ['a plugin with an install-only capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'guard.hook' }] }))],
@@ -536,7 +536,7 @@ describe('writing', () => {
       }))],
       // Counted across entries, so one type split over many can't get past the cap
       ['a plugin with more scopes for one type than core/api allows', () => store.writePlugin('search', pluginIn({
-        granted: [{ type: 'vault.read', paths: many(40, i => `a${i}/**`) }, { type: 'vault.read', paths: many(40, i => `b${i}/**`) }],
+        granted: [{ type: 'luoshu.read', paths: many(40, i => `a${i}/**`) }, { type: 'luoshu.read', paths: many(40, i => `b${i}/**`) }],
       }))],
       ['a plugin with an unknown field', () => store.writePlugin('search', pluginIn({ extra: 1 }))],
       ['a plugin that carries its own id', () => store.writePlugin('search', pluginIn({ id: 'search' }))],
@@ -591,11 +591,11 @@ describe('writing', () => {
 
     // One rename per file means a load can't see half a write anyway, what the queue still gives is order
     it('lets a load called after three writes see them all, without waiting for them first', async () => {
-      const writes = [store.writeSwitches(switchesIn), store.writeVault(vaultIn), store.writePlugin('search', pluginIn())]
+      const writes = [store.writeSwitches(switchesIn), store.writeLuoshu(luoshuIn), store.writePlugin('search', pluginIn())]
       const loaded = await store.load()
       await Promise.all(writes)
       expect(loaded.state.switches).toEqual(switchesIn)
-      expect(loaded.state.vault).toEqual(vaultIn)
+      expect(loaded.state.luoshu).toEqual(luoshuIn)
       expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
     })
 
@@ -625,14 +625,14 @@ type Kind = {
 }
 
 const capabilityCases = (wrap: (capability: object) => string): [string, string][] => [
-  ['an unknown capability type', wrap({ type: 'vault.delete', paths: ['**'] })],
+  ['an unknown capability type', wrap({ type: 'luoshu.delete', paths: ['**'] })],
   ['an install-only capability type', wrap({ type: 'guard.hook' })],
-  ['a capability with the scope of another', wrap({ type: 'vault.read', hosts: ['example.com'] })],
+  ['a capability with the scope of another', wrap({ type: 'luoshu.read', hosts: ['example.com'] })],
   ['a capability with no scope', wrap({ type: 'net.fetch' })],
   ['an exec command as a string', wrap({ type: 'exec', commands: ['git status'], env: [] })],
   ['an empty exec command', wrap({ type: 'exec', commands: [[]], env: [] })],
   ['an unknown history access', wrap({ type: 'history', access: 'rewrite', paths: ['**'] })],
-  ['a duplicate key in a capability', wrap({ type: 'vault.read', paths: ['safe/**'] }).replace('"paths":["safe/**"]', '"paths":["safe/**"],"paths":["**"]')],
+  ['a duplicate key in a capability', wrap({ type: 'luoshu.read', paths: ['safe/**'] }).replace('"paths":["safe/**"]', '"paths":["safe/**"],"paths":["**"]')],
   ['__proto__ inside a capability', wrap({ type: 'storage' }).replace('{"type":"storage"', '{"__proto__":{"type":"guard.hook"},"type":"storage"')],
 ]
 
@@ -686,15 +686,15 @@ const kinds: Kind[] = [
     ],
   },
   {
-    name: 'vault',
-    file: vaultPath,
-    valid: { format: 2, ...vaultIn },
-    seed: () => store.writeVault(vaultIn),
+    name: 'luoshu',
+    file: luoshuPath,
+    valid: { format: 2, ...luoshuIn },
+    seed: () => store.writeLuoshu(luoshuIn),
     edit: text => text.replace('notes"', 'other"'),
-    result: loaded => result(loaded, 'vault'),
+    result: loaded => result(loaded, 'luoshu'),
     absent: 'absent',
-    seeded: loaded => expect(loaded.state.vault).toEqual(vaultIn),
-    fellBack: loaded => expect(loaded.state.vault).toBeNull(),
+    seeded: loaded => expect(loaded.state.luoshu).toEqual(luoshuIn),
+    fellBack: loaded => expect(loaded.state.luoshu).toBeNull(),
     rejected: [
       ['a relative folder', JSON.stringify({ format: 2, folder: 'notes' })],
       ['an empty folder', JSON.stringify({ format: 2, folder: '' })],
@@ -702,8 +702,8 @@ const kinds: Kind[] = [
       ['a null folder', JSON.stringify({ format: 2, folder: null })],
       ['no folder', JSON.stringify({ format: 2 })],
       ['a folder with a control character', JSON.stringify({ format: 2, folder: `${notes}\u0000` })],
-      ['an unknown vault field', JSON.stringify({ format: 2, ...vaultIn, extra: 1 })],
-      ['a duplicate folder', JSON.stringify({ format: 2, ...vaultIn }).replace('{"format":2', '{"format":2,"folder":"/elsewhere"')],
+      ['an unknown luoshu field', JSON.stringify({ format: 2, ...luoshuIn, extra: 1 })],
+      ['a duplicate folder', JSON.stringify({ format: 2, ...luoshuIn }).replace('{"format":2', '{"format":2,"folder":"/elsewhere"')],
     ],
   },
   {
@@ -928,11 +928,11 @@ describe('newer formats', () => {
   it('hold only the file that is newer, every other file still writes', async () => {
     await plant(switchesPath(), JSON.stringify({ format: 3 }))
     await store.load()
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     await addPlugin('search')
     const loaded = await store.load()
     expect(result(loaded, 'switches')).toBe('newer')
-    expect(result(loaded, 'vault')).toBe('ok')
+    expect(result(loaded, 'luoshu')).toBe('ok')
     expect(result(loaded, 'plugin-entry', 'search')).toBe('ok')
   })
 
@@ -978,7 +978,7 @@ describe('files that fail alone', () => {
     const searchRoot = await addPlugin('search')
     const gitRoot = await addPlugin('git')
     await store.writeSwitches(switchesIn)
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     return { searchRoot, gitRoot }
   }
 
@@ -990,7 +990,7 @@ describe('files that fail alone', () => {
     await writeFile(file, `${text.slice(0, at)} ${text.slice(at)}`)
   }
 
-  it('leaves every other plugin, the switches and the vault loaded when one plugin entry is edited', async () => {
+  it('leaves every other plugin, the switches and the luoshu loaded when one plugin entry is edited', async () => {
     await setup()
     await change(pluginPath('search'))
     const loaded = await store.load()
@@ -1000,18 +1000,18 @@ describe('files that fail alone', () => {
     expect(Object.keys(loaded.state.plugins)).toEqual(['git'])
     expect(loaded.state.plugins.git.enabled).toBe(true)
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.vault).toEqual(vaultIn)
+    expect(loaded.state.luoshu).toEqual(luoshuIn)
   })
 
-  it('leaves the plugins and the vault alone when the switches are edited', async () => {
+  it('leaves the plugins and the luoshu alone when the switches are edited', async () => {
     await setup()
     await tamper(switchesPath())
     const loaded = await store.load()
     expect(loaded.suspect).toBe(true)
     expect(result(loaded, 'switches')).toBe('hash-mismatch')
     expect(loaded.state.switches).toEqual(noSwitches)
-    expect(result(loaded, 'vault')).toBe('ok')
-    expect(loaded.state.vault).toEqual(vaultIn)
+    expect(result(loaded, 'luoshu')).toBe('ok')
+    expect(loaded.state.luoshu).toEqual(luoshuIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
     expect(loaded.state.plugins.search.enabled).toBe(true)
     expect(loaded.state.plugins.git.enabled).toBe(true)
@@ -1021,25 +1021,25 @@ describe('files that fail alone', () => {
     ['missing', () => rm(switchesPath())],
     ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3 }))],
     ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
-  ])('keeps the vault when the switches file is %s', async (_name, spoil) => {
+  ])('keeps the luoshu when the switches file is %s', async (_name, spoil) => {
     await setup()
     await spoil()
     const loaded = await store.load()
     expect(loaded.state.switches).toEqual(noSwitches)
-    expect(result(loaded, 'vault')).toBe('ok')
-    expect(loaded.state.vault).toEqual(vaultIn)
+    expect(result(loaded, 'luoshu')).toBe('ok')
+    expect(loaded.state.luoshu).toEqual(luoshuIn)
   })
 
   it.each([
-    ['edited', () => tamper(vaultPath())],
-    ['missing', () => rm(vaultPath())],
-    ['in a newer format', () => plant(vaultPath(), JSON.stringify({ format: 3 }))],
-    ['relative inside', () => plant(vaultPath(), JSON.stringify({ format: 2, folder: 'notes' }))],
-  ])('keeps the switches and the plugins when the vault file is %s', async (_name, spoil) => {
+    ['edited', () => tamper(luoshuPath())],
+    ['missing', () => rm(luoshuPath())],
+    ['in a newer format', () => plant(luoshuPath(), JSON.stringify({ format: 3 }))],
+    ['relative inside', () => plant(luoshuPath(), JSON.stringify({ format: 2, folder: 'notes' }))],
+  ])('keeps the switches and the plugins when the luoshu file is %s', async (_name, spoil) => {
     await setup()
     await spoil()
     const loaded = await store.load()
-    expect(loaded.state.vault).toBeNull()
+    expect(loaded.state.luoshu).toBeNull()
     expect(result(loaded, 'switches')).toBe('ok')
     expect(loaded.state.switches).toEqual(switchesIn)
     expect(Object.keys(loaded.state.plugins)).toEqual(['git', 'search'])
@@ -1049,11 +1049,11 @@ describe('files that fail alone', () => {
     await setup()
     await change(pluginPath('git'))
     await tamper(switchesPath())
-    await tamper(vaultPath())
+    await tamper(luoshuPath())
     await store.writeSwitches(switchesIn)
     const loaded = await store.load()
     expect(result(loaded, 'switches')).toBe('ok')
-    expect(result(loaded, 'vault')).toBe('hash-mismatch')
+    expect(result(loaded, 'luoshu')).toBe('hash-mismatch')
     expect(result(loaded, 'plugin-entry', 'git')).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
   })
@@ -1065,7 +1065,7 @@ describe('a failed check and a switch-off', () => {
     const searchRoot = await addPlugin('search')
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     const loaded = await store.load()
-    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'vault', 'plugin-entry'])
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'luoshu', 'plugin-entry'])
     expect(loaded.suspect).toBe(false)
   })
 
@@ -1141,7 +1141,7 @@ describe('the tombstones', () => {
   it.each([
     ['missing, which only boot can tell from a first run', () => rm(switchesPath())],
     ['edited', () => writeFile(switchesPath(), 'tampered')],
-    ['invalid', () => plant(switchesPath(), switchesText({ removed: ['vault'] }))],
+    ['invalid', () => plant(switchesPath(), switchesText({ removed: ['luoshu'] }))],
     ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, removed: ['git'] }))],
     ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
   ])('are not known when the switches file is %s', async (_name, spoil) => {
@@ -1153,7 +1153,7 @@ describe('the tombstones', () => {
   })
 })
 
-describe('the vault folder', () => {
+describe('the luoshu folder', () => {
   const folders: [string, string, boolean][] = [
     ['win32', 'C:\\Users\\han\\notes', true],
     ['win32', 'c:/Users/han/notes', true],
@@ -1181,26 +1181,26 @@ describe('the vault folder', () => {
   it.each(folders)('on %s takes %j as absolute: %s', async (platform, folder, absolute) => {
     const onPlatform = new StateStore(dir, platform)
     if (absolute) {
-      await onPlatform.writeVault({ folder })
-      expect((await onPlatform.load()).state.vault).toEqual({ folder })
+      await onPlatform.writeLuoshu({ folder })
+      expect((await onPlatform.load()).state.luoshu).toEqual({ folder })
     } else {
-      await expect(onPlatform.writeVault({ folder })).rejects.toThrow(/absolute/)
+      await expect(onPlatform.writeLuoshu({ folder })).rejects.toThrow(/absolute/)
     }
   })
 
   it('takes a folder of exactly the cap and refuses one character more', async () => {
     const posix = new StateStore(dir, 'linux')
     const folder = `/${'a'.repeat(MAX_FOLDER_LENGTH - 1)}`
-    await posix.writeVault({ folder })
-    expect((await posix.load()).state.vault).toEqual({ folder })
-    await expect(posix.writeVault({ folder: `${folder}a` })).rejects.toThrow(/too_big/)
+    await posix.writeLuoshu({ folder })
+    expect((await posix.load()).state.luoshu).toEqual({ folder })
+    await expect(posix.writeLuoshu({ folder: `${folder}a` })).rejects.toThrow(/too_big/)
   })
 
   it('reads a folder absolute only on another platform as invalid', async () => {
-    await plant(vaultPath(), JSON.stringify({ format: 2, folder: 'C:\\Users\\han\\notes' }))
-    expect(result(await new StateStore(dir, 'linux').load(), 'vault')).toBe('invalid')
-    await plant(vaultPath(), JSON.stringify({ format: 2, folder: '/home/han/notes' }))
-    expect(result(await new StateStore(dir, 'win32').load(), 'vault')).toBe('invalid')
+    await plant(luoshuPath(), JSON.stringify({ format: 2, folder: 'C:\\Users\\han\\notes' }))
+    expect(result(await new StateStore(dir, 'linux').load(), 'luoshu')).toBe('invalid')
+    await plant(luoshuPath(), JSON.stringify({ format: 2, folder: '/home/han/notes' }))
+    expect(result(await new StateStore(dir, 'win32').load(), 'luoshu')).toBe('invalid')
   })
 })
 
@@ -1251,20 +1251,20 @@ describe('names in the plugins folder', () => {
     expect(loaded.suspect).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'ok' },
-      { check: 'vault', result: 'absent' },
+      { check: 'luoshu', result: 'absent' },
     ])
   })
 
   it('fails closed when the folder can not be listed, without touching the other files', async () => {
     await store.writeSwitches(switchesIn)
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     await writeFile(stateFile('plugins'), 'not a folder')
     const loaded = await store.load()
     expect(result(loaded, 'plugin-entry')).toBe('unreadable')
     expect(loaded.suspect).toBe(true)
     expect(loaded.state.plugins).toEqual({})
     expect(loaded.state.switches).toEqual(switchesIn)
-    expect(loaded.state.vault).toEqual(vaultIn)
+    expect(loaded.state.luoshu).toEqual(luoshuIn)
   })
 })
 
@@ -1280,7 +1280,7 @@ describe('removing a plugin', () => {
     await rm(pluginPath('search'))
     const loaded = await store.load()
     expect(loaded.state.plugins.search).toBeUndefined()
-    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'vault'])
+    expect(loaded.checks.map(c => c.check)).toEqual(['switches', 'luoshu'])
   })
 
   it('removes its entry and leaves the others', async () => {
@@ -1306,14 +1306,14 @@ describe('removing a plugin', () => {
 })
 
 describe('loading', () => {
-  it('reads no files at all as no switches and no vault, nothing suspect', async () => {
+  it('reads no files at all as no switches and no luoshu, nothing suspect', async () => {
     const loaded = await store.load()
     expect(loaded.state).toEqual(defaultState())
     expect(loaded.suspect).toBe(false)
     expect(loaded.removedKnown).toBe(false)
     expect(loaded.checks).toEqual([
       { check: 'switches', result: 'absent' },
-      { check: 'vault', result: 'absent' },
+      { check: 'luoshu', result: 'absent' },
     ])
   })
 
@@ -1327,10 +1327,10 @@ describe('loading', () => {
     await addPlugin('git')
     await addPlugin('mcp')
     await store.writeSwitches(switchesIn)
-    await store.writeVault(vaultIn)
+    await store.writeLuoshu(luoshuIn)
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     await writeFile(switchesPath(), 'tampered')
-    await plant(vaultPath(), JSON.stringify({ format: 3 }))
+    await plant(luoshuPath(), JSON.stringify({ format: 3 }))
     await writeFile(pluginPath('git'), 'tampered')
     await plant(pluginPath('mcp'), JSON.stringify({ format: 1, ...pluginIn() }))
     await writeFile(stateFile('plugins', 'notes.txt'), 'x')

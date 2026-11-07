@@ -6,7 +6,7 @@ import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
-import { code, FakeStorage, FakeVault, worker } from './carrier-fakes.ts'
+import { code, FakeStorage, FakeLuoshu, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
@@ -343,39 +343,39 @@ describe('shutdown through the joined core', () => {
 // The carrier must ask the same guards the loader expects and report where the loader's options say
 describe('what wireCore hands the carrier', () => {
   async function writing(wire: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>, gate = allowAll()) {
-    const vault = new FakeVault()
+    const luoshu = new FakeLuoshu()
     const parts = await joined({
-      install: { ...coreInstall(), vault: { files: filesFor(hostManifest('vault')) } },
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate } }, vault: { exports: { provider: vault } } },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
       wire,
     })
     await parts.loader.start()
     await parts.loader.settled()
-    return { ...parts, vault }
+    return { ...parts, luoshu }
   }
 
   it('makes the carrier ask the guards the loader expects, so a missing one refuses the write', async () => {
-    const { runtime, vault } = await writing({ guardsFor: () => ['leases'] })
-    const reply = await runtime.half('alpha').ask('vault.write', { path: 'notes/a.md', text: 'x' })
+    const { runtime, luoshu } = await writing({ guardsFor: () => ['leases'] })
+    const reply = await runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
-    expect(vault.performed).toEqual([])
+    expect(luoshu.performed).toEqual([])
   })
 
   it('hands the carrier the debug sink for a gate that throws', async () => {
     const debug: { plugin: string | null }[] = []
     const gate = gateDeciding(() => { throw new Error('broken') })
     const { runtime } = await writing({ debug: entry => { debug.push(entry) } }, gate)
-    expect(code((await runtime.half('alpha').ask('vault.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
+    expect(code((await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
     expect(debug.map(entry => entry.plugin)).toContain('gate')
   })
 
   it('hands the carrier the asks that raise a gate\'s prompt', async () => {
     const raised: string[] = []
-    const gate = gateDeciding((access, view) => access.stage === 'raw' ? { allow: true, view } : { ask: 'vault.read notes/a.md', view })
+    const gate = gateDeciding((access, view) => access.stage === 'raw' ? { allow: true, view } : { ask: 'luoshu.read notes/a.md', view })
     const { runtime } = await writing({ asks: { raise: ask => { raised.push(ask); return 'req-1' } } }, gate)
-    const reply = await runtime.half('alpha').ask('vault.read', { path: 'notes/a.md' })
-    expect(reply?.refusal).toEqual({ code: 'needs-confirm', action: 'vault.read', request: 'req-1' })
-    expect(raised).toEqual(['vault.read notes/a.md'])
+    const reply = await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
+    expect(reply?.refusal).toEqual({ code: 'needs-confirm', action: 'luoshu.read', request: 'req-1' })
+    expect(raised).toEqual(['luoshu.read notes/a.md'])
   })
 })

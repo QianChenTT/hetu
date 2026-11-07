@@ -5,16 +5,16 @@ import type { Call, Prepared, Provider } from '../../api/slots.ts'
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
 
-// A note's version: the SHA-256 hex of its UTF-8 bytes, as the vault plugin keeps it
+// A note's version: the SHA-256 hex of its UTF-8 bytes, as the luoshu plugin keeps it
 export function versionOf(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
-// The vault in memory. read answers { text, version } or not-found. write refuses stale for a baseVersion that isn't
+// The luoshu in memory. read answers { text, version } or not-found. write refuses stale for a baseVersion that isn't
 // the note's or one given for a note that doesn't exist yet. It tells changed of each path it wrote
-export class MemoryVault implements Provider {
+export class MemoryLuoshu implements Provider {
   readonly notes = new Map<string, string>()
-  // Codes the next calls answer with, one each, for a test that needs the vault to fail for a while
+  // Codes the next calls answer with, one each, for a test that needs the luoshu to fail for a while
   readonly refusals: RefusalCode[] = []
   private readonly changed: (path: string) => Promise<void>
   private readonly latencyMs: number
@@ -54,11 +54,11 @@ export class MemoryVault implements Provider {
     if (refusal !== undefined) throw { code: refusal }
     const path = prepared.scope.paths![0]
     const current = this.notes.get(path)
-    if (call.action === 'vault.read') {
+    if (call.action === 'luoshu.read') {
       if (current === undefined) throw { code: 'not-found' }
       return { text: current, version: versionOf(current) }
     }
-    if (call.action !== 'vault.write') throw { code: 'not-found' }
+    if (call.action !== 'luoshu.write') throw { code: 'not-found' }
     const base = prepared.baseVersion
     if (current === undefined ? base !== undefined : base !== versionOf(current)) throw { code: 'stale' }
     const { text } = call.args as { text: string }

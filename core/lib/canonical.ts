@@ -4,7 +4,7 @@ import type { RefusalCode } from '../api/envelope.ts'
 import { isGitName, MAX_SCOPE_LENGTH, withoutIgnorable } from '../api/scope.ts'
 
 // A string that breaks a rule answers invalid and a refusal from the disk answers not-granted, so a caller can't tell
-// a link out of the vault from a missing grant. rule names the check for ctx.debug and the tests, never for a reply.
+// a link out of the luoshu from a missing grant. rule names the check for ctx.debug and the tests, never for a reply.
 // Not named Refused, the name the SDK gives its error, which carries no rule
 export type StringRule =
   | 'type' | 'empty' | 'too-long' | 'ill-formed' | 'absolute' | 'backslash' | 'colon' | 'control'
@@ -15,10 +15,10 @@ export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule }
 
 // absolute is for the disk. relative joins the names with / on every platform and is what the gate, the guards and
-// the records see. key is only for the vault's per-path lock and the lease table's conflict check
+// the records see. key is only for the luoshu's per-path lock and the lease table's conflict check
 export type Canonical = { ok: true, absolute: string, relative: string, key: string }
 
-// hetu's own folders, which a vault picked at the home folder holds
+// hetu's own folders, which a luoshu picked at the home folder holds
 export type CanonicalOptions = { dataDir?: string, installDir?: string }
 
 // ASCII letters only. JS case folding joins names NTFS keeps apart, such as the Kelvin sign and k
@@ -26,7 +26,7 @@ const fold = (text: string) => text.replace(/[A-Z]/g, letter => letter.toLowerCa
 
 // Win32 opens a device for these names in any folder, with any extension and with spaces before the dot. The
 // superscript digits count as digits there. CONIN$ and CONOUT$ come from CPython's isreserved, COM0 and LPT0 from the
-// plugin id rule in core/api/ids.ts. Refused on every platform, since a vault moves between machines
+// plugin id rule in core/api/ids.ts. Refused on every platform, since a luoshu moves between machines
 const devices = new Set([
   'con', 'prn', 'aux', 'nul', 'conin$', 'conout$',
   ...[...'0123456789\u00b9\u00b2\u00b3'].flatMap(digit => [`com${digit}`, `lpt${digit}`]),
@@ -110,13 +110,13 @@ export async function canonical(root: string, input: string, options: CanonicalO
   if (rootReal === null) return refuse('unresolved')
   const found = await deepest(rootReal, input.split('/'))
   if (found === null) return refuse('unresolved')
-  // A link or a junction out of the vault
+  // A link or a junction out of the luoshu
   if (!within(rootReal, found.real)) return refuse('outside')
   const names = [
     ...(found.real === rootReal ? [] : found.real.slice(withSep(rootReal).length).split(path.sep)),
     ...found.rest,
   ]
-  // A link to the vault itself, where no note lives
+  // A link to the luoshu itself, where no note lives
   if (names.length === 0) return refuse('root')
   if (names.some(isGitName)) return refuse('git')
 

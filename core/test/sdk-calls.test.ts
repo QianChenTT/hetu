@@ -13,31 +13,31 @@ function setup() {
   const parts = harness()
   parts.loader.sandboxed('search')
   parts.loader.sandboxed('mcp', { handle: {} })
-  parts.gate.grants.search = [{ type: 'vault.read', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['mcp'] }]
-  parts.vault.files.set('notes/a.md', 'hello')
+  parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['mcp'] }]
+  parts.luoshu.files.set('notes/a.md', 'hello')
   return { ...parts, ...clientOn(parts.carrier, worker('search')), mcp: parts.connect(worker('mcp')) }
 }
 
 describe('a call through the SDK', () => {
   it('resolves a typed provider call with the provider\'s result', async () => {
     const { client } = setup()
-    expect(await client.vault.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
+    expect(await client.luoshu.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
   })
 
   it('rejects a refusal as Refused with its code and action', async () => {
     const { client } = setup()
-    const refused = await client.vault.read({ path: 'secret/b.md' }).catch((err: unknown) => err)
+    const refused = await client.luoshu.read({ path: 'secret/b.md' }).catch((err: unknown) => err)
     expect(refused).toBeInstanceOf(Refused)
     expect(refused).toBeInstanceOf(Error)
-    expect(refused).toMatchObject({ code: 'not-granted', action: 'vault.read' })
+    expect(refused).toMatchObject({ code: 'not-granted', action: 'luoshu.read' })
   })
 
   it('gives a refusal back from attempt instead of throwing', async () => {
     const { client } = setup()
-    const refused = await attempt(client.vault.read({ path: 'secret/b.md' }))
+    const refused = await attempt(client.luoshu.read({ path: 'secret/b.md' }))
     expect(refused.ok).toBe(false)
     expect(!refused.ok && refused.refused.code).toBe('not-granted')
-    expect(await attempt(client.vault.read({ path: 'notes/a.md' }))).toEqual({ ok: true, value: { text: 'hello' } })
+    expect(await attempt(client.luoshu.read({ path: 'notes/a.md' }))).toEqual({ ok: true, value: { text: 'hello' } })
   })
 
   it('rethrows from attempt anything but a refusal', async () => {
@@ -91,8 +91,8 @@ async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions =
   const parts = harness()
   parts.loader.sandboxed('search')
   parts.loader.sandboxed('mcp', { handle: {} })
-  parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
-  parts.vault.files.set('notes/a.md', 'hello')
+  parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
+  parts.luoshu.files.set('notes/a.md', 'hello')
   let ctx: PluginContext | null = null
   const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport, { limits })
@@ -104,16 +104,16 @@ async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions =
 describe('what a call hides', () => {
   it('retries a call refused starting until the provider is ready', async () => {
     const { ctx, loader } = await plugin()
-    loader.installed('vault', 'starting')
-    setTimeout(() => loader.installed('vault', 'ready'), 100)
-    expect(await ctx.vault.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
+    loader.installed('luoshu', 'starting')
+    setTimeout(() => loader.installed('luoshu', 'ready'), 100)
+    expect(await ctx.luoshu.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
   })
 
   it('gives up on starting at the call\'s deadline with the last refusal', async () => {
     const { ctx, loader } = await plugin()
-    loader.installed('vault', 'starting')
+    loader.installed('luoshu', 'starting')
     const started = Date.now()
-    await expect(ctx.vault.read({ path: 'notes/a.md' }, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
+    await expect(ctx.luoshu.read({ path: 'notes/a.md' }, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
     expect(Date.now() - started).toBeLessThan(1000)
   })
 
@@ -121,8 +121,8 @@ describe('what a call hides', () => {
     const parts = await plugin()
     parts.loader.human.plugins.search = { callsInFlight: 1 }
     let release: () => void = () => {}
-    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
-    const reads = [1, 2, 3].map(() => parts.ctx.vault.read({ path: 'notes/a.md' }))
+    parts.luoshu.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const reads = [1, 2, 3].map(() => parts.ctx.luoshu.read({ path: 'notes/a.md' }))
     setTimeout(() => release(), 100)
     expect(await Promise.all(reads)).toEqual([{ text: 'hello' }, { text: 'hello' }, { text: 'hello' }])
   })
@@ -130,10 +130,10 @@ describe('what a call hides', () => {
   it('keeps no more calls in flight than callsInFlight', async () => {
     const parts = await plugin({ callsInFlight: 2 })
     let release: () => void = () => {}
-    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
-    const reads = [1, 2, 3, 4, 5].map(() => parts.ctx.vault.read({ path: 'notes/a.md' }))
+    parts.luoshu.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const reads = [1, 2, 3, 4, 5].map(() => parts.ctx.luoshu.read({ path: 'notes/a.md' }))
     await tick(60)
-    expect(parts.vault.prepared).toHaveLength(2)
+    expect(parts.luoshu.prepared).toHaveLength(2)
     release()
     expect(await Promise.all(reads)).toHaveLength(5)
   })
@@ -171,7 +171,7 @@ describe('what a call hides', () => {
     const { ctx, transport } = await plugin()
     const before = transport.sent.length
     const reason = new Error('gone')
-    await expect(ctx.vault.read({ path: 'notes/a.md' }, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
+    await expect(ctx.luoshu.read({ path: 'notes/a.md' }, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
     await tick(20)
     expect(transport.sent.length).toBe(before)
   })
@@ -181,15 +181,15 @@ describe('a call that runs out of time or can\'t go out', () => {
   it('never sends a call whose deadline passed while it waited its turn', async () => {
     const parts = await plugin({ callsInFlight: 1 })
     let release: () => void = () => {}
-    parts.vault.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
-    const first = parts.ctx.vault.read({ path: 'notes/a.md' })
+    parts.luoshu.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
+    const first = parts.ctx.luoshu.read({ path: 'notes/a.md' })
     const started = Date.now()
-    await expect(parts.ctx.vault.read({ path: 'notes/a.md' }, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'timeout' })
+    await expect(parts.ctx.luoshu.read({ path: 'notes/a.md' }, { timeoutMs: 100 })).rejects.toMatchObject({ code: 'timeout' })
     expect(Date.now() - started).toBeLessThan(400)
     release()
     await first
     await tick(50)
-    expect(parts.vault.prepared).toHaveLength(1)
+    expect(parts.luoshu.prepared).toHaveLength(1)
   })
 
   it('cancels a call it gives up on at its own timeoutMs', async () => {

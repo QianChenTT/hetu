@@ -69,7 +69,7 @@ export class FakeLoader implements Loader {
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'vault.read' || item.type === 'vault.write') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write') {
       const paths = access.scope.paths ?? []
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
@@ -113,7 +113,7 @@ export class FakeGate implements Gate {
   canRead(caller: Caller, path: string): boolean {
     this.reads.push({ caller, path })
     if (this.readable !== null) return this.readable(caller, path) as boolean
-    return holds(this.grantsOf(caller), { capability: 'vault.read', scope: { paths: [path] } })
+    return holds(this.grantsOf(caller), { capability: 'luoshu.read', scope: { paths: [path] } })
   }
 
   verbs(): string[] {
@@ -133,9 +133,9 @@ export class FakeGuard implements Guard {
   }
 }
 
-// A vault that resolves 8.3 short names the way Windows does, so GIT~1/config prepares to .git/config. It refuses
+// A luoshu that resolves 8.3 short names the way Windows does, so GIT~1/config prepares to .git/config. It refuses
 // nothing itself, which leaves the judging to decide
-export class FakeVault implements Provider {
+export class FakeLuoshu implements Provider {
   readonly files = new Map<string, string>()
   readonly prepared: Call[] = []
   readonly performed: { call: Call, prepared: Prepared }[] = []
@@ -158,7 +158,7 @@ export class FakeVault implements Provider {
     await this.hold.perform
     if (this.perform_ !== null) return this.perform_(call, prepared)
     const path = prepared.scope.paths![0]
-    if (call.action === 'vault.write') {
+    if (call.action === 'luoshu.write') {
       this.files.set(path, (call.args as { text: string }).text)
       return { written: path }
     }
@@ -289,18 +289,18 @@ const live: { carrier: Carrier, ports: MessagePort[] }[] = []
 export function harness(over: Partial<CarrierOptions> = {}) {
   const loader = new FakeLoader()
   const gate = new FakeGate(loader)
-  const vault = new FakeVault()
+  const luoshu = new FakeLuoshu()
   const storage = new FakeStorage()
   const guards: Record<string, FakeGuard> = {}
-  const providers: Record<string, Provider> = { vault, storage }
+  const providers: Record<string, Provider> = { luoshu, storage }
   const samples: Sample[] = []
   const log = new FakeLog()
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
-  loader.installed('vault')
+  loader.installed('luoshu')
   loader.installed('storage')
-  // The vault's manifest declares the two topics it publishes
-  loader.plugins.vault.topics = ['changed', 'outside']
+  // The luoshu's manifest declares the two topics it publishes
+  loader.plugins.luoshu.topics = ['changed', 'outside']
   const carrier = new Carrier({
     loader,
     gate: () => gate,
@@ -321,7 +321,7 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     carrier.register(port1, caller)
     return new Side(port2)
   }
-  return { carrier, loader, gate, vault, storage, guards, providers, samples, log, debug, asks, connect }
+  return { carrier, loader, gate, luoshu, storage, guards, providers, samples, log, debug, asks, connect }
 }
 
 // A window's way in with a sender check that knows one sender per window

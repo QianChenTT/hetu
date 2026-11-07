@@ -25,9 +25,9 @@ const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 describe('the start order', () => {
   it('starts the slot holders, then the providers, then the guard, then sandboxed plugins in graph order', async () => {
     const { loader, runtime } = await harness({
-      install: Object.fromEntries(['log', 'gate', 'capabilities', 'watchdog', 'storage', 'vault', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
+      install: Object.fromEntries(['log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
       folder: {
-        outline: filesFor(workerManifest('outline', { requires: ['vault'] })),
+        outline: filesFor(workerManifest('outline', { requires: ['luoshu'] })),
         indexer: filesFor(workerManifest('indexer', { requires: ['outline'] })),
         'notes-tool': filesFor(workerManifest('notes-tool')),
       },
@@ -36,7 +36,7 @@ describe('the start order', () => {
     })
     await loader.start()
     expect(runtime.order()).toEqual([
-      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'vault', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
+      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
     ])
     for (const id of ['log', 'gate', 'leases', 'outline', 'indexer']) expect(stateOf(loader, id)).toBe('ready')
   })
@@ -78,13 +78,13 @@ describe('the start order', () => {
 
   it('sends init with the id, the API version, its dependencies, lastStop and previousVersion', async () => {
     const { loader, runtime } = await harness({
-      install: { ...coreInstall(), vault: host('vault') },
-      folder: { outline: filesFor(workerManifest('outline', { requires: ['vault'] })) },
+      install: { ...coreInstall(), luoshu: host('luoshu') },
+      folder: { outline: filesFor(workerManifest('outline', { requires: ['luoshu'] })) },
       entries: { outline: signed({ granted: [{ type: 'plugin.call', targets: ['git'] }] }) },
     })
     await loader.start()
     expect(runtime.half('outline').got('init')).toEqual([{
-      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 1, deps: { git: 'unavailable', vault: 'ready' },
+      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 1, deps: { git: 'unavailable', luoshu: 'ready' },
       lastStop: null, previousVersion: null,
     }])
   })
@@ -159,7 +159,7 @@ describe('install plugins', () => {
 
   it('in dev mode loads its bytes unhashed from the install and nothing more', async () => {
     const { loader, runtime, link } = await harness({
-      install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash }, vault: { ...host('vault'), hash: wrongHash } },
+      install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash }, luoshu: { ...host('luoshu'), hash: wrongHash } },
       switches: { devMode: ['gate'] },
     })
     await loader.start()
@@ -167,12 +167,12 @@ describe('install plugins', () => {
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'dev' })
     // The code still came from the install. Another plugin's failed check still holds
     expect(runtime.started.find(start => start.id === 'gate')?.half).toBe('host')
-    expect(reasonOf(loader, 'vault')).toBe('tampered')
+    expect(reasonOf(loader, 'luoshu')).toBe('tampered')
   })
 
   it('with skipVerification loads mismatched bytes and still refuses an unsigned plugin and a broken manifest', async () => {
     const { loader, link } = await harness({
-      install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash }, vault: { files: { 'hetu-plugin.json': '{}' }, version: '1.0.0' } },
+      install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash }, luoshu: { files: { 'hetu-plugin.json': '{}' }, version: '1.0.0' } },
       folder: { outline: filesFor(workerManifest('outline')) },
       entries: { outline: signed({ signer: null }) },
       switches: { skipVerification: true },
@@ -181,16 +181,16 @@ describe('install plugins', () => {
     expect(loader.slot('gate')).toBe('on')
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'skipped' })
     expect(reasonOf(loader, 'outline')).toBe('unsigned')
-    expect(reasonOf(loader, 'vault')).toBe('invalid')
+    expect(reasonOf(loader, 'luoshu')).toBe('invalid')
   })
 
   it('refuses a slot, provider or guard id with no host half, place', async () => {
     const { loader } = await harness({
-      install: { ...coreInstall(), vault: { files: filesFor(workerManifest('vault')) } },
+      install: { ...coreInstall(), luoshu: { files: filesFor(workerManifest('luoshu')) } },
       loader: { guardsFor: () => ['leases'] },
     })
     await loader.start()
-    expect(reasonOf(loader, 'vault')).toBe('place')
+    expect(reasonOf(loader, 'luoshu')).toBe('place')
   })
 
   it('refuses a slot holder that requires anything, a plugin that requires one and an install plugin that requires a folder plugin', async () => {
@@ -199,14 +199,14 @@ describe('install plugins', () => {
         ...coreInstall(),
         log: host('log', { requires: ['storage'] }),
         storage: host('storage'),
-        vault: host('vault', { requires: ['outline'] }),
+        luoshu: host('luoshu', { requires: ['outline'] }),
       },
       folder: { outline: filesFor(workerManifest('outline', { requires: ['gate'] })) },
       entries: { outline: signed() },
     })
     await loader.start()
     expect(reasonOf(loader, 'log')).toBe('requires')
-    expect(reasonOf(loader, 'vault')).toBe('requires')
+    expect(reasonOf(loader, 'luoshu')).toBe('requires')
     expect(reasonOf(loader, 'outline')).toBe('requires')
     expect(stateOf(loader, 'storage')).toBe('ready')
   })
@@ -215,15 +215,15 @@ describe('install plugins', () => {
 describe('starting', () => {
   it('marks a sandboxed plugin crashed and a host half failed with start-timeout when ready doesn\'t come in time', async () => {
     const { loader, runtime, link } = await harness({
-      install: { ...coreInstall(), vault: host('vault') },
+      install: { ...coreInstall(), luoshu: host('luoshu') },
       folder: { outline: filesFor(workerManifest('outline')) },
       entries: { outline: signed() },
-      behave: { vault: { ready: false }, outline: { ready: false } },
+      behave: { luoshu: { ready: false }, outline: { ready: false } },
       limits: { readyMs: 40 },
     })
     await loader.start()
-    expect(stateOf(loader, 'vault')).toBe('failed')
-    expect(reasonOf(loader, 'vault')).toBe('start-timeout')
+    expect(stateOf(loader, 'luoshu')).toBe('failed')
+    expect(reasonOf(loader, 'luoshu')).toBe('start-timeout')
     expect(stateOf(loader, 'outline')).toBe('crashed')
     expect(reasonOf(loader, 'outline')).toBe('start-timeout')
     expect(runtime.terminated).toEqual([{ id: 'outline', incarnation: 1 }])
@@ -231,11 +231,11 @@ describe('starting', () => {
   })
 
   it('marks a host half failed when its module throws, and never starts it again in the run', async () => {
-    const { loader, runtime } = await harness({ install: { ...coreInstall(), vault: host('vault') }, behave: { vault: { throws: true } } })
+    const { loader, runtime } = await harness({ install: { ...coreInstall(), luoshu: host('luoshu') }, behave: { luoshu: { throws: true } } })
     await loader.start()
-    expect(stateOf(loader, 'vault')).toBe('failed')
-    expect(reasonOf(loader, 'vault')).toBe('start-failed')
-    expect(runtime.order().filter(id => id === 'vault')).toEqual(['vault'])
+    expect(stateOf(loader, 'luoshu')).toBe('failed')
+    expect(reasonOf(loader, 'luoshu')).toBe('start-failed')
+    expect(runtime.order().filter(id => id === 'luoshu')).toEqual(['luoshu'])
   })
 
   it('crashes a worker the runtime can\'t start', async () => {
@@ -361,10 +361,10 @@ describe('start markers', () => {
     const made = await harness()
     await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'starting', 'Not An Id'), '')
-    await writeFile(path.join(made.dataDir, 'starting', 'vault'), '')
+    await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')
     const booted = await boot({ packaged: false, installDir: made.installDir, env: { HETU_DATA_DIR: made.dataDir }, platform: process.platform })
     try {
-      expect(booted.markers).toEqual(['vault'])
+      expect(booted.markers).toEqual(['luoshu'])
     } finally {
       await booted.release()
     }

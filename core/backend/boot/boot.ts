@@ -195,7 +195,7 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
   let suspect = loaded.suspect
 
   // A missing switches file is a new install only if nothing says hetu ran here before. A log that couldn't be opened
-  // says nothing, so a wipe then reads as a new install. A missing vault file is a vault not picked yet, never gone
+  // says nothing, so a wipe then reads as a new install. A missing luoshu file is a luoshu not picked yet, never gone
   const ranBefore = (opened !== null && (opened.lastSeq > 0 || opened.broken !== null))
     || checks.some(c => c.result !== 'absent')
   const missing = checks.filter(c => c.check === 'switches' && c.result === 'absent')

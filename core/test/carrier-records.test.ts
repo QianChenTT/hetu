@@ -27,19 +27,19 @@ describe('the audit queue', () => {
     const { carrier, connect, gate, loader } = harness()
     loader.sandboxed('mcp', { handle: {} })
     gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
-    gate.grants.mcp = [{ type: 'vault.write', paths: ['notes/**'] }]
+    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const http = connect(worker('http'))
     const mcp = connect(worker('mcp'))
     const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
-    const write = await mcp.ask('vault.write', { path: 'notes/a.md', text: 'secret note text' }, { parent: parent.callId, onBehalf: 'agent-a' })
+    const write = await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'secret note text' }, { parent: parent.callId, onBehalf: 'agent-a' })
     expect(write.ok).toBe(true)
     mcp.answer(parent.callId, { said: 'secret result' })
     await http.reply(id)
     const records = carrier.audit.next(10)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
-      caller: worker('mcp'), onBehalf: 'agent-a', root: worker('http'), action: 'vault.write',
+      caller: worker('mcp'), onBehalf: 'agent-a', root: worker('http'), action: 'luoshu.write',
       scope: { paths: ['notes/a.md'] }, code: null, gate: 'on', count: 1,
     })
     expect(records[1]).toMatchObject({ caller: worker('http'), root: worker('http'), action: 'mcp.handle', scope: { target: 'mcp' }, code: null })
@@ -51,20 +51,20 @@ describe('the audit queue', () => {
   it('records a refusal with its code and the gate\'s state', async () => {
     const { carrier, connect, loader } = harness()
     loader.slots.gate = 'failed'
-    await connect(worker('search')).ask('vault.read', { path: 'a.md' })
-    expect(carrier.audit.next(10)).toMatchObject([{ action: 'vault.read', code: 'policy-down', gate: 'failed', count: 1 }])
+    await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })
+    expect(carrier.audit.next(10)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
   })
 
   // The caller's own text is no canonical scope, so a call refused at precheck records no path
   it('records no path for a call refused before prepare and the canonical one once prepare ran', async () => {
     let clock = 1_000_000
     const { carrier, connect, gate } = harness({ now: () => clock })
-    gate.grants.search = [{ type: 'vault.read', paths: ['notes/**'] }]
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'secret/a.md' }))).toBe('not-granted')
+    expect(code(await search.ask('luoshu.read', { path: 'secret/a.md' }))).toBe('not-granted')
     clock += 1000
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
-    expect(code(await search.ask('vault.read', { path: 'GIT~1/config' }))).toBe('not-granted')
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    expect(code(await search.ask('luoshu.read', { path: 'GIT~1/config' }))).toBe('not-granted')
     const records = carrier.audit.next(10)
     expect(records.map(record => [record.code, record.scope])).toEqual([['not-granted', undefined], ['not-granted', { paths: ['.git/config'] }]])
     expect('scope' in records[0]).toBe(false)
@@ -76,12 +76,12 @@ describe('the audit queue', () => {
     http.call('mcp.handle', {}, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
     const under = { parent: parent.callId, onBehalf: 'agent-a' }
-    expect(code(await mcp.ask('vault.read', { path: '' }, under))).toBe('invalid')
+    expect(code(await mcp.ask('luoshu.read', { path: '' }, under))).toBe('invalid')
     expect(code(await mcp.ask('security.request', { change: { kind: 'plugin.on', plugin: 'search' } }, under))).toBe('not-granted')
     expect(code(await mcp.ask('core.self', undefined, under))).toBe('throttled')
     const refused = carrier.audit.next(10).filter(record => record.code !== null)
     expect(refused.map(record => [record.action, record.code, idOf(record.caller), idOf(record.root), record.onBehalf])).toEqual([
-      ['vault.read', 'invalid', 'mcp', 'http', 'agent-a'],
+      ['luoshu.read', 'invalid', 'mcp', 'http', 'agent-a'],
       ['security.request', 'not-granted', 'mcp', 'http', 'agent-a'],
       ['core.self', 'throttled', 'mcp', 'http', 'agent-a'],
     ])
@@ -103,26 +103,26 @@ describe('the audit queue', () => {
 
   it('coalesces reads and refusals per caller per second, and keeps writes one record each', async () => {
     let clock = 1_000_000
-    const { carrier, connect, gate, vault } = harness({ now: () => clock })
-    gate.grants.search = [{ type: 'vault.read', paths: ['notes/**'] }, { type: 'vault.write', paths: ['notes/**'] }]
-    for (const name of ['a', 'b', 'c']) vault.files.set(`notes/${name}.md`, name)
+    const { carrier, connect, gate, luoshu } = harness({ now: () => clock })
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }]
+    for (const name of ['a', 'b', 'c']) luoshu.files.set(`notes/${name}.md`, name)
     const search = connect(worker('search'))
-    for (const name of ['a', 'b', 'c']) await search.ask('vault.read', { path: `notes/${name}.md` })
-    for (let i = 0; i < 4; i++) await search.ask('vault.read', { path: 'secret/x.md' })
-    await search.ask('vault.write', { path: 'notes/a.md', text: '1' })
-    await search.ask('vault.write', { path: 'notes/a.md', text: '2' })
+    for (const name of ['a', 'b', 'c']) await search.ask('luoshu.read', { path: `notes/${name}.md` })
+    for (let i = 0; i < 4; i++) await search.ask('luoshu.read', { path: 'secret/x.md' })
+    await search.ask('luoshu.write', { path: 'notes/a.md', text: '1' })
+    await search.ask('luoshu.write', { path: 'notes/a.md', text: '2' })
     await search.ask('storage.get', { key: 'index' })
     await search.ask('storage.get', { key: 'other' })
     clock += 1000
-    await search.ask('vault.read', { path: 'notes/a.md' })
+    await search.ask('luoshu.read', { path: 'notes/a.md' })
     const records = carrier.audit.next(100).map(record => [record.action, record.code, record.count])
     expect(records).toEqual([
-      ['vault.read', null, 3],
-      ['vault.read', 'not-granted', 4],
-      ['vault.write', null, 1],
-      ['vault.write', null, 1],
+      ['luoshu.read', null, 3],
+      ['luoshu.read', 'not-granted', 4],
+      ['luoshu.write', null, 1],
+      ['luoshu.write', null, 1],
       ['storage.get', null, 2],
-      ['vault.read', null, 1],
+      ['luoshu.read', null, 1],
     ])
   })
 
@@ -246,10 +246,10 @@ describe('the audit queue', () => {
     const clock = 1_000_000
     const { carrier, connect } = harness({ now: () => clock })
     const search = connect(worker('search'))
-    for (let i = 0; i < 3; i++) await search.ask('vault.write', { path: 'a.md', text: 'x' })
-    for (let i = 0; i < 3; i++) await search.ask('vault.read', { path: '' })
+    for (let i = 0; i < 3; i++) await search.ask('luoshu.write', { path: 'a.md', text: 'x' })
+    for (let i = 0; i < 3; i++) await search.ask('luoshu.read', { path: '' })
     expect(carrier.audit.next(10).map(record => [record.action, record.code, record.count])).toEqual([
-      ['vault.write', 'not-granted', 3], ['vault.read', 'invalid', 3],
+      ['luoshu.write', 'not-granted', 3], ['luoshu.read', 'invalid', 3],
     ])
   })
 
@@ -272,12 +272,12 @@ describe('the audit queue', () => {
   // A record joins only calls that share every field it names, the A-05 case of two agents behind one MCP among them
   it('keeps two agents behind one caller apart', async () => {
     const clock = 1_000_000
-    const { carrier, connect, gate, vault } = harness({ now: () => clock })
-    gate.grants.mcp = [{ type: 'vault.read', paths: ['**'] }]
-    vault.files.set('a.md', 'x')
+    const { carrier, connect, gate, luoshu } = harness({ now: () => clock })
+    gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     const mcp = connect(worker('mcp'))
-    await mcp.ask('vault.read', { path: 'a.md' }, { onBehalf: 'agent-a' })
-    await mcp.ask('vault.read', { path: 'a.md' }, { onBehalf: 'agent-b' })
+    await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-a' })
+    await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-b' })
     expect(carrier.audit.next(10).map(record => [record.onBehalf, record.count])).toEqual([['agent-a', 1], ['agent-b', 1]])
   })
 
@@ -457,22 +457,22 @@ describe('the floor lane', () => {
   })
 
   it('keeps the faults of different plugins and steps apart', async () => {
-    const { carrier, connect, gate, vault, log } = harness()
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    const { carrier, connect, gate, luoshu, log } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let throws = true
     gate.decision = access => {
       if (throws) throw new Error('broken')
       return gate.granted(access)
     }
-    vault.perform_ = () => { throw new Error('disk') }
+    luoshu.perform_ = () => { throw new Error('disk') }
     const search = connect(worker('search'))
-    await search.ask('vault.read', { path: 'a.md' })
+    await search.ask('luoshu.read', { path: 'a.md' })
     throws = false
-    await search.ask('vault.read', { path: 'a.md' })
+    await search.ask('luoshu.read', { path: 'a.md' })
     carrier.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([
-      { plugin: 'gate', step: 'precheck', count: 1 }, { plugin: 'vault', step: 'perform', count: 1 },
+      { plugin: 'gate', step: 'precheck', count: 1 }, { plugin: 'luoshu', step: 'perform', count: 1 },
     ])
   })
 
@@ -480,7 +480,7 @@ describe('the floor lane', () => {
     const { carrier, connect, gate, log } = harness()
     gate.decision = () => { throw new Error('broken') }
     const search = connect(worker('search'))
-    for (let i = 0; i < 3; i++) expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    for (let i = 0; i < 3; i++) expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'precheck', count: 1 }])
     carrier.close()
@@ -498,7 +498,7 @@ describe('record nothing', () => {
     loader.nothing = true
     gate.decision = () => { throw new Error('broken') }
     const search = connect(worker('search'))
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     carrier.floor('plugin.found', { plugin: 'search' })
     await carrier.flushFloor()
     carrier.close()
@@ -514,7 +514,7 @@ describe('record nothing', () => {
     loader.nothing = true
     gate.decision = () => { throw new Error('broken') }
     const search = connect(worker('search'))
-    for (let i = 0; i < 3; i++) expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    for (let i = 0; i < 3; i++) expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     loader.nothing = false
     carrier.close()
     await tick()
@@ -549,7 +549,7 @@ describe('record nothing', () => {
     expect(carrier.audit.next(10)).toHaveLength(1)
     loader.slots.gate = 'off'
     loader.slots.log = 'failed'
-    expect(code(await search.ask('vault.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 })
 

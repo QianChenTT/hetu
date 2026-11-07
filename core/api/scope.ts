@@ -46,7 +46,7 @@ export function scopeProblem(scope: string): string | null {
   return null
 }
 
-// Why a path can't be matched, or null. A canonical path holds one of these only when a link in the vault leads to a
+// Why a path can't be matched, or null. A canonical path holds one of these only when a link in the luoshu leads to a
 // name on the disk that has it, and then the path matches nothing
 export function pathProblem(path: string): string | null {
   if (typeof path !== 'string' || path === '') return 'empty'

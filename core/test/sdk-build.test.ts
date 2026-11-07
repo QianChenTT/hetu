@@ -92,7 +92,7 @@ describe('checking a manifest', () => {
   })
 
   it('refuses an unknown capability, a duplicate key and a missing entry once built', async () => {
-    const unknown = await folder({ 'hetu-plugin.json': manifest({ capabilities: [{ type: 'vault.teleport' }] }) })
+    const unknown = await folder({ 'hetu-plugin.json': manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })
     expect((await checkManifest(unknown)).length).toBeGreaterThan(0)
     const doubled = await folder({ 'hetu-plugin.json': manifest().replace('"name":"Sample"', '"name":"Sample","name":"Other"') })
     expect((await checkManifest(doubled)).length).toBeGreaterThan(0)

@@ -53,17 +53,17 @@ describe('StateView versions', () => {
 
 describe('the human\'s switches, applied', () => {
   it('off switches an install plugin off at once and it stays down for the run once switched on, since a host half starts once', async () => {
-    const made = await harness({ install: { ...coreInstall(), vault: { files: filesFor(hostManifest('vault')) } } })
+    const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } } })
     await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.off', plugin: 'vault' })
+    await made.loader.apply({ kind: 'plugin.off', plugin: 'luoshu' })
     await made.loader.settled()
-    expect(stateOf(made.loader, 'vault')).toBe('off')
-    expect(made.link.sentTo('vault', 'stop')).toHaveLength(1)
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'vault' })
+    expect(stateOf(made.loader, 'luoshu')).toBe('off')
+    expect(made.link.sentTo('luoshu', 'stop')).toHaveLength(1)
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'luoshu' })
     await made.loader.settled()
-    expect(stateOf(made.loader, 'vault')).toBe('stopped')
-    expect(reasonOf(made.loader, 'vault')).toBe('restart-hetu')
-    expect(made.runtime.order().filter(id => id === 'vault')).toHaveLength(1)
+    expect(stateOf(made.loader, 'luoshu')).toBe('stopped')
+    expect(reasonOf(made.loader, 'luoshu')).toBe('restart-hetu')
+    expect(made.runtime.order().filter(id => id === 'luoshu')).toHaveLength(1)
   })
 
   it('off switches a slot holder off at once, which reads off and not failed', async () => {
@@ -170,23 +170,23 @@ describe('the human\'s switches, applied', () => {
   })
 
   it('switching off a host half held by its marker clears the marker, so switched on again it starts fresh', async () => {
-    const made = await harness({ install: { ...coreInstall(), vault: { files: filesFor(hostManifest('vault')) } }, markers: ['vault'] })
+    const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } }, markers: ['luoshu'] })
     await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
-    await writeFile(path.join(made.dataDir, 'starting', 'vault'), '')
+    await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')
     await made.loader.start()
-    expect(reasonOf(made.loader, 'vault')).toBe('marker')
-    await made.loader.apply({ kind: 'plugin.off', plugin: 'vault' })
-    expect(await exists(path.join(made.dataDir, 'starting', 'vault'))).toBe(false)
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'vault' })
-    await until(() => stateOf(made.loader, 'vault') === 'ready')
+    expect(reasonOf(made.loader, 'luoshu')).toBe('marker')
+    await made.loader.apply({ kind: 'plugin.off', plugin: 'luoshu' })
+    expect(await exists(path.join(made.dataDir, 'starting', 'luoshu'))).toBe(false)
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'luoshu' })
+    await until(() => stateOf(made.loader, 'luoshu') === 'ready')
   })
 
-  it('writes the vault folder through the store', async () => {
+  it('writes the luoshu folder through the store', async () => {
     const made = await harness()
     await made.loader.start()
     const folder = process.platform === 'win32' ? 'C:\\notes' : '/home/han/notes'
-    await made.loader.apply({ kind: 'vault.set', folder })
-    expect(JSON.parse((await readFile(path.join(made.dataDir, 'state', 'vault.json'), 'utf8')).split('\n').slice(0, -2).join('\n')).folder).toBe(folder)
+    await made.loader.apply({ kind: 'luoshu.set', folder })
+    expect(JSON.parse((await readFile(path.join(made.dataDir, 'state', 'luoshu.json'), 'utf8')).split('\n').slice(0, -2).join('\n')).folder).toBe(folder)
     expect(made.loader.view()).toBe(2)
   })
 

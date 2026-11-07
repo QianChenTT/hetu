@@ -82,22 +82,22 @@ afterEach(async () => {
 })
 
 describe('first run', () => {
-  it('finds nothing, writes the default switches and no vault and is not suspect', async () => {
+  it('finds nothing, writes the default switches and no luoshu and is not suspect', async () => {
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }, { check: 'vault', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'absent' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.suspect).toBe(false)
     expect(booted.logHealthy).toBe(true)
     expect(booted.dev).toBe(false)
     expect(await readdir(stateFile())).toEqual(['switches.json'])
     expect(booted.state.switches).toEqual(noSwitches)
-    expect(booted.state.vault).toBeNull()
+    expect(booted.state.luoshu).toBeNull()
   })
 
   it('logs each check without an id where the check has none, then what it wrote', async () => {
     await started()
     expect(await bootRecords()).toEqual([
       { event: 'boot.check', check: 'switches', result: 'absent' },
-      { event: 'boot.check', check: 'vault', result: 'absent' },
+      { event: 'boot.check', check: 'luoshu', result: 'absent' },
       { event: 'boot.default-written', file: 'switches' },
     ])
   })
@@ -121,7 +121,7 @@ describe('a later run', () => {
     await stopped(await started())
     const before = await readFile(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.suspect).toBe(false)
     expect(booted.removedKnown).toBe(true)
     // What the first run wrote, which this boot takes as the human's own switches
@@ -129,7 +129,7 @@ describe('a later run', () => {
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
     expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'ok' },
-      { event: 'boot.check', check: 'vault', result: 'absent' },
+      { event: 'boot.check', check: 'luoshu', result: 'absent' },
     ])
   })
 
@@ -191,82 +191,82 @@ describe('a later run', () => {
     await stopped(first)
     await writeFile(path.join(dataDir(), 'plugins', 'search', 'main.js'), 'changed')
     const booted = await started()
-    expect(booted.checks.map(c => c.check)).toEqual(['switches', 'vault', 'plugin-entry'])
+    expect(booted.checks.map(c => c.check)).toEqual(['switches', 'luoshu', 'plugin-entry'])
     expect(booted.state.plugins.search.enabled).toBe(true)
     expect(booted.suspect).toBe(false)
   })
 })
 
-describe('the vault file', () => {
+describe('the luoshu file', () => {
   it('reads the folder written through the store and logs its check', async () => {
     const first = await started()
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
     const booted = await started()
-    expect(booted.state.vault).toEqual(notes)
-    expect(booted.checks).toContainEqual({ check: 'vault', result: 'ok' })
-    expect((await bootRecords()).slice(3)).toContainEqual({ event: 'boot.check', check: 'vault', result: 'ok' })
+    expect(booted.state.luoshu).toEqual(notes)
+    expect(booted.checks).toContainEqual({ check: 'luoshu', result: 'ok' })
+    expect((await bootRecords()).slice(3)).toContainEqual({ event: 'boot.check', check: 'luoshu', result: 'ok' })
   })
 
-  // Only the folder dialog and a Confirm pick a vault, so boot writes no default for one
-  it('reads a missing vault file as a vault not picked yet, never gone, even after hetu ran here', async () => {
+  // Only the folder dialog and a Confirm pick a luoshu, so boot writes no default for one
+  it('reads a missing luoshu file as a luoshu not picked yet, never gone, even after hetu ran here', async () => {
     const first = await started()
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
-    await rm(stateFile('vault.json'))
+    await rm(stateFile('luoshu.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'absent' }])
-    expect(booted.state.vault).toBeNull()
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'absent' }])
+    expect(booted.state.luoshu).toBeNull()
     expect(booted.suspect).toBe(false)
     expect(await readdir(stateFile())).toEqual(['switches.json'])
   })
 
-  it('keeps the switches when the vault file is bad and writes nothing over it', async () => {
+  it('keeps the switches when the luoshu file is bad and writes nothing over it', async () => {
     const first = await started()
     await first.store.writeSwitches({ ...noSwitches, off: ['leases'] })
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
-    await writeFile(stateFile('vault.json'), 'tampered')
+    await writeFile(stateFile('luoshu.json'), 'tampered')
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'vault', result: 'hash-missing' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'hash-missing' }])
     expect(booted.suspect).toBe(true)
-    expect(booted.state.vault).toBeNull()
+    expect(booted.state.luoshu).toBeNull()
     expect(booted.state.switches.off).toEqual(['leases'])
-    expect(await readFile(stateFile('vault.json'), 'utf8')).toBe('tampered')
+    expect(await readFile(stateFile('luoshu.json'), 'utf8')).toBe('tampered')
   })
 
-  it('keeps the vault when the switches file is bad', async () => {
+  it('keeps the luoshu when the switches file is bad', async () => {
     const first = await started()
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
     await writeFile(stateFile('switches.json'), 'tampered')
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'hash-missing' }, { check: 'vault', result: 'ok' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'hash-missing' }, { check: 'luoshu', result: 'ok' }])
     expect(booted.state.switches).toEqual(noSwitches)
-    expect(booted.state.vault).toEqual(notes)
+    expect(booted.state.luoshu).toEqual(notes)
   })
 
-  it('keeps the vault when the switches file was wiped', async () => {
+  it('keeps the luoshu when the switches file was wiped', async () => {
     const first = await started()
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
     await rm(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'ok' }])
-    expect(booted.state.vault).toEqual(notes)
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'luoshu', result: 'ok' }])
+    expect(booted.state.luoshu).toEqual(notes)
   })
 
   // Only a posix host tells the platform given from its own. The mirror can't boot on Windows: HETU_DATA_DIR has to be
   // absolute by the platform given, which a Windows temp folder is not by posix rules
-  it.skipIf(onWindows)('checks the vault folder by the platform boot was given', async () => {
+  it.skipIf(onWindows)('checks the luoshu folder by the platform boot was given', async () => {
     const options = { ...installed({ HETU_DATA_DIR: path.join(base, 'win') }), packaged: false, platform: 'win32' }
     const windowsNotes = { folder: 'C:\\Users\\han\\notes' }
     const first = await started(options)
-    await first.store.writeVault(windowsNotes)
+    await first.store.writeLuoshu(windowsNotes)
     await stopped(first)
     const booted = await started(options)
-    expect(booted.checks).toContainEqual({ check: 'vault', result: 'ok' })
-    expect(booted.state.vault).toEqual(windowsNotes)
+    expect(booted.checks).toContainEqual({ check: 'luoshu', result: 'ok' })
+    expect(booted.state.luoshu).toEqual(windowsNotes)
   })
 })
 
@@ -277,26 +277,26 @@ describe('a state file in a newer format', () => {
     await plant(stateFile('switches.json'), JSON.stringify({ format: 3, off: ['gate'] }))
     const before = await readFile(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'newer' }, { check: 'vault', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'newer' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.state.switches).toEqual(noSwitches)
     expect(booted.suspect).toBe(false)
     expect(booted.removedKnown).toBe(false)
     expect(await readFile(stateFile('switches.json'))).toEqual(before)
     expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'newer' },
-      { event: 'boot.check', check: 'vault', result: 'absent' },
+      { event: 'boot.check', check: 'luoshu', result: 'absent' },
     ])
   })
 
   it('refuses every write of that file for the rest of the run', async () => {
     await stopped(await started())
     await plant(stateFile('switches.json'), JSON.stringify({ format: 3 }))
-    await plant(stateFile('vault.json'), JSON.stringify({ format: 7 }))
+    await plant(stateFile('luoshu.json'), JSON.stringify({ format: 7 }))
     const booted = await started()
     await expect(booted.store.writeSwitches(noSwitches)).rejects.toThrow(/newer format/)
-    await expect(booted.store.writeVault(notes)).rejects.toThrow(/newer format/)
-    expect(booted.state.vault).toBeNull()
-    expect(booted.checks).toContainEqual({ check: 'vault', result: 'newer' })
+    await expect(booted.store.writeLuoshu(notes)).rejects.toThrow(/newer format/)
+    expect(booted.state.luoshu).toBeNull()
+    expect(booted.checks).toContainEqual({ check: 'luoshu', result: 'newer' })
   })
 })
 
@@ -345,13 +345,13 @@ describe('recording off', () => {
   async function recordingOff() {
     const first = await started()
     await first.store.writeSwitches({ ...noSwitches, recordNothing: true })
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
   }
 
   it('writes no boot record while the switches say so, a suspect boot included', async () => {
     await recordingOff()
-    await writeFile(stateFile('vault.json'), 'tampered')
+    await writeFile(stateFile('luoshu.json'), 'tampered')
     const before = await records()
     const booted = await started()
     expect(booted.state.switches.recordNothing).toBe(true)
@@ -382,11 +382,11 @@ describe('a wiped state', () => {
     await stopped(await started())
     await rm(stateFile(), { recursive: true })
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'absent' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'luoshu', result: 'absent' }])
     expect(booted.suspect).toBe(true)
     expect((await bootRecords()).slice(3)).toEqual([
       { event: 'boot.check', check: 'switches', result: 'gone' },
-      { event: 'boot.check', check: 'vault', result: 'absent' },
+      { event: 'boot.check', check: 'luoshu', result: 'absent' },
       { event: 'boot.suspect' },
       { event: 'boot.default-written', file: 'switches' },
     ])
@@ -410,20 +410,20 @@ describe('a wiped state', () => {
     const booted = await started()
     expect(booted.checks).toEqual([
       { check: 'switches', result: 'gone' },
-      { check: 'vault', result: 'absent' },
+      { check: 'luoshu', result: 'absent' },
       { check: 'plugin-entry', id: 'search', result: 'ok' },
     ])
     expect(booted.suspect).toBe(true)
   })
 
-  it('reads the switches gone when the log was wiped but the vault file is still there', async () => {
+  it('reads the switches gone when the log was wiped but the luoshu file is still there', async () => {
     const first = await started()
-    await first.store.writeVault(notes)
+    await first.store.writeLuoshu(notes)
     await stopped(first)
     await rm(path.join(dataDir(), 'events'), { recursive: true })
     await rm(stateFile('switches.json'))
     const booted = await started()
-    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'vault', result: 'ok' }])
+    expect(booted.checks).toEqual([{ check: 'switches', result: 'gone' }, { check: 'luoshu', result: 'ok' }])
     expect(booted.suspect).toBe(true)
   })
 
@@ -437,7 +437,7 @@ describe('a wiped state', () => {
     const booted = await started()
     expect(booted.checks).toEqual([
       { check: 'switches', result: 'gone' },
-      { check: 'vault', result: 'absent' },
+      { check: 'luoshu', result: 'absent' },
       { check: 'plugin-entry', id: 'search', result: 'hash-missing' },
     ])
   })

@@ -16,22 +16,22 @@ describe('the carrier as the loader\'s link', () => {
 
   it('hands a host half a copy of the message on a later turn', async () => {
     const { carrier } = harness()
-    const vault = hostHalf(carrier, host('vault'))
+    const luoshu = hostHalf(carrier, host('luoshu'))
     const message = { v: 1, kind: 'deps', deps: { log: 'ready' } }
-    carrier.send(host('vault'), message)
-    expect(vault.inbox).toEqual([])
+    carrier.send(host('luoshu'), message)
+    expect(luoshu.inbox).toEqual([])
     message.deps.log = 'starting'
     await tick()
-    expect(vault.inbox).toEqual([{ v: 1, kind: 'deps', deps: { log: 'ready' } }])
+    expect(luoshu.inbox).toEqual([{ v: 1, kind: 'deps', deps: { log: 'ready' } }])
   })
 
   it('drops a message for a way that ended', async () => {
     const { carrier } = harness()
-    const vault = hostHalf(carrier, host('vault'))
-    carrier.end(host('vault'))
-    carrier.send(host('vault'), { v: 1, kind: 'stop', graceMs: 3000 })
+    const luoshu = hostHalf(carrier, host('luoshu'))
+    carrier.end(host('luoshu'))
+    carrier.send(host('luoshu'), { v: 1, kind: 'stop', graceMs: 3000 })
     await tick()
-    expect(vault.inbox).toEqual([])
+    expect(luoshu.inbox).toEqual([])
   })
 
   it('drops a message for a caller it never registered', () => {
@@ -82,8 +82,8 @@ describe('shutdown', () => {
     const { connect, gate, guards, loader } = parts
     loader.slots.leases = 'on'
     guards.leases = new FakeGuard()
-    gate.grants.mcp = [{ type: 'vault.write', paths: ['notes/**'] }]
-    gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     return { ...parts, mcp: connect(worker('mcp')), search: connect(worker('search')) }
   }
 
@@ -91,60 +91,60 @@ describe('shutdown', () => {
     const { carrier, loader, search } = setup()
     carrier.stopping()
     loader.slots.gate = 'failed'
-    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('stopped')
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('stopped')
   })
 
   it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {
-    const { carrier, loader, mcp, vault } = setup()
+    const { carrier, loader, mcp, luoshu } = setup()
     carrier.stopping()
     loader.slots.leases = 'failed'
-    expect(code(await mcp.ask('vault.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
-    expect(vault.performed).toEqual([])
+    expect(code(await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
+    expect(luoshu.performed).toEqual([])
   })
 
   it('answers stopped for a provider that is gone once shutdown began', async () => {
     const { carrier, providers, search } = setup()
     carrier.stopping()
-    delete (providers as Record<string, unknown>).vault
-    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('stopped')
+    delete (providers as Record<string, unknown>).luoshu
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('stopped')
   })
 
   it('answers policy-down, guard-down and unavailable for the same calls before shutdown', async () => {
     const { loader, mcp, providers, search } = setup()
     loader.slots.leases = 'failed'
-    expect(code(await mcp.ask('vault.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
-    delete (providers as Record<string, unknown>).vault
-    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('unavailable')
+    expect(code(await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    delete (providers as Record<string, unknown>).luoshu
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('unavailable')
     loader.slots.gate = 'failed'
-    expect(code(await search.ask('vault.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
   })
 
   // A change the human confirmed just before Quit still applies during shutdown. A narrowing ends what it removed
   it('ends a subscription a change applied during shutdown no longer grants', async () => {
     const { carrier, gate, loader, search } = setup()
-    gate.grants.search.push({ type: 'events.subscribe', topics: ['vault.changed'] })
-    expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: [] })
+    gate.grants.search.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
+    expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     carrier.stopping()
     gate.grants.search = gate.grants.search.filter(grant => grant.type !== 'events.subscribe')
     loader.current = 2
     carrier.changed()
-    const vault = hostHalf(carrier, host('vault'))
-    await vault.ask('events.publish', { topic: 'vault.changed' })
-    await vault.ask('events.publish', { topic: 'vault.changed', path: 'notes/a.md' })
+    const luoshu = hostHalf(carrier, host('luoshu'))
+    await luoshu.ask('events.publish', { topic: 'luoshu.changed' })
+    await luoshu.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })
     await tick(30)
-    expect(search.events().filter(event => event.topic === 'vault.changed')).toEqual([])
+    expect(search.events().filter(event => event.topic === 'luoshu.changed')).toEqual([])
   })
 
   it('writes no events.waiting or events.ended while shutdown takes the gate down', async () => {
     const { carrier, gate, loader, log, search } = setup()
-    gate.grants.search.push({ type: 'events.subscribe', topics: ['vault.changed'] })
-    expect((await search.ask('events.subscribe', { topics: ['vault.changed'] })).result).toEqual({ standing: [] })
+    gate.grants.search.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
+    expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     carrier.stopping()
     loader.slots.gate = 'failed'
     loader.current = 2
     carrier.changed()
-    const vault = hostHalf(carrier, host('vault'))
-    await vault.ask('events.publish', { topic: 'vault.changed', path: 'notes/a.md' })
+    const luoshu = hostHalf(carrier, host('luoshu'))
+    await luoshu.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })
     await tick(30)
     // The gate still holds during shutdown: a StateView the gate never judged search on holds its events back
     expect(search.events()).toEqual([])

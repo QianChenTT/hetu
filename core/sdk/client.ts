@@ -4,7 +4,7 @@ import type { CallOptions, RequestOptions } from './calls.ts'
 // The provider actions a plugin calls by name. The same list as core/api's providerActions, which a test holds it to.
 // Kept here as strings, so a plugin bundles none of core/api's schemas
 export const providerActionNames = [
-  'vault.read', 'vault.write',
+  'luoshu.read', 'luoshu.write',
   'leases.acquire', 'leases.renew', 'leases.release', 'leases.list',
   'storage.get', 'storage.set', 'storage.delete',
   'cache.get', 'cache.set', 'cache.delete',
@@ -26,7 +26,7 @@ type Namespaces = {
   }
 }
 
-// One call per action, such as ctx.vault.read({ path }) or ctx.storage.set({ key, value }). call reaches another
+// One call per action, such as ctx.luoshu.read({ path }) or ctx.storage.set({ key, value }). call reaches another
 // plugin's <target>.<name>, which needs plugin.call on that target
 export type Client = Namespaces & {
   call(target: string, name: string, args?: unknown, options?: CallOptions): Promise<unknown>

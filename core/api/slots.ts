@@ -2,7 +2,7 @@ import type { CapabilityType } from './capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from './envelope.ts'
 import { frozen } from './plain.ts'
 
-// What a call reaches as the gate and the guards judge it. paths are vault paths, the caller's own text at precheck and
+// What a call reaches as the gate and the guards judge it. paths are luoshu paths, the caller's own text at precheck and
 // canonical once the provider has prepared the call. target is the plugin a plugin call reaches. topics are the topics
 // a subscribe names that the gate holds, each already canonical as written
 export type Scope = { readonly paths?: readonly string[], readonly target?: string, readonly topics?: readonly string[] }
