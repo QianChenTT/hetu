@@ -92,7 +92,7 @@ describe('window grants', () => {
 })
 
 describe('floor constants', () => {
-  it("holds section 4's starting values", () => {
+  it("holds the starting values", () => {
     expect(floorConstants).toEqual({
       messagesPerSecond: 1000,
       callsInFlight: 64,
@@ -108,6 +108,7 @@ describe('floor constants', () => {
       heartbeatMisses: 3,
       eventCredits: 256,
       topicsPerHalf: 64,
+      filterMsPerSecond: 100,
       auditQueue: 10000,
       floorBacklog: 1000,
       floodFactor: 10,

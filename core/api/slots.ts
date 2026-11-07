@@ -48,7 +48,7 @@ export type Decision =
   | { ask: string, view: number }
 
 // What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. The grants it
-// carries come with the gate at step 13
+// carries come with the gate plugin
 export type StateView = { readonly n: number }
 
 export type Gate = {
@@ -90,7 +90,7 @@ export const pluginStates = frozen([
 export type PluginState = typeof pluginStates[number]
 
 // What the watchdog hears from the carrier: messages over a port's rate dropped since the last sample, at most once a
-// second per port. The runtime's samples come with step 11
+// second per port. The runtime's samples come with the Electron runtime
 export type Sample = { readonly kind: 'dropped', readonly caller: Caller, readonly count: number }
 export type Watchdog = { sample(sample: Sample): void }
 

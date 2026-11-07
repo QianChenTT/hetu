@@ -1,1 +1,0 @@
-The mechanism that measures and stops plugin workers: heartbeats, samples and `terminate()`. It joins the runtime in `core/backend/runtime`. The watchdog plugin decides and the loader stops and restarts

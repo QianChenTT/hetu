@@ -1,1 +1,0 @@
-The generic bridge plugins reach the editor through, shaped like CodeMirror. It carries only the verbs a plugin was granted and holds no power of its own. Joins the window shell in `core/frontend/mount`. The CodeMirror adapter goes to the editor core plugin

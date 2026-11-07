@@ -14,7 +14,7 @@ describe('the scope grammar', () => {
     expect(scope.safeParse(grant).success).toBe(true)
   })
 
-  // Every character the #66 brief refuses, whole, at the start of a segment and inside one
+  // Every character the scope grammar refuses, whole, at the start of a segment and inside one
   it.each(['\\', ':', '?', '[', ']', '{', '}', '(', ')', '!', '#'])('refuses %j anywhere in a scope', char => {
     for (const grant of [char, `notes/${char}`, `notes/a${char}b.md`, `${char}notes/**`]) {
       expect(scopeProblem(grant)).toBe('a character outside the grammar')
@@ -333,6 +333,15 @@ describe('patterns that made glob libraries slow', () => {
     const answer = matches(grant, path)
     expect(performance.now() - started).toBeLessThan(50)
     expect(answer).toBe(false)
+  })
+
+  // A grant may hold 64 scopes of a type, so a call's precheck may run 64 of the slow cases against one path
+  it('answers a grant of 64 such scopes against one 512 character path in well under 250 ms', () => {
+    const grants = Array.from({ length: 64 }, (_, i) => slow[i % slow.length])
+    const started = performance.now()
+    const answers = grants.map(([, grant, path]) => matches(grant, path))
+    expect(performance.now() - started).toBeLessThan(250)
+    expect(answers.every(answer => answer === false)).toBe(true)
   })
 })
 

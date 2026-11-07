@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { createHash, type Hash } from 'node:crypto'
+import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { retried, syncDir, writable } from './disk.ts'
 
@@ -9,6 +9,12 @@ import { retried, syncDir, writable } from './disk.ts'
 const refusedNames = new Set(['seq', 'prev', 'at', 'event', 'content', 'text', 'body', '__proto__'])
 // A path is the longest value expected. Every open reads the newest segment back, so one huge value costs every start
 const MAX_VALUE = 4096
+// The longest line a read holds whole. append refuses fields that would make a longer one, so a longer line wasn't
+// written by hetu and can't check out. seq, prev, at and the event name fit in the room left under it
+const MAX_LINE = 2 ** 20
+const LINE_ROOM = 512
+// A read takes a file this much at a time, so a segment of any size reads with one chunk and one line in memory
+const CHUNK = 2 ** 20
 const eventName = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/
 const segmentName = /^events-([1-9][0-9]*)\.jsonl$/
 const ZERO = '0'.repeat(64)
@@ -39,11 +45,11 @@ export type Segment = {
 // first is the seq the segment began with and prev is the hash of its last line or zeros before the first line. start
 // is the prev its first line carries and at the time of its last line, which decides when to rotate
 type Tip = { segment: number, first: number, seq: number, prev: string, start: string, at: string | null }
-// last and tip are the seq and the hash of the last line that checked out, at its time and end the byte after it.
-// start is the prev of the first line. broken means a line after those did not check out
+// last and tip are the seq and the hash of the last line that checked out, at its time. start is the prev of the
+// first line. broken means a line after those did not check out
 type Walk = {
   lines: number, first: number | null, last: number | null, tip: string, start: string | null, at: string | null,
-  end: number, broken: boolean,
+  broken: boolean,
 }
 
 function sha256(bytes: Buffer | string): string {
@@ -62,8 +68,67 @@ function checkFields(event: unknown, fields: unknown): Record<string, Field> {
     if (typeof value === 'string' && value.length > MAX_VALUE) throw new Error(`field ${name} is longer than ${MAX_VALUE}`)
     checked[name] = value
   }
+  if (Buffer.byteLength(JSON.stringify(checked)) > MAX_LINE - LINE_ROOM) throw new Error(`fields make a line longer than ${MAX_LINE} bytes`)
   return checked
 }
+
+// A line as a read hands it over: its bytes without the newline, valid only during the call, or the hash alone of a
+// line past MAX_LINE
+type Line = Buffer | { hash: string }
+
+// Hands each line of a file to take, a chunk at a time, so no file is too large to read. Bytes after the last newline
+// are a write that never finished and come last as null. A line past MAX_LINE comes as its hash when long is 'hash',
+// counted in pieces. With 'stop' it comes as null as soon as it passes MAX_LINE and the read ends, for a reader that
+// stops at the first line that doesn't check out. take returns false to stop reading
+async function eachLine(file: string, long: 'hash' | 'stop', take: (line: Line | null) => boolean): Promise<void> {
+  const handle = await retried(() => open(file, 'r'), file, 'read')
+  try {
+    const chunk = Buffer.allocUnsafe(CHUNK)
+    // The start of the line the chunk before ended in, copied since the chunk is read into again
+    let held: Buffer[] = []
+    let size = 0
+    // Set once the line passed MAX_LINE, its hash then counted piece by piece
+    let hashing: Hash | null = null
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, CHUNK, null)
+      if (bytesRead === 0) break
+      const bytes = chunk.subarray(0, bytesRead)
+      let at = 0
+      for (;;) {
+        const newline = bytes.indexOf(0x0a, at)
+        const piece = bytes.subarray(at, newline === -1 ? bytes.length : newline)
+        if (hashing === null && size + piece.length > MAX_LINE) {
+          if (long === 'stop') {
+            take(null)
+            return
+          }
+          hashing = createHash('sha256')
+          for (const part of held) hashing.update(part)
+          held = []
+        }
+        size += piece.length
+        if (newline === -1) {
+          if (hashing !== null) hashing.update(piece)
+          else if (piece.length > 0) held.push(Buffer.from(piece))
+          break
+        }
+        const line: Line = hashing !== null
+          ? { hash: hashing.update(piece).digest('hex') }
+          : held.length === 0 ? piece : Buffer.concat([...held, piece])
+        held = []
+        size = 0
+        hashing = null
+        if (!take(line)) return
+        at = newline + 1
+      }
+    }
+    if (size > 0) take(null)
+  } finally {
+    await handle.close()
+  }
+}
+
+const hashOf = (line: Line) => (Buffer.isBuffer(line) ? sha256(line) : line.hash)
 
 // A line that is exactly what append writes and follows the one before, otherwise null. With prev null any hash is taken
 // as the first line's prev, the link to the file before is checked on its own
@@ -85,17 +150,16 @@ function lineSeq(line: Buffer, prev: string | null, last: number | null): { seq:
 }
 
 // Takes lines from the top until one fails, comparing raw bytes. Appends go on from the last good line, so nothing
-// after a failure is taken as the tip. start is the prev the first line must carry, null for any hash
-function walk(bytes: Buffer, start: string | null): Walk {
-  const walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, end: 0, broken: false }
-  while (walked.end < bytes.length) {
-    const end = bytes.indexOf(0x0a, walked.end)
-    // Bytes with no newline after them are a write that never finished
-    const line = end === -1 ? null : bytes.subarray(walked.end, end)
-    const read = line === null ? null : lineSeq(line, walked.lines === 0 ? start : walked.tip, walked.last)
-    if (line === null || read === null) {
+// after a failure is taken as the tip and nothing after it is read. start is the prev the first line must carry, null
+// for any hash
+async function walk(file: string, start: string | null): Promise<Walk> {
+  const walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, broken: false }
+  await eachLine(file, 'stop', line => {
+    // A write that never finished or a line too long to be hetu's
+    const read = Buffer.isBuffer(line) ? lineSeq(line, walked.lines === 0 ? start : walked.tip, walked.last) : null
+    if (!Buffer.isBuffer(line) || read === null) {
       walked.broken = true
-      break
+      return false
     }
     walked.lines++
     walked.first ??= read.seq
@@ -103,26 +167,23 @@ function walk(bytes: Buffer, start: string | null): Walk {
     walked.last = read.seq
     walked.at = read.at
     walked.tip = sha256(line)
-    walked.end = end + 1
-  }
+    return true
+  })
   return walked
 }
 
 // Reads a whole file for history, going on past a line that doesn't check out. end is the hash of the last whole line,
 // whatever it holds, for the link to the file after
-function scan(bytes: Buffer): Omit<Segment, 'segment' | 'start'> & { start: string | null, end: string | null } {
+async function scan(file: string): Promise<Omit<Segment, 'segment' | 'start'> & { start: string | null, end: string | null }> {
   const scanned = { lines: 0, first: null as number | null, last: null as number | null, start: null as string | null, end: null as string | null, breaks: [] as number[] }
-  let at = 0
   let last: number | null = null
-  while (at < bytes.length) {
-    const end = bytes.indexOf(0x0a, at)
-    if (end === -1) {
+  await eachLine(file, 'hash', line => {
+    if (line === null) {
       scanned.breaks.push(scanned.lines + 1)
-      break
+      return false
     }
-    const line = bytes.subarray(at, end)
     scanned.lines++
-    const read = lineSeq(line, scanned.lines === 1 ? null : scanned.end, last)
+    const read = Buffer.isBuffer(line) ? lineSeq(line, scanned.lines === 1 ? null : scanned.end, last) : null
     if (read === null) scanned.breaks.push(scanned.lines)
     else {
       if (scanned.lines === 1) scanned.start = read.prev
@@ -130,9 +191,9 @@ function scan(bytes: Buffer): Omit<Segment, 'segment' | 'start'> & { start: stri
       scanned.last = read.seq
     }
     last = read?.seq ?? null
-    scanned.end = sha256(line)
-    at = end + 1
-  }
+    scanned.end = hashOf(line)
+    return true
+  })
   return scanned
 }
 
@@ -272,14 +333,12 @@ export class EventLog {
   // about the chain, so it fails open instead of starting a segment that would reuse the seqs the file holds
   private async read(segment: number): Promise<Walk | null> {
     const file = this.file(segment)
-    let bytes: Buffer
     try {
-      bytes = await retried(() => readFile(file), file, 'read')
+      return await walk(file, null)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EISDIR' || (await stat(file).catch(() => null))?.isDirectory()) return null
       throw err
     }
-    return walk(bytes, null)
   }
 
   // A segment with lines in it is left for a new one once the clock has moved past the idle gap since its last line.
@@ -346,14 +405,12 @@ export class EventLog {
     return this.serial(async () => {
       const tip = this.tip
       if (tip === null) throw new Error('event log is not open')
-      let bytes = Buffer.alloc(0)
+      let walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, broken: false }
       try {
-        const file = this.file(tip.segment)
-        bytes = await retried(() => readFile(file), file, 'read')
+        walked = await walk(this.file(tip.segment), tip.start)
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
       }
-      const walked = walk(bytes, tip.start)
       const last = walked.last ?? tip.first - 1
       if (walked.broken) return { ok: false, seq: last + 1 }
       if (last !== tip.seq) return { ok: false, seq: Math.min(last, tip.seq) + 1 }
@@ -362,7 +419,7 @@ export class EventLog {
     })
   }
 
-  // Every segment in order, each read whole. Checking a file as it is read costs little next to parsing it, so history
+  // Every segment in order, each read through. Checking a file as it is read costs little next to parsing it, so history
   // is checked where it is used and not by a separate pass. A chain runs from a zero start through the files that
   // continue it and a break ends it. Reads wait for appends called before them, so no line is read half written
   history(): Promise<Segment[]> {
@@ -377,17 +434,16 @@ export class EventLog {
       const segments: Segment[] = []
       let before: { last: number | null, end: string | null } | null = null
       for (const segment of numbers) {
-        const file = this.file(segment)
-        let bytes: Buffer
+        let found: Awaited<ReturnType<typeof scan>>
         try {
-          bytes = await retried(() => readFile(file), file, 'read')
+          found = await scan(this.file(segment))
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code !== 'EISDIR') throw err
           segments.push({ segment, lines: 0, first: null, last: null, start: null, breaks: [1] })
           before = null
           continue
         }
-        const { start, end, ...scanned } = scan(bytes)
+        const { start, end, ...scanned } = found
         const follows = before !== null && before.end === start && (before.last === null || scanned.first === null || scanned.first === before.last + 1)
         const kind = start === null ? null : start === ZERO ? 'zero' : follows ? 'continues' : 'unlinked'
         segments.push({ segment, ...scanned, start: kind })

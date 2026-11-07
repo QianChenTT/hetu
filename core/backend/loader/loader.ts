@@ -37,7 +37,8 @@ export type LoaderOptions = {
   platform?: string
   // The guards expected on an action. Defaults to core/api's list, which is empty until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come at step 14
+  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
+  // trusted window
   raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
 }
 
@@ -76,6 +77,8 @@ type Live = {
   with: string[]
   over: boolean
   deps: string
+  // A host half's start marker is on disk and no removal has started
+  marked: boolean
 }
 
 // A plugin the loader knows. read holds the bytes that run. held is what happened in this run that only a restart
@@ -180,6 +183,8 @@ export class Loader implements Seam {
   private readonly minted = new Map<string, number>()
   private readonly lastSlots = new Map<string, SlotState>()
   private readonly waiters: (() => void)[] = []
+  // Marker writes and removals under way, which shutdown waits for, so none is cut off when the process ends
+  private readonly markerWork = new Set<Promise<void>>()
   private state: SecurityState
   private removedKnown: boolean
   private install: InstallList | null = null
@@ -214,7 +219,8 @@ export class Loader implements Seam {
 
   // An install plugin's slot or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
   // is tampered and every other way of not being ready is failed, so nothing reads as off that the human didn't switch
-  // off. Before the install list is read every slot is starting, as boot step 8 has it
+  // off. Before the install list is read every slot is starting, as every action with power answers starting while the
+  // core starts
   slot(id: string): SlotState {
     if (this.listResult === 'unread') return 'starting'
     if (this.listResult === 'absent') return 'absent'
@@ -317,8 +323,8 @@ export class Loader implements Seam {
 
   // ---- boot
 
-  // Boot steps 6 and 7, 9 and 10, then 12 to 16: the install checked and its host tier started, the first-party
-  // reconcile, the plugin folder scanned and the sandboxed tier started in graph order
+  // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
+  // scanned and the sandboxed tier started in graph order
   async start(): Promise<void> {
     await this.readInstall()
     this.replan()
@@ -350,6 +356,7 @@ export class Loader implements Seam {
       this.replan()
     }
     await this.pumped()
+    while (this.markerWork.size > 0) await Promise.all(this.markerWork)
   }
 
   // ---- the install
@@ -471,7 +478,7 @@ export class Loader implements Seam {
   // Applies only once its record has landed, so the copy's floor record is on disk before the entry widens anything
   private async copy(id: string, read: Read, listed: Listed, event: string, enabled: boolean, previous: string | null): Promise<boolean> {
     const dir = await stage(this.dataDir, id, read.files)
-    const landing = await this.record(event, { plugin: id, version: listed.version })
+    const landing = await this.landing(id, event, { plugin: id, version: listed.version })
     if (landing === 'lost') {
       await clear(dir).catch(() => {})
       return false
@@ -508,8 +515,8 @@ export class Loader implements Seam {
 
   // ---- the plugin folder
 
-  // Boot step 13: every folder and every entry, each folder's bytes read and hashed once. An id no folder plugin may
-  // hold is refused reserved-id unread and kept apart, entry or folder
+  // The plugin folder scan: every folder and every entry, each folder's bytes read and hashed once. An id no folder
+  // plugin may hold is refused reserved-id unread and kept apart, entry or folder
   private async scan(): Promise<void> {
     const dir = path.join(this.dataDir, 'plugins')
     const found = new Set<string>()
@@ -846,7 +853,7 @@ export class Loader implements Seam {
     k.incarnations = n
     const live: Live = {
       n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
-      with: [], over: false, deps: '',
+      with: [], over: false, deps: '', marked: false,
     }
     k.live = live
     k.state = 'starting'
@@ -863,11 +870,14 @@ export class Loader implements Seam {
       // Written before start and removed at ready, so a host half that freezes main here is held failed next boot. One
       // whose start ended before its module ran couldn't have frozen anything, so its marker goes
       if (k.place === 'host') {
-        await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-        if (live.over) {
-          await removeMarker(this.dataDir, k.id).catch(() => {})
-          return
-        }
+        // The marker counts as on disk once its write settled, so a stop that came during the write leaves its removal
+        // to here
+        await this.tracked((async () => {
+          await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
+          live.marked = true
+          if (live.over) await this.unmark(k, live)
+        })())
+        if (live.over) return
       }
       this.mint(k, live)
     } catch {
@@ -879,7 +889,7 @@ export class Loader implements Seam {
   // it replaced. A record that never lands leaves the marker as it was, so the next start tries again
   private async applyInstalled(k: Known): Promise<void> {
     const from = k.updated!
-    const landing = await this.record('plugin.updated', { plugin: k.id, from, to: k.listed!.version })
+    const landing = await this.landing(k.id, 'plugin.updated', { plugin: k.id, from, to: k.listed!.version })
     if (landing === 'lost') return
     k.updated = null
     await clear(folders.cache(this.dataDir, k.id)).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
@@ -951,9 +961,7 @@ export class Loader implements Seam {
     this.versions.delete(k.id)
     this.note('plugin.started', { plugin: k.id, incarnation: live.n })
     this.beat(k, live)
-    if (k.place === 'host') {
-      removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-    }
+    void this.unmark(k, live)
     this.replan()
   }
 
@@ -999,10 +1007,12 @@ export class Loader implements Seam {
     return out.sort()
   }
 
+  // A planned stop ran in a main that wasn't frozen, so a start it ended before ready leaves no marker
   private finished(k: Known, live: Live): void {
     if (live.over) return
     const stop = live.stop
     const reason = stop?.reason ?? this.stopReason(k)
+    void this.unmark(k, live)
     this.retire(k, live)
     k.lastStop = reason
     this.note('plugin.stopped', { plugin: k.id, incarnation: live.n, reason, with: live.with.join(',') })
@@ -1104,7 +1114,8 @@ export class Loader implements Seam {
   // ---- the state
 
   // Applies a change the trusted window confirmed, exactly as stored, through the one StateStore. A write that fails
-  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come at step 14
+  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come with the
+  // trusted window
   apply(input: Change): Promise<void> {
     return this.serial(() => this.applyNow(changeSchema.parse(input)))
   }
@@ -1337,7 +1348,7 @@ export class Loader implements Seam {
     const { read } = staged
     const old = k.entry
     const to = read.manifest!.version
-    const landing = await this.record('plugin.updated', { plugin: id, from: old.version, to })
+    const landing = await this.landing(id, 'plugin.updated', { plugin: id, from: old.version, to })
     if (landing === 'lost') throw new Error('the update record did not land')
     await swapIn(this.dataDir, id, staged.dir)
     const entry: Plugin = { ...old, version: to, contentHash: read.hash! }
@@ -1389,6 +1400,43 @@ export class Loader implements Seam {
     } catch {
       return Promise.resolve('lost')
     }
+  }
+
+  // A record a change waits on, for at most the plugin's readyMs, so a log that can't write never holds a start or
+  // the change queue behind it. Past that the wait gives up and the record counts as lost: the lane takes it out if
+  // it still waits, so the log never shows a change that didn't apply. One whose write was under way may land late
+  private async landing(plugin: string, event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
+    if (this.state.switches.recordNothing) return 'muted'
+    const giveUp = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const due = new Promise<'lost'>(resolve => {
+      timer = setTimeout(() => {
+        giveUp.abort()
+        resolve('lost')
+      }, this.limitOf(plugin, 'readyMs'))
+      timer.unref?.()
+    })
+    try {
+      return await Promise.race([Promise.resolve(this.link.record(event, fields, giveUp.signal)).catch(() => 'lost' as const), due])
+    } catch {
+      return 'lost'
+    } finally {
+      if (timer !== null) clearTimeout(timer)
+    }
+  }
+
+  // Removes a host half's start marker once per incarnation, tracked until it settles
+  private unmark(k: Known, live: Live): Promise<void> {
+    if (!live.marked) return Promise.resolve()
+    live.marked = false
+    return this.tracked(removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' })))
+  }
+
+  // Marker work shutdown waits for. The work never rejects
+  private tracked(work: Promise<void>): Promise<void> {
+    this.markerWork.add(work)
+    void work.finally(() => this.markerWork.delete(work))
+    return work
   }
 
   private note(event: string, fields: Record<string, string | number | boolean | null>): void {

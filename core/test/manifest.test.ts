@@ -4,7 +4,7 @@ import { API_VERSION, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BY
 const raw = (text: string) => JSON.parse(text)
 const many = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i))
 
-// The example from section 3 of the proposal
+// A full manifest example
 const search = {
   id: 'search',
   name: 'Search',
@@ -34,7 +34,7 @@ const leases = {
 const both = [['folder', folderManifest], ['install', installManifest]] as const
 
 describe('a manifest', () => {
-  it.each(both)('parses the proposal\'s example from the %s', (_from, schema) => {
+  it.each(both)('parses the full example from the %s', (_from, schema) => {
     expect(schema.parse(search)).toEqual(search)
   })
 

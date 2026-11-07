@@ -12,6 +12,7 @@ import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
 import { Loader, type LoaderOptions } from '../backend/loader/loader.ts'
 import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, WorkerStart } from '../backend/loader/seams.ts'
+import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 
@@ -42,7 +43,7 @@ export class FakeLink implements CarrierLink {
   // What the loader asked of the carrier, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
-  landing: (event: string, fields: Record<string, Field>) => Landing | Promise<Landing> = () => 'landed'
+  landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
   changes = 0
   stopped = 0
   limits: Partial<Record<FloorConstant, number>> = {}
@@ -85,10 +86,10 @@ export class FakeLink implements CarrierLink {
     })
   }
 
-  record(event: string, fields: Record<string, Field>): Promise<Landing> {
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     this.records.push({ event, fields })
     this.timeline.push(`record ${event}${typeof fields.plugin === 'string' ? ` ${fields.plugin}` : ''}`)
-    return Promise.resolve(this.landing(event, fields))
+    return Promise.resolve(this.landing(event, fields, signal))
   }
 
   changed(): void {
@@ -278,7 +279,7 @@ export async function plant(file: string, body: string): Promise<void> {
 export type Listing = { files: Files, firstParty?: boolean, version?: string, hash?: string }
 
 // Writes an install folder: each plugin under plugins/<id> and the install list with each one's version and hash, as
-// the build will from step 9. hash replaces the real one, for a list that doesn't match its files
+// the Electron build is to. hash replaces the real one, for a list that doesn't match its files
 export async function writeInstall(dir: string, plugins: Record<string, Listing>): Promise<void> {
   const listed: Record<string, unknown> = {}
   for (const [id, plugin] of Object.entries(plugins)) {
@@ -306,17 +307,9 @@ export const coreInstall = (): Record<string, Listing> => ({
   gate: { files: filesFor(hostManifest('gate')) },
 })
 
-// A real carrier over the loader, as the join will build it: the slot holders' roles come from the loader
+// A real carrier over the loader, built from the options wireCore builds it from, with no floor log
 export function wire(loader: Loader, link: FakeLink): Carrier {
-  const carrier = new Carrier({
-    loader,
-    gate: () => loader.role('gate', 'gate'),
-    guards: id => loader.role(id, 'guard'),
-    providers: id => loader.role(id, 'provider'),
-    watchdog: () => loader.role('watchdog', 'watchdog'),
-    log: null,
-    core: loader.serve,
-  })
+  const carrier = new Carrier(carrierOptions(loader, { log: null }))
   link.carrier?.close()
   link.carrier = carrier
   return carrier

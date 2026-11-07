@@ -56,6 +56,8 @@ describe('the install list', () => {
     expect(isNewer('2.0.0', '1.99.99')).toBe(true)
     expect(isNewer('1.0.0', '1.0.0')).toBe(false)
     expect(isNewer('1.0.0', '1.0.1')).toBe(false)
+    expect(isNewer('1.0.1', '1.0.0')).toBe(true)
+    expect(isNewer('1.0.10', '1.0.9')).toBe(true)
     expect(pluginVersion.safeParse('01.0.0').success).toBe(false)
   })
 })

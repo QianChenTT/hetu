@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { coreActions, eventActions, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import {
@@ -18,7 +18,7 @@ import {
 import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, Limits, newRate, type Rate } from './limits.ts'
-import { AuditQueue, Coalesced, FloorLane } from './records.ts'
+import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
@@ -70,7 +70,14 @@ type Pending = {
   gate: SlotState
   scope: Scope | undefined
   coalesce: boolean
+  // How far a throttled filterReadable for this call got, so the next try goes on from there
+  filtering: Filtering | null
 }
+
+// The paths by their hash, the gate and StateView the answers came from, how many were asked about and the indexes kept
+type Filtering = { hash: string, gate: object, view: number | null, asked: number, kept: number[] }
+
+const hashOf = (paths: readonly string[]) => createHash('sha256').update(JSON.stringify(paths)).digest('hex')
 
 type Target =
   | { kind: 'core', spec: CoreAction }
@@ -136,6 +143,13 @@ function topicsOf(topics: readonly string[]): Record<string, Field> {
   return { topics: listed, count: topics.length }
 }
 
+// The topics later subscribes in the same second left standing, in the order first seen, for the one record that ends
+// the second. Topic names hold no spaces
+const joinTopics: Join = (held, next) => {
+  const named = (fields: Record<string, Field> | null) => (fields === null || fields.topics === '' ? [] : String(fields.topics).split(' '))
+  return { ...next, ...topicsOf([...new Set([...named(held), ...named(next)])]) }
+}
+
 // The caller's own id and action, read only to answer a call the shape step refused. An action outside the grammar is
 // never echoed or recorded
 function readId(message: unknown): number | null {
@@ -185,6 +199,8 @@ export class Carrier {
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
   private readonly inflight = new Map<string, { calls: number, bytes: number }>()
+  // The gate's time filterReadable took in the current second for each caller of a live call, by principal
+  private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly bus: Bus
   // The StateView number core.security last went out for
@@ -223,7 +239,7 @@ export class Carrier {
     })
   }
 
-  // The audit queue's pair, which the log plugin's handle wraps at step 13
+  // The audit queue's pair, which the log plugin's handle is to wrap
   readonly audit = {
     next: (max: number) => this.queue.next(max),
     ack: (seq: number) => this.queue.ack(seq),
@@ -350,9 +366,10 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost
-  record(event: string, fields: Record<string, Field>): Promise<Landing> {
-    return this.lane.write(event, fields)
+  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost. A record
+  // still waiting when signal aborts comes out and settles lost
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
+    return this.lane.write(event, fields, signal)
   }
 
   // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop
@@ -674,6 +691,7 @@ export class Carrier {
       coalesce: target.kind === 'core'
         ? !shaped.action.startsWith('security.') && !shaped.action.startsWith('watchdog.')
         : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
+      filtering: null,
     }
     way.made.set(pending.id, pending)
     parent?.children.add(pending)
@@ -779,7 +797,12 @@ export class Carrier {
   }
 
   // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-  // read too, every path with the gate off and policy-down while the gate is starting or failed
+  // read too, every path with the gate off and policy-down while the gate is starting or failed. One message asks the
+  // gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
+  // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
+  // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
+  // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
+  // gate or the StateView changed, so no answer from before a narrowing stands
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)
     const paths = field(args, 'paths') as string[]
@@ -788,12 +811,39 @@ export class Carrier {
     if (state === 'off') return { ok: true, result: [...paths] }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
+    const budget = this.limits.of(live.way.plugin, 'filterMsPerSecond')
+    const started = this.clock()
+    let spent = this.filtered.get(live.way.principal)
+    if (spent === undefined || started - spent.second >= 1000 || started < spent.second) {
+      spent = { second: started, spent: 0 }
+      this.filtered.set(live.way.principal, spent)
+    }
+    if (spent.spent >= budget) return no('throttled')
+    const view = this.view()
+    const before = live.filtering
+    live.filtering = null
+    const progress: Filtering = before !== null && before.gate === gate && before.view === view && before.hash === hashOf(paths)
+      ? before
+      : { hash: '', gate, view, asked: 0, kept: [] }
     try {
-      return { ok: true, result: paths.filter(path => gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) }
+      while (progress.asked < paths.length) {
+        const path = paths[progress.asked]
+        if (gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) progress.kept.push(progress.asked)
+        progress.asked++
+        if (progress.asked < paths.length && spent.spent + this.clock() - started >= budget) break
+      }
     } catch {
       this.fault('gate', 'canRead')
       return no('policy-down')
+    } finally {
+      spent.spent += this.clock() - started
     }
+    if (progress.asked < paths.length) {
+      if (progress.hash === '') progress.hash = hashOf(paths)
+      live.filtering = progress
+      return no('throttled')
+    }
+    return { ok: true, result: progress.kept.map(at => paths[at]) }
   }
 
   // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A
@@ -836,7 +886,8 @@ export class Carrier {
       const live = topics.filter(topic => !standing.includes(topic))
       pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
       if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
-      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) })
+      // Counted per half, since the topics are the plugin's to pick
+      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
     }
     this.finish(pending, { ok: true, result: { standing } })
   }

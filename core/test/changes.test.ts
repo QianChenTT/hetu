@@ -29,7 +29,7 @@ const everyKind = [
 ]
 
 describe('the change kinds', () => {
-  it("are section 5's sixteen and the three the amendments added", () => {
+  it("are the nineteen change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'vault.set', 'devMode', 'exec.anyCommand', 'skipVerification',

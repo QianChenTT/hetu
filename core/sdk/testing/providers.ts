@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto'
 import type { RefusalCode } from '../../api/envelope.ts'
 import type { Call, Prepared, Provider } from '../../api/slots.ts'
 
+// Each call waits ms before it is performed, as a provider on a slow disk would
+const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
+
 // A note's version: the SHA-256 hex of its UTF-8 bytes, as the vault plugin keeps it
 export function versionOf(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
@@ -14,9 +17,20 @@ export class MemoryVault implements Provider {
   // Codes the next calls answer with, one each, for a test that needs the vault to fail for a while
   readonly refusals: RefusalCode[] = []
   private readonly changed: (path: string) => Promise<void>
+  private readonly latencyMs: number
+  private inFlight = 0
+  private peak = 0
 
-  constructor(changed: (path: string) => Promise<void>) {
+  constructor(changed: (path: string) => Promise<void>, latencyMs = 0) {
     this.changed = changed
+    this.latencyMs = latencyMs
+  }
+
+  // The most calls in flight at once since the last ask, then counting again from those in flight now
+  busiest(): number {
+    const peak = this.peak
+    this.peak = this.inFlight
+    return peak
   }
 
   async prepare(call: Call): Promise<Prepared> {
@@ -25,6 +39,17 @@ export class MemoryVault implements Provider {
   }
 
   async perform(call: Call, prepared: Prepared): Promise<unknown> {
+    this.inFlight++
+    this.peak = Math.max(this.peak, this.inFlight)
+    try {
+      await after(this.latencyMs)
+      return await this.performed(call, prepared)
+    } finally {
+      this.inFlight--
+    }
+  }
+
+  private async performed(call: Call, prepared: Prepared): Promise<unknown> {
     const refusal = this.refusals.shift()
     if (refusal !== undefined) throw { code: refusal }
     const path = prepared.scope.paths![0]
@@ -49,12 +74,18 @@ type Kind = 'storage' | 'cache'
 // the value or null, set and delete answer null
 export class MemoryStorage implements Provider {
   private readonly spaces: Record<Kind, Map<string, Map<string, unknown>>> = { storage: new Map(), cache: new Map() }
+  private readonly latencyMs: number
+
+  constructor(latencyMs = 0) {
+    this.latencyMs = latencyMs
+  }
 
   async prepare(): Promise<Prepared> {
     return { scope: {} }
   }
 
   async perform(call: Call): Promise<unknown> {
+    await after(this.latencyMs)
     const [kind, verb] = call.action.split('.') as [Kind, string]
     const space = this.space(kind, ownerOf(call))
     const { key, value } = call.args as { key: string, value?: unknown }

@@ -23,8 +23,9 @@ export type CarrierLink = {
   // one record is on disk. It settles at once with muted while the human turned recording off. It settles with lost
   // when the backlog dropped it, the log refused it or the lane closed with it still waiting. It never rejects. A copy,
   // an update or a restore applies only on landed or muted, so a record the log can't write yet holds the change back
-  // until it lands
-  record(event: string, fields: Record<string, Field>): Promise<Landing>
+  // until it lands or the loader gives up. A loader that gives up aborts signal, which takes a record still waiting
+  // out of the backlog and settles it lost
+  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   // A slot state, a plugin state or the StateView changed, so the carrier asks the gate about live subscriptions again
   changed(): void
   // Shutdown has begun. The six slot states have no stopping and the carrier reads anything else as failed, so
@@ -55,8 +56,9 @@ export type Runtime = {
   // Starts a worker from the verified bytes. The worker host page gets { id, incarnation, code } and the port. A throw
   // means it couldn't start
   startWorker(start: WorkerStart): void
-  // Imports a host half from the verified files and starts it on its link. Resolves with the roles the module holds.
-  // A throw or a rejection marks the half failed. root is where the files came from, for the import hook step 9 picks
+  // Imports a host half from the verified files and starts it on its link. Resolves with the roles the module holds. A
+  // throw or a rejection marks the half failed. root is where the files came from, for the import hook the Electron
+  // runtime picks
   startHost(start: HostStart): Promise<HostExports>
   // Ends a worker with terminate(). Ending one already dead decides nothing
   terminate(id: string, incarnation: number): void
