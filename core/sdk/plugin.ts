@@ -3,6 +3,7 @@ import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
 import { attempt } from './refused.ts'
+import { type Handler, type IncomingCall, Serving } from './serving.ts'
 import type { Transport } from './transport.ts'
 
 // What start and stop get: the calls, the plugin's own facts from init and the hooks around its life
@@ -17,6 +18,10 @@ export type PluginContext = Client & {
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
   onStop(fn: () => void | Promise<void>): void
+  // Serves <id>.<name>, an action the manifest declares under provides.actions
+  provide(name: string, handler: Handler): void
+  // The paths of these the call's own caller may read too, only while the call is live
+  filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]>
   readonly try: typeof attempt
 }
 
@@ -51,6 +56,7 @@ class Half {
   private deps: Record<string, unknown> = {}
   private readonly stops: (() => void | Promise<void>)[] = []
   private ctx: PluginContext | null = null
+  private serving: Serving | null = null
 
   constructor(spec: PluginSpec, transport: Transport) {
     this.spec = spec
@@ -71,6 +77,8 @@ class Half {
     else if (kind === 'deps') this.readDeps((message as { deps?: unknown }).deps)
     else if (kind === 'ping') this.post({ v: VERSION, kind: 'pong' })
     else if (kind === 'stop') void this.stop((message as { graceMs?: unknown }).graceMs)
+    else if (kind === 'call') void this.serving!.deliver(message as Record<string, unknown>)
+    else if (kind === 'cancel') this.serving!.cancel(message as Record<string, unknown>)
   }
 
   private init(message: Record<string, unknown>): void {
@@ -78,8 +86,11 @@ class Half {
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     this.readDeps(message.deps)
     this.phase = 'starting'
+    const request = (action: string, args: unknown, options?: Parameters<Calls['request']>[2]) => this.calls.request(action, args, options)
+    const serving = new Serving(id, this.post, request)
+    this.serving = serving
     const ctx: PluginContext = {
-      ...makeClient((action, args, options) => this.calls.request(action, args, options)),
+      ...makeClient(request),
       id,
       incarnation,
       lastStop: typeof lastStop === 'string' ? lastStop : null,
@@ -89,6 +100,8 @@ class Half {
         return state === 'ready' || state === 'starting'
       },
       onStop: fn => { this.stops.push(fn) },
+      provide: (name, handler) => serving.provide(name, handler),
+      filterReadable: (call, paths) => serving.filterReadable(call, paths),
       try: attempt,
     }
     this.ctx = ctx
