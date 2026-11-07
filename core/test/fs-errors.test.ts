@@ -29,6 +29,9 @@ vi.mock('node:fs/promises', async importOriginal => {
         if (fake.openDirError) throw fail(fake.openDirError)
         return { sync: async () => { throw fail(fake.syncError!) }, close: async () => {} }
       }
+      // A file opened to be read fails as readFile would, since the log reads its segments through a handle
+      const reading = rest[0] === undefined || rest[0] === 'r'
+      if (reading && fake.readError && String(file).endsWith(fake.readError.match)) throw fail(fake.readError.code)
       return (real.open as (...args: unknown[]) => unknown)(file, ...rest)
     }) as typeof real.open,
   }

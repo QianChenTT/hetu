@@ -90,6 +90,9 @@ function edit(line: string, from: string, to: string): string {
   return line.replace(from, to)
 }
 
+// count fields of 4096 characters each, about 4 KiB of line apiece
+const manyFields = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`f${i}`, 'x'.repeat(4096)]))
+
 async function fill(log: EventLog, count: number) {
   for (let n = 1; n <= count; n++) await log.append('test.line', { n })
 }
@@ -227,6 +230,7 @@ describe('refusing input', () => {
     ['an event name with a double dash', 'note--written', {}],
     ['an event name that starts with a digit', '1note', {}],
     ['a value longer than 4096', 'test.line', { path: 'x'.repeat(4097) }],
+    ['fields that make a line longer than 1 MiB', 'test.line', manyFields(300)],
   ]
 
   it.each(refused)('refuses %s, writes nothing and keeps the log healthy', async (_name, event, fields) => {
@@ -251,6 +255,13 @@ describe('refusing input', () => {
     const log = await opened()
     await log.append('test.line', { path: 'x'.repeat(4096) })
     expect((await recordsOf(1))[0].path).toHaveLength(4096)
+  })
+
+  it('accepts a line just under 1 MiB and reads it back at the next open', async () => {
+    const log = await opened()
+    await log.append('test.line', manyFields(250))
+    expect(Object.keys((await recordsOf(1))[0])).toHaveLength(254)
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 1, broken: null, unlinked: null })
   })
 
   it('accepts field names that merely contain a refused word', async () => {
@@ -1114,5 +1125,66 @@ describe('history', () => {
   it('reads a folder in a segment\'s place as a break', async () => {
     await mkdir(segmentFile(1), { recursive: true })
     expect(await new EventLog(dir).history()).toEqual([{ segment: 1, lines: 0, first: null, last: null, start: null, breaks: [1] }])
+  })
+})
+
+describe('a segment of any size', () => {
+  // A chain whose lines are about 3 KiB, so they cross the 1 MiB chunks a read takes at many offsets
+  function padded(count: number): string[] {
+    const lines: string[] = []
+    let prev = ZERO
+    for (let seq = 1; seq <= count; seq++) {
+      const line = JSON.stringify({ seq, prev, at: AT, event: 'test.line', pad: 'p'.repeat(2900 + (seq % 97)) })
+      lines.push(line)
+      prev = sha256(line)
+    }
+    return lines
+  }
+
+  it('opens, verifies and goes on in a newest segment read in many chunks', async () => {
+    const lines = padded(1500)
+    await put(1, joined(lines))
+    const log = new EventLog(dir)
+    expect(await log.open()).toEqual({ lastSeq: 1500, broken: null, unlinked: null })
+    await log.append('test.line', { n: 1501 })
+    const records = await recordsOf(1)
+    expect(records.at(-1)).toMatchObject({ seq: 1501, prev: sha256(lines[1499]) })
+    expect(await log.verify()).toEqual({ ok: true })
+    expect(await log.history()).toEqual([{ segment: 1, lines: 1501, first: 1, last: 1501, start: 'zero', breaks: [] }])
+  })
+
+  it('finds a changed line deep in a segment read in many chunks', async () => {
+    const lines = padded(1500)
+    lines[1200] = edit(lines[1200], '"pad":"p', '"pad":"q')
+    await put(1, joined(lines))
+    // The changed line still follows the one before, the line after it no longer follows it
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 1201, broken: { segment: 1, brokenSeq: 1202 }, unlinked: null })
+    expect((await new EventLog(dir).history())[0].breaks).toEqual([1202])
+  })
+
+  // fs.readFile refuses a file past 2 GiB, which kept the log from opening or appending ever again. The file is
+  // extended past 2 GiB with zeros, which takes no time and, where the disk allows it, no space
+  it('opens a newest segment past 2 GiB and lists it in history', { timeout: 60_000 }, async () => {
+    const lines = chain(1, 3)
+    await put(1, joined(lines))
+    const handle = await open(segmentFile(1), 'r+')
+    await handle.truncate(2 ** 31 + 4096)
+    await handle.close()
+    const log = new EventLog(dir)
+    expect(await log.open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 4 }, unlinked: null })
+    await log.append('test.line', { n: 5 })
+    expect(await log.history()).toEqual([
+      { segment: 1, lines: 3, first: 1, last: 3, start: 'zero', breaks: [4] },
+      { segment: 2, lines: 2, first: 4, last: 5, start: 'zero', breaks: [] },
+    ])
+  })
+
+  it('reads a line past 1 MiB as a break and checks the lines after it against its hash', async () => {
+    const lines = chain(1, 3)
+    const long = 'x'.repeat(3 * 2 ** 20)
+    const next = JSON.stringify({ seq: 5, prev: sha256(long), at: AT, event: 'test.line', n: 5 })
+    await put(1, joined([...lines, long, next]))
+    expect(await new EventLog(dir).open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 4 }, unlinked: null })
+    expect((await new EventLog(dir).history())[0]).toEqual({ segment: 1, lines: 5, first: 1, last: 5, start: 'zero', breaks: [4] })
   })
 })
