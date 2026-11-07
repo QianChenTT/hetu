@@ -3,4 +3,6 @@ dist/
 # The playground vault is its own git repo, run by the daemon
 /playground_vault/
 /.claude/
+# Plan ledgers and review packages, local only
+/.superpowers/
 /.vscode/
