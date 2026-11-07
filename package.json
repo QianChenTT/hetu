@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "core/dist/main.js",
   "engines": {
     "node": ">=24"
   },
@@ -18,6 +19,12 @@
     "seed": "npm run seed -w daemon",
     "seed:fresh": "npm run seed -w daemon -- --fresh",
     "test": "npm test -w core -w daemon -w plugins/search --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:main": "node core/build/main.ts",
+    "test:e2e": "npm run build:main && npm run test:e2e -w core"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "playwright": "1.65.0"
   }
 }
