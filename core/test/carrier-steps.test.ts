@@ -29,6 +29,35 @@ describe('prepare before decide', () => {
     expect(vault.released).toHaveLength(1)
   })
 
+  it('hands perform and release the copy the gate judged, not the object prepare gave', async () => {
+    const { connect, gate, vault } = harness()
+    gate.grants.search = [{ type: 'vault.read', paths: ['notes/**'] }]
+    vault.files.set('notes/a.md', 'a')
+    vault.files.set('secret/b.md', 'b')
+    // An object that answers another path once it was judged
+    let reads = 0
+    vault.prepare = async () => ({
+      get scope() {
+        reads++
+        return { paths: [reads === 1 ? 'notes/a.md' : 'secret/b.md'] }
+      },
+    })
+    const released: unknown[] = []
+    vault.release = (_call, prepared) => { released.push(prepared) }
+    const search = connect(worker('search'))
+    const reply = await search.ask('vault.read', { path: 'notes/a.md' })
+    expect(reply.result).toEqual({ text: 'a' })
+    expect(vault.performed[0].prepared.scope.paths).toEqual(['notes/a.md'])
+    expect(Object.isFrozen(vault.performed[0].prepared)).toBe(true)
+
+    // A refusal at decide, after prepare, releases the same copy
+    gate.decision = access => (access.stage === 'canonical' ? { ...gate.granted(access), allow: false, code: 'not-granted' } as never : gate.granted(access))
+    reads = 0
+    await search.ask('vault.read', { path: 'notes/a.md' })
+    expect(released).toHaveLength(1)
+    expect((released[0] as { scope: { paths: string[] } }).scope.paths).toEqual(['notes/a.md'])
+  })
+
   it('answers a provider\'s own refusal from prepare with its code and fixed reason only', async () => {
     const { connect, gate, vault } = harness()
     gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
