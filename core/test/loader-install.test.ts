@@ -307,6 +307,23 @@ describe('start markers', () => {
     }
   })
 
+  it('removes the marker of a host half a stop caught while its marker was being written', async () => {
+    const made = await harness()
+    let stopping: Promise<void> | null = null
+    const changed = made.link.changed.bind(made.link)
+    made.link.changed = () => {
+      changed()
+      // The turn after the log shows starting, its launch is writing the marker
+      if (stopping === null && stateOf(made.loader, 'log') === 'starting') {
+        stopping = new Promise(resolve => queueMicrotask(() => resolve(made.loader.shutdown())))
+      }
+    }
+    void made.loader.start()
+    await until(() => stopping !== null)
+    await stopping
+    expect(await exists(marker(made.dataDir, 'log'))).toBe(false)
+  })
+
   it('removes the marker of a host half a planned stop ended before ready, so the next boot starts it', async () => {
     const made = await harness({ behave: { gate: { ready: false } } })
     void made.loader.start()

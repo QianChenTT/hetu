@@ -182,8 +182,8 @@ export class Loader implements Seam {
   private readonly minted = new Map<string, number>()
   private readonly lastSlots = new Map<string, SlotState>()
   private readonly waiters: (() => void)[] = []
-  // Marker removals under way, which shutdown waits for, so none is cut off when the process ends
-  private readonly unmarking = new Set<Promise<void>>()
+  // Marker writes and removals under way, which shutdown waits for, so none is cut off when the process ends
+  private readonly markerWork = new Set<Promise<void>>()
   private state: SecurityState
   private removedKnown: boolean
   private install: InstallList | null = null
@@ -354,7 +354,7 @@ export class Loader implements Seam {
       this.replan()
     }
     await this.pumped()
-    while (this.unmarking.size > 0) await Promise.all(this.unmarking)
+    while (this.markerWork.size > 0) await Promise.all(this.markerWork)
   }
 
   // ---- the install
@@ -868,12 +868,14 @@ export class Loader implements Seam {
       // Written before start and removed at ready, so a host half that freezes main here is held failed next boot. One
       // whose start ended before its module ran couldn't have frozen anything, so its marker goes
       if (k.place === 'host') {
-        live.marked = true
-        await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-        if (live.over) {
-          await this.unmark(k, live)
-          return
-        }
+        // The marker counts as on disk once its write settled, so a stop that came during the write leaves its removal
+        // to here
+        await this.tracked((async () => {
+          await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
+          live.marked = true
+          if (live.over) await this.unmark(k, live)
+        })())
+        if (live.over) return
       }
       this.mint(k, live)
     } catch {
@@ -1424,10 +1426,14 @@ export class Loader implements Seam {
   private unmark(k: Known, live: Live): Promise<void> {
     if (!live.marked) return Promise.resolve()
     live.marked = false
-    const removal = removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-    this.unmarking.add(removal)
-    void removal.finally(() => this.unmarking.delete(removal))
-    return removal
+    return this.tracked(removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' })))
+  }
+
+  // Marker work shutdown waits for. The work never rejects
+  private tracked(work: Promise<void>): Promise<void> {
+    this.markerWork.add(work)
+    void work.finally(() => this.markerWork.delete(work))
+    return work
   }
 
   private note(event: string, fields: Record<string, string | number | boolean | null>): void {
