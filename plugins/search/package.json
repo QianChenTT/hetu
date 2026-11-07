@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build": "node build.ts",
+    "check": "node ../../core/sdk/build/check-manifest.ts .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -9,5 +9,10 @@
     "./esbuild": "./build/esbuild.ts",
     "./eslint": "./build/eslint.ts",
     "./check-manifest": "./build/check-manifest.ts"
+  },
+  "dependencies": {
+    "acorn": "^8.19.0",
+    "acorn-walk": "^8.3.5",
+    "esbuild": "^0.28.2"
   }
 }
