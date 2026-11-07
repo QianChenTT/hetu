@@ -302,6 +302,66 @@ describe('deadlines and cancel', () => {
     await git.waitFor(message => message.kind === 'cancel' && message.callId === child.callId)
   })
 
+  // Nothing done under a call outlives it: work a callee wants to keep doing after answering runs as its own calls
+  it('cancels the live sub-calls of a call once it is answered', async () => {
+    const { http, mcp, git } = plugins()
+    const id = http.call('mcp.handle')
+    const parent = await mcp.delivered('mcp.handle')
+    const sub = mcp.call('git.log', undefined, { parent: parent.callId })
+    const child = await git.delivered('git.log')
+    mcp.answer(parent.callId, 'done')
+    expect((await http.reply(id)).ok).toBe(true)
+    expect(code(await mcp.reply(sub))).toBe('stopped')
+    await git.waitFor(message => message.kind === 'cancel' && message.callId === child.callId)
+    git.answer(child.callId, 'late')
+    await tick(20)
+    expect(mcp.repliesTo(sub)).toHaveLength(1)
+  })
+
+  it('frees the root caller\'s ceiling once the answered call\'s sub-calls are cancelled', async () => {
+    const { http, mcp, loader } = plugins()
+    loader.human.plugins.http = { callsInFlight: 2 }
+    const id = http.call('mcp.handle')
+    const parent = await mcp.delivered('mcp.handle')
+    mcp.call('git.log', undefined, { parent: parent.callId })
+    await tick(10)
+    mcp.answer(parent.callId, 'done')
+    await http.reply(id)
+    http.call('mcp.handle')
+    http.call('mcp.handle')
+    for (let i = 0; i < 100 && deliveries(mcp, 'mcp.handle').length < 3; i++) await tick(5)
+    expect(deliveries(mcp, 'mcp.handle')).toHaveLength(3)
+    expect(http.inbox.filter(message => code(message) === 'throttled')).toEqual([])
+  })
+
+  it('leaves the sub-calls of other calls from the same caller running', async () => {
+    const { http, mcp, git } = plugins()
+    const first = http.call('mcp.handle')
+    http.call('mcp.handle')
+    for (let i = 0; i < 100 && deliveries(mcp, 'mcp.handle').length < 2; i++) await tick(5)
+    const [one, two] = deliveries(mcp, 'mcp.handle')
+    mcp.call('git.log', undefined, { parent: one.callId })
+    const kept = mcp.call('git.log', undefined, { parent: two.callId })
+    for (let i = 0; i < 100 && deliveries(git, 'git.log').length < 2; i++) await tick(5)
+    mcp.answer(one.callId, 'done')
+    await http.reply(first)
+    const atGit = deliveries(git, 'git.log')[1]
+    git.answer(atGit.callId, 'entries')
+    expect((await mcp.reply(kept)).result).toBe('entries')
+  })
+
+  it('still lets a callee make calls of its own with no parent after it answered', async () => {
+    const { http, mcp, git } = plugins()
+    const id = http.call('mcp.handle')
+    const parent = await mcp.delivered('mcp.handle')
+    mcp.answer(parent.callId, 'done')
+    await http.reply(id)
+    const own = mcp.call('git.log')
+    const atGit = await git.delivered('git.log')
+    git.answer(atGit.callId, 'entries')
+    expect((await mcp.reply(own)).result).toBe('entries')
+  })
+
   // A call with no parent, which only the list of calls the way made can reach
   it.each([
     ['crashes', (parts: ReturnType<typeof plugins>) => parts.mcp.port.close()],

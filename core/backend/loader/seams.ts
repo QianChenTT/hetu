@@ -3,11 +3,10 @@ import type { FloorConstant } from '../../api/floor.ts'
 import type { Gate, Guard, Provider, Watchdog } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
-import type { Port } from '../carrier/seams.ts'
+import type { Landing, Port } from '../carrier/seams.ts'
 
-// What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a
-// full backlog, refused by the log or still waiting when the lane closed
-export type Landing = 'landed' | 'muted' | 'lost'
+// The carrier says what became of a floor record, so the type lives with it
+export type { Landing }
 
 // What the loader needs from the carrier, a small interface the loader's tests fake. register, handle and end are the
 // carrier's own. The join builds send, record, changed, stopping and limit in the carrier

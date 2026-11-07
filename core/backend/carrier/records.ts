@@ -1,14 +1,16 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { AuditRecord } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { FloorLog } from './seams.ts'
+import type { FloorLog, Landing } from './seams.ts'
 
-type FloorRecord = { event: string, fields: Record<string, Field> }
+// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none
+type FloorRecord = { event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void }
 
 // Floor records go straight through the one EventLog in the order they were made, ahead of the audit queue and with
 // the log plugin off. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
 // counted and the count lands as floor.dropped once the backlog has. A write never blocks and never throws. Nothing is
-// taken in while the human turned recording off
+// taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
+// the record's fate is known, for the loader, which applies some changes only once their record is on disk
 export class FloorLane {
   private readonly log: FloorLog | null
   private readonly bound: () => number
@@ -42,14 +44,17 @@ export class FloorLane {
     return !this.closed && !this.muted()
   }
 
-  write(event: string, fields: Record<string, Field> = {}): void {
-    if (this.closed || this.muted()) return
+  write(event: string, fields: Record<string, Field> = {}): Promise<Landing> {
+    if (this.closed) return Promise.resolve('lost')
+    if (this.muted()) return Promise.resolve('muted')
     if (this.backlog.length >= this.bound()) {
       this.overflowed++
-      return
+      return Promise.resolve('lost')
     }
-    this.backlog.push({ event, fields: { ...fields } })
-    void this.pump()
+    return new Promise(landed => {
+      this.backlog.push({ event, fields: { ...fields }, landed })
+      void this.pump()
+    })
   }
 
   // One drain at a time. A record written while one runs is picked up by it, so a flush waits for that drain
@@ -66,18 +71,22 @@ export class FloorLane {
     try {
       while (this.backlog.length > 0) {
         const [first] = this.backlog
+        let landing: Landing = 'landed'
         try {
           await log.append(first.event, first.fields)
         } catch {
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
-            this.later()
+            if (this.closed) this.abandon()
+            else this.later()
             return
           }
+          landing = 'lost'
           // Not for the count's own record, which would count itself forever
           if (first.event !== 'floor.dropped') this.overflowed++
         }
         this.backlog.shift()
+        first.landed?.(landing)
         if (this.backlog.length === 0 && this.overflowed > 0) {
           this.backlog.push({ event: 'floor.dropped', fields: { count: this.overflowed } })
           this.overflowed = 0
@@ -102,10 +111,16 @@ export class FloorLane {
     return this.pump()
   }
 
+  // A drain under way keeps going and lands what it can. With none, what still waits never will
   close(): void {
     this.closed = true
     if (this.retry !== null) clearTimeout(this.retry)
     this.retry = null
+    if (!this.pumping) this.abandon()
+  }
+
+  private abandon(): void {
+    for (const record of this.backlog.splice(0)) record.landed?.('lost')
   }
 }
 

@@ -19,7 +19,7 @@ import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, Limits, newRate, type Rate } from './limits.ts'
 import { AuditQueue, Coalesced, FloorLane } from './records.ts'
-import type { CarrierOptions, PluginInfo, Port, Served } from './seams.ts'
+import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
 
@@ -190,6 +190,8 @@ export class Carrier {
   // The StateView number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
+  // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
+  private shutting = false
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -210,9 +212,14 @@ export class Carrier {
       recheck: (caller, topic) => this.recheck(caller, topic),
       limit: (plugin, name) => this.limits.of(plugin, name),
       // Coalesced, since a publisher's pace or a subscriber's own can make them
-      dropped: (caller, why) => this.coalesced.hit('events.dropped', { ...whoOf(caller), why }),
+      // Shutdown takes the gate down on its way out, which is no failure, so the bus records nothing then
+      dropped: (caller, why) => {
+        if (!this.shutting) this.coalesced.hit('events.dropped', { ...whoOf(caller), why })
+      },
       // One record each, since a change of the gate or the grants makes them
-      changed: (caller, change, topics) => this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }),
+      changed: (caller, change, topics) => {
+        if (!this.shutting) this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) })
+      },
     })
   }
 
@@ -220,6 +227,20 @@ export class Carrier {
   readonly audit = {
     next: (max: number) => this.queue.next(max),
     ack: (seq: number) => this.queue.ack(seq),
+  }
+
+  // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
+  // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
+  // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
+  // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
+  // holds. Audit records keep queueing until close counts them
+  stopping(): void {
+    this.shutting = true
+  }
+
+  // The answer for something that is down: what it is outside shutdown, stopped once shutdown began
+  private down(code: 'policy-down' | 'guard-down' | 'unavailable'): RefusalCode {
+    return this.shutting ? 'stopped' : code
   }
 
   // A floor record from the core: boot, the loader and the carrier itself
@@ -237,7 +258,7 @@ export class Carrier {
   // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
   // starts, not a change
   changed(): void {
-    if (this.closed) return
+    if (this.closed || this.shutting) return
     this.bus.sync()
     this.bus.emit('core.status')
     const view = this.view()
@@ -321,10 +342,32 @@ export class Carrier {
     for (const pending of [...way.made.values()]) this.stop(pending, 'stopped')
   }
 
+  // For the loader: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
+  // never registered drops it. Nothing the core sends counts against the half's rate
+  send(caller: Caller, message: unknown): void {
+    const way = this.ways.get(keyOf(caller))
+    if (way === undefined || !way.open || way.send === null) return
+    way.send(message)
+  }
+
+  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost
+  record(event: string, fields: Record<string, Field>): Promise<Landing> {
+    return this.lane.write(event, fields)
+  }
+
+  // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop
+  // deadlines follow the same values
+  limit(plugin: string, name: FloorConstant): number {
+    return this.limits.of(plugin, name)
+  }
+
   close(): void {
     this.closed = true
     for (const way of [...this.ways.values()]) this.end(way.caller)
     this.coalesced.close()
+    // Records the log plugin never acknowledged are lost with the run and counted
+    const held = this.queue.clear()
+    if (held > 0 && !this.muted()) this.lane.write('audit.dropped', { count: held, why: 'shutdown' })
     this.lane.close()
   }
 
@@ -660,11 +703,11 @@ export class Carrier {
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
-    if (gate !== 'off') return 'policy-down'
+    if (gate !== 'off') return this.down('policy-down')
     if (this.muted()) return 'pass'
     const log = this.slot('log')
     if (log === 'on' || log === 'off') return 'pass'
-    return log === 'starting' ? 'starting' : 'policy-down'
+    return log === 'starting' ? 'starting' : this.down('policy-down')
   }
 
   // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
@@ -682,7 +725,7 @@ export class Carrier {
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
     const gate = this.holder(() => this.options.gate())
-    if (gate === null) return { code: 'policy-down' }
+    if (gate === null) return { code: this.down('policy-down') }
     const access: Access = frozen({
       stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
       action: asker.action, capability, scope,
@@ -703,7 +746,7 @@ export class Carrier {
       return { code: 'policy-down' }
     }
     const current = this.view()
-    if (current === null) return { code: 'policy-down' }
+    if (current === null) return { code: this.down('policy-down') }
     // An answer with no view isn't an answer at all. One on an older view is stale
     if (!Number.isSafeInteger(view)) return { code: 'not-granted' }
     if (view !== current) return { code: 'stale' }
@@ -744,7 +787,7 @@ export class Carrier {
     const state = this.slot('gate')
     if (state === 'off') return { ok: true, result: [...paths] }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
-    if (gate === null) return no('policy-down')
+    if (gate === null) return no(this.down('policy-down'))
     try {
       return { ok: true, result: paths.filter(path => gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) }
     } catch {
@@ -863,7 +906,7 @@ export class Carrier {
     const info = this.info(id)
     if (info?.state === 'starting') return this.finish(pending, no('starting'))
     const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
-    if (provider === null) return this.finish(pending, no('unavailable'))
+    if (provider === null) return this.finish(pending, no(this.down('unavailable')))
     const call = this.callOf(pending, args)
     // The provider's own handle may name this call as the parent of its sub-calls
     const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
@@ -926,7 +969,7 @@ export class Carrier {
       if (state === 'off') continue
       if (state === 'starting') return 'starting'
       const guard = state === 'on' ? this.holder(() => this.options.guards(id)) : null
-      if (guard === null) return 'guard-down'
+      if (guard === null) return this.down('guard-down')
       const call: GuardCall = frozen({
         callId: pending.callId, caller: pending.caller,
         ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
@@ -1032,10 +1075,13 @@ export class Carrier {
     this.finish(pending, no('failed'))
   }
 
-  // Every call ends here once. The reply never waits on the record
+  // Every call ends here once. The reply never waits on the record. Its live sub-calls stop with it, so none still waits
+  // on a callee after the call answers. What a callee already did stays done. A callee that keeps working after it
+  // answers makes its own calls
   private finish(pending: Pending, outcome: Outcome): void {
     if (pending.done) return
     pending.done = true
+    for (const child of [...pending.children]) this.stop(child, 'stopped')
     if (pending.timer !== null) clearTimeout(pending.timer)
     for (const [principal] of pending.charged) {
       const load = this.inflight.get(principal)
@@ -1056,7 +1102,7 @@ export class Carrier {
     }
     // 11 record
     const code = outcome.ok ? null : outcome.code
-    this.record({
+    this.recordCall({
       at: pending.started, caller: pending.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       root: pending.root.caller, action: pending.action,
@@ -1071,7 +1117,7 @@ export class Carrier {
     if (about.id !== null && way.open) {
       answer({ v: VERSION, kind: 'reply', id: about.id, callId, ok: false, refusal: this.refusalOf(about.action, refused) })
     }
-    this.record({
+    this.recordCall({
       at: started, caller: way.caller, ...(about.onBehalf !== undefined ? { onBehalf: about.onBehalf } : {}),
       root: about.parent?.root.caller ?? way.caller, action: about.action, code: refused.code, ms: this.now() - started,
       gate: this.slot('gate'),
@@ -1088,11 +1134,12 @@ export class Carrier {
   }
 
   // One audit record per call while the log is on or starting. Nothing while recording is off. A log that went down
-  // or was switched off loses what the queue held, which is counted in a floor record
-  private record(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
+  // or was switched off loses what the queue held, which is counted in a floor record. During shutdown the log stops
+  // last and reads failed then, so records keep queueing and close counts what is left
+  private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.muted()) return
     const log = this.slot('log')
-    if (log !== 'on' && log !== 'starting') {
+    if (log !== 'on' && log !== 'starting' && !this.shutting) {
       const held = this.queue.clear()
       if (held > 0) this.lane.write('audit.dropped', { count: held, why: 'log-down' })
       return
