@@ -11,8 +11,12 @@ import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest,
   type Listing,
 } from './loader-fakes.ts'
+import { HOLD_TIMEOUT, holdOpen, onWindows, releaseAfter, releaseAll } from './hold.ts'
 
-afterEach(cleanup)
+afterEach(async () => {
+  await releaseAll()
+  await cleanup()
+})
 
 const host = (id: string, extra: object = {}): Listing => ({ files: filesFor(hostManifest(id, extra)) })
 const wrongHash = 'b'.repeat(64)
@@ -301,6 +305,36 @@ describe('start markers', () => {
     } finally {
       await booted.release()
     }
+  })
+
+  it('removes the marker of a host half a planned stop ended before ready, so the next boot starts it', async () => {
+    const made = await harness({ behave: { gate: { ready: false } } })
+    void made.loader.start()
+    await until(() => made.runtime.order().includes('gate') && made.runtime.half('gate', 1, 'host').got('init').length === 1)
+    expect(await exists(marker(made.dataDir, 'gate'))).toBe(true)
+    await made.loader.shutdown()
+    expect(await exists(marker(made.dataDir, 'gate'))).toBe(false)
+    const booted = await boot({ packaged: false, installDir: made.installDir, env: { HETU_DATA_DIR: made.dataDir }, platform: process.platform })
+    try {
+      expect(booted.markers).toEqual([])
+    } finally {
+      await booted.release()
+    }
+  })
+
+  // A marker held open by another program waits in the removal's retry, which shutdown has to see through
+  it.runIf(onWindows)('finishes removing a ready half\'s marker before shutdown resolves', { timeout: HOLD_TIMEOUT }, async () => {
+    // PowerShell takes a second or more to start, which the harness's short readyMs would read as a start that hung
+    const made = await harness({ limits: { readyMs: 10_000 } })
+    const startHost = made.runtime.startHost.bind(made.runtime)
+    made.runtime.startHost = async start => {
+      if (start.id === 'gate') void releaseAfter(await holdOpen(marker(made.dataDir, 'gate'), 'Read'), 600)
+      return startHost(start)
+    }
+    await made.loader.start()
+    expect(stateOf(made.loader, 'gate')).toBe('ready')
+    await made.loader.shutdown()
+    expect(await exists(marker(made.dataDir, 'gate'))).toBe(false)
   })
 
   it('reads no marker from a name that is no plugin id, and none when the folder is missing', async () => {

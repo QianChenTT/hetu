@@ -76,6 +76,8 @@ type Live = {
   with: string[]
   over: boolean
   deps: string
+  // A host half's start marker is on disk and no removal has started
+  marked: boolean
 }
 
 // A plugin the loader knows. read holds the bytes that run. held is what happened in this run that only a restart
@@ -180,6 +182,8 @@ export class Loader implements Seam {
   private readonly minted = new Map<string, number>()
   private readonly lastSlots = new Map<string, SlotState>()
   private readonly waiters: (() => void)[] = []
+  // Marker removals under way, which shutdown waits for, so none is cut off when the process ends
+  private readonly unmarking = new Set<Promise<void>>()
   private state: SecurityState
   private removedKnown: boolean
   private install: InstallList | null = null
@@ -350,6 +354,7 @@ export class Loader implements Seam {
       this.replan()
     }
     await this.pumped()
+    while (this.unmarking.size > 0) await Promise.all(this.unmarking)
   }
 
   // ---- the install
@@ -846,7 +851,7 @@ export class Loader implements Seam {
     k.incarnations = n
     const live: Live = {
       n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
-      with: [], over: false, deps: '',
+      with: [], over: false, deps: '', marked: false,
     }
     k.live = live
     k.state = 'starting'
@@ -863,9 +868,10 @@ export class Loader implements Seam {
       // Written before start and removed at ready, so a host half that freezes main here is held failed next boot. One
       // whose start ended before its module ran couldn't have frozen anything, so its marker goes
       if (k.place === 'host') {
+        live.marked = true
         await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
         if (live.over) {
-          await removeMarker(this.dataDir, k.id).catch(() => {})
+          await this.unmark(k, live)
           return
         }
       }
@@ -951,9 +957,7 @@ export class Loader implements Seam {
     this.versions.delete(k.id)
     this.note('plugin.started', { plugin: k.id, incarnation: live.n })
     this.beat(k, live)
-    if (k.place === 'host') {
-      removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-    }
+    void this.unmark(k, live)
     this.replan()
   }
 
@@ -999,10 +1003,12 @@ export class Loader implements Seam {
     return out.sort()
   }
 
+  // A planned stop ran in a main that wasn't frozen, so a start it ended before ready leaves no marker
   private finished(k: Known, live: Live): void {
     if (live.over) return
     const stop = live.stop
     const reason = stop?.reason ?? this.stopReason(k)
+    void this.unmark(k, live)
     this.retire(k, live)
     k.lastStop = reason
     this.note('plugin.stopped', { plugin: k.id, incarnation: live.n, reason, with: live.with.join(',') })
@@ -1412,6 +1418,16 @@ export class Loader implements Seam {
     } finally {
       if (timer !== null) clearTimeout(timer)
     }
+  }
+
+  // Removes a host half's start marker once per incarnation, tracked until it settles
+  private unmark(k: Known, live: Live): Promise<void> {
+    if (!live.marked) return Promise.resolve()
+    live.marked = false
+    const removal = removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
+    this.unmarking.add(removal)
+    void removal.finally(() => this.unmarking.delete(removal))
+    return removal
   }
 
   private note(event: string, fields: Record<string, string | number | boolean | null>): void {
