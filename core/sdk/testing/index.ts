@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
-import { floorConstants } from '../../api/floor.ts'
+import { type FloorConstant, floorConstants } from '../../api/floor.ts'
 import { dependencyReason } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest } from '../../api/manifest.ts'
 import type { PluginState, SlotState } from '../../api/slots.ts'
@@ -22,7 +22,12 @@ export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string 
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }
 
 // manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the vault at start
-export type FakeCoreOptions = { manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number }
+// latencyMs is how long the vault, storage and cache take to answer each call, so a plugin meets a save or a read that
+// takes time. limits are the human's values for all, read each time, so a test may change them while the plugin runs
+export type FakeCoreOptions = {
+  manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
+  limits?: Partial<Record<FloorConstant, number>>,
+}
 
 type Manifest = {
   id: string
@@ -84,10 +89,12 @@ class Way {
 class FakeLoader implements Loader {
   readonly infos = new Map<string, PluginInfo>()
   private readonly gateSlot: SlotState
+  private readonly all: Partial<Record<FloorConstant, number>>
   private readonly listeners = new Set<(caller: Caller, kind: string) => void>()
 
-  constructor(gateSlot: SlotState) {
+  constructor(gateSlot: SlotState, all: Partial<Record<FloorConstant, number>>) {
     this.gateSlot = gateSlot
+    this.all = all
   }
 
   // The log, capabilities and watchdog slots read off, as with the human's switch, so calls pass unlogged
@@ -105,7 +112,7 @@ class FakeLoader implements Loader {
   }
 
   limits(): HumanLimits {
-    return { all: {}, plugins: {} }
+    return { all: { ...this.all }, plugins: {} }
   }
 
   recordNothing(): boolean {
@@ -169,7 +176,11 @@ export class FakeCore {
     read(path: string): string | undefined
     // The next vault call a plugin makes answers this code, as a vault that is busy, down or starting would
     refuseNext(code: RefusalCode): void
+    // The most vault calls in flight at once since a test last asked
+    busiest(): number
   }
+  // The human's limits for all, which the carrier reads on each use
+  readonly limits: Partial<Record<FloorConstant, number>>
 
   private readonly manifest: Manifest
   private readonly half: 'worker' | 'host'
@@ -177,7 +188,7 @@ export class FakeCore {
   private readonly gate: ModeGate
   private readonly carrier: Carrier
   private readonly memory: MemoryVault
-  private readonly storage = new MemoryStorage()
+  private readonly storage: MemoryStorage
   private readonly vaultWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
@@ -192,7 +203,8 @@ export class FakeCore {
     this.mode = options.mode ?? 'manifest'
     this.readyMs = options.readyMs ?? floorConstants.readyMs
     this.half = 'host' in this.manifest.entries ? 'host' : 'worker'
-    this.loader = new FakeLoader(this.mode === 'gate-failed' ? 'failed' : 'on')
+    this.limits = { ...options.limits }
+    this.loader = new FakeLoader(this.mode === 'gate-failed' ? 'failed' : 'on', this.limits)
     this.gate = new ModeGate(this.manifest.id, this.mode, this.manifest.capabilities ?? [])
     // A requirement the fake core doesn't run is missing in every mode. dependency-missing takes the rest away too
     const requires = this.manifest.requires ?? []
@@ -200,7 +212,8 @@ export class FakeCore {
     for (const [id, topics] of Object.entries(providers)) {
       if (!this.missing.has(id)) this.infos(id, { state: 'ready', place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [...topics] })
     }
-    this.memory = new MemoryVault(path => this.publish('vault.changed', path))
+    this.memory = new MemoryVault(path => this.publish('vault.changed', path), options.latencyMs ?? 0)
+    this.storage = new MemoryStorage(options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     this.carrier = new Carrier({
       loader: this.loader,
@@ -222,6 +235,7 @@ export class FakeCore {
       },
       read: path => this.memory.notes.get(path),
       refuseNext: code => { this.memory.refusals.push(code) },
+      busiest: () => this.memory.busiest(),
     }
   }
 

@@ -103,6 +103,23 @@ describe('search with the grants its manifest asks for', () => {
     await finds(fake, 'fox', [])
   })
 
+  it('reads a resync a batch at a time, so its other calls never wait behind it', async () => {
+    const fake = fakeCore({ manifest, latencyMs: 5 })
+    cores.push(fake)
+    await fake.start(search)
+    for (let i = 0; i < 100; i++) await fake.vault.write(`notes/${i}.md`, `fox ${i}`)
+    await until(async () => (await query(fake, 'fox')).length === 100, 10_000)
+    fake.vault.busiest()
+    // One event at a time, so a burst drops some and a resync of every note search knows follows
+    fake.limits.eventCredits = 1
+    for (let i = 0; i < 5; i++) await fake.vault.write(`notes/${i}.md`, `fox again ${i}`)
+    await tick(500)
+    const peak = fake.vault.busiest()
+    // Unbatched, the SDK put 64 reads in flight at once, all it may
+    expect(peak).toBeGreaterThan(8)
+    expect(peak).toBeLessThanOrEqual(17)
+  })
+
   it('refuses a query that isn\'t { text: string }', async () => {
     const fake = core()
     await fake.start(search)

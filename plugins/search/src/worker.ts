@@ -9,6 +9,9 @@ const MAX_HITS = 1024
 const MAX_RETRIES = 1024
 const FIRST_RETRY_MS = 1000
 const LAST_RETRY_MS = 30_000
+// Reads again for a resync or a retry go this many at a time, so they never fill the calls search may have in flight
+// and a query never waits behind them
+const BATCH = 16
 // Refusals that mean the note is gone or no longer search's to read. Any other is passing: the gate or the vault is
 // starting, busy or down
 const gone = new Set(['not-found', 'not-granted', 'switched-off'])
@@ -33,8 +36,28 @@ async function start(ctx: PluginContext): Promise<void> {
     retryTimer = setTimeout(() => {
       retryTimer = null
       retryMs = Math.min(retryMs * 2, LAST_RETRY_MS)
-      void Promise.all([...retries].map(refresh))
+      readAgain(retries)
     }, retryMs)
+  }
+
+  // Notes to read again, read by one loop a batch at a time
+  const due = new Set<string>()
+  let reading = false
+  function readAgain(paths: Iterable<string>): void {
+    for (const path of paths) due.add(path)
+    if (reading) return
+    reading = true
+    void (async () => {
+      try {
+        while (due.size > 0) {
+          const batch = [...due].slice(0, BATCH)
+          for (const path of batch) due.delete(path)
+          await Promise.all(batch.map(refresh))
+        }
+      } finally {
+        reading = false
+      }
+    })()
   }
 
   // Reads the note again. One that is gone or that search may no longer read leaves the index. One whose read failed
@@ -69,7 +92,7 @@ async function start(ctx: PluginContext): Promise<void> {
   // answering from the index it has
   await ctx.try(ctx.events.on(['vault.changed', 'vault.outside'], event => (event.path === undefined ? undefined : refresh(event.path)), {
     onResync: () => {
-      void Promise.all([...new Set([...index.paths(), ...retries])].map(refresh))
+      readAgain([...index.paths(), ...retries])
     },
   }))
 

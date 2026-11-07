@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
-import { type FakeCore, fakeCore, type FakeMode } from '../sdk/testing/index.ts'
+import { type FakeCore, fakeCore, type FakeCoreOptions, type FakeMode } from '../sdk/testing/index.ts'
 import { tick } from './carrier-fakes.ts'
 
 const cores: FakeCore[] = []
@@ -26,7 +26,7 @@ const manifest = (over: object = {}) => ({
   ...over,
 })
 
-function core(mode?: FakeMode, over: object = {}, extra: { readyMs?: number } = {}): FakeCore {
+function core(mode?: FakeMode, over: object = {}, extra: Omit<FakeCoreOptions, 'manifest' | 'notes' | 'mode'> = {}): FakeCore {
   const made = fakeCore({ manifest: manifest(over), notes: { 'notes/a.md': 'a', 'secret/b.md': 'b' }, ...(mode === undefined ? {} : { mode }), ...extra })
   cores.push(made)
   return made
@@ -144,5 +144,42 @@ describe('a vault that fails for a while', () => {
     fake.vault.refuseNext('unavailable')
     await expect(box.ctx!.vault.read({ path: 'notes/a.md' })).rejects.toMatchObject({ code: 'unavailable' })
     expect(await box.ctx!.vault.read({ path: 'notes/a.md' })).toMatchObject({ text: 'a' })
+  })
+})
+
+describe('a core that takes time and holds the floor lower', () => {
+  it('answers the vault, storage and cache after latencyMs', async () => {
+    const fake = core(undefined, {}, { latencyMs: 60 })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    for (const call of [() => box.ctx!.vault.read({ path: 'notes/a.md' }), () => box.ctx!.storage.set({ key: 'k', value: 1 }), () => box.ctx!.cache.get({ key: 'k' })]) {
+      const started = performance.now()
+      await call()
+      expect(performance.now() - started).toBeGreaterThanOrEqual(55)
+    }
+  })
+
+  it('tells the most vault calls in flight at once since a test last asked', async () => {
+    const fake = core(undefined, {}, { latencyMs: 30 })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    await Promise.all(Array.from({ length: 5 }, () => box.ctx!.vault.read({ path: 'notes/a.md' })))
+    expect(fake.vault.busiest()).toBe(5)
+    await box.ctx!.vault.read({ path: 'notes/a.md' })
+    expect(fake.vault.busiest()).toBe(1)
+    expect(fake.vault.busiest()).toBe(0)
+  })
+
+  it('holds the plugin to the human\'s limits for all, read each time', async () => {
+    const fake = core(undefined, {}, { latencyMs: 30, limits: { callsInFlight: 2 } })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    // Past two in flight the carrier answers throttled, which the SDK tries again within the deadline
+    const reads = () => Promise.all(Array.from({ length: 4 }, () => box.ctx!.vault.read({ path: 'notes/a.md' })))
+    expect(await reads()).toHaveLength(4)
+    expect(fake.vault.busiest()).toBe(2)
+    fake.limits.callsInFlight = 3
+    expect(await reads()).toHaveLength(4)
+    expect(fake.vault.busiest()).toBe(3)
   })
 })

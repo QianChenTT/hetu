@@ -89,6 +89,26 @@ describe('a plugin\'s life through the SDK', () => {
     expect(order.sort()).toEqual(['onStop', 'stop'])
   })
 
+  it('waits for stop work that takes time, so its save lands before stopped goes out', async () => {
+    const order: string[] = []
+    const slow = (name: string) => new Promise<void>(resolve => setTimeout(() => {
+      order.push(name)
+      resolve()
+    }, 40))
+    const { heard, send } = running({
+      start: ctx => {
+        ctx.onStop(() => slow('onStop saved'))
+      },
+      stop: () => slow('stop saved'),
+    })
+    await until(() => heard().includes('ready'))
+    send({ v: 1, kind: 'stop', graceMs: 3000 })
+    await until(() => heard().includes('stopped'))
+    order.push('stopped')
+    expect(order.slice(0, 2).sort()).toEqual(['onStop saved', 'stop saved'])
+    expect(order[2]).toBe('stopped')
+  })
+
   it('answers stopped within the grace when an onStop hangs', async () => {
     const { heard, send } = running({ start: ctx => { ctx.onStop(() => new Promise(() => {})) } })
     await until(() => heard().includes('ready'))
