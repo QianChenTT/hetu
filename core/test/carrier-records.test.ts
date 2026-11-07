@@ -687,6 +687,24 @@ describe('a floor record\'s landing', () => {
     expect(log.records).toEqual([])
   })
 
+  it('takes out a record its waiter gave up on during an append that then failed, so it never lands on a retry', async () => {
+    const { log, appends } = heldLog()
+    const lane = laneOf(log)
+    const giveUp = new AbortController()
+    let settled: Landing | null = null
+    void Promise.resolve(lane.write('plugin.updated', { plugin: 'git' }, giveUp.signal)).then(landing => { settled = landing })
+    await tick()
+    giveUp.abort()
+    log.healthy = false
+    appends[0].reject(new Error('locked'))
+    await tick()
+    expect(settled).toBe('lost')
+    expect(lane.waiting).toBe(0)
+    log.healthy = true
+    await lane.flush()
+    expect(appends).toHaveLength(1)
+  })
+
   // An append under way can't be called back, so its record may still land after the waiter gave up
   it('lands a record already being written when its waiter gives up', async () => {
     const { log, appends } = heldLog()

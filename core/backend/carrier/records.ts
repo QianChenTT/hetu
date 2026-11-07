@@ -4,9 +4,11 @@ import type { Field } from '../../lib/event-log.ts'
 import type { FloorLog, Landing } from './seams.ts'
 
 // landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none. writing is
-// set while its append is under way, when it can no longer be taken out. done drops the listener on the waiter's signal
+// set while its append is under way, when it can no longer be taken out. withdrawn is a waiter that gave up meanwhile,
+// so the record comes out if that append fails. done drops the listener on the waiter's signal
 type FloorRecord = {
-  event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void, writing?: boolean, done?: () => void,
+  event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void, writing?: boolean, withdrawn?: boolean,
+  done?: () => void,
 }
 
 // Floor records go straight through the one EventLog in the order they were made, ahead of the audit queue and with
@@ -15,7 +17,7 @@ type FloorRecord = {
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
 // the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
 // that gives up aborts its signal: a record still waiting then comes out and settles lost, so the log never shows a
-// change that didn't apply. One whose append is under way can't be called back and may still land
+// change that didn't apply. One whose append is under way can't be called back: it lands if that append works and comes out if it fails
 export class FloorLane {
   private readonly log: FloorLog | null
   private readonly bound: () => number
@@ -61,7 +63,11 @@ export class FloorLane {
       const record: FloorRecord = { event, fields: { ...fields } }
       const withdraw = () => {
         const at = this.backlog.indexOf(record)
-        if (at === -1 || record.writing) return
+        if (at === -1) return
+        if (record.writing) {
+          record.withdrawn = true
+          return
+        }
         this.backlog.splice(at, 1)
         record.landed?.('lost')
       }
@@ -98,6 +104,10 @@ export class FloorLane {
           first.writing = false
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
+            if (first.withdrawn) {
+              this.backlog.shift()
+              first.landed?.('lost')
+            }
             if (this.closed) this.abandon()
             else this.later()
             return
