@@ -1,0 +1,13 @@
+{
+  "id": "search",
+  "name": "Search",
+  "version": "0.1.0",
+  "api": "^1",
+  "entries": { "worker": "dist/worker.js" },
+  "requires": ["vault"],
+  "provides": { "actions": { "query": {} }, "topics": ["indexed"] },
+  "capabilities": [
+    { "type": "vault.read", "paths": ["**"] },
+    { "type": "events.subscribe", "topics": ["vault.changed", "vault.outside"] }
+  ]
+}

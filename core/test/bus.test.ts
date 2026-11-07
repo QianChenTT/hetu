@@ -1173,6 +1173,21 @@ describe('credits', () => {
     expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'] })
   })
 
+  it('names every topic missed while past the credits in the one catch-up events.dropped', async () => {
+    const { loader, search, edited, vaultHalf } = setup()
+    loader.human.plugins.search = { eventCredits: 1 }
+    await search.ask('events.subscribe', { topics: ['vault.changed', 'vault.outside'] })
+    await edited('notes/a.md')
+    // Both dropped, each topic in its turn
+    await vaultHalf.ask('events.publish', { topic: 'vault.outside', path: 'notes/b.md' })
+    await edited('notes/c.md')
+    await until(() => search.events().length === 1)
+    await settle()
+    search.ack(1)
+    await until(() => search.events().length === 2)
+    expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.outside', 'vault.changed'] })
+  })
+
   it('keeps credits per half and gives a window the human\'s value for all', async () => {
     const { connect, loader, search, way, edited } = setup()
     loader.human.all = { eventCredits: 2 }
@@ -1408,6 +1423,39 @@ describe('records', () => {
       { plugin: 'git', half: 'worker', topics: 'search.indexed', count: 1 },
       { plugin: 'ghost', half: 'worker', topics: 'vault.changed', count: 1 },
     ])
+  })
+
+  it('coalesces a half\'s events.waiting per second whatever topics each subscribe names', async () => {
+    const { carrier, loader, log, connect } = setup()
+    loader.slots.gate = 'failed'
+    carrier.changed()
+    const ghost = connect(worker('ghost'))
+    // Each subscribe names another set, which made each its own record with its own fsync
+    const sets = [['vault.changed'], ['vault.outside'], ['search.indexed', 'vault.changed'], ['vault.outside', 'search.indexed']]
+    for (let i = 0; i < 40; i++) await ghost.ask('events.subscribe', { topics: sets[i % sets.length] })
+    carrier.close()
+    await tick()
+    expect(log.events('events.waiting').map(record => record.fields)).toEqual([
+      { plugin: 'ghost', half: 'worker', topics: 'vault.changed', count: 1 },
+      // The later ones join one record when the second ends, naming every topic they stood
+      { plugin: 'ghost', half: 'worker', topics: 'vault.outside search.indexed vault.changed', count: 39 },
+    ])
+  })
+
+  it('keeps the joined record of a half\'s events.waiting within the topics text cap', async () => {
+    const { carrier, loader, log, connect } = setup()
+    loader.slots.gate = 'failed'
+    carrier.changed()
+    const ghost = connect(worker('ghost'))
+    const long = (i: number) => `p${String(i).padStart(2, '0')}${'x'.repeat(60)}.${'y'.repeat(60)}`
+    await ghost.ask('events.subscribe', { topics: [long(0)] })
+    for (let i = 1; i < 64; i++) await ghost.ask('events.subscribe', { topics: [long(i)] })
+    carrier.close()
+    await tick()
+    const joined = log.events('events.waiting')[1].fields
+    expect(joined.count).toBe(63)
+    expect((joined.topics as string).length).toBeLessThanOrEqual(4096)
+    expect((joined.topics as string).split(' ')).toEqual(Array.from({ length: 32 }, (_, i) => long(i + 1)))
   })
 
   it('coalesces publishes, free subscribes and unsubscribes per caller per second and records no delivery or ack', async () => {

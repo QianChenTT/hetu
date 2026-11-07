@@ -1,0 +1,1 @@
+The worker host page: a hidden renderer page that starts each sandboxed plugin's worker from the bytes the loader verified, under its CSP and with the prelude, and hands the worker its port to the carrier

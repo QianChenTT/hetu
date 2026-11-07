@@ -105,6 +105,24 @@ describe('a staged update', () => {
     expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
   })
 
+  it('refuses an update whose record waits past the deadline, withdraws the record and applies the next change', async () => {
+    const made = await running()
+    made.link.limits.readyMs = 100
+    let signal: AbortSignal | undefined
+    made.link.landing = (event, _fields, given) => {
+      if (event !== 'plugin.updated') return 'landed'
+      signal = given
+      return new Promise<Landing>(() => {})
+    }
+    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    await expect(made.loader.update('alpha', dir)).rejects.toThrow()
+    expect(signal?.aborted).toBe(true)
+    expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.0.0')
+    expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    expect((await new StateStore(made.dataDir).load()).state.switches.confirmOff).toBe(true)
+  })
+
   it('reads as a failed check at the next boot when it stopped between the swap and the entry, the old incarnation running on meanwhile', async () => {
     const made = await running()
     const writePlugin = made.store.writePlugin.bind(made.store)

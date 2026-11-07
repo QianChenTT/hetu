@@ -35,7 +35,7 @@ export const qualifiedName = z.string()
 // The policy slots the carrier asks, each held by the install plugin of the same id
 export const slotIds = frozen(['gate', 'capabilities', 'log', 'watchdog'] as const)
 
-// The plugin that serves each provider namespace, section 4's table
+// The plugin that serves each provider namespace
 export const providers = table({
   vault: 'vault',
   leases: 'leases',

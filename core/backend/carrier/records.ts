@@ -3,14 +3,21 @@ import type { AuditRecord } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { FloorLog, Landing } from './seams.ts'
 
-// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none
-type FloorRecord = { event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void }
+// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none. writing is
+// set while its append is under way, when it can no longer be taken out. withdrawn is a waiter that gave up meanwhile,
+// so the record comes out if that append fails. done drops the listener on the waiter's signal
+type FloorRecord = {
+  event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void, writing?: boolean, withdrawn?: boolean,
+  done?: () => void,
+}
 
 // Floor records go straight through the one EventLog in the order they were made, ahead of the audit queue and with
 // the log plugin off. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
 // counted and the count lands as floor.dropped once the backlog has. A write never blocks and never throws. Nothing is
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
-// the record's fate is known, for the loader, which applies some changes only once their record is on disk
+// the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
+// that gives up aborts its signal: a record still waiting then comes out and settles lost, so the log never shows a
+// change that didn't apply. One whose append is under way can't be called back: it lands if that append works and comes out if it fails
 export class FloorLane {
   private readonly log: FloorLog | null
   private readonly bound: () => number
@@ -44,15 +51,33 @@ export class FloorLane {
     return !this.closed && !this.muted()
   }
 
-  write(event: string, fields: Record<string, Field> = {}): Promise<Landing> {
+  write(event: string, fields: Record<string, Field> = {}, signal?: AbortSignal): Promise<Landing> {
     if (this.closed) return Promise.resolve('lost')
     if (this.muted()) return Promise.resolve('muted')
+    if (signal?.aborted) return Promise.resolve('lost')
     if (this.backlog.length >= this.bound()) {
       this.overflowed++
       return Promise.resolve('lost')
     }
-    return new Promise(landed => {
-      this.backlog.push({ event, fields: { ...fields }, landed })
+    return new Promise(settle => {
+      const record: FloorRecord = { event, fields: { ...fields } }
+      const withdraw = () => {
+        const at = this.backlog.indexOf(record)
+        if (at === -1) return
+        if (record.writing) {
+          record.withdrawn = true
+          return
+        }
+        this.backlog.splice(at, 1)
+        record.landed?.('lost')
+      }
+      signal?.addEventListener('abort', withdraw, { once: true })
+      record.done = () => signal?.removeEventListener('abort', withdraw)
+      record.landed = landing => {
+        record.done?.()
+        settle(landing)
+      }
+      this.backlog.push(record)
       void this.pump()
     })
   }
@@ -72,11 +97,17 @@ export class FloorLane {
       while (this.backlog.length > 0) {
         const [first] = this.backlog
         let landing: Landing = 'landed'
+        first.writing = true
         try {
           await log.append(first.event, first.fields)
         } catch {
+          first.writing = false
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
+            if (first.withdrawn) {
+              this.backlog.shift()
+              first.landed?.('lost')
+            }
             if (this.closed) this.abandon()
             else this.later()
             return
@@ -124,28 +155,38 @@ export class FloorLane {
   }
 }
 
-// Floor records a plugin can trigger, one per event and fields per second with a count: the first at once and the rest
-// when its second is over. Nothing counts while the human turned recording off, so no count from the gap lands after it
+// Joins a later hit's fields into the fields the record at the end of the second carries, null before the first later hit
+export type Join = (held: Record<string, Field> | null, next: Record<string, Field>) => Record<string, Field>
+
+// Floor records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
+// when its second is over. The key is the whole fields unless the caller names one. A plugin that picks part of the
+// fields, such as the topics of a subscribe, would otherwise make a key per message, so those name a key without it
+// and join what the later hits carried. Nothing counts while the human turned recording off, so no count from the gap
+// lands after it
 export class Coalesced {
   private readonly lane: FloorLane
-  private readonly open = new Map<string, { event: string, fields: Record<string, Field>, count: number, timer: ReturnType<typeof setTimeout> }>()
+  private readonly open = new Map<string, {
+    event: string, fields: Record<string, Field>, later: Record<string, Field> | null, join: Join | null, count: number,
+    timer: ReturnType<typeof setTimeout>,
+  }>()
 
   constructor(lane: FloorLane) {
     this.lane = lane
   }
 
-  hit(event: string, fields: Record<string, Field>): void {
+  hit(event: string, fields: Record<string, Field>, keyed?: { by: Record<string, Field>, join: Join }): void {
     if (!this.lane.recording) return
-    const key = JSON.stringify([event, fields])
+    const key = JSON.stringify([event, keyed?.by ?? fields])
     const found = this.open.get(key)
     if (found !== undefined) {
       found.count++
+      if (found.join !== null) found.later = found.join(found.later, fields)
       return
     }
     this.lane.write(event, { ...fields, count: 1 })
     const timer = setTimeout(() => this.end(key), 1000)
     timer.unref?.()
-    this.open.set(key, { event, fields, count: 0, timer })
+    this.open.set(key, { event, fields, later: null, join: keyed?.join ?? null, count: 0, timer })
   }
 
   private end(key: string): void {
@@ -153,7 +194,7 @@ export class Coalesced {
     if (found === undefined) return
     this.open.delete(key)
     clearTimeout(found.timer)
-    if (found.count > 0) this.lane.write(found.event, { ...found.fields, count: found.count })
+    if (found.count > 0) this.lane.write(found.event, { ...(found.later ?? found.fields), count: found.count })
   }
 
   close(): void {

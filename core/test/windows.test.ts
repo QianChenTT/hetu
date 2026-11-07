@@ -108,6 +108,7 @@ describe('floor constants', () => {
       heartbeatMisses: 3,
       eventCredits: 256,
       topicsPerHalf: 64,
+      filterMsPerSecond: 100,
       auditQueue: 10000,
       floorBacklog: 1000,
       floodFactor: 10,

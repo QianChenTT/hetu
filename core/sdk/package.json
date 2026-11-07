@@ -1,0 +1,17 @@
+{
+  "name": "@hetu/sdk",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./testing": "./testing/index.ts",
+    "./esbuild": "./build/esbuild.ts",
+    "./check-manifest": "./build/check-manifest.ts"
+  },
+  "dependencies": {
+    "acorn": "^8.19.0",
+    "acorn-walk": "^8.3.5",
+    "esbuild": "^0.28.2"
+  }
+}
