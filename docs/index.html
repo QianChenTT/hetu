@@ -17,10 +17,11 @@
       <p class="lede">Every component of the everything-is-a-plugin core, every flow between them and what each flow is checked by. Pick a scenario to walk a real sequence step by step, or click any box or arrow to read what it does.</p>
     </div>
     <div class="legend" aria-label="Legend">
-      <span><i class="sw core"></i>Trusted core</span>
+      <span><i class="sw core"></i>Trusted base</span>
       <span><i class="sw sandbox"></i>Sandboxed plugins</span>
       <span><i class="sw outside"></i>Outside hetu</span>
       <span><i class="sw disk"></i>Disk and OS</span>
+      <span><i class="sw proc"></i>Outside the sandbox</span>
       <span><i class="ln"></i>Flow</span>
       <span><i class="ln opt"></i>Optional</span>
       <span><i class="ln att"></i>Attack attempt</span>
@@ -28,7 +29,7 @@
     </div>
   </header>
 
-  <p class="status"><strong>This is the design, not what runs today.</strong> The daemon, its MCP tools, leases, the commit per write, outside-write detection and a CodeMirror editor run today, without the plugin core. Everything else here is designed and being built next.</p>
+  <p class="status"><strong>This is the design, not what runs today.</strong> The daemon, its MCP tools, leases, the commit per write, outside-write detection and a CodeMirror editor run today, without the plugin core. Everything else here is designed and being built.</p>
 
   <div class="scen-bar" role="toolbar" aria-label="Scenarios">
     <span class="eyebrow lbl">Scenarios</span>
@@ -40,7 +41,7 @@
   <div class="stage">
     <div>
       <div class="mapbox" id="mapbox">
-        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left, the read-only app install, the daemon that holds all power, the hidden plugin renderer, the editor window, the trusted UI window and OS processes in the middle, disk and the security state on the right, with arrows for every flow between them">
+        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left. In the middle the http plugin, the core with boot, loader, carrier and runtime, the host-level plugins and OS processes, beside the hidden plugin renderers, the editor window and the trusted window. Disk, the app install and the security state on the right, with arrows for every flow between them">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
             <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>
@@ -85,10 +86,10 @@
   <section class="sheet">
     <div class="hdr"><div><span class="eyebrow">Reading the map</span><h2>Rules the whole core keeps</h2></div></div>
     <div class="notes">
-      <div><strong>Plugins have no power of their own.</strong> Every plugin runs in a Chromium worker or frame and can only ask the capability gate. The gate is the reference monitor: always in the path, out of reach of plugins, small enough to check.</div>
-      <div><strong>The daemon holds all power.</strong> It is Electron's main process. The hidden renderer and editor windows only get what the daemon grants them.</div>
-      <div><strong>Mechanism in the core, policy in plugins.</strong> Leases, the watchdog and git all follow this split: the core enforces, a core plugin decides.</div>
-      <div><strong>Security stays on until you approve otherwise.</strong> Every security switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. A guard that crashes fails closed.</div>
+      <div><strong>The core is four parts that can't be switched off.</strong> Boot sets up trust for one run. The loader checks every plugin's bytes before they run, places each plugin and gives it its identity. The carrier is the one path every call and event takes. The runtime keeps the isolated places plugins run in. Everything that decides is a plugin in a slot the carrier asks.</div>
+      <div><strong>Plugins have no power of their own.</strong> A sandboxed plugin runs in a Chromium worker or frame and holds one channel, to the carrier. The carrier names the caller, checks the shape and the floor, asks the gate and routes. The gate decides and never routes. Host-level plugins hold real power in Electron's main process, so they come only from the install, stay minimal and are reviewed as core.</div>
+      <div><strong>Mechanism in the core, policy in plugins.</strong> The gate, the log, the watchdog and leases all follow this split: the carrier enforces, a plugin decides.</div>
+      <div><strong>You can switch anything off, security included.</strong> Every switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. With the gate off, calls with power pass and are still logged. They need the log running, so a crashed log refuses them unless you switched the log off too. A gate or guard that is missing or crashed without you switching it off fails closed.</div>
       <div><strong>A program that targets hetu is out of scope.</strong> Plugins and MCP agents can't change the security state, since only hetu writes it and only after your Confirm click in the trusted window. A program running as you can edit the files. hetu checks each against the hash it recorded at its last write and a plugin or setting whose hash differs doesn't load. That catches careless edits but not a program that rewrites the hash too. hetu assumes the machine has no such program, which could already read and edit your notes directly.</div>
       <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>
     </div>

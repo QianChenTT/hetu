@@ -1,1 +1,1 @@
-The way in for hetu windows: Electron IPC, identified by the window that sent the call, every call through the gate
+The way in for hetu windows, part of the carrier: Electron IPC with the sending window checked before anything else, so a window's identity comes from the window itself. The carrier routes each call and asks the gate about calls with power. Moves into `core/backend/carrier`

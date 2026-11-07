@@ -8,19 +8,20 @@ Notes apps are starting to have two kinds of untrusted writers. AI agents read u
 
 hetu is a local notes app designed around that problem
 
-- **Agents get scoped access:** an agent writes only the notes it holds a lease on, under grants set for that agent, and every write becomes its own git commit with an event log entry
-- **Plugins hold no power of their own:** every plugin runs isolated and asks the core for narrow capabilities, such as committing these paths, instead of raw disk, process or network access. Plugins must be signed, and the signer is pinned when the user first approves one
+- **Agents get scoped access:** an agent writes only the notes it holds a lease on, under grants set for that agent. Every write becomes its own git commit with an event log entry
+- **Plugins hold no power of their own:** every plugin runs isolated and asks the core for narrow capabilities, such as committing these paths, instead of raw disk, process or network access. Before a plugin's code runs, the core checks its files against the build the user approved. Its signer is pinned at that first approval
 - **Security changes need the human:** turning a guard off, granting a plugin more power or changing which plugins load needs a Confirm click in a separate trusted window that shows the exact change. hetu keeps its security state in files only it writes and checks each against a recorded hash at start, which catches careless edits by tools that don't know hetu. Never an agent over MCP, never another plugin
-- **Detection where prevention stops:** an agent with a shell can write notes without going through MCP, and hetu can't prevent that. So changes the daemon didn't make are flagged and committed as an unknown writer. A program on your machine that targets hetu itself is out of scope, hetu assumes the machine is free of such programs
+- **The user can switch anything off:** every check, security included, can be switched off with a Confirm click in the trusted window. A banner shows while it is off and the event log records the switch. A check that crashes or fails without the user switching it off blocks instead of passing
+- **Detection where prevention stops:** an agent with a shell can write notes without going through MCP. hetu can't prevent that, so changes hetu didn't make are flagged and committed as an unknown writer. A program on your machine that targets hetu itself is out of scope, hetu assumes the machine is free of such programs
 
 Many security decisions in hetu are still handed to the user: approving a plugin, giving it more power, switching a guard off. Most people are here for the features and can't be expected to know what each approval risks. So an approval made for convenience points to a gap in hetu's design, not a mistake by the user. Each confirmation says plainly what is being changed. The goal is fewer of these decisions left to the user and a safe choice that is also the easy one
 
-The daemon, its MCP tools, leases, the commit per write and outside-write detection run today. The plugin core is designed, see the [core map](https://qianchentt.github.io/hetu/), and being built next, and an attack phase follows. Findings are published in [findings/](findings/)
+The daemon, its MCP tools, leases, the commit per write and outside-write detection run today. The plugin core is designed and being built, see the [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
 
 ## Layout
 
-- [core/](core/): the plugin core, being built here. Each folder's README says what it holds
-- [plugins/](plugins/): the plugins that replace today's features
+- [core/](core/): the core, the four parts that can't be switched off (boot, loader, carrier and runtime), being built here. Each folder's README says what it holds and where it moves
+- [plugins/](plugins/): everything that decides or adds a feature, the gate and the log among them
 - [daemon/](daemon/): today's vault daemon, removed file by file as the core replaces it. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
 - [editor/](editor/): today's text-first CodeMirror 6 editor, removed the same way. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
 - [docs/](docs/): the interactive core map, published with GitHub Pages
