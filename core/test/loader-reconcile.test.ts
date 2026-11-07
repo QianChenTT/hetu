@@ -121,6 +121,18 @@ describe('the first-party reconcile', () => {
     expect(await exists(path.join(on.dataDir, 'cache', 'git', 'index'))).toBe(false)
   })
 
+  it('copies a release that changed only the patch number', async () => {
+    const made = await harness({
+      install: installWith({ git: gitFiles('1.0.1') }),
+      folder: { git: gitFiles('1.0.0') },
+      entries: { git: async root => firstPartyEntry(await hashOf(root)) },
+    })
+    await made.loader.start()
+    expect((await new StateStore(made.dataDir).load()).state.plugins.git.version).toBe('1.0.1')
+    expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'git', version: '1.0.1' }])
+    expect(stateOf(made.loader, 'git')).toBe('ready')
+  })
+
   it('leaves a copy alone when the install\'s version is the same or older', async () => {
     const made = await harness({
       install: installWith({ git: gitFiles('1.0.0') }),
@@ -248,6 +260,39 @@ describe('a copy and its record', () => {
 })
 
 describe('removing and restoring a first-party plugin', () => {
+  it('clears what the plugin stored and cached with its code', async () => {
+    const made = await harness({
+      install: installWith({ git: gitFiles() }),
+      before: async ({ dataDir }) => {
+        for (const kind of ['storage', 'cache']) {
+          await mkdir(path.join(dataDir, kind, 'git'), { recursive: true })
+          await writeFile(path.join(dataDir, kind, 'git', 'kept'), 'x')
+        }
+        await mkdir(path.join(dataDir, 'storage', 'other'), { recursive: true })
+      },
+    })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'plugin.remove', plugin: 'git' })
+    expect(await exists(path.join(made.dataDir, 'storage', 'git'))).toBe(false)
+    expect(await exists(path.join(made.dataDir, 'cache', 'git'))).toBe(false)
+    expect(await exists(path.join(made.dataDir, 'storage', 'other'))).toBe(true)
+  })
+
+  it('stops a running copy it restores and ends its way before the new incarnation starts', async () => {
+    const made = await harness({ install: installWith({ git: gitFiles() }) })
+    await made.loader.start()
+    expect(stateOf(made.loader, 'git')).toBe('ready')
+    await made.loader.apply({ kind: 'plugin.restore', plugin: 'git' })
+    await made.loader.settled()
+    expect(made.runtime.half('git', 1).got('stop')).toHaveLength(1)
+    expect(made.link.ended.map(ended => ended.caller)).toContainEqual(expect.objectContaining({ id: 'git', incarnation: 1 }))
+    const { timeline } = made.link
+    expect(timeline.indexOf('end git')).toBeGreaterThan(-1)
+    expect(timeline.indexOf('end git')).toBeLessThan(timeline.lastIndexOf('init git'))
+    expect(made.loader.plugin('git')?.incarnation).toBe(2)
+    expect(stateOf(made.loader, 'git')).toBe('ready')
+  })
+
   it('removes the entry first, then the code, leaving a tombstone that keeps the next start from copying it back', async () => {
     const made = await harness({ install: installWith({ git: gitFiles() }) })
     await made.loader.start()

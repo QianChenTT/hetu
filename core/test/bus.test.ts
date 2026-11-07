@@ -1173,6 +1173,21 @@ describe('credits', () => {
     expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'] })
   })
 
+  it('names every topic missed while past the credits in the one catch-up events.dropped', async () => {
+    const { loader, search, edited, vaultHalf } = setup()
+    loader.human.plugins.search = { eventCredits: 1 }
+    await search.ask('events.subscribe', { topics: ['vault.changed', 'vault.outside'] })
+    await edited('notes/a.md')
+    // Both dropped, each topic in its turn
+    await vaultHalf.ask('events.publish', { topic: 'vault.outside', path: 'notes/b.md' })
+    await edited('notes/c.md')
+    await until(() => search.events().length === 1)
+    await settle()
+    search.ack(1)
+    await until(() => search.events().length === 2)
+    expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.outside', 'vault.changed'] })
+  })
+
   it('keeps credits per half and gives a window the human\'s value for all', async () => {
     const { connect, loader, search, way, edited } = setup()
     loader.human.all = { eventCredits: 2 }

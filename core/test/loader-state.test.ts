@@ -201,6 +201,56 @@ describe('the human\'s switches, applied', () => {
     expect(made.loader.view()).toBe(3)
   })
 
+  it('applies the next change after one that failed', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const write = made.store.writeSwitches.bind(made.store)
+    made.store.writeSwitches = async () => { throw new Error('read-only') }
+    await expect(made.loader.apply({ kind: 'confirmOff', on: true })).rejects.toThrow('read-only')
+    made.store.writeSwitches = write
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    expect((await new StateStore(made.dataDir).load()).state.switches.confirmOff).toBe(true)
+  })
+
+  it('keeps judging plugins by the switches on disk when a write fails, through later changes', async () => {
+    const made = await harness({
+      folder: { alpha: worker('alpha') },
+      entries: { alpha: signed() },
+      before: ({ dataDir }) => writeFile(path.join(dataDir, 'plugins', 'alpha', 'worker.js'), 'changed()'),
+    })
+    await made.loader.start()
+    expect(reasonOf(made.loader, 'alpha')).toBe('tampered')
+    const write = made.store.writeSwitches.bind(made.store)
+    made.store.writeSwitches = async () => { throw new Error('read-only') }
+    await expect(made.loader.apply({ kind: 'skipVerification', on: true })).rejects.toThrow('read-only')
+    made.store.writeSwitches = write
+    // A later change writes the switches whole and replans
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    await made.loader.settled()
+    expect(reasonOf(made.loader, 'alpha')).toBe('tampered')
+    expect((await new StateStore(made.dataDir).load()).state.switches.skipVerification).toBe(false)
+  })
+
+  it('stores what each switch change names, both ways, and a plugin\'s limits beside its others', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    const stored = async () => (await new StateStore(made.dataDir).load()).state.switches
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'alpha', on: true })
+    expect((await stored()).execAnyCommand).toEqual(['alpha'])
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'alpha', on: false })
+    expect((await stored()).execAnyCommand).toEqual([])
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    expect((await stored()).confirmOff).toBe(true)
+    await made.loader.apply({ kind: 'confirmOff', on: false })
+    expect((await stored()).confirmOff).toBe(false)
+    await made.loader.apply({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
+    await made.loader.apply({ kind: 'limit.set', constant: 'readyMs', value: 15000, plugin: 'alpha' })
+    await made.loader.apply({ kind: 'limit.set', constant: 'stopGraceMs', value: 5000, plugin: 'alpha' })
+    const limits = { all: { readyMs: 20000 }, plugins: { alpha: { readyMs: 15000, stopGraceMs: 5000 } } }
+    expect((await stored()).limits).toEqual(limits)
+    expect(made.loader.limits()).toEqual(limits)
+  })
+
   it('takes switching a crashed plugin back on as the human\'s restart of it', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.loader.start()
