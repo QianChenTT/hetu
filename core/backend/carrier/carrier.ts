@@ -19,7 +19,7 @@ import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, Limits, newRate, type Rate } from './limits.ts'
 import { AuditQueue, Coalesced, FloorLane } from './records.ts'
-import type { CarrierOptions, PluginInfo, Port, Served } from './seams.ts'
+import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
 
@@ -319,6 +319,25 @@ export class Carrier {
     this.bus.drop(way)
     for (const pending of [...way.delivered.values()]) this.stop(pending, code)
     for (const pending of [...way.made.values()]) this.stop(pending, 'stopped')
+  }
+
+  // For the loader: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
+  // never registered drops it. Nothing the core sends counts against the half's rate
+  send(caller: Caller, message: unknown): void {
+    const way = this.ways.get(keyOf(caller))
+    if (way === undefined || !way.open || way.send === null) return
+    way.send(message)
+  }
+
+  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost
+  record(event: string, fields: Record<string, Field>): Promise<Landing> {
+    return this.lane.write(event, fields)
+  }
+
+  // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop
+  // deadlines follow the same values
+  limit(plugin: string, name: FloorConstant): number {
+    return this.limits.of(plugin, name)
   }
 
   close(): void {
@@ -1056,7 +1075,7 @@ export class Carrier {
     }
     // 11 record
     const code = outcome.ok ? null : outcome.code
-    this.record({
+    this.recordCall({
       at: pending.started, caller: pending.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       root: pending.root.caller, action: pending.action,
@@ -1071,7 +1090,7 @@ export class Carrier {
     if (about.id !== null && way.open) {
       answer({ v: VERSION, kind: 'reply', id: about.id, callId, ok: false, refusal: this.refusalOf(about.action, refused) })
     }
-    this.record({
+    this.recordCall({
       at: started, caller: way.caller, ...(about.onBehalf !== undefined ? { onBehalf: about.onBehalf } : {}),
       root: about.parent?.root.caller ?? way.caller, action: about.action, code: refused.code, ms: this.now() - started,
       gate: this.slot('gate'),
@@ -1089,7 +1108,7 @@ export class Carrier {
 
   // One audit record per call while the log is on or starting. Nothing while recording is off. A log that went down
   // or was switched off loses what the queue held, which is counted in a floor record
-  private record(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
+  private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.muted()) return
     const log = this.slot('log')
     if (log !== 'on' && log !== 'starting') {
