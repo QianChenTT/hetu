@@ -1,0 +1,13 @@
+{
+  "name": "@hetu/sdk",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./testing": "./testing/index.ts",
+    "./esbuild": "./build/esbuild.ts",
+    "./eslint": "./build/eslint.ts",
+    "./check-manifest": "./build/check-manifest.ts"
+  }
+}

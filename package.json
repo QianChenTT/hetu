@@ -8,6 +8,7 @@
   },
   "workspaces": [
     "core",
+    "core/sdk",
     "daemon",
     "editor"
   ],
@@ -16,6 +17,6 @@
     "seed": "npm run seed -w daemon",
     "seed:fresh": "npm run seed -w daemon -- --fresh",
     "test": "npm test -w core -w daemon",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces --if-present"
   }
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { CapabilityType } from './capabilities.ts'
 import { change } from './changes.ts'
-import { token } from './envelope.ts'
+import { token, type Caller } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
 import { coreNamespaces, localName, pluginId, qualifiedName } from './ids.ts'
 import { frozen } from './plain.ts'
@@ -68,7 +68,7 @@ function lookup<T extends object>(entries: Record<string, T>): Readonly<Record<s
 
 const target = z.strictObject({ plugin: pluginId })
 
-export const coreActions = lookup<CoreAction>({
+const coreTable = {
   // The caller as its way in names it
   'core.self': { from: 'any', args: nothing },
   // Only for a live call delivered to the caller on the same way in. Gives back the paths both the caller and the
@@ -88,23 +88,25 @@ export const coreActions = lookup<CoreAction>({
     from: 'watchdog',
     args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
   },
-})
+} satisfies Record<string, CoreAction>
+export const coreActions = lookup<CoreAction>(coreTable)
 
 // The bus's actions, which the carrier serves itself. The floor decides who may name which topic and the gate judges a
 // subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
 // caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call
 export type EventAction = { readonly args: z.ZodType }
 
-export const eventActions = lookup<EventAction>({
+const eventTable = {
   'events.subscribe': { args: topics },
   'events.unsubscribe': { args: topics },
   'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }) },
-})
+} satisfies Record<string, EventAction>
+export const eventActions = lookup<EventAction>(eventTable)
 
 const key = z.strictObject({ key: localName })
 const keyed = z.strictObject({ key: localName, value: z.unknown() })
 
-export const providerActions = lookup<ProviderAction>({
+const providerTable = {
   'vault.read': { capability: 'vault.read', args: z.strictObject({ path }), scope: 'path', write: false },
   // baseVersion is the hash of the bytes the writer read, left out for a note that doesn't exist yet
   'vault.write': {
@@ -130,4 +132,22 @@ export const providerActions = lookup<ProviderAction>({
   'cache.delete': { capability: null, args: key, scope: null, write: true },
   'log.history': { capability: 'log.read', args: nothing, scope: null, write: false },
   'log.verify': { capability: 'log.read', args: nothing, scope: null, write: false },
-})
+} satisfies Record<string, ProviderAction>
+export const providerActions = lookup<ProviderAction>(providerTable)
+
+// Each action's args as a caller writes them, from the literal tables before lookup widens their keys to strings
+type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
+export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
+
+// What an action answers with where that is settled: the carrier's own actions and the vault's, which keep the daemon's
+// shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
+export type ActionResults = {
+  'core.self': Caller
+  'core.filterReadable': string[]
+  'events.subscribe': { standing: string[] }
+  'events.unsubscribe': null
+  'events.publish': null
+  'vault.read': { text: string, version: string }
+  'vault.write': { version: string }
+}
+export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown
