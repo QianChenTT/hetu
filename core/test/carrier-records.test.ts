@@ -185,7 +185,10 @@ describe('the audit queue', () => {
     loader.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
     for (let i = 0; i < 4; i++) expect((await search.ask('storage.set', { key: `k${i}`, value: i })).ok).toBe(true)
-    expect(carrier.audit.next(10)).toHaveLength(2)
+    const taken = carrier.audit.next(10)
+    expect(taken).toHaveLength(2)
+    // Acknowledged, so close has nothing left to count as lost to shutdown
+    carrier.audit.ack(taken[1].seq)
     carrier.close()
     await tick()
     expect(log.events('audit.dropped').map(record => record.fields)).toEqual([
@@ -604,6 +607,43 @@ describe('a floor record\'s landing', () => {
     lane.close()
     expect(await waiting).toBe('lost')
     expect(await lane.write('plugin.copied', { plugin: 'mcp' })).toBe('lost')
+  })
+
+  // A log whose appends wait until the test settles them, healthy until the test says otherwise
+  function heldLog() {
+    const appends: { resolve: () => void, reject: (error: Error) => void }[] = []
+    const log = {
+      healthy: true,
+      append: () => new Promise<void>((resolve, reject) => { appends.push({ resolve, reject }) }),
+    }
+    return { log, appends }
+  }
+
+  it('lands what a drain under way holds when the lane closes', async () => {
+    const { log, appends } = heldLog()
+    const lane = laneOf(log)
+    const first = lane.write('plugin.copied', { plugin: 'git' })
+    const second = lane.write('plugin.copied', { plugin: 'mcp' })
+    await tick()
+    lane.close()
+    appends[0].resolve()
+    await tick()
+    appends[1].resolve()
+    expect(await Promise.all([first, second])).toEqual(['landed', 'landed'])
+  })
+
+  it('settles lost for all it holds once a drain under way meets a log that went down after the close', async () => {
+    const { log, appends } = heldLog()
+    const lane = laneOf(log)
+    const settled: Landing[] = []
+    for (const plugin of ['git', 'mcp']) void Promise.resolve(lane.write('plugin.copied', { plugin })).then(result => { settled.push(result) })
+    await tick()
+    lane.close()
+    log.healthy = false
+    appends[0].reject(new Error('disk gone'))
+    await tick(30)
+    // Never held for a retry the closed lane would not make
+    expect(settled).toEqual(['lost', 'lost'])
   })
 
   it('settles in the order the records were written', async () => {

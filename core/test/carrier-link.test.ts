@@ -129,6 +129,9 @@ describe('shutdown', () => {
     carrier.changed()
     const vault = hostHalf(carrier, host('vault'))
     await vault.ask('events.publish', { topic: 'vault.changed', path: 'notes/a.md' })
+    await tick(30)
+    // The gate still holds during shutdown: a StateView the gate never judged search on holds its events back
+    expect(search.events()).toEqual([])
     carrier.close()
     await tick()
     expect(log.events('events.waiting')).toEqual([])

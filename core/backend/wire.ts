@@ -19,7 +19,7 @@ export type WireOptions = {
 }
 
 // The loader needs its link before the carrier exists, since the carrier needs the loader. Each call goes to the
-// carrier once wireCore attached it, and one made before that throws
+// carrier once wireCore attached it. One made before that throws
 export class LinkToCarrier implements CarrierLink {
   carrier: Carrier | null = null
 

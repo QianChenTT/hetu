@@ -682,6 +682,9 @@ export class Loader implements Seam {
   // shows waiting at once when a requirement went, else stopping until it has stopped
   private show(k: Known): void {
     if (k.live !== null && this.runs(k)) return
+    // Shutdown stops one plugin at a time in reverse graph order, so each keeps its state until its own stop begins.
+    // A host half serves its roles until then and a plugin in its stop grace can still save
+    if (this.closing && k.live !== null && k.live.stop === null) return
     const verdict = this.verdictOf(k)
     const shown = k.live === null ? this.final(k, verdict) : verdict.kind === 'waiting'
       ? { state: 'waiting' as const, reason: verdict.reason }
@@ -733,7 +736,11 @@ export class Loader implements Seam {
       const now = this.slot(id)
       if (this.lastSlots.get(id) === now) continue
       this.lastSlots.set(id, now)
-      this.note('slot.state', { slot: id, state: now })
+      // A slot reads failed to the carrier once its stop for shutdown began, so nothing passes unguarded. It didn't
+      // fail, so its record says stopped. One that failed before its own stop began is recorded failed
+      const state = this.known.get(id)?.state
+      const stopped = this.closing && now === 'failed' && (state === 'stopping' || state === 'stopped')
+      this.note('slot.state', { slot: id, state: stopped ? 'stopped' : now })
     }
     try {
       this.link.changed()
@@ -1099,6 +1106,8 @@ export class Loader implements Seam {
   // Applies a change the trusted window confirmed, exactly as stored, through the one StateStore. A write that fails
   // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come at step 14
   apply(input: Change): Promise<void> {
+    // Nothing changes the state once shutdown began, so what the bus and the gate judged holds until the end
+    if (this.closing) return Promise.reject({ code: 'stopped' })
     return this.serial(() => this.applyNow(changeSchema.parse(input)))
   }
 
@@ -1283,6 +1292,7 @@ export class Loader implements Seam {
   // a cycle is refused. One that would stop running plugins, itself or its dependents, needs a Confirm naming them and
   // is raised as plugin.update. A first-party copy changes only with the install
   update(id: string, dir: string): Promise<UpdateOutcome> {
+    if (this.closing) return Promise.reject({ code: 'stopped' })
     return this.serial(() => this.updateNow(id, dir))
   }
 

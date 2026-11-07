@@ -1,14 +1,15 @@
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { Access } from '../api/slots.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
-import { LinkToCarrier, wireCore } from '../backend/wire.ts'
-import { worker } from './carrier-fakes.ts'
+import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
+import { code, FakeStorage, FakeVault, worker } from './carrier-fakes.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, tempBase, workerManifest, writeFolder, writeInstall,
-  type Files, type Listing, type Message,
+  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, workerManifest, writeFolder,
+  writeInstall, type Files, type Listing, type Message,
 } from './loader-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -34,6 +35,7 @@ async function joined(options: {
   folder?: Record<string, Files>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -51,12 +53,13 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { loader, carrier } = wireCore({ booted, installDir, runtime })
+  const { loader, carrier } = wireCore({ booted, installDir, runtime, ...options.wire })
   open.push(async () => {
     await loader.shutdown().catch(() => {})
-    // Shutdown's own records are still draining into the log, and Windows won't remove a folder a write is filling
-    await carrier.flushFloor()
+    // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
+    // also won't remove a folder a write is still filling
     carrier.close()
+    await carrier.flushFloor()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
@@ -64,10 +67,20 @@ async function joined(options: {
   return { loader, carrier, runtime, booted, dataDir, installDir }
 }
 
-// The events the floor lane wrote to the boot's event log, in order
-async function floorEvents(dataDir: string): Promise<string[]> {
+// The records the floor lane wrote to the boot's event log, in order, each with its fields
+async function floorRecords(dataDir: string): Promise<Record<string, unknown>[]> {
   const text = await readFile(path.join(dataDir, 'events', 'events-1.jsonl'), 'utf8')
-  return text.trim().split('\n').map(line => (JSON.parse(line) as { event: string }).event)
+  return text.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+}
+
+async function floorEvents(dataDir: string): Promise<string[]> {
+  return (await floorRecords(dataDir)).map(record => record.event as string)
+}
+
+// A gate built on the fixtures' allow-all one, deciding with decide while it keeps the StateView it was given
+function gateDeciding(decide: (access: Access, view: number) => unknown) {
+  const gate = allowAll()
+  return Object.assign(gate, { decide: (access: Access) => decide(access, gate.views.at(-1) ?? 0) })
 }
 
 describe('wiring the core', () => {
@@ -231,5 +244,126 @@ describe('a plugin\'s life through the joined core', () => {
     await loader.settled()
     expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(true)
     expect(loader.plugin('git')?.state).toBe('ready')
+  })
+})
+
+// Shutdown stops sandboxed plugins in reverse graph order, then host plugins in reverse with the log last. A plugin in
+// its stop grace can still save, so the host plugins it needs serve until their own turn
+describe('shutdown through the joined core', () => {
+  async function quitting(options: { alphaHolds?: boolean } = {}) {
+    const storage = new FakeStorage()
+    const parts = await joined({
+      install: { ...coreInstall(), storage: { files: filesFor(hostManifest('storage')) } },
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      behave: {
+        gate: { exports: { gate: allowAll() } },
+        storage: { exports: { provider: storage } },
+        alpha: { stopped: options.alphaHolds !== true },
+      },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, storage }
+  }
+
+  it('keeps host-level plugins serving while sandboxed plugins stop for shutdown', async () => {
+    const { loader, runtime, storage } = await quitting({ alphaHolds: true })
+    const alpha = runtime.half('alpha')
+    const shutdown = loader.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    expect(loader.slot('gate')).toBe('on')
+    expect(loader.slot('log')).toBe('on')
+    expect((await alpha.ask('storage.set', { key: 'draft', value: 'last words' }))?.ok).toBe(true)
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+    expect([...storage.values.values()]).toContain('last words')
+  })
+
+  it('records no slot as failed when shutdown stops it', async () => {
+    const { carrier, dataDir, loader } = await quitting()
+    await loader.shutdown()
+    await carrier.flushFloor()
+    const records = await floorRecords(dataDir)
+    const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
+    const slots = after.filter(record => record.event === 'slot.state')
+    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'stopped'], ['log', 'stopped']])
+  })
+
+  it('records a host slot that fails during shutdown, before its own stop, as failed', async () => {
+    const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+    const alpha = runtime.half('alpha')
+    const shutdown = loader.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    // What the carrier tells the loader when a host half floods its way
+    loader.crashed({ kind: 'plugin', id: 'log', half: 'host', incarnation: 1 }, 'flood')
+    await until(() => loader.slot('log') === 'failed')
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+    await carrier.flushFloor()
+    const records = await floorRecords(dataDir)
+    const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
+    const slots = after.filter(record => record.event === 'slot.state')
+    expect(slots.map(record => [record.slot, record.state])).toEqual([['log', 'failed'], ['gate', 'stopped']])
+  })
+
+  it('keeps the audit queue through shutdown and counts what is left once the carrier closes', async () => {
+    const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+    const alpha = runtime.half('alpha')
+    expect((await alpha.ask('storage.set', { key: 'draft', value: 'one' }))?.ok).toBe(true)
+    const shutdown = loader.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    expect((await alpha.ask('storage.set', { key: 'draft', value: 'two' }))?.ok).toBe(true)
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+    carrier.close()
+    await carrier.flushFloor()
+    const dropped = (await floorRecords(dataDir)).filter(record => record.event === 'audit.dropped')
+    expect(dropped.map(record => [record.why, record.count])).toEqual([['shutdown', 2]])
+  })
+
+  it('refuses a security change once shutdown began', async () => {
+    const { loader } = await quitting()
+    await loader.shutdown()
+    await expect(loader.apply({ kind: 'plugin.off', plugin: 'alpha' })).rejects.toMatchObject({ code: 'stopped' })
+  })
+})
+
+// The carrier must ask the same guards the loader expects and report where the loader's options say
+describe('what wireCore hands the carrier', () => {
+  async function writing(wire: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>, gate = allowAll()) {
+    const vault = new FakeVault()
+    const parts = await joined({
+      install: { ...coreInstall(), vault: { files: filesFor(hostManifest('vault')) } },
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      behave: { gate: { exports: { gate } }, vault: { exports: { provider: vault } } },
+      wire,
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, vault }
+  }
+
+  it('makes the carrier ask the guards the loader expects, so a missing one refuses the write', async () => {
+    const { runtime, vault } = await writing({ guardsFor: () => ['leases'] })
+    const reply = await runtime.half('alpha').ask('vault.write', { path: 'notes/a.md', text: 'x' })
+    expect(code(reply!)).toBe('guard-down')
+    expect(vault.performed).toEqual([])
+  })
+
+  it('hands the carrier the debug sink for a gate that throws', async () => {
+    const debug: { plugin: string | null }[] = []
+    const gate = gateDeciding(() => { throw new Error('broken') })
+    const { runtime } = await writing({ debug: entry => { debug.push(entry) } }, gate)
+    expect(code((await runtime.half('alpha').ask('vault.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
+    expect(debug.map(entry => entry.plugin)).toContain('gate')
+  })
+
+  it('hands the carrier the asks that raise a gate\'s prompt', async () => {
+    const raised: string[] = []
+    const gate = gateDeciding((access, view) => access.stage === 'raw' ? { allow: true, view } : { ask: 'vault.read notes/a.md', view })
+    const { runtime } = await writing({ asks: { raise: ask => { raised.push(ask); return 'req-1' } } }, gate)
+    const reply = await runtime.half('alpha').ask('vault.read', { path: 'notes/a.md' })
+    expect(reply?.refusal).toEqual({ code: 'needs-confirm', action: 'vault.read', request: 'req-1' })
+    expect(raised).toEqual(['vault.read notes/a.md'])
   })
 })

@@ -212,9 +212,14 @@ export class Carrier {
       recheck: (caller, topic) => this.recheck(caller, topic),
       limit: (plugin, name) => this.limits.of(plugin, name),
       // Coalesced, since a publisher's pace or a subscriber's own can make them
-      dropped: (caller, why) => this.coalesced.hit('events.dropped', { ...whoOf(caller), why }),
+      // Shutdown takes the gate down on its way out, which is no failure, so the bus records nothing then
+      dropped: (caller, why) => {
+        if (!this.shutting) this.coalesced.hit('events.dropped', { ...whoOf(caller), why })
+      },
       // One record each, since a change of the gate or the grants makes them
-      changed: (caller, change, topics) => this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }),
+      changed: (caller, change, topics) => {
+        if (!this.shutting) this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) })
+      },
     })
   }
 
@@ -225,12 +230,11 @@ export class Carrier {
   }
 
   // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
-  // or provider that is down answers stopped where it would answer policy-down, guard-down or unavailable. A gate that
-  // throws or a guard that answers late still answers as a fault
+  // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
+  // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
+  // gate to the end and records no subscription change. Audit records keep queueing until close counts them
   stopping(): void {
     this.shutting = true
-    // Every way ends before the gate stops, so nothing is asked again and no subscription change is recorded
-    this.bus.freeze()
   }
 
   // The answer for something that is down: what it is outside shutdown, stopped once shutdown began
@@ -360,6 +364,9 @@ export class Carrier {
     this.closed = true
     for (const way of [...this.ways.values()]) this.end(way.caller)
     this.coalesced.close()
+    // Records the log plugin never acknowledged are lost with the run and counted
+    const held = this.queue.clear()
+    if (held > 0 && !this.muted()) this.lane.write('audit.dropped', { count: held, why: 'shutdown' })
     this.lane.close()
   }
 
@@ -1067,8 +1074,9 @@ export class Carrier {
     this.finish(pending, no('failed'))
   }
 
-  // Every call ends here once. The reply never waits on the record. Its live sub-calls end with it, so nothing done
-  // under a call outlives it: a callee that wants to keep working after it answers makes its own calls
+  // Every call ends here once. The reply never waits on the record. Its live sub-calls stop with it, so none still waits
+  // on a callee after the call answers. What a callee already did stays done. A callee that keeps working after it
+  // answers makes its own calls
   private finish(pending: Pending, outcome: Outcome): void {
     if (pending.done) return
     pending.done = true
@@ -1125,11 +1133,12 @@ export class Carrier {
   }
 
   // One audit record per call while the log is on or starting. Nothing while recording is off. A log that went down
-  // or was switched off loses what the queue held, which is counted in a floor record
+  // or was switched off loses what the queue held, which is counted in a floor record. During shutdown the log stops
+  // last and reads failed then, so records keep queueing and close counts what is left
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.muted()) return
     const log = this.slot('log')
-    if (log !== 'on' && log !== 'starting') {
+    if (log !== 'on' && log !== 'starting' && !this.shutting) {
       const held = this.queue.clear()
       if (held > 0) this.lane.write('audit.dropped', { count: held, why: 'log-down' })
       return
