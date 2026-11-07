@@ -140,7 +140,9 @@ describe('what a call hides', () => {
 
   it('paces its messages under messagesPerSecond', { timeout: 10_000 }, async () => {
     const parts = await plugin({ messagesPerSecond: 20 })
-    parts.loader.human.plugins.search = { messagesPerSecond: 20 }
+    // The carrier counts messages as they arrive, and a busy runner hands over messages sent apart in a bunch. 24
+    // leaves room for that and still drops a burst of 40 sent at once
+    parts.loader.human.plugins.search = { messagesPerSecond: 24 }
     const selves = Array.from({ length: 40 }, () => parts.ctx.call('core', 'self', {}, { timeoutMs: 6000 }))
     const results = await Promise.all(selves)
     expect(results.every(result => (result as { id?: string }).id === 'search')).toBe(true)

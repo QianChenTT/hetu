@@ -318,18 +318,21 @@ describe('start markers', () => {
         stopping = new Promise(resolve => queueMicrotask(() => resolve(made.loader.shutdown())))
       }
     }
-    void made.loader.start()
+    // Awaited, so nothing it writes is still landing when the test's folder is removed
+    const starting = made.loader.start()
     await until(() => stopping !== null)
     await stopping
+    await starting
     expect(await exists(marker(made.dataDir, 'log'))).toBe(false)
   })
 
   it('removes the marker of a host half a planned stop ended before ready, so the next boot starts it', async () => {
     const made = await harness({ behave: { gate: { ready: false } } })
-    void made.loader.start()
+    const starting = made.loader.start()
     await until(() => made.runtime.order().includes('gate') && made.runtime.half('gate', 1, 'host').got('init').length === 1)
     expect(await exists(marker(made.dataDir, 'gate'))).toBe(true)
     await made.loader.shutdown()
+    await starting
     expect(await exists(marker(made.dataDir, 'gate'))).toBe(false)
     const booted = await boot({ packaged: false, installDir: made.installDir, env: { HETU_DATA_DIR: made.dataDir }, platform: process.platform })
     try {
