@@ -561,3 +561,24 @@ describe('the request to approve a plugin', () => {
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing'])
   })
 })
+
+// Checkpoint B: with the log down, the stopped mode's stop recording waited for a record the dead log could never take
+describe('stopping recording with the log down', () => {
+  it('applies though its own record was lost, since the log is what it switches off', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
+    made.link.landing = () => 'lost'
+    await made.loader.confirm(id, { typed: 'log' })
+    expect(made.loader.recordNothing()).toBe(true)
+  })
+
+  it('lets the audit writer go again when the switch can\u2019t be written', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
+    made.store.writeSwitches = async () => { throw new Error('read-only') }
+    expect(await code(made.loader.confirm(id, { typed: 'log' }))).toBe('failed')
+    expect(made.link.timeline.slice(-2)).toEqual(expect.arrayContaining(['resume']))
+  })
+})

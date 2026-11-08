@@ -108,6 +108,10 @@ export class FakeLink implements CarrierLink {
     return this.waiting
   }
 
+  resume(): void {
+    this.timeline.push('resume')
+  }
+
   limit(_plugin: string, name: FloorConstant): number {
     return this.limits[name] ?? floorConstants[name]
   }

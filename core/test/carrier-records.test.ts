@@ -949,3 +949,31 @@ describe('recording going off', () => {
     expect(log.events('audit.call')).toEqual([])
   })
 })
+
+// Checkpoint B: a call record could land after the switch's own record, written while the switch was being applied
+describe('the writer while recording goes off', () => {
+  it('writes nothing more once drained until it resumes, then writes what waited', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    expect(await carrier.drain(1000)).toBe(0)
+    await search.ask('storage.get', { key: 'k' })
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+    carrier.resume()
+    await carrier.flush()
+    expect(log.events('audit.call')).toHaveLength(1)
+  })
+
+  it('stops waiting at its deadline on a log whose writes never settle', async () => {
+    const log = new FakeLog()
+    log.appendMany = () => new Promise(() => {})
+    log.append = () => new Promise(() => {})
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    const started = performance.now()
+    expect(await carrier.drain(50)).toBe(1)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+})

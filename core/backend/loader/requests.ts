@@ -28,8 +28,10 @@ export type RequestHost = {
   // A clock no change of the wall clock moves, and how long a request must be first in line before its Confirm counts
   clock(): number
   delayMs: number
-  // Writes what waits to be recorded, within ms, and gives back how many records still wait
+  // Writes what waits to be recorded, within ms, and gives back how many records still wait. The audit writer then
+  // writes nothing until recording is off or resume is called
   drain(ms: number): Promise<number>
+  resume(): void
 }
 
 export type RequestAnswer = { applied: true } | { held: string }
@@ -187,23 +189,27 @@ export class Requests {
   }
 
   // The Confirm record on disk, or muted with recording off, then the change. A record that doesn't land in time
-  // applies nothing, and a write that fails applies nothing either
+  // applies nothing, and a write that fails applies nothing either. Turning recording off is the one exception: it
+  // writes what waits first and counts what still does in its own record, which is then the last one written (S4-5),
+  // and it applies even when that record is lost, since the log it switches off is what can't write. The drain and the
+  // record share the one wait
   private async landThenApply(change: Change, fields: Record<string, Field>): Promise<void> {
-    // Turning recording off writes what waits first and counts what still does in its own record, which is then the
-    // last one written (S4-5)
-    if (change.kind === 'recordNothing' && change.on) fields = { ...fields, unwritten: await this.host.drain(CONFIRM_RECORD_MS) }
+    const stopping = change.kind === 'recordNothing' && change.on
+    const wait = stopping ? CONFIRM_RECORD_MS / 2 : CONFIRM_RECORD_MS
+    if (stopping) fields = { ...fields, unwritten: await this.host.drain(wait) }
     const abort = new AbortController()
-    const timer = setTimeout(() => abort.abort(), CONFIRM_RECORD_MS)
+    const timer = setTimeout(() => abort.abort(), wait)
     let landing: Landing
     try {
       landing = await this.host.record('security.confirm', fields, abort.signal)
     } finally {
       clearTimeout(timer)
     }
-    if (landing === 'lost') throw { code: 'failed' }
+    if (landing === 'lost' && !stopping) throw { code: 'failed' }
     try {
       await this.host.applyNow(change)
     } catch {
+      if (stopping) this.host.resume()
       void this.host.record('security.failed', fields)
       throw { code: 'failed' }
     }

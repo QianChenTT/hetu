@@ -267,6 +267,7 @@ export class Loader implements Seam {
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
+      resume: () => this.link.resume(),
       changed: () => this.refresh(),
       clock: () => performance.now(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,

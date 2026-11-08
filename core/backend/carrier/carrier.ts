@@ -217,6 +217,8 @@ export class Carrier {
   private readonly looking: ReturnType<typeof setInterval>
   private logHealthy: boolean | undefined
   private toldLog = false
+  // Drained for recording to go off: the writer writes nothing more until the switch applies or resume is called
+  private paused = false
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -237,12 +239,16 @@ export class Carrier {
     const log = options.log
     // A batch the log refused while healthy is let go and counted, one record a batch
     // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
-    // and is the last record written (S4-5)
+    // and is the last record written (S4-5). Between the drain and the switch nothing is written, so no call record
+    // lands after the switch's own
     const source = {
       next: (max: number) => {
-        if (!this.muted()) return this.queue.next(max)
-        this.queue.clear()
-        return []
+        if (this.muted()) {
+          this.queue.clear()
+          this.paused = false
+          return []
+        }
+        return this.paused ? [] : this.queue.next(max)
       },
       ack: (seq: number) => this.queue.ack(seq),
     }
@@ -328,7 +334,13 @@ export class Carrier {
     })
     await Promise.race([this.flush(), deadline])
     clearTimeout(timer)
+    this.paused = true
     return this.queue.size + this.lane.waiting
+  }
+
+  // Recording didn't go off after a drain, so the writer goes on
+  resume(): void {
+    this.paused = false
   }
 
   // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
