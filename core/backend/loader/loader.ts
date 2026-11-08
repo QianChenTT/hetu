@@ -261,10 +261,11 @@ export class Loader implements Seam {
     return this.state.switches.recordNothing
   }
 
-  // A way closed under its plugin or was closed for a flood. Every dependent is waiting before this returns, then the
+  // A way closed under its plugin, was closed for a flood or the worker host page cut its worker off for a flood or a
+  // message that wasn't text within the cap. Every dependent is waiting before this returns, then the
   // ways of the plugin's other halves end. A close during a planned stop is that stop ending. A caller from an
   // incarnation that is over finds nothing
-  crashed(caller: Caller, reason: 'closed' | 'flood'): void {
+  crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void {
     const found = this.runOf(caller)
     if (found === null) return
     this.die(found.k, reason)
@@ -324,7 +325,8 @@ export class Loader implements Seam {
   // ---- boot
 
   // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
-  // scanned and the sandboxed tier started in graph order
+  // scanned and the sandboxed tier started in graph order. core.ready closes it with every slot's state, unless a
+  // shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.replan()
@@ -334,6 +336,7 @@ export class Loader implements Seam {
     await this.scan()
     this.replan()
     await this.settled()
+    if (!this.closing) this.note('core.ready', Object.fromEntries(slotIds.map(id => [id, this.slot(id)])))
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start
@@ -930,7 +933,7 @@ export class Loader implements Seam {
 
     if (worker !== undefined) {
       const run: Run = { caller: caller('worker'), ready: false, stopped: false }
-      const { core, plugin } = this.runtime.channel()
+      const { core, plugin } = this.runtime.channel(k.id)
       this.link.register(core, run.caller)
       live.halves.set('worker', run)
       const code = k.read.files.find(file => file.path === worker)!.bytes

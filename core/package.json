@@ -7,8 +7,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p api",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p api && tsc --noEmit -p frontend",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts"
   },
   "dependencies": {
     "@humanwhocodes/momoa": "^3.3.13",

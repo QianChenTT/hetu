@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["api", "lib", "backend", "sdk", "test"]
+  "include": ["api", "lib", "backend", "build", "sdk", "test"]
 }
