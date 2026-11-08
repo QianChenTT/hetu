@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access } from '../api/slots.ts'
+import type { Access, AuditHandle } from '../api/slots.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
@@ -427,5 +427,35 @@ describe('core.status, for a window\'s banner', () => {
     const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
     expect(code((await runtime.half('alpha').ask('core.status', {}))!)).toBe('not-granted')
+  })
+})
+
+describe('the log plugin\'s handle through the joined core', () => {
+  it('lends the log the carrier\'s audit queue and boot\'s event log, so a record it takes lands as audit.call', async () => {
+    let lent: AuditHandle | null = null
+    const parts = await joined({
+      folder: {
+        alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} } } })),
+        beta: filesFor(workerManifest('beta')),
+      },
+      behave: {
+        gate: { exports: { gate: allowAll() } },
+        log: { exports: { log: { attach: (handle: AuditHandle) => { lent = handle } } } },
+      },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    const alpha = parts.runtime.half('alpha')
+    const asked = parts.runtime.half('beta').ask('alpha.hello', {})
+    await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
+    const delivered = alpha.inbox.find(message => message.kind === 'call' && message.action === 'alpha.hello')!
+    alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: null })
+    await asked
+    expect(lent).not.toBe(null)
+    const taken = lent!.next(50)
+    await lent!.append(taken.filter(record => record.action === 'alpha.hello'))
+    lent!.ack(taken.at(-1)!.seq)
+    const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
+    expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
   })
 })

@@ -15,7 +15,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { AuditHandle, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -42,6 +42,9 @@ export type LoaderOptions = {
   // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
   // trusted window
   raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
+  // Lends the install's log plugin its audit handle for one incarnation, with the revoke that ends it. The join builds
+  // it from the carrier's audit queue and boot's EventLog
+  audit?: () => { handle: AuditHandle, revoke(): void }
 }
 
 // What an update staged beside the old version came to
@@ -69,6 +72,8 @@ type Live = {
   readonly n: number
   readonly halves: Map<HalfName, Run>
   exports: HostExports | null
+  // Ends the audit handle lent to the log for this incarnation
+  revoke: (() => void) | null
   imported: boolean
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
@@ -172,6 +177,7 @@ export class Loader implements Seam {
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly raise: LoaderOptions['raise']
+  private readonly audit: LoaderOptions['audit']
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
   private readonly known = new Map<string, Known>()
@@ -209,6 +215,7 @@ export class Loader implements Seam {
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.raise = options.raise
+    this.audit = options.audit
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -874,7 +881,7 @@ export class Loader implements Seam {
     this.minted.set(k.id, n)
     k.incarnations = n
     const live: Live = {
-      n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
+      n, halves: new Map(), exports: null, revoke: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
       with: [], over: false, deps: '', marked: false,
     }
     k.live = live
@@ -942,6 +949,7 @@ export class Loader implements Seam {
         if (live.over) return
         live.exports = exports ?? {}
         live.imported = true
+        if (!this.lend(k, live)) return
         this.readied(k, live)
       }, () => {
         if (!live.over) this.die(k, 'start-failed')
@@ -968,6 +976,22 @@ export class Loader implements Seam {
     for (const run of live.halves.values()) this.link.send(run.caller, init)
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
+  }
+
+  // The install's log gets its audit handle once its module is imported and before it can count as ready, as the gate
+  // gets its first StateView. A throw from attach marks it failed, and retire revokes what was lent
+  private lend(k: Known, live: Live): boolean {
+    const role = live.exports?.log
+    if (k.id !== 'log' || k.from !== 'install' || role === undefined || this.audit === undefined) return true
+    try {
+      const lent = this.audit()
+      live.revoke = lent.revoke
+      role.attach(lent.handle)
+      return true
+    } catch {
+      this.die(k, 'start-failed')
+      return false
+    }
   }
 
   private readied(k: Known, live: Live): void {
@@ -1082,6 +1106,10 @@ export class Loader implements Seam {
   }
 
   private retire(k: Known, live: Live): void {
+    try {
+      live.revoke?.()
+    } catch {}
+    live.revoke = null
     if (live.beat !== null) clearInterval(live.beat.timer)
     live.beat = null
     live.over = true

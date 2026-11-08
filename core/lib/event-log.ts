@@ -1,6 +1,7 @@
 import { createHash, type Hash } from 'node:crypto'
 import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type { LogSegment as Segment, LogVerification as Verification } from '../api/slots.ts'
 import { retried, syncDir, writable } from './disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
@@ -25,24 +26,15 @@ const IDLE_GAP_MS = 2 * 60 * 60 * 1000
 export type Field = string | number | boolean | null
 // One record of a batch, its fields checked
 type Entry = { event: string, fields: Record<string, Field> }
-export type Verification = { ok: true } | { ok: false, seq: number }
+// history and verify answer with core/api's types, which the log plugin hands on
+export type { Segment, Verification }
 // What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
 // a new segment because the newest one didn't check out. unlinked is a newest segment that checks out but doesn't follow
 // the file before it, which was cut, edited or deleted after the rotation
 export type Opened = { lastSeq: number, broken: { segment: number, brokenSeq: number } | null, unlinked: number | null }
 
-// One file as history reads it. start says how its first line begins: zeros begin a chain, continues follows the last
-// line of the file before, unlinked follows neither. null when there is no good first line to tell. breaks are the line
-// numbers in the file, from 1, that don't check out: a break at line n means line n or the one before it changed, or
-// lines between them were taken out. The lines after a break still check against each other
-export type Segment = {
-  segment: number
-  lines: number
-  first: number | null
-  last: number | null
-  start: 'zero' | 'continues' | 'unlinked' | null
-  breaks: number[]
-}
+// A break at line n of a segment means line n or the one before it changed, or lines between them were taken out. The
+// lines after a break still check against each other
 
 // first is the seq the segment began with and prev is the hash of its last line or zeros before the first line. start
 // is the prev its first line carries and at the time of its last line, which decides when to rotate

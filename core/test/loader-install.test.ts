@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST } from '../api/install.ts'
+import type { AuditHandle } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { Loader } from '../backend/loader/loader.ts'
 import { readInstalled, writeInstalled } from '../backend/loader/folders.ts'
@@ -456,3 +457,46 @@ async function readInstalledHash(made: { installDir: string }, id: string): Prom
 
 // Loader is used for its type in the harness. Kept so a rename shows here too
 export type { Loader }
+
+describe('the log\'s audit handle', () => {
+  const lending = () => {
+    const handle = {} as AuditHandle
+    const seen = { lent: 0, revoked: 0, attached: [] as { given: boolean, slot: string }[] }
+    const audit = () => {
+      seen.lent++
+      return { handle, revoke: () => { seen.revoked++ } }
+    }
+    return { handle, seen, audit }
+  }
+
+  it('is lent once to the install\'s log, after the import and before the log reads ready, and revoked when its incarnation ends', async () => {
+    const { handle, seen, audit } = lending()
+    let made: Awaited<ReturnType<typeof harness>> | null = null
+    const role = { attach: (given: AuditHandle) => { seen.attached.push({ given: given === handle, slot: made!.loader.slot('log') }) } }
+    made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
+    await made.loader.start()
+    expect(seen.attached).toEqual([{ given: true, slot: 'starting' }])
+    expect(made.loader.slot('log')).toBe('on')
+    expect(seen.revoked).toBe(0)
+    await made.loader.shutdown()
+    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
+  })
+
+  it('marks the log failed when attach throws, revoking what it lent', async () => {
+    const { seen, audit } = lending()
+    const role = { attach: () => { throw new Error('no') } }
+    const made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
+    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
+  })
+
+  it('lends nothing to another plugin holding a log role', async () => {
+    const { seen, audit } = lending()
+    const role = { attach: () => { seen.attached.push({ given: true, slot: 'gate' }) } }
+    const made = await harness({ behave: { gate: { exports: { gate: allowAll(), log: role } } }, loader: { audit } })
+    await made.loader.start()
+    expect(seen).toMatchObject({ lent: 0, attached: [] })
+  })
+})
