@@ -23,6 +23,8 @@ const hex64 = /^[0-9a-f]{64}$/
 const IDLE_GAP_MS = 2 * 60 * 60 * 1000
 
 export type Field = string | number | boolean | null
+// One record of a batch, its fields checked
+type Entry = { event: string, fields: Record<string, Field> }
 export type Verification = { ok: true } | { ok: false, seq: number }
 // What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
 // a new segment because the newest one didn't check out. unlinked is a newest segment that checks out but doesn't follow
@@ -298,7 +300,7 @@ export class EventLog {
         if (tip.start === ZERO || await this.follows(numbers.at(-2), tip)) {
           return { tip, opened: { lastSeq: tip.seq, broken: null, unlinked: null } }
         }
-        const next = await this.write(tip, 'log.unlinked', { segment: newest })
+        const next = await this.write(tip, [{ event: 'log.unlinked', fields: { segment: newest } }])
         return { tip: next, opened: { lastSeq: tip.seq, broken: null, unlinked: newest } }
       }
     }
@@ -312,7 +314,7 @@ export class EventLog {
     const seq = Math.max(last ?? 0, before?.seq ?? 0)
     const broken = { segment, brokenSeq: edited ? before.seq : (last ?? 0) + 1 }
     const start = { segment: segment + 1, first: seq + 1, seq, prev: ZERO, start: ZERO, at: null }
-    const tip = await this.write(start, 'log.chain-broken', broken)
+    const tip = await this.write(start, [{ event: 'log.chain-broken', fields: broken }])
     return { tip, opened: { lastSeq: seq, broken, unlinked: null } }
   }
 
@@ -348,48 +350,64 @@ export class EventLog {
     return Date.parse(at) - Date.parse(tip.at) >= this.idleGapMs
   }
 
-  // Gives back the tip after the line is on disk, so a failed write leaves the old one as it was
-  private async write(tip: Tip, event: string, fields: Record<string, Field>): Promise<Tip> {
-    const seq = tip.seq + 1
+  // Gives back the tip after the batch's lines are on disk, so a failed write leaves the old one as it was. One write and
+  // one fsync for the whole batch, every line chained to the one before it and all of them in one segment
+  private async write(tip: Tip, batch: readonly Entry[]): Promise<Tip> {
+    const firstSeq = tip.seq + 1
     const at = new Date().toISOString()
-    const line = JSON.stringify({ seq, prev: tip.prev, at, event, ...fields })
-    // The line is the same in either file, a rotation only moves where it goes
+    let seq = tip.seq
+    let prev = tip.prev
+    const lines: string[] = []
+    for (const { event, fields } of batch) {
+      seq++
+      const line = JSON.stringify({ seq, prev, at, event, ...fields })
+      lines.push(line)
+      prev = sha256(line)
+    }
+    // The lines are the same in either file, a rotation only moves where they go
     const into = this.rotates(tip, at)
-      ? { segment: tip.segment + 1, first: seq, seq: tip.seq, prev: tip.prev, start: tip.prev, at: tip.at }
+      ? { segment: tip.segment + 1, first: firstSeq, seq: tip.seq, prev: tip.prev, start: tip.prev, at: tip.at }
       : tip
     // Nothing is written before the file opens, so a lock there is safe to wait out
     const file = this.file(into.segment)
-    const next = { ...into, seq, prev: sha256(line), at }
+    const next = { ...into, seq, prev, at }
     this.pending = next
     await writable(file)
     const handle = await retried(() => open(file, 'a'), file)
     try {
-      await handle.writeFile(`${line}\n`)
+      await handle.writeFile(lines.map(line => `${line}\n`).join(''))
       await handle.sync()
     } catch (err) {
       // A new segment whose first line never landed is removed, or each failed retry on a full disk leaves another
       // empty segment behind and the next open blames the wrong one
-      const empty = seq === into.first && (await handle.stat().catch(() => null))?.size === 0
+      const empty = firstSeq === into.first && (await handle.stat().catch(() => null))?.size === 0
       await handle.close().catch(() => {})
       if (empty) await rm(file, { force: true }).catch(() => {})
       throw err
     }
     await handle.close()
     // The segment's first line made the file, which is only on disk once its folder is
-    if (seq === into.first) await syncDir(this.dir)
+    if (firstSeq === into.first) await syncDir(this.dir)
     this.pending = null
     return next
   }
 
   async append(event: string, fields: Record<string, Field> = {}): Promise<void> {
-    const checked = checkFields(event, fields)
+    await this.appendMany([{ event, fields }])
+  }
+
+  // A batch of records with one fsync, as the log plugin writes the audit records it takes. Each is checked first, so
+  // one the log wouldn't take refuses the whole batch and none of it is written
+  async appendMany(batch: readonly { event: string, fields?: Record<string, Field> }[]): Promise<void> {
+    const checked = batch.map(({ event, fields }) => ({ event, fields: checkFields(event, fields === undefined ? {} : fields) }))
+    if (checked.length === 0) return
     await this.serial(async () => {
       // After a failed open or write the file is looked at again, so a lock that has passed doesn't keep the log off.
       // A half written line then reads as a break. Until retryAfterMs has passed appends are refused at once
       if (!this.ok && this.tried && performance.now() >= this.quietUntil) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
       try {
-        this.tip = await this.write(this.tip, event, checked)
+        this.tip = await this.write(this.tip, checked)
       } catch (err) {
         // A half written line may be on disk, so nothing more is added until the file has been looked at again
         this.ok = false

@@ -1188,3 +1188,42 @@ describe('a segment of any size', () => {
     expect((await new EventLog(dir).history())[0]).toEqual({ segment: 1, lines: 5, first: 1, last: 5, start: 'zero', breaks: [4] })
   })
 })
+
+describe('a batch', () => {
+  it('writes each record of a batch as its line, in order, chained, with one fsync for the batch', async () => {
+    const log = await opened()
+    await log.append('test.line', { n: 0 })
+    const sync = vi.spyOn(await fileHandleProto(), 'sync')
+    await log.appendMany([{ event: 'audit.call', fields: { n: 1 } }, { event: 'audit.call', fields: { n: 2 } }, { event: 'audit.read', fields: { n: 3 } }])
+    expect(sync).toHaveBeenCalledTimes(1)
+    const records = await recordsOf(1)
+    expect(records.map(record => [record.seq, record.event, record.n])).toEqual([[1, 'test.line', 0], [2, 'audit.call', 1], [3, 'audit.call', 2], [4, 'audit.read', 3]])
+    expect(await linesOf(1)).toEqual(chainOf(records))
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('writes nothing for an empty batch', async () => {
+    const log = await opened()
+    await log.appendMany([])
+    expect(await segments()).toEqual([])
+  })
+
+  it('refuses the whole batch for one record it wouldn\'t take, writing none of it', async () => {
+    const log = await opened()
+    await expect(log.appendMany([{ event: 'audit.call', fields: { n: 1 } }, { event: 'Bad Event', fields: {} }])).rejects.toThrow()
+    expect(await segments()).toEqual([])
+    await log.append('test.line')
+    expect((await recordsOf(1)).map(record => record.seq)).toEqual([1])
+  })
+
+  it('puts a whole batch in the new segment when the idle gap has passed', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    const log = await opened({ idleGapMs: 1000 })
+    await log.append('test.line', { n: 1 })
+    step(1000)
+    await log.appendMany([{ event: 'test.line', fields: { n: 2 } }, { event: 'test.line', fields: { n: 3 } }])
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    expect((await recordsOf(2)).map(record => record.seq)).toEqual([2, 3])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+})
