@@ -261,3 +261,38 @@ describe('the kinds the loader applies since the trusted window', () => {
     expect(reasonOf(made.loader, 'luoshu')).toBe('restart-hetu')
   })
 })
+
+// Record nothing's own record is the last one (S4-5)
+describe('recording off and on', () => {
+  it('drains what waits before the record of recording going off and counts what still waits in it', async () => {
+    const made = await harness()
+    await made.loader.start()
+    made.link.waiting = 2
+    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
+    await made.loader.confirm(id, { typed: 'log' })
+    const at = made.link.timeline.indexOf('drain')
+    expect(at).toBeGreaterThan(-1)
+    expect(made.link.timeline.indexOf('record security.confirm')).toBeGreaterThan(at)
+    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'recordNothing', unwritten: 2 }])
+  })
+
+  it('drains nothing for any other change', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.loader.confirm(id, {})
+    expect(made.link.timeline).not.toContain('drain')
+  })
+
+  it('switches recording back on before its record, so that record is the first one written again', async () => {
+    const made = await harness({ switches: { recordNothing: true } })
+    await made.loader.start()
+    let recording: boolean | null = null
+    made.link.landing = event => {
+      if (event === 'security.applied') recording = !made.loader.recordNothing()
+      return 'landed'
+    }
+    expect(await made.loader.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
+    expect(recording).toBe(true)
+  })
+})

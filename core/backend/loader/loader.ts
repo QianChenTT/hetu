@@ -243,6 +243,7 @@ export class Loader implements Seam {
       applyNow: change => this.applyNow(change),
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
+      drain: ms => this.link.drain(ms),
     })
   }
 

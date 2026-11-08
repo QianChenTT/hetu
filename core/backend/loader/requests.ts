@@ -21,6 +21,8 @@ export type RequestHost = {
   applyNow(change: Change): Promise<void>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   confirmOff(): boolean
+  // Writes what waits to be recorded, within ms, and gives back how many records still wait
+  drain(ms: number): Promise<number>
 }
 
 export type RequestAnswer = { applied: true } | { held: string }
@@ -120,6 +122,9 @@ export class Requests {
   // The Confirm record on disk, or muted with recording off, then the change. A record that doesn't land in time
   // applies nothing, and a write that fails applies nothing either
   private async landThenApply(change: Change, fields: Record<string, Field>): Promise<void> {
+    // Turning recording off writes what waits first and counts what still does in its own record, which is then the
+    // last one written (S4-5)
+    if (change.kind === 'recordNothing' && change.on) fields = { ...fields, unwritten: await this.host.drain(CONFIRM_RECORD_MS) }
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), CONFIRM_RECORD_MS)
     let landing: Landing

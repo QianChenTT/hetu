@@ -883,3 +883,43 @@ describe('a failing log', () => {
     }
   })
 })
+
+// Record nothing's own record is the last one (S4-5): the loader drains what waits before it writes that record, and
+// what still waits once recording is off is let go, counted in that record
+describe('recording going off', () => {
+  it('drains the audit queue and the floor backlog and says nothing still waits', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    carrier.floor('plugin.found', { plugin: 'alpha' })
+    expect(await carrier.drain(1000)).toBe(0)
+    expect(log.events('audit.call')).toHaveLength(1)
+    expect(log.events('plugin.found')).toHaveLength(1)
+  })
+
+  it('stops waiting at its deadline and counts what still waits on a log that can\'t write', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    log.failing = true
+    await search.ask('storage.get', { key: 'k' })
+    await search.ask('storage.set', { key: 'k', value: 1 })
+    carrier.floor('plugin.found', { plugin: 'alpha' })
+    const started = performance.now()
+    expect(await carrier.drain(50)).toBe(3)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('lets go of audit records still queued once recording is off, so none lands after the switch', async () => {
+    const log = new FakeLog()
+    const { carrier, connect, loader } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    loader.nothing = true
+    await carrier.flush()
+    loader.nothing = false
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+  })
+})

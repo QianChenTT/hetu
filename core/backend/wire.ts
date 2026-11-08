@@ -58,6 +58,10 @@ export class LinkToCarrier implements CarrierLink {
     this.to.stopping()
   }
 
+  drain(ms: number): Promise<number> {
+    return this.to.drain(ms)
+  }
+
   limit(plugin: string, name: FloorConstant): number {
     return this.to.limit(plugin, name)
   }

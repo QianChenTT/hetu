@@ -235,7 +235,17 @@ export class Carrier {
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
     const log = options.log
     // A batch the log refused while healthy is let go and counted, one record a batch
-    this.writer = log === null ? null : new AuditWriter(this.queue, log, {
+    // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
+    // and is the last record written (S4-5)
+    const source = {
+      next: (max: number) => {
+        if (!this.muted()) return this.queue.next(max)
+        this.queue.clear()
+        return []
+      },
+      ack: (seq: number) => this.queue.ack(seq),
+    }
+    this.writer = log === null ? null : new AuditWriter(source, log, {
       everyMs: options.auditEveryMs ?? 100,
       refused: count => {
         void this.lane.write('audit.dropped', { why: 'refused', count })
@@ -301,6 +311,18 @@ export class Carrier {
   async flush(): Promise<void> {
     await this.writer?.flush()
     await this.lane.flush()
+  }
+
+  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
+  async drain(ms: number): Promise<number> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>(resolve => {
+      timer = setTimeout(resolve, ms)
+    })
+    await Promise.race([this.flush(), deadline])
+    clearTimeout(timer)
+    return this.queue.size + this.lane.waiting
   }
 
   // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the

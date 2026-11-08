@@ -46,6 +46,8 @@ export class FakeLink implements CarrierLink {
   landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
   changes = 0
   stopped = 0
+  // How many records drain says still wait
+  waiting = 0
   limits: Partial<Record<FloorConstant, number>> = {}
   private readonly ports = new Map<string, Port>()
   private readonly receivers = new Map<string, (message: unknown) => void>()
@@ -99,6 +101,11 @@ export class FakeLink implements CarrierLink {
   stopping(): void {
     this.stopped++
     this.timeline.push('stopping')
+  }
+
+  async drain(_ms: number): Promise<number> {
+    this.timeline.push('drain')
+    return this.waiting
   }
 
   limit(_plugin: string, name: FloorConstant): number {
