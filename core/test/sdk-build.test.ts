@@ -151,4 +151,16 @@ describe('building a host half', () => {
     const external = await folder({ 'src/host.ts': host("import { basename } from 'node:path'\nimport 'electron'") })
     await expect(buildHost(external, 'src/host.ts', ['path'])).rejects.toThrow()
   })
+
+  // A lint for the plain ways past the node list. A computed name gets past it, so a host half's reach is bounded by its
+  // review as install code
+  it.each([
+    ['getBuiltinModule', "export const fs = process.getBuiltinModule('node:fs')\n"],
+    ['createRequire', "export const make = (m: { createRequire(path: string): unknown }) => m.createRequire('/')\n"],
+    ['binding', "export const bound = (process as unknown as { binding(name: string): unknown }).binding('fs')\n"],
+    ['mainModule', 'export const main = (process as unknown as { mainModule: unknown }).mainModule\n'],
+  ])('refuses a host half that reaches a built-in or Electron past its imports through %s', async (name, code) => {
+    const dir = await folder({ 'src/host.ts': `${host("import { basename } from 'node:path'")}${code}` })
+    await expect(buildHost(dir, 'src/host.ts', ['path'])).rejects.toThrow(name)
+  })
 })
