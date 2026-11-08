@@ -397,6 +397,7 @@ ${capabilityKey(change.capability)}`)
       return {
         id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
         security: row.from === 'install' && isSecurityControl(row.id),
+        firstParty: row.from === 'folder' && isOne(firstPartyIds, row.id),
         on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),

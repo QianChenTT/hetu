@@ -1,9 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
+import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 
-// How long the trusted window takes no input after it shows or gains focus. A click or a key already on its way lands
-// within a human reaction time of a few hundred ms. Firefox keeps the buttons of its security dialogs disabled for
-// 1000 ms by default (security.dialog_enable_delay)
-export const INPUT_DELAY_MS = 1000
+export { INPUT_DELAY_MS }
 
 // Keyboard input as before-input-event hands it and mouse input as before-mouse-event does
 export type KeyInput = { readonly type: string, readonly code: string, readonly isAutoRepeat?: boolean }

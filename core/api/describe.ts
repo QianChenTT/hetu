@@ -1,6 +1,6 @@
-import type { Capability } from './capabilities.ts'
 import type { Change } from './changes.ts'
 import { isSecurityControl } from './ids.ts'
+import { capabilityText } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. Ids are
 // shown as they are, since their grammar holds nothing that reads as a sentence. Anything else a plugin wrote, a scope
@@ -8,27 +8,6 @@ import { isSecurityControl } from './ids.ts'
 export type Described = { text: string, notes: string[] }
 
 const quoted = (value: string) => JSON.stringify(value)
-
-// One capability as its type and each scope quoted
-function capabilityText(granted: Capability): string {
-  switch (granted.type) {
-    case 'luoshu.read':
-    case 'luoshu.write':
-      return `${granted.type} on ${granted.paths.map(quoted).join(', ')}`
-    case 'history':
-      return `history ${granted.access} on ${granted.paths.map(quoted).join(', ')}`
-    case 'net.fetch':
-      return `net.fetch to ${granted.hosts.map(quoted).join(', ')}`
-    case 'events.subscribe':
-      return `events.subscribe to ${granted.topics.join(', ')}`
-    case 'exec':
-      return `exec of ${granted.commands.map(command => quoted(command.join(' '))).join(', ')}`
-    case 'plugin.call':
-      return `plugin.call to ${granted.targets.join(', ')}`
-    default:
-      return granted.type
-  }
-}
 
 // What each security control stops doing while off
 const whileOff: Readonly<Record<string, string>> = Object.freeze({

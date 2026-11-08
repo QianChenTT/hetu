@@ -1,1 +1,1 @@
-The trusted page, a fixed core page and the only place a Confirm counts: the pending security change, the plugin list and the switches. No plugins and no note content
+The trusted page, a fixed core page and the only place a Confirm counts: the pending security change, the plugin list and the switches. No plugins and no note content. `view.ts` holds its logic apart from the DOM, `page.ts` draws it as text. Main keeps its input delay, so the page only shows Confirm disabled meanwhile

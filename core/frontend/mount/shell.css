@@ -24,3 +24,17 @@ body {
 main {
   padding: 24px;
 }
+
+#notices {
+  padding: 6px 12px;
+  background: #e8f0fe;
+  border-bottom: 1px solid #9db7e8;
+}
+
+#notices button {
+  margin-right: 8px;
+}
+
+#security {
+  margin: 8px 12px 0;
+}

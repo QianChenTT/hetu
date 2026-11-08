@@ -175,6 +175,8 @@ export type ListedPlugin = {
   state: PluginState
   reason: string | null
   security: boolean
+  // A plugin-folder copy of a first-party plugin, which Recover can restore from the install
+  firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
 }
