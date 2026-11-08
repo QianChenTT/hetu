@@ -8,7 +8,7 @@ import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, workerManifest, writeFolder,
+  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
 } from './loader-fakes.ts'
 
@@ -465,5 +465,34 @@ describe('the log plugin\'s handle through the joined core', () => {
     lent!.ack(taken.at(-1)!.seq)
     const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
+  })
+})
+
+// The guard's slot states end to end wait for #77, since core/api expects no guard on any action yet. Through the
+// shipping wiring here, with the guards the loader and the carrier both expect
+describe('a guard down through the joined core', () => {
+  const leases: Listing = { files: filesFor(hostManifest('leases')) }
+
+  it.each([
+    ['its module throws', leases, { leases: { throws: true } }, 'start-failed'],
+    ['its start never answers', leases, { leases: { ready: false } }, 'start-timeout'],
+    ['it fails its hash check', { ...leases, hash: '0'.repeat(64) }, {}, 'tampered'],
+  ] as const)('refuses the writes it guards with guard-down when %s', async (_name, listing, behave, reason) => {
+    const luoshu = new FakeLuoshu()
+    const parts = await joined({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, leases: listing },
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      behave: { gate: { exports: { gate: allowAll() } }, luoshu: { exports: { provider: luoshu } }, ...behave },
+      wire: { guardsFor: () => ['leases'] },
+      before: booted => {
+        booted.state.switches = { ...booted.state.switches, limits: { all: { readyMs: 300 }, plugins: {} } }
+      },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    expect(reasonOf(parts.loader, 'leases')).toBe(reason)
+    const reply = await parts.runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    expect(code(reply!)).toBe('guard-down')
+    expect(luoshu.performed).toEqual([])
   })
 })
