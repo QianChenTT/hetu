@@ -169,8 +169,10 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
+  // The log by default takes its handle and writes nothing, as a log with no role fails at start
   private of(id: string): Behaviour {
-    return { ready: true, stopped: true, pong: true, throws: false, exports: {}, ...this.behave[id] }
+    const exports: HostExports = id === 'log' ? { log: { attach() {} } } : {}
+    return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
   half(id: string, incarnation = 1, half: 'worker' | 'host' = 'worker'): Half {

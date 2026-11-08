@@ -497,7 +497,8 @@ describe('the log\'s audit handle', () => {
     const role = { attach: () => { seen.attached.push({ given: true, slot: 'gate' }) } }
     const made = await harness({ behave: { gate: { exports: { gate: allowAll(), log: role } } }, loader: { audit } })
     await made.loader.start()
-    expect(seen).toMatchObject({ lent: 0, attached: [] })
+    // One handle, the install's log's
+    expect(seen).toMatchObject({ lent: 1, attached: [] })
   })
 })
 
@@ -520,5 +521,20 @@ describe('a slot holder the carrier finds failing', () => {
     made.loader.fail('alpha', 'stalled')
     made.loader.fail('nobody', 'stalled')
     expect(stateOf(made.loader, 'alpha')).toBe('ready')
+  })
+})
+
+describe('a slot holder missing its role', () => {
+  it('marks the install\'s log failed at start when its module holds no log role, since nothing could drain the records', async () => {
+    let lent = 0
+    const audit = () => {
+      lent++
+      return { handle: {} as AuditHandle, revoke: () => {} }
+    }
+    const made = await harness({ behave: { log: { exports: {} } }, loader: { audit } })
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
+    expect(lent).toBe(0)
   })
 })

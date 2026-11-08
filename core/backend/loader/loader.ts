@@ -1013,7 +1013,12 @@ export class Loader implements Seam {
   // gets its first StateView. A throw from attach marks it failed, and retire revokes what was lent
   private lend(k: Known, live: Live): boolean {
     const role = live.exports?.log
-    if (k.id !== 'log' || k.from !== 'install' || role === undefined || this.audit === undefined) return true
+    if (k.id !== 'log' || k.from !== 'install' || this.audit === undefined) return true
+    // With no role nothing could take the handle and drain the records, so the slot can't read on
+    if (role === undefined) {
+      this.die(k, 'start-failed')
+      return false
+    }
     try {
       const lent = this.audit()
       live.revoke = lent.revoke
