@@ -216,6 +216,7 @@ export class Carrier {
   // The once a second look, and the log's health it last saw
   private readonly looking: ReturnType<typeof setInterval>
   private logHealthy: boolean | undefined
+  private toldLog = false
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -1260,11 +1261,22 @@ export class Carrier {
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.writer === null || this.muted()) return
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
+    this.checkLog()
+  }
+
+  // Tells the loader once that the log failed, as records queue and once a second, whatever the gate's state
+  private checkLog(): void {
+    if (this.toldLog || this.muted() || !this.logFailing()) return
+    this.toldLog = true
+    try {
+      this.options.logFailed?.()
+    } catch {}
   }
 
   // Once a second, so windows hear when the log's health changed through an audit write, which the floor lane doesn't see
   private look(): void {
     if (this.closed || this.shutting) return
+    this.checkLog()
     const healthy = this.options.log?.healthy
     if (healthy === this.logHealthy) return
     this.logHealthy = healthy

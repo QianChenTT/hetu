@@ -5,7 +5,7 @@ import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
 import { Carrier } from './carrier/carrier.ts'
 import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/seams.ts'
-import { Loader } from './loader/loader.ts'
+import { Loader, type Failure } from './loader/loader.ts'
 import type { CarrierLink, Runtime } from './loader/seams.ts'
 
 export type WireOptions = {
@@ -21,6 +21,8 @@ export type WireOptions = {
   // The windows' own actions the runtime serves, opening the trusted window, Quit and Restart hetu, and whether the
   // trusted window is past its input delay
   windows?: { serve: Served, armed: (caller: Caller) => boolean }
+  // A security control or the log failed while hetu ran, for the runtime to quit and start hetu again
+  onFailure?: (failure: Failure) => void
 }
 
 // The core actions the runtime serves, since only it opens windows and ends the process
@@ -103,12 +105,14 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     link,
     runtime: options.runtime,
     logWrites: () => options.booted.log.healthy,
+    ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })
   const { windows } = options
   const carrier = new Carrier(carrierOptions(loader, {
     log: options.booted.log,
     core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : loader.serve(call)),
+    logFailed: () => loader.controlFailed('log', 'log-failing'),
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),

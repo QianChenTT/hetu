@@ -176,8 +176,9 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
+  // A security control's module gives its role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
-    const exports: HostExports = {}
+    const exports: HostExports = id === 'gate' ? { gate: allowAll() } : id === 'watchdog' ? { watchdog: { sample() {} } } : {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 

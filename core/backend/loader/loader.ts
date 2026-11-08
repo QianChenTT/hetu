@@ -1,12 +1,13 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList } from '../../api/actions.ts'
+import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
 import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
-  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers, slotIds,
+  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
+  securityControls, slotIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import {
@@ -23,7 +24,8 @@ import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import type { FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/state.ts'
 import type { AskRefusal, Asks, HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
 import {
-  clear, folders, readInstalled, removeMarker, stage, swapIn, writeInstalled, writeMarker, type Installed,
+  clear, clearFailedOnce, folders, readFailedOnce, readInstalled, removeMarker, stage, swapIn, writeFailedOnce, writeInstalled,
+  writeMarker, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
@@ -43,7 +45,19 @@ export type LoaderOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
+  // A security control failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the
+  // trusted window once the loader stopped in the stopped mode
+  onFailure?: (failure: Failure) => void
 }
+
+// What the runtime does about a security control that failed while hetu ran
+export type Failure =
+  | { action: 'relaunch', control: string, reason: string }
+  | { action: 'stopped', mode: StoppedMode }
+
+// The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
+// with #77
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', watchdog: 'watchdog' })
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -215,6 +229,13 @@ export class Loader implements Seam {
   private again = false
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
+  private readonly onFailure: LoaderOptions['onFailure']
+  // controls while only the security controls may start, all once they are up, stopped once one failed
+  private phase: 'controls' | 'all' | 'stopped' = 'controls'
+  private stoppedMode: StoppedMode | null = null
+  // The control the run before restarted for, from the restart marker
+  private failedBefore: string | null = null
+  private failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
   private readonly declinedAsks = new Set<string>()
 
@@ -228,6 +249,7 @@ export class Loader implements Seam {
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
+    this.onFailure = options.onFailure
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -391,7 +413,7 @@ ${capabilityKey(change.capability)}`)
         allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
       },
       requests,
-      stopped: null,
+      stopped: this.stoppedMode,
     }
   }
 
@@ -409,7 +431,7 @@ ${capabilityKey(change.capability)}`)
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
       pending: this.pending(),
-      stopped: null,
+      stopped: this.stoppedMode,
     }
   }
 
@@ -436,6 +458,13 @@ ${capabilityKey(change.capability)}`)
   // shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
+    this.failedBefore = await readFailedOnce(this.dataDir)
+    // The security controls start alone first. One that is on and fails stops hetu before anything else runs
+    this.replan()
+    await this.settled()
+    const failed = this.controlFailure()
+    if (failed !== null) return this.enterStopped(failed)
+    this.phase = 'all'
     this.replan()
     await this.settled()
     await this.saveInstalled()
@@ -444,6 +473,68 @@ ${capabilityKey(change.capability)}`)
     this.replan()
     await this.settled()
     if (!this.closing) this.note('core.ready', Object.fromEntries(slotIds.map(id => [id, this.slot(id)])))
+  }
+
+  // The stopped mode hetu is in, null while it runs
+  stopped(): StoppedMode | null {
+    return this.stoppedMode
+  }
+
+  // The first security control the install names that is on and not ready once the controls started: tampered, absent
+  // from the install while the list names it, or failed. An install list that can't be read counts as tampered, since
+  // it ships inside hetu's own files. One the human switched off is no failure
+  private controlFailure(): StoppedMode | null {
+    const again = (control: string) => this.failedBefore === control
+    if (this.listResult === 'invalid') return { control: 'install', why: 'tampered', reason: null, again: again('install') }
+    for (const id of securityControls(Object.keys(this.install?.plugins ?? {}))) {
+      const k = this.known.get(id)
+      if (k === undefined || isOne(this.state.switches.off, id) || k.state === 'ready') continue
+      const refusedFor = (reason: string) => k.state === 'refused' && k.reason === reason
+      const why = refusedFor('tampered') ? 'tampered' : refusedFor('missing') ? 'absent' : 'failed'
+      return { control: id, why, reason: k.reason, again: again(id) }
+    }
+    return null
+  }
+
+  // The stopped mode: every plugin stops and none starts. Only the trusted window opens, with the human's three choices
+  private async enterStopped(mode: StoppedMode): Promise<void> {
+    this.stoppedMode = mode
+    this.phase = 'stopped'
+    this.note('core.stopped', { control: mode.control, why: mode.why, reason: mode.reason, again: mode.again })
+    this.replan()
+    await this.pumped()
+  }
+
+  // A security control or the core's log failed while hetu ran. The first time, the restart marker goes down and the
+  // runtime quits with an error to start hetu again. When the run before already restarted for the same control, hetu
+  // stops in the stopped mode instead. One failure is enough, the ones after it change nothing
+  controlFailed(control: string, reason: string): void {
+    if (this.closing || this.phase !== 'all' || this.failing) return
+    this.failing = true
+    this.note('core.failed', { control, reason })
+    if (this.failedBefore === control) {
+      const mode: StoppedMode = { control, why: 'failed', reason, again: true }
+      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode }))
+      return
+    }
+    // Shutdown waits for the write like any marker's, so a Quit that follows can't cut it off
+    const work = writeFailedOnce(this.dataDir, control).catch(() => {})
+    this.markerWork.add(work)
+    void work.finally(() => {
+      this.markerWork.delete(work)
+      this.tell({ action: 'relaunch', control, reason })
+    })
+  }
+
+  private tell(failure: Failure): void {
+    try {
+      this.onFailure?.(failure)
+    } catch {}
+  }
+
+  // The human quit hetu: nothing failed, so the next failure restarts hetu again
+  async cleanQuit(): Promise<void> {
+    await clearFailedOnce(this.dataDir).catch(() => {})
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start
@@ -781,7 +872,7 @@ ${capabilityKey(change.capability)}`)
 
   // Whether a plugin should be running now
   private runs(k: Known): boolean {
-    return !this.closing && k.held === null && this.verdictOf(k).kind === 'start'
+    return !this.closing && this.phase !== 'stopped' && k.held === null && this.verdictOf(k).kind === 'start'
   }
 
   // ---- the plan and its states
@@ -828,6 +919,7 @@ ${capabilityKey(change.capability)}`)
 
   private final(k: Known, verdict: Verdict): { state: PluginState, reason: string | null } {
     if (this.closing && verdict.kind === 'start') return { state: 'stopped', reason: 'shutdown' }
+    if (this.phase === 'stopped' && verdict.kind === 'start') return { state: 'stopped', reason: 'control-failed' }
     switch (verdict.kind) {
       case 'start':
         return k.place === 'host' && k.ran ? { state: 'stopped', reason: 'restart-hetu' } : { state: 'found', reason: null }
@@ -949,6 +1041,7 @@ ${capabilityKey(change.capability)}`)
 
   private startable(k: Known): boolean {
     if (k.live !== null || !this.runs(k) || (k.place === 'host' && k.ran)) return false
+    if (this.phase === 'controls' && !(k.from === 'install' && isSecurityControl(k.id))) return false
     return (k.read.manifest?.requires ?? []).every(id => this.known.get(id)?.state === 'ready')
   }
 
@@ -1068,6 +1161,9 @@ ${capabilityKey(change.capability)}`)
     if (!live.imported || [...live.halves.values()].some(run => !run.ready)) return
     if (live.readyTimer !== null) clearTimeout(live.readyTimer)
     live.readyTimer = null
+    // A security control with no role to play would refuse everything while reading as up, so it fails here
+    const role = roleOf[k.id]
+    if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
     // The gate has the StateView before it answers anything. A throw marks it failed
     if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
     k.state = 'ready'
@@ -1149,6 +1245,7 @@ ${capabilityKey(change.capability)}`)
     this.note(`plugin.${state}`, { plugin: k.id, incarnation: live.n, reason })
     this.replan()
     this.release(k, live, 'crashed')
+    if (k.from === 'install' && isSecurityControl(k.id)) this.controlFailed(k.id, reason)
   }
 
   // A ping down the worker's port every heartbeatMs. heartbeatMisses unanswered in a row read unresponsive: calls to it
@@ -1287,6 +1384,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   private async applyNow(change: Change): Promise<void> {
+    // The human chose in the stopped mode, so the next failure restarts hetu again
+    if (this.phase === 'stopped') await clearFailedOnce(this.dataDir).catch(() => {})
     switch (change.kind) {
       case 'plugin.on':
       case 'plugin.off':

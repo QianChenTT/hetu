@@ -38,7 +38,7 @@ async function joined(options: {
   entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
-  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows'>
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -605,5 +605,26 @@ describe('the windows\' own actions', () => {
     await loader.start()
     const way = windowWay(carrier, { editor })
     expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
+  })
+})
+
+describe('a failing log', () => {
+  it('quits hetu to start it again once its oldest record waited logFailMs unwritten', async () => {
+    const failures: unknown[] = []
+    const { loader, runtime } = await joined({
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      before: booted => {
+        booted.state.switches.limits.all.logFailMs = 100
+        Object.defineProperty(booted.log, 'healthy', { get: () => false })
+        booted.log.appendMany = async () => { throw new Error('disk full') }
+      },
+      wire: { onFailure: failure => { failures.push(failure) } },
+    })
+    await loader.start()
+    await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await runtime.half('alpha').ask('luoshu.read', { path: 'notes/b.md' })
+    await until(() => failures.length > 0)
+    expect(failures).toEqual([{ action: 'relaunch', control: 'log', reason: 'log-failing' }])
   })
 })

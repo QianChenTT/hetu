@@ -842,6 +842,32 @@ describe('a failing log', () => {
     expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
+  // Step 14: a log that fails stops hetu. The carrier tells the loader once, the loader quits and starts hetu again
+  it('tells the loader once that the log failed, with the gate on as with it off', async () => {
+    const told: number[] = []
+    const { at, connect } = failing({ logFailed: () => { told.push(1) } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(29_999)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(told).toEqual([])
+    at(30_000)
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    await search.ask('storage.set', { key: 'd', value: 4 })
+    expect(told).toEqual([1])
+  })
+
+  it('tells nothing while the human turned recording off', async () => {
+    const told: number[] = []
+    const { at, connect, loader } = failing({ logFailed: () => { told.push(1) } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    loader.nothing = true
+    at(40_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(told).toEqual([])
+  })
+
   it('takes the wait from logFailMs, which the human may set for all', async () => {
     const { at, connect, loader } = failing()
     loader.human.all = { logFailMs: 1000 }
