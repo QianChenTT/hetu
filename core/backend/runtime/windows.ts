@@ -51,11 +51,16 @@ export function quietPlacement(options: {
   return other === undefined ? { quiet: true } : { quiet: true, at: { x: other.workArea.x + 40, y: other.workArea.y + 40 } }
 }
 
-// The editor window on the placeholder page, shown once it has drawn
-export function openEditor(Window: typeof BrowserWindow, session: Session, packaged: boolean, placement: Placement = { quiet: false }): BrowserWindow {
-  const window = new Window({
-    width: 1100, height: 760, show: false, title: 'hetu', webPreferences: webPreferences(session, packaged), ...placement.at,
-  })
+// The editor window on its shell, shown once it has drawn. preload is the shell's, which gives the top frame its bridge
+export function openEditor(
+  Window: typeof BrowserWindow,
+  session: Session,
+  packaged: boolean,
+  placement: Placement = { quiet: false },
+  preload?: string,
+): BrowserWindow {
+  const preferences = preload === undefined ? webPreferences(session, packaged) : { ...webPreferences(session, packaged), preload }
+  const window = new Window({ width: 1100, height: 760, show: false, title: 'hetu', webPreferences: preferences, ...placement.at })
   window.once('ready-to-show', () => (placement.quiet ? window.showInactive() : window.show()))
   window.loadURL(EDITOR_URL).catch((err: unknown) => console.error(`the editor page didn't load: ${String(err)}`))
   return window

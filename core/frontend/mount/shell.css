@@ -1,0 +1,26 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}
+
+#banner {
+  margin: 0;
+  padding: 6px 12px;
+  list-style: none;
+  background: #fff4d6;
+  border-bottom: 1px solid #e0c46c;
+  color: #4a3b00;
+  font-size: 13px;
+}
+
+#banner li {
+  display: inline;
+}
+
+#banner li + li::before {
+  content: " · ";
+}
+
+main {
+  padding: 24px;
+}

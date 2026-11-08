@@ -13,6 +13,7 @@ describe('the core actions', () => {
     expect(Object.fromEntries(Object.entries(coreActions).map(([action, spec]) => [action, spec.from]))).toEqual({
       'core.self': 'any',
       'core.filterReadable': 'any',
+      'core.status': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
       'watchdog.stop': 'watchdog',

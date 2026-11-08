@@ -6,7 +6,7 @@ import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
-import { code, FakeStorage, FakeLuoshu, worker } from './carrier-fakes.ts'
+import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
@@ -395,5 +395,37 @@ describe('what wireCore hands the carrier', () => {
     const reply = await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
     expect(reply?.refusal).toEqual({ code: 'needs-confirm', action: 'luoshu.read', request: 'req-1' })
     expect(raised).toEqual(['luoshu.read notes/a.md'])
+  })
+})
+
+describe('core.status, for a window\'s banner', () => {
+  const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
+
+  it('answers a window with the slots, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
+    const { carrier, loader, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    const reply = await way.ask('editor', 'core.status')
+    expect(reply).toMatchObject({ ok: true })
+    expect(reply.result).toEqual({
+      slots: { gate: 'on', capabilities: 'absent', log: 'on', watchdog: 'absent' },
+      crashed: [],
+      devMode: [],
+      allowUnsigned: 0,
+      skipVerification: false,
+      recordNothing: false,
+      luoshuPicked: false,
+    })
+    runtime.half('alpha').crash()
+    await until(() => loader.plugin('alpha')?.state === 'crashed')
+    expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
+  })
+
+  it('answers the trusted window too and refuses a plugin, since the banner is the windows\' own', async () => {
+    const { carrier, loader, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    await loader.start()
+    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
+    expect(code((await runtime.half('alpha').ask('core.status', {}))!)).toBe('not-granted')
   })
 })

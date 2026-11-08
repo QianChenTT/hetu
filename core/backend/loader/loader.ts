@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { CoreStatus } from '../../api/actions.ts'
 import { change as changeSchema, type Change } from '../../api/changes.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
@@ -294,9 +295,11 @@ export class Loader implements Seam {
 
   // ---- what else the core asks of the loader
 
-  // watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier has checked that the caller
-  // holds the watchdog slot and that the target is a sandboxed plugin holding no slot or guard role
+  // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
+  // has checked that the caller is a window, or holds the watchdog slot and names a sandboxed plugin holding no slot or
+  // guard role
   readonly serve: Served = async call => {
+    if (call.action === 'core.status') return this.banner()
     const target = (call.args as { plugin?: unknown } | null)?.plugin
     if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
     const k = typeof target === 'string' ? this.known.get(target) : undefined
@@ -304,6 +307,21 @@ export class Loader implements Seam {
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  // What a window's banner shows, from the loader's own states and the state it runs with
+  private banner(): CoreStatus {
+    const down = new Set(['crashed', 'failed', 'unresponsive'])
+    const { switches } = this.state
+    return {
+      slots: Object.fromEntries(slotIds.map(id => [id, this.slot(id)])) as CoreStatus['slots'],
+      crashed: this.list().filter(row => down.has(row.state)).map(row => row.id),
+      devMode: [...switches.devMode],
+      allowUnsigned: switches.allowUnsigned.length,
+      skipVerification: switches.skipVerification,
+      recordNothing: switches.recordNothing,
+      luoshuPicked: this.state.luoshu !== null,
+    }
   }
 
   // A host half's role interface, only while its plugin is ready. The carrier's gate, guards, providers and watchdog

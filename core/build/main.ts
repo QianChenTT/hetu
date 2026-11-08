@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
@@ -75,7 +75,10 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     const from = path.join(frontend, page)
     const to = path.join(pagesOut, page)
     await mkdir(to, { recursive: true })
-    if (await exists(path.join(from, 'index.html'))) await copyFile(path.join(from, 'index.html'), path.join(to, 'index.html'))
+    // The page and its stylesheets as they are, its script bundled
+    for (const name of await readdir(from)) {
+      if (name.endsWith('.html') || name.endsWith('.css')) await copyFile(path.join(from, name), path.join(to, name))
+    }
     if (!await exists(path.join(from, 'page.ts'))) continue
     const bundled = await build({
       ...shared,
@@ -89,17 +92,22 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     pageImports.push(...external(bundled.metafile))
   }
 
-  const preload = await build({
-    ...shared,
-    entryPoints: [path.join(frontend, 'workers', 'preload.ts')],
-    outfile: path.join(outDir, 'workers-preload.js'),
-    platform: 'browser',
-    format: 'cjs',
-    target: CHROMIUM,
-    external: ['electron'],
-  })
+  // The worker host page's preload and the window shell's, each beside main.js
+  const preloadImports: string[] = []
+  for (const page of ['workers', 'mount']) {
+    const preload = await build({
+      ...shared,
+      entryPoints: [path.join(frontend, page, 'preload.ts')],
+      outfile: path.join(outDir, `${page}-preload.js`),
+      platform: 'browser',
+      format: 'cjs',
+      target: CHROMIUM,
+      external: ['electron'],
+    })
+    preloadImports.push(...external(preload.metafile))
+  }
 
-  return { imports: external(main.metafile), pageImports, preloadImports: external(preload.metafile), prelude }
+  return { imports: external(main.metafile), pageImports, preloadImports: [...new Set(preloadImports)].sort(), prelude }
 }
 
 if (import.meta.main) await buildMain()

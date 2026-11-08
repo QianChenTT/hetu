@@ -43,16 +43,16 @@ describe('the main bundle', () => {
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {
     const out = await outDir()
     const built = await buildMain(out)
-    for (const file of ['mount/index.html', 'workers/index.html', 'workers/page.js']) {
+    for (const file of ['mount/index.html', 'mount/page.js', 'mount/shell.css', 'workers/index.html', 'workers/page.js']) {
       expect((await stat(path.join(out, 'frontend', file))).isFile(), file).toBe(true)
     }
     expect(built.pageImports).toEqual([])
   })
 
-  it('bundles the workers preload as a script whose only import is electron', async () => {
+  it('bundles the workers and window preloads as scripts whose only import is electron', async () => {
     const out = await outDir()
     const built = await buildMain(out)
-    expect((await stat(path.join(out, 'workers-preload.js'))).isFile()).toBe(true)
+    for (const file of ['workers-preload.js', 'mount-preload.js']) expect((await stat(path.join(out, file))).isFile(), file).toBe(true)
     expect(built.preloadImports).toEqual(['electron'])
   })
 
