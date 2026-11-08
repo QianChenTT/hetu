@@ -165,7 +165,8 @@ describe('hetu as an Electron app', () => {
     }, urls)
     expect(loaded[network.url]).toBe('ERR_BLOCKED_BY_CLIENT')
     expect(loaded[urls[1]]).toBe('ERR_BLOCKED_BY_CLIENT')
-    expect(loaded['hetu://trusted/']).not.toBe('loaded')
+    // The filter sees hetu requests too and is what refuses another role's host, since a 404 still loads
+    expect(loaded['hetu://trusted/']).toBe('ERR_BLOCKED_BY_CLIENT')
     expect(loaded['hetu://editor/']).toBe('loaded')
     expect(network.hits()).toBe(0)
   })
