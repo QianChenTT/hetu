@@ -1309,7 +1309,7 @@ export class Carrier {
 
   // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
   // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
-  // count. Step 14 makes this a quit. Until then the gate off refuses a call with power meanwhile
+  // count. The loader then quits hetu to start it again, and meanwhile the gate off refuses a call with power
   private logFailing(): boolean {
     const oldest = this.queue.oldest()
     return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')

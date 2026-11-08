@@ -162,8 +162,8 @@ export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & 
 export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
 
 // Why hetu stopped instead of starting: a security control that is on failed its check, is missing from the install
-// or failed at start, with the lifecycle reason. again says the same control failed in the run before, so hetu didn't
-// restart a second time
+// or failed at start, with the lifecycle reason. again says the run before already restarted hetu after a failure, so
+// it didn't restart a second time
 export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
 
 // One plugin as the trusted window's plugin list shows it: where its code came from and where it runs, its state and
