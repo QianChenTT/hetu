@@ -53,11 +53,12 @@ function bridge() {
 describe('the notices', () => {
   // The notice names the plugin whose call raised it, so a prompt a plugin drew can't pass for the core's
   it('names the plugin a request waits for, or the change when none is named', () => {
-    expect(noticeText({ id: 'r1', kind: 'item.on', plugin: 'search' })).toBe('search asks to use something for the first time')
-    expect(noticeText({ id: 'r2', kind: 'plugin.approve', plugin: 'alpha' })).toBe('New plugin found: alpha')
-    expect(noticeText({ id: 'r3', kind: 'plugin.update', plugin: 'alpha' })).toBe('An update for alpha is waiting')
+    // The id in quotes, since an id like hetu-needs-this-click-confirm reads as a sentence
+    expect(noticeText({ id: 'r1', kind: 'item.on', plugin: 'search' })).toBe('The plugin "search" asks to use something for the first time')
+    expect(noticeText({ id: 'r2', kind: 'plugin.approve', plugin: 'alpha' })).toBe('New plugin found: "alpha"')
+    expect(noticeText({ id: 'r3', kind: 'plugin.update', plugin: 'alpha' })).toBe('An update for "alpha" is waiting')
     expect(noticeText({ id: 'r4', kind: 'skipVerification', plugin: null })).toBe('A security change is waiting: skipVerification')
-    expect(noticeText({ id: 'r5', kind: 'plugin.off', plugin: 'gate' })).toBe('A security change is waiting: plugin.off gate')
+    expect(noticeText({ id: 'r5', kind: 'plugin.off', plugin: 'gate' })).toBe('A security change is waiting: plugin.off "gate"')
   })
 })
 
@@ -94,7 +95,7 @@ describe('the shell', () => {
   it('draws a notice for each request waiting', () => {
     const { sent, drawn, hears } = started()
     hears({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: { ...calm, pending: [{ id: 'r1', kind: 'item.on', plugin: 'search' }] } })
-    expect(drawn[0].notices).toEqual([{ id: 'r1', text: 'search asks to use something for the first time' }])
+    expect(drawn[0].notices).toEqual([{ id: 'r1', text: 'The plugin "search" asks to use something for the first time' }])
   })
 
   // A plugin can time its call under a click, so the click that lands as the notice appears opens nothing

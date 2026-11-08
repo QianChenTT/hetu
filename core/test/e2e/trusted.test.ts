@@ -217,7 +217,7 @@ describe('a prompt a plugin\'s call raises (A-29)', () => {
     const dataDir = await data({ workers })
     const app = await start(dataDir, await install())
     const editor = await editorPage(app)
-    const notice = editor.getByRole('button', { name: 'asker asks to use something for the first time' })
+    const notice = editor.getByRole('button', { name: 'The plugin "asker" asks to use something for the first time' })
     await notice.waitFor()
     // The call opened nothing, and a click as the notice appears opens nothing either
     await notice.click()

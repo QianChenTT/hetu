@@ -26,12 +26,14 @@ export function bannerLines(status: CoreStatus): string[] {
 // A request waiting for the human, as the banner area shows it: a notice the human clicks to open the trusted window
 export type Notice = { id: string, text: string }
 
-// What a notice says: the plugin whose call raised it, or the change. Never text a plugin wrote
+// What a notice says: the plugin whose call raised it, or the change. Never text a plugin wrote. The id goes in quotes,
+// since a plugin can pick one that reads as a sentence
 export function noticeText(request: PendingRequest): string {
-  if (request.kind === 'item.on' && request.plugin !== null) return `${request.plugin} asks to use something for the first time`
-  if (request.kind === 'plugin.approve' && request.plugin !== null) return `New plugin found: ${request.plugin}`
-  if (request.kind === 'plugin.update' && request.plugin !== null) return `An update for ${request.plugin} is waiting`
-  return `A security change is waiting: ${request.kind}${request.plugin !== null ? ` ${request.plugin}` : ''}`
+  const id = request.plugin === null ? null : JSON.stringify(request.plugin)
+  if (request.kind === 'item.on' && id !== null) return `The plugin ${id} asks to use something for the first time`
+  if (request.kind === 'plugin.approve' && id !== null) return `New plugin found: ${id}`
+  if (request.kind === 'plugin.update' && id !== null) return `An update for ${id} is waiting`
+  return `A security change is waiting: ${request.kind}${id !== null ? ` ${id}` : ''}`
 }
 
 type Reply = { v?: unknown, kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, topic?: unknown, seq?: unknown }

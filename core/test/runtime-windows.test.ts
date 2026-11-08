@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer and the window open handler
 class FakeContents extends EventEmitter {
@@ -128,5 +128,17 @@ describe('the trusted window', () => {
     expect((options.webPreferences as Record<string, unknown>).sandbox).toBe(true)
     window.emit('ready-to-show')
     expect(shown).toEqual(['show'])
+  })
+})
+
+// Checkpoint B: Electron's default menu put Reload and Close within a key of the trusted window
+describe('the application menu', () => {
+  it('is none on Windows and Linux', () => {
+    expect(appMenu('win32')).toBe(null)
+    expect(appMenu('linux')).toBe(null)
+  })
+
+  it('holds only Quit on macOS, where the menu bar is the app\u2019s', () => {
+    expect(appMenu('darwin')).toEqual([{ label: 'hetu', submenu: [{ role: 'quit' }] }])
   })
 })

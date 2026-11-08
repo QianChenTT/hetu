@@ -157,6 +157,17 @@ describe('the trusted window', () => {
     expect(window.armed(trustedCaller)).toBe(false)
   })
 
+  // Checkpoint B: a reload was a new page armed at once
+  it('starts the delay again whenever its page starts loading', () => {
+    const { window, windows, at } = trusted()
+    window.show()
+    windows[0].emit('show')
+    at(INPUT_DELAY_MS)
+    expect(window.armed(trustedCaller)).toBe(true)
+    windows[0].webContents.emit('did-start-loading')
+    expect(window.armed(trustedCaller)).toBe(false)
+  })
+
   it('drops the page\'s keyboard and mouse input during the delay', () => {
     const { window, windows, at } = trusted()
     window.show()

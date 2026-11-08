@@ -379,6 +379,9 @@ ${capabilityKey(change.capability)}`)
         const k = this.known.get(args.plugin as string)
         if (k === undefined) throw { code: 'not-found' }
         if (k.place !== 'sandboxed') throw { code: 'not-granted' }
+        // The human stopped it from the trusted window, so only the trusted window starts it again
+        const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
+        if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
         else await this.restart(k.id, 'human')
         return null
@@ -388,9 +391,15 @@ ${capabilityKey(change.capability)}`)
     if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
     const k = typeof target === 'string' ? this.known.get(target) : undefined
     if (k === undefined || k.place !== 'sandboxed') throw { code: 'not-found' }
+    // The human's stop outranks the watchdog's policy
+    if (call.action === 'watchdog.restart' && this.stoppedByHuman(k)) throw { code: 'not-granted' }
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  private stoppedByHuman(k: Known): boolean {
+    return k.held?.state === 'stopped' && k.held.reason === 'human'
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words

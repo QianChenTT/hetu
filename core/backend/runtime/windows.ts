@@ -68,6 +68,12 @@ export function openEditor(
 
 export const TRUSTED_URL = `${SCHEME}://trusted/`
 
+// The application menu: none on Windows and Linux, so Electron's default Reload, Close and DevTools keys reach no
+// window, and only Quit on macOS, where the menu bar is the app's and Quit lives in it
+export function appMenu(platform: string): { label: string, submenu: { role: 'quit' }[] }[] | null {
+  return platform === 'darwin' ? [{ label: 'hetu', submenu: [{ role: 'quit' }] }] : null
+}
+
 // The trusted window: its own OS window with its own taskbar entry, on the fixed trusted page in the trusted session,
 // never on top of other windows and shown once it has drawn. preload is the shell's, the same narrow bridge
 export function openTrusted(

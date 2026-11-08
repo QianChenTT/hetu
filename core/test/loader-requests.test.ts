@@ -465,11 +465,25 @@ describe('the core actions the loader serves', () => {
     await made.loader.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
     expect(stateOf(made.loader, 'alpha')).toBe('stopped')
     expect(reasonOf(made.loader, 'alpha')).toBe('human')
-    await made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' }))
+    await made.loader.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
     await made.loader.settled()
     expect(stateOf(made.loader, 'alpha')).toBe('ready')
     expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-granted')
     expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
+  })
+
+  // Checkpoint B: the human stops a plugin from the trusted window, so only the trusted window starts it again
+  it('restarts a plugin the human stopped only from the trusted window, never from the editor or the watchdog', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    await made.loader.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
+    expect(await code(made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' })))).toBe('not-granted')
+    const watchdog = { kind: 'plugin' as const, id: 'watchdog', half: 'host', incarnation: 1 }
+    expect(await code(made.loader.serve(call(watchdog, 'watchdog.restart', { plugin: 'alpha' })))).toBe('not-granted')
+    expect(stateOf(made.loader, 'alpha')).toBe('stopped')
+    await made.loader.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
+    await made.loader.settled()
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
   })
 
   it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {

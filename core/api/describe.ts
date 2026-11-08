@@ -3,8 +3,9 @@ import { isSecurityControl } from './ids.ts'
 import { capabilityText } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. Ids are
-// shown as they are, since their grammar holds nothing that reads as a sentence. Anything else a plugin wrote, a scope
-// or a folder, goes in quotes as data
+// shown as they are inside a fixed sentence. An id with hyphens can still read as words, such as
+// hetu-needs-this-click-confirm, which the notices quote. Anything else a plugin wrote, a scope or a folder, goes in
+// quotes as data
 export type Described = { text: string, notes: string[] }
 
 const quoted = (value: string) => JSON.stringify(value)

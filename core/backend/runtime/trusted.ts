@@ -85,6 +85,8 @@ export class TrustedWindow {
     this.current = made
     window.on('show', () => delay.restart())
     window.on('focus', () => delay.restart())
+    // A reload is a new page, which waits the delay like the first
+    window.webContents.on('did-start-loading', () => delay.restart())
     window.on('closed', () => {
       if (this.current === made) this.current = null
     })

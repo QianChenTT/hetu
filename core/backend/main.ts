@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, MessageChannelMain, protocol, screen, session, type Session } from 'electron'
+import { app, BrowserWindow, dialog, Menu, MessageChannelMain, protocol, screen, session, type Session } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
@@ -12,7 +12,7 @@ import { QUIT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtim
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { TrustedWindow } from './runtime/trusted.ts'
-import { guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
@@ -86,6 +86,8 @@ async function start(): Promise<void> {
 
   try {
     await app.whenReady()
+    const menu = appMenu(process.platform)
+    Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate(menu))
     app.on('web-contents-created', (_event, contents) => guardContents(contents))
     lockDown(session.defaultSession, null, pages)
     const sessions = {} as Record<Role, Session>
