@@ -1122,6 +1122,28 @@ describe('history', () => {
     expect((await log.history()).map(s => [s.segment, s.start, s.breaks])).toEqual([[1, 'zero', [3]], [2, 'zero', []]])
   })
 
+  // A closed segment takes no more lines, so reading it needn't hold the appends behind it
+  it('reads closed segments while an append is still writing, and the open one after it', async () => {
+    const log = await rotations(2, 1)
+    const proto = await fileHandleProto()
+    const realSync = proto.sync
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: unknown) {
+      await held
+      await realSync.call(this)
+    })
+    const read = vi.spyOn(proto, 'read')
+    const appended = log.append('test.line', { n: 4 })
+    const history = log.history()
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    release()
+    await appended
+    expect((await history).map(s => [s.segment, s.lines, s.start])).toEqual([[1, 2, 'zero'], [2, 1, 'continues'], [3, 1, 'continues']])
+  })
+
   it('reads a folder in a segment\'s place as a break', async () => {
     await mkdir(segmentFile(1), { recursive: true })
     expect(await new EventLog(dir).history()).toEqual([{ segment: 1, lines: 0, first: null, last: null, start: null, breaks: [1] }])

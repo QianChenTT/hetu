@@ -439,35 +439,45 @@ export class EventLog {
 
   // Every segment in order, each read through. Checking a file as it is read costs little next to parsing it, so history
   // is checked where it is used and not by a separate pass. A chain runs from a zero start through the files that
-  // continue it and a break ends it. Reads wait for appends called before them, so no line is read half written
-  history(): Promise<Segment[]> {
-    return this.serial(async () => {
-      let numbers: number[]
+  // continue it and a break ends it. The segments below the one appends go to take no more lines, so they are read
+  // outside the append queue and a long read doesn't hold the appends behind it. The rest wait for appends called
+  // before them, so no line is read half written
+  async history(): Promise<Segment[]> {
+    const below = this.tip?.segment ?? 0
+    const closed = await this.segments(number => number < below, { segments: [], before: null })
+    return this.serial(async () => (await this.segments(number => number >= below, closed)).segments)
+  }
+
+  // The segments chosen, each read through, going on from what was read so far
+  private async segments(chosen: (number: number) => boolean, from: Read): Promise<Read> {
+    let numbers: number[]
+    try {
+      numbers = (await this.numbers()).filter(chosen)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return from
+      throw err
+    }
+    const segments = [...from.segments]
+    let before = from.before
+    for (const segment of numbers) {
+      let found: Awaited<ReturnType<typeof scan>>
       try {
-        numbers = await this.numbers()
+        found = await scan(this.file(segment))
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-        throw err
+        if ((err as NodeJS.ErrnoException).code !== 'EISDIR') throw err
+        segments.push({ segment, lines: 0, first: null, last: null, start: null, breaks: [1] })
+        before = null
+        continue
       }
-      const segments: Segment[] = []
-      let before: { last: number | null, end: string | null } | null = null
-      for (const segment of numbers) {
-        let found: Awaited<ReturnType<typeof scan>>
-        try {
-          found = await scan(this.file(segment))
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'EISDIR') throw err
-          segments.push({ segment, lines: 0, first: null, last: null, start: null, breaks: [1] })
-          before = null
-          continue
-        }
-        const { start, end, ...scanned } = found
-        const follows = before !== null && before.end === start && (before.last === null || scanned.first === null || scanned.first === before.last + 1)
-        const kind = start === null ? null : start === ZERO ? 'zero' : follows ? 'continues' : 'unlinked'
-        segments.push({ segment, ...scanned, start: kind })
-        before = { last: scanned.last, end }
-      }
-      return segments
-    })
+      const { start, end, ...scanned } = found
+      const follows = before !== null && before.end === start && (before.last === null || scanned.first === null || scanned.first === before.last + 1)
+      const kind = start === null ? null : start === ZERO ? 'zero' : follows ? 'continues' : 'unlinked'
+      segments.push({ segment, ...scanned, start: kind })
+      before = { last: scanned.last, end }
+    }
+    return { segments, before }
   }
 }
+
+// What history has read so far, and how the last segment it read ended
+type Read = { segments: Segment[], before: { last: number | null, end: string | null } | null }
