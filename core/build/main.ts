@@ -1,7 +1,12 @@
-import { copyFile, mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
+import { hashFiles, readFiles } from '../lib/hash-files.ts'
+import { buildPlugin } from '../sdk/build/esbuild.ts'
+
+// The first-party plugins built, each a worker from src/worker.ts
+const FIRST_PARTY = ['search']
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')
@@ -28,9 +33,9 @@ export type Built = {
   prelude: string
 }
 
-// main.ts and everything it imports as one ES module, electron left to the runtime. The install list beside it names
-// the install plugins the runtime can start, none until host halves load. Each page's index.html and page.ts go to
-// dist/frontend, the prelude put into the worker host page's script as text, and the workers preload to dist
+// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list and the
+// first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
+// host page's script as text, and the workers preload to dist
 export async function buildMain(outDir: string = path.join(core, 'dist')): Promise<Built> {
   await mkdir(outDir, { recursive: true })
   const main = await build({
@@ -42,7 +47,22 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     target: NODE,
     external: ['electron'],
   })
-  const list = { format: INSTALL_LIST_FORMAT, plugins: {} }
+  // The first-party plugins the install carries, each built into dist/plugins/<id> and listed with the hash of its files,
+  // which the loader copies into the plugin folder. search waits for the luoshu until the luoshu is built
+  const plugins: Record<string, unknown> = {}
+  for (const id of FIRST_PARTY) {
+    const source = path.join(core, '..', 'plugins', id)
+    const root = path.join(outDir, 'plugins', id)
+    await rm(root, { recursive: true, force: true })
+    await mkdir(path.join(root, 'dist'), { recursive: true })
+    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
+    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
+    const outputs = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+    for (const output of outputs) await writeFile(path.join(root, ...output.path.split('/')), output.text)
+    const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
+    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
+  }
+  const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
 
   // Not bundled, since it imports nothing, which also keeps esbuild's source path comment out of every worker

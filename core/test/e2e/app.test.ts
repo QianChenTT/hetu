@@ -23,6 +23,9 @@ describe('hetu as an Electron app', () => {
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
     expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
+    // search ships in the install, is copied into the plugin folder and waits for the luoshu until the luoshu is built
+    expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'search', version: '0.1.0' })
+    expect(all.find(record => record.event === 'plugin.waiting')).toMatchObject({ plugin: 'search', reason: 'dependency:luoshu:absent' })
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'absent', log: 'absent', capabilities: 'absent', watchdog: 'absent',
     })

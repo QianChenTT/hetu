@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST, installList } from '../api/install.ts'
 import { buildMain } from '../build/main.ts'
+import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 
 const made: string[] = []
@@ -29,11 +30,14 @@ describe('the main bundle', () => {
     expect(await readFile(path.join(out, 'main.js'), 'utf8')).toMatch(/from ["']electron["']/)
   })
 
-  it('writes an install list that names no plugin until the runtime can start one', async () => {
+  it('writes search into the install as a first-party copy, built, with the hash of its files', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    expect(Object.keys(list.plugins)).toEqual([])
+    const root = path.join(out, 'plugins', 'search')
+    expect(Object.keys(list.plugins)).toEqual(['search'])
+    expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {
