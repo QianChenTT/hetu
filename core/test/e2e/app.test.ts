@@ -90,6 +90,8 @@ describe('hetu as an Electron app', () => {
     await window.waitForLoadState()
     expect(window.url()).toBe('hetu://editor/')
     expect(await window.textContent('body')).toContain('hetu is running')
+    // Sandboxed and isolated with no Node: the page sees none of Node's globals
+    expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
