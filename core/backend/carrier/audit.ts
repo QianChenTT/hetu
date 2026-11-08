@@ -3,11 +3,13 @@ import { frozen } from '../../api/plain.ts'
 import type { AuditHandle, AuditRecord, LogSegment, LogVerification } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 
-// The EventLog's part the handle writes and reads through
+// The EventLog's part the writer writes through and log.history and log.verify read. healthy still true after a failed
+// append means the log refused that batch, not that the log is down
 export type AuditLog = {
   appendMany(batch: readonly { event: string, fields: Record<string, Field> }[], options?: { id?: string }): Promise<void>
   history(): Promise<LogSegment[]>
   verify(): Promise<LogVerification>
+  readonly healthy?: boolean
 }
 
 // The audit queue's pair, as the carrier exposes it
@@ -62,6 +64,94 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
   fields.count = record.count
   fields.calledAt = new Date(record.at).toISOString()
   return fields
+}
+
+// What one write came to: a batch on disk, nothing to write, a batch held to try again or a batch the log refused
+export type Written = 'written' | 'empty' | 'failed' | 'dropped'
+
+export type AuditWriterOptions = {
+  // Records a batch takes at most
+  max?: number
+  // How often a started writer writes
+  everyMs?: number
+  // How many records a batch held that a healthy log refused
+  refused?: (count: number) => void
+}
+
+// The core's own audit writer. Every everyMs it takes up to max records from the audit queue, writes them as audit.call
+// lines in one batch with one fsync and lets go of them once on disk. A batch is named by its first and last seq, which
+// no other batch in the run holds. A write can throw after its lines landed, so after a failed append with the log down
+// only the same batch goes, under the same id, which the log then writes once. The queue holds those records meanwhile,
+// so the oldest still times how long the log has been failing. A batch a healthy log refused would hold back every
+// record after it, so it is let go and counted. One write at a time: a write asked for during one waits on it
+export class AuditWriter {
+  private readonly source: AuditSource
+  private readonly log: AuditLog
+  private readonly max: number
+  private readonly everyMs: number
+  private readonly refused: (count: number) => void
+  private held: AuditRecord[] | null = null
+  private running: Promise<Written> | null = null
+  private timer: ReturnType<typeof setInterval> | null = null
+
+  constructor(source: AuditSource, log: AuditLog, options: AuditWriterOptions = {}) {
+    this.source = source
+    this.log = log
+    this.max = options.max ?? 256
+    this.everyMs = options.everyMs ?? 100
+    this.refused = options.refused ?? (() => {})
+  }
+
+  start(): void {
+    if (this.timer !== null) return
+    this.timer = setInterval(() => void this.write(), this.everyMs)
+    this.timer.unref?.()
+  }
+
+  // A write under way still finishes
+  stop(): void {
+    if (this.timer !== null) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  write(): Promise<Written> {
+    if (this.running !== null) return this.running
+    const batch = this.held ?? this.source.next(this.max)
+    if (batch.length === 0) return Promise.resolve('empty')
+    this.running = this.append(batch).finally(() => {
+      this.running = null
+    })
+    return this.running
+  }
+
+  // Writes until nothing is left or a write failed. Never throws
+  async flush(): Promise<void> {
+    for (;;) {
+      const written = await this.write()
+      if (written === 'empty' || written === 'failed') return
+    }
+  }
+
+  private async append(batch: AuditRecord[]): Promise<Written> {
+    const last = batch[batch.length - 1].seq
+    try {
+      await this.log.appendMany(batch.map(record => ({ event: 'audit.call', fields: auditFields(record) })), { id: `audit:${batch[0].seq}-${last}` })
+    } catch {
+      if (this.log.healthy !== true) {
+        this.held = batch
+        return 'failed'
+      }
+      this.held = null
+      this.source.ack(last)
+      try {
+        this.refused(batch.length)
+      } catch {}
+      return 'dropped'
+    }
+    this.held = null
+    this.source.ack(last)
+    return 'written'
+  }
 }
 
 // The handle the log plugin holds for one incarnation, and revoke, which the loader calls when that incarnation is
