@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { CoreStatus } from '../../api/actions.ts'
-import { change as changeSchema, type Change } from '../../api/changes.ts'
+import type { CoreStatus, PendingRequest } from '../../api/actions.ts'
+import { change as changeSchema, changeEffect, type Change } from '../../api/changes.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -26,6 +26,7 @@ import {
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
+import { Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
 export type LoaderOptions = {
@@ -216,6 +217,7 @@ export class Loader implements Seam {
   private pumping: Promise<void> | null = null
   private again = false
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly requests: Requests
 
   constructor(options: LoaderOptions) {
     const { booted } = options
@@ -234,6 +236,14 @@ export class Loader implements Seam {
     for (const check of booted.checks) {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
     }
+    this.requests = new Requests({
+      effect: change => changeEffect(change, change.kind === 'limit.set' ? { limit: this.limitInForce(change.constant, change.plugin) } : {}),
+      fingerprint: change => this.store.fingerprint('plugin' in change ? change.plugin : null),
+      exclusive: work => this.serial(work),
+      applyNow: change => this.applyNow(change),
+      record: (event, fields, signal) => this.link.record(event, fields, signal),
+      confirmOff: () => this.state.switches.confirmOff,
+    })
   }
 
   // ---- the carrier's seam
@@ -1160,9 +1170,37 @@ export class Loader implements Seam {
 
   // ---- the state
 
-  // Applies a change the trusted window confirmed, exactly as stored, through the one StateStore. A write that fails
-  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come with the
-  // trusted window
+  // A security request from a window: a narrowing change applies at once, a widening or destroying one waits for the
+  // trusted window's Confirm. The carrier has checked the caller is a window
+  request(input: unknown, from: Caller): Promise<RequestAnswer> {
+    const parsed = changeSchema.safeParse(input)
+    if (!parsed.success) return Promise.reject({ code: 'invalid' })
+    return this.requests.request(parsed.data, from)
+  }
+
+  // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
+  confirm(id: string, options: { typed?: string }): Promise<void> {
+    return this.requests.confirm(id, options)
+  }
+
+  cancel(id: string): Promise<void> {
+    return this.requests.cancel(id)
+  }
+
+  pending(): PendingRequest[] {
+    return this.requests.pending()
+  }
+
+  // The value a limit has now for one plugin: its own, else the value for all, else the floor's
+  private limitInForce(constant: FloorConstant, plugin: string | null): number {
+    const { limits } = this.state.switches
+    const own = plugin === null ? undefined : limits.plugins[plugin]?.[constant]
+    return own ?? limits.all[constant] ?? floorConstants[constant]
+  }
+
+  // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
+  // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
+  // directly
   apply(input: Change): Promise<void> {
     return this.serial(() => this.applyNow(changeSchema.parse(input)))
   }
@@ -1217,9 +1255,74 @@ export class Loader implements Seam {
       case 'item.on':
       case 'item.off':
         return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
-      default:
-        throw new Error(`${change.kind} comes with a later step`)
+      case 'grant.widen':
+      case 'grant.narrow':
+        return this.grant(change.plugin, change.capability, change.kind === 'grant.widen')
+      case 'plugin.clearStorage':
+        return this.clearStorage(change.plugin)
+      case 'plugin.reset':
+        return this.reset(change.plugin)
     }
+  }
+
+  // A capability added to a folder plugin's entry or taken out with its switch. Adding one it holds changes nothing
+  private async grant(id: string, capability: Capability, add: boolean): Promise<void> {
+    const k = this.known.get(id)
+    const entry = k?.from === 'folder' ? k.entry : null
+    if (entry === null) throw new Error(`no plugin entry for ${id}`)
+    const key = capabilityKey(capability)
+    const has = entry.granted.some(granted => capabilityKey(granted) === key)
+    if (add && has) return
+    const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
+    const next: Plugin = { ...entry, granted }
+    if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
+    await this.store.writePlugin(id, next)
+    this.putEntry(id, next)
+    this.bump()
+  }
+
+  // A running plugin stops while what it keeps is cleared, then starts again as a new incarnation
+  private async stoppedWhile<T>(k: Known, work: () => Promise<T>): Promise<T> {
+    const running = k.live !== null
+    if (running) {
+      k.held = { kind: 'held', state: 'stopped', reason: 'update' }
+      this.replan()
+      await this.pumped()
+    }
+    try {
+      return await work()
+    } finally {
+      if (running && k.held?.reason === 'update') k.held = null
+      this.replan()
+    }
+  }
+
+  private async clearStorage(id: string): Promise<void> {
+    const k = this.known.get(id)
+    if (k === undefined) throw new Error(`no plugin ${id}`)
+    await this.stoppedWhile(k, () => clear(folders.storage(this.dataDir, id)))
+  }
+
+  // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
+  // again with the code it has. An install plugin waits for Restart hetu, since a host half starts once per run and
+  // the reset may follow a start that froze main
+  private async reset(id: string): Promise<void> {
+    const k = this.known.get(id)
+    if (k === undefined) throw new Error(`no plugin ${id}`)
+    await this.stoppedWhile(k, async () => {
+      for (const dir of [folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) await clear(dir)
+      await removeMarker(this.dataDir, id)
+      this.markers.delete(id)
+      if (k.from === 'folder' && k.entry !== null) {
+        await this.store.removePlugin(id)
+        delete this.state.plugins[id]
+        this.entryChecks.set(id, 'absent')
+        k.entry = null
+        this.bump()
+      }
+    })
+    if (k.from === 'install') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
+    this.replan()
   }
 
   // The lists hold ids as plain strings here. The store parses the whole value against the switches' schema before it
