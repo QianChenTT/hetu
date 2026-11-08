@@ -32,10 +32,31 @@ export function webPreferences(session: Session, packaged: boolean): WebPreferen
   }
 }
 
+// How a window a human sees opens: as usual, or quiet, without taking focus and at a place of its own
+export type Placement = { quiet: boolean, at?: { x: number, y: number } }
+
+type Display = { id: number, workArea: { x: number, y: number } }
+
+// A run from the source with HETU_QUIET_WINDOWS set to 1, as the tests run it, opens its windows without taking focus,
+// on a display other than the one under the cursor when there is one, so the person at the machine can keep working. A
+// packaged build ignores it
+export function quietPlacement(options: {
+  packaged: boolean
+  env: Record<string, string | undefined>
+  displays: readonly Display[]
+  cursorDisplay: number
+}): Placement {
+  if (options.packaged || options.env.HETU_QUIET_WINDOWS !== '1') return { quiet: false }
+  const other = options.displays.find(display => display.id !== options.cursorDisplay)
+  return other === undefined ? { quiet: true } : { quiet: true, at: { x: other.workArea.x + 40, y: other.workArea.y + 40 } }
+}
+
 // The editor window on the placeholder page, shown once it has drawn
-export function openEditor(Window: typeof BrowserWindow, session: Session, packaged: boolean): BrowserWindow {
-  const window = new Window({ width: 1100, height: 760, show: false, title: 'hetu', webPreferences: webPreferences(session, packaged) })
-  window.once('ready-to-show', () => window.show())
+export function openEditor(Window: typeof BrowserWindow, session: Session, packaged: boolean, placement: Placement = { quiet: false }): BrowserWindow {
+  const window = new Window({
+    width: 1100, height: 760, show: false, title: 'hetu', webPreferences: webPreferences(session, packaged), ...placement.at,
+  })
+  window.once('ready-to-show', () => (placement.quiet ? window.showInactive() : window.show()))
   window.loadURL(EDITOR_URL).catch((err: unknown) => console.error(`the editor page didn't load: ${String(err)}`))
   return window
 }
