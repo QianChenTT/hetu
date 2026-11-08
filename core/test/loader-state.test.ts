@@ -263,14 +263,6 @@ describe('the human\'s switches, applied', () => {
     expect(made.loader.plugin('alpha')?.incarnation).toBe(2)
   })
 
-  it('refuses a change kind whose step hasn\'t come yet, applying nothing', async () => {
-    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    await expect(made.loader.apply({ kind: 'plugin.clearStorage', plugin: 'alpha' })).rejects.toThrow()
-    await expect(made.loader.apply({ kind: 'grant.widen', plugin: 'alpha', capability: { type: 'ui.panel' } })).rejects.toThrow()
-    expect(made.loader.view()).toBe(1)
-  })
-
   it('refuses a change outside core/api\'s change schema', async () => {
     const made = await harness()
     await made.loader.start()

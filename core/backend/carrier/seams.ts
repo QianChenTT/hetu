@@ -50,8 +50,10 @@ export type Loader = {
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
 }
 
-// Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window
-export type Asks = { raise(ask: string, access: Access): string }
+// Raises the prompt behind a gate's ask and names the held request, or refuses: throttled while another ask from the
+// same plugin is open, not-granted for an item that doesn't ask and with declined for one the human cancelled this run
+export type AskRefusal = { code: 'throttled' } | { code: 'not-granted', reason?: 'declined' }
+export type Asks = { raise(ask: string, access: Access): string | AskRefusal }
 
 // Where an error's text goes, never to a reply or a record. plugin is whose code threw: a provider, the gate or a
 // guard, or null for the core's own code. The text belongs in that plugin's debug, never the caller's, since a
@@ -83,6 +85,12 @@ export type CarrierOptions = {
   watchdog: () => Watchdog | null
   log: CoreLog | null
   asks?: Asks
+  // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or
+  // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
+  armed?: (caller: Caller) => boolean
+  // The core's log has failed: its oldest record waited logFailMs unwritten while recording was on. Told until the
+  // loader takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
+  logFailed?: () => boolean | void
   // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
   // the trusted window exists
   core?: Served

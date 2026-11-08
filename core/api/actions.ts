@@ -1,12 +1,12 @@
 import { z } from 'zod'
-import type { CapabilityType } from './capabilities.ts'
-import { change } from './changes.ts'
+import type { Capability, CapabilityType } from './capabilities.ts'
+import { change, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
-import { coreNamespaces, localName, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
-import type { LogSegment, LogVerification, SlotState } from './slots.ts'
+import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
@@ -32,9 +32,10 @@ export const MAX_LEASE_PATHS = 64
 // Topics one subscribe or unsubscribe names. A half holds at most topicsPerHalf in all
 export const MAX_CALL_TOPICS = 64
 
-// The topics the core sends, to windows only and never with a path: core.status says to read core.status again and
-// core.security that a security change was applied
-export const coreTopics = frozen(['core.status', 'core.security'] as const)
+// The topics the core sends, to windows only and never with a path: core.status says to read core.status again,
+// core.security that a security change was applied and core.quitting that hetu ends after a short grace, so a window can
+// keep a draft
+export const coreTopics = frozen(['core.status', 'core.security', 'core.quitting'] as const)
 export type CoreTopic = typeof coreTopics[number]
 
 // A topic a subscriber names: one the core sends or a plugin's <id>.<name>. The core's other namespaces carry no
@@ -85,8 +86,20 @@ const coreTable = {
   'log.history': { from: 'windows', args: nothing },
   'log.verify': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
-  // requestId is the request a needs-confirm refusal named
-  'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token }) },
+  // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
+  // attention, which the core checks where the change asks for it
+  'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token, typed: z.string().max(MAX_ID_LENGTH).optional() }) },
+  'security.cancel': { from: 'trusted', args: z.strictObject({ requestId: token }) },
+  // Opens the trusted window, at the named request or else at the plugin list, and focuses one already open. Only a
+  // human's click on a core control sends it, a notice's included
+  'security.open': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
+  // What the trusted window draws: the plugin list, the switches, the requests waiting and the stopped mode
+  'security.list': { from: 'trusted', args: nothing },
+  // The human's stop of a sandboxed plugin, from the plugin list only. A restart widens nothing, so any window may
+  'core.stop': { from: 'trusted', args: target },
+  'core.restart': { from: 'windows', args: target },
+  'core.quit': { from: 'windows', args: nothing },
+  'core.relaunch': { from: 'trusted', args: nothing },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -144,9 +157,52 @@ export const providerActions = lookup<ProviderAction>(providerTable)
 type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
 export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
 
+// A security change waiting for the human: its kind and the plugin it names or that raised it, null for a change no
+// plugin is named in. A window draws it as a notice that opens the trusted window
+export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
+
+// Why hetu stopped instead of starting: a security control that is on failed its check, is missing from the install
+// or failed at start, with the lifecycle reason. again says the same control failed in the run before, so hetu didn't
+// restart a second time
+export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
+
+// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs, its state and
+// why, whether it is a security control, the human's switch and, for a plugin-folder plugin, each item it was granted
+export type ListedPlugin = {
+  id: string
+  from: 'install' | 'folder'
+  place: 'host' | 'sandboxed' | 'page'
+  state: PluginState
+  reason: string | null
+  security: boolean
+  // A plugin-folder copy of a first-party plugin, which Recover can restore from the install
+  firstParty: boolean
+  on: boolean
+  items: { capability: Capability, off: boolean, firstUse: boolean }[]
+}
+
+// A request waiting for the human in the core's own words, with the word to type where the change asks for one
+export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null }
+
+// What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest
+// first, and the stopped mode
+export type SecurityList = {
+  plugins: ListedPlugin[]
+  switches: {
+    devMode: string[]
+    execAnyCommand: string[]
+    skipVerification: boolean
+    allowUnsigned: string[]
+    confirmOff: boolean
+    recordNothing: boolean
+  }
+  requests: HeldRequest[]
+  stopped: StoppedMode | null
+}
+
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
-// switches that weaken a check, whether the event log takes appends and whether a luoshu folder is picked. Pending
-// requests join with the trusted window
+// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the requests
+// waiting for the human and the stopped mode
 export type CoreStatus = {
   slots: Record<typeof slotIds[number], SlotState>
   crashed: string[]
@@ -156,6 +212,8 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
+  pending: PendingRequest[]
+  stopped: StoppedMode | null
 }
 
 // What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
@@ -163,6 +221,8 @@ export type CoreStatus = {
 export type ActionResults = {
   'core.self': Caller
   'core.status': CoreStatus
+  'security.list': SecurityList
+  'security.request': { applied: true } | { held: string }
   'core.filterReadable': string[]
   'log.history': LogSegment[]
   'log.verify': LogVerification

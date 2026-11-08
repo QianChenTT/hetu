@@ -12,7 +12,11 @@ function positive(value: unknown): number | undefined {
 }
 
 // The floor constants as they apply to one plugin: the human's value for that plugin, else the human's value for all,
-// else core/api's. The watchdog may only lower what that gives, never past it
+// else core/api's. The watchdog may only lower what that gives, never past it. A window's own way never runs below the
+// floor, so a value for all lowered by mistake can't lock the trusted window out. The core-wide constants, the audit
+// queue, the floor backlog and logFailMs, follow the human either way
+const coreWide: ReadonlySet<FloorConstant> = new Set(['auditQueue', 'floorBacklog', 'logFailMs'])
+
 export class Limits {
   private readonly human: () => HumanLimits
   private readonly lowered = new Map<string, Map<FloorConstant, number>>()
@@ -28,7 +32,9 @@ export class Limits {
       human = this.human()
     } catch {}
     const mine = plugin === null ? undefined : positive(own(own(human?.plugins, plugin), name))
-    const set = mine ?? positive(own(human?.all, name)) ?? floorConstants[name]
+    const all = positive(own(human?.all, name))
+    if (plugin === null && !coreWide.has(name)) return Math.max(all ?? 0, floorConstants[name])
+    const set = mine ?? all ?? floorConstants[name]
     const lowered = plugin === null ? undefined : this.lowered.get(plugin)?.get(name)
     return lowered === undefined ? set : Math.min(set, lowered)
   }

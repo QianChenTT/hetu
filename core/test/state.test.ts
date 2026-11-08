@@ -1350,3 +1350,40 @@ describe('loading', () => {
     expect(await snapshot()).toEqual(before)
   })
 })
+
+// What a held security request compares at its Confirm: the bytes of the state files the change reads, so a change
+// or an edit between the request and the click answers stale
+describe('the fingerprint of the state a change reads', () => {
+  it('stays the same while nothing is written', async () => {
+    await store.writeSwitches(switchesIn)
+    await store.writePlugin('search', pluginIn())
+    expect(await store.fingerprint('search')).toBe(await store.fingerprint('search'))
+  })
+
+  it('moves with a write to the switches, the luoshu or the plugin named, and not with another plugin', async () => {
+    await store.writeSwitches(switchesIn)
+    await store.writePlugin('search', pluginIn())
+    const before = await store.fingerprint('search')
+    await store.writePlugin('git', pluginIn())
+    expect(await store.fingerprint('search')).toBe(before)
+    await store.writeSwitches({ ...switchesIn, confirmOff: false })
+    const afterSwitches = await store.fingerprint('search')
+    expect(afterSwitches).not.toBe(before)
+    await store.writeLuoshu(luoshuIn)
+    const afterLuoshu = await store.fingerprint('search')
+    expect(afterLuoshu).not.toBe(afterSwitches)
+    await store.writePlugin('search', pluginIn({ enabled: false }))
+    expect(await store.fingerprint('search')).not.toBe(afterLuoshu)
+  })
+
+  it('moves with an edit outside hetu and with a file removed', async () => {
+    await store.writeSwitches(switchesIn)
+    await store.writePlugin('search', pluginIn())
+    const before = await store.fingerprint(null)
+    await writeFile(switchesPath(), 'edited')
+    expect(await store.fingerprint(null)).not.toBe(before)
+    const one = await store.fingerprint('search')
+    await store.removePlugin('search')
+    expect(await store.fingerprint('search')).not.toBe(one)
+  })
+})

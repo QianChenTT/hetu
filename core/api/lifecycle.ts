@@ -17,8 +17,10 @@ export const stopReasons = frozen([
   // found with no entry yet, waiting for the human's approval
   'new',
   // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
-  // the gate's stateChanged
-  'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed',
+  // the gate's stateChanged, a security control whose module gave no role
+  'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role',
+  // held back because a security control failed and hetu stopped
+  'control-failed',
   // who stopped it: the human's switch, the watchdog, the human, the core's own shutdown, an update or a removal. A host
   // half switched back on after it ran waits for Restart hetu, since a host half starts once per run
   'off', 'watchdog', 'human', 'shutdown', 'update', 'removed', 'restart-hetu',

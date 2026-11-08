@@ -107,6 +107,9 @@ type Shaped =
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
+// The core actions the trusted window may send inside its input delay, since they only read
+const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.history', 'log.verify'])
+
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
 
@@ -216,6 +219,9 @@ export class Carrier {
   // The once a second look, and the log's health it last saw
   private readonly looking: ReturnType<typeof setInterval>
   private logHealthy: boolean | undefined
+  private toldLog = false
+  // Drained for recording to go off: the writer writes nothing more until the switch applies or resume is called
+  private paused = false
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -235,7 +241,21 @@ export class Carrier {
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
     const log = options.log
     // A batch the log refused while healthy is let go and counted, one record a batch
-    this.writer = log === null ? null : new AuditWriter(this.queue, log, {
+    // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
+    // and is the last record written (S4-5). Between the drain and the switch nothing is written, so no call record
+    // lands after the switch's own
+    const source = {
+      next: (max: number) => {
+        if (this.muted()) {
+          this.queue.clear()
+          this.paused = false
+          return []
+        }
+        return this.paused ? [] : this.queue.next(max)
+      },
+      ack: (seq: number) => this.queue.ack(seq),
+    }
+    this.writer = log === null ? null : new AuditWriter(source, log, {
       everyMs: options.auditEveryMs ?? 100,
       refused: count => {
         void this.lane.write('audit.dropped', { why: 'refused', count })
@@ -296,11 +316,34 @@ export class Carrier {
     }
   }
 
+  // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
+  quitting(): void {
+    if (!this.closed) this.bus.emit('core.quitting')
+  }
+
   // Writes what the audit queue holds, then the floor backlog: for a log that came back and for Quit, before close and
   // after it. Never throws
   async flush(): Promise<void> {
     await this.writer?.flush()
     await this.lane.flush()
+  }
+
+  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
+  async drain(ms: number): Promise<number> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>(resolve => {
+      timer = setTimeout(resolve, ms)
+    })
+    await Promise.race([this.flush(), deadline])
+    clearTimeout(timer)
+    this.paused = true
+    return this.queue.size + this.lane.waiting
+  }
+
+  // Recording didn't go off after a drain, so the writer goes on
+  resume(): void {
+    this.paused = false
   }
 
   // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
@@ -804,15 +847,21 @@ export class Carrier {
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
       const request = prompt ? this.raise(ask, access) : null
-      return request === null ? { code: 'not-granted' } : { code: 'needs-confirm', request }
+      if (typeof request === 'string') return { code: 'needs-confirm', request }
+      return request ?? { code: 'not-granted' }
     }
     return { code: allow === false && code === 'switched-off' ? 'switched-off' : 'not-granted' }
   }
 
-  private raise(ask: string, access: Access): string | null {
+  // A request id in the grammar, or one of the refusals the prompt may give. Anything else refuses not-granted
+  private raise(ask: string, access: Access): string | No | null {
     try {
       const request = this.options.asks?.raise(ask, access)
-      return token.safeParse(request).success ? request as string : null
+      if (token.safeParse(request).success) return request as string
+      if (request === null || typeof request !== 'object') return null
+      if (request.code === 'throttled') return { code: 'throttled' }
+      if (request.code === 'not-granted') return request.reason === 'declined' ? { code: 'not-granted', reason: 'declined' } : { code: 'not-granted' }
+      return null
     } catch {
       return null
     }
@@ -823,6 +872,12 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
+    // with confirmOff on a request that applies at once. Its reads answer
+    const { caller } = pending
+    if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !this.armed(caller)) {
+      return this.finish(pending, no('throttled'))
+    }
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
       this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
@@ -1230,11 +1285,22 @@ export class Carrier {
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.writer === null || this.muted()) return
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
+    this.checkLog()
+  }
+
+  // Tells the loader that the log failed, as records queue and once a second, whatever the gate's state, until the
+  // loader takes it
+  private checkLog(): void {
+    if (this.toldLog || this.muted() || !this.logFailing()) return
+    try {
+      if (this.options.logFailed?.() !== false) this.toldLog = true
+    } catch {}
   }
 
   // Once a second, so windows hear when the log's health changed through an audit write, which the floor lane doesn't see
   private look(): void {
     if (this.closed || this.shutting) return
+    this.checkLog()
     const healthy = this.options.log?.healthy
     if (healthy === this.logHealthy) return
     this.logHealthy = healthy
@@ -1296,6 +1362,14 @@ export class Carrier {
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
+    }
+  }
+
+  private armed(caller: Caller): boolean {
+    try {
+      return this.options.armed?.(caller) === true
+    } catch {
+      return false
     }
   }
 

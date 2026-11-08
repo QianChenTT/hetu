@@ -351,3 +351,17 @@ describe('perform', () => {
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('unavailable')
   })
 })
+
+describe('an ask the prompt refuses', () => {
+  it.each([
+    ['throttled while another ask of the plugin is open', { code: 'throttled' }, { code: 'throttled', action: 'luoshu.read' }],
+    ['declined for an item the human cancelled', { code: 'not-granted', reason: 'declined' }, { code: 'not-granted', action: 'luoshu.read', reason: 'declined' }],
+    ['not-granted for an item that doesn\'t ask', { code: 'not-granted' }, { code: 'not-granted', action: 'luoshu.read' }],
+    ['not-granted for a refusal outside the two', { code: 'needs-confirm' }, { code: 'not-granted', action: 'luoshu.read' }],
+    ['not-granted for a reason outside declined', { code: 'not-granted', reason: 'cycle' }, { code: 'not-granted', action: 'luoshu.read' }],
+  ])('answers %s', async (_name, answer, refusal) => {
+    const { connect, gate } = harness({ asks: { raise: () => answer as never } })
+    gate.decision = access => access.stage === 'raw' ? { allow: true, view: 1 } : { ask: 'x', view: 1 }
+    expect((await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })).refusal).toEqual(refusal)
+  })
+})

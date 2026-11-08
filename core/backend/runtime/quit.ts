@@ -50,3 +50,43 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
   app.relaunch()
   app.quit()
 }
+
+// How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
+export const QUIT_GRACE_MS = 2000
+
+// What main does about a failure, kept apart from Electron so it runs in tests
+export type FailureParts = {
+  quitting(): boolean
+  announce(): void
+  quit(code: number, again: boolean): void
+  showTrusted(): void
+  closeEditors(): void
+  packaged: boolean
+  env: Record<string, string | undefined>
+  later(run: () => void, ms: number): void
+}
+
+// A control that failed while hetu ran: windows hear core.quitting, then after the grace hetu quits with exit code 1
+// and starts again, unless HETU_NO_RELAUNCH says not to. Once the loader stopped in the stopped mode instead, only the
+// trusted window stays
+export function afterFailure(
+  failure: { action: 'relaunch', control: string, reason: string } | { action: 'stopped', mode: unknown },
+  parts: FailureParts,
+): void {
+  if (failure.action === 'stopped') {
+    parts.showTrusted()
+    parts.closeEditors()
+    return
+  }
+  if (parts.quitting()) return
+  parts.announce()
+  const again = relaunches({ packaged: parts.packaged, env: parts.env })
+  parts.later(() => parts.quit(1, again), QUIT_GRACE_MS)
+}
+
+// Whether hetu starts again after quitting for a failure. A run from the source with HETU_NO_RELAUNCH set to 1, as the
+// end-to-end tests run it, exits without starting again, so the test starts the next run itself. A packaged build
+// ignores it
+export function relaunches(options: { packaged: boolean, env: Record<string, string | undefined> }): boolean {
+  return options.packaged || options.env.HETU_NO_RELAUNCH !== '1'
+}

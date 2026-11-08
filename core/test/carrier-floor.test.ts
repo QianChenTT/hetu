@@ -110,21 +110,89 @@ describe('shape', () => {
 })
 
 describe('the floor', () => {
-  it.each([
+  // The roadmap's proof for step 14: no plugin reaches security.* or the window lifecycle actions, whatever the gate
+  const securityActions = [
     ['security.request', { change: { kind: 'plugin.on', plugin: 'search' } }],
     ['security.confirm', { requestId: 'req-1' }],
-  ])('refuses %s for every plugin, MCP and host halves included, without asking the gate', async (action, args) => {
+    ['security.cancel', { requestId: 'req-1' }],
+    ['security.open', undefined],
+    ['security.list', undefined],
+    ['core.stop', { plugin: 'search' }],
+    ['core.restart', { plugin: 'search' }],
+    ['core.quit', undefined],
+    ['core.relaunch', undefined],
+  ] as const
+
+  it.each(securityActions)('refuses %s for every plugin, MCP and host halves included, in every gate state, without asking the gate', async (action, args) => {
     const seen: Call[] = []
-    const { carrier, connect, gate } = harness({ core: async call => { seen.push(call); return null } })
-    for (const id of ['mcp', 'search']) expect(code(await connect(worker(id)).ask(action, args))).toBe('not-granted')
-    expect(code(await hostHalf(carrier, host('luoshu')).ask(action, args))).toBe('not-granted')
+    const { carrier, connect, gate, loader } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
+    const plugins = [
+      ...['mcp', 'search', 'gate'].map(id => connect(worker(id))),
+      ...['luoshu', 'gate', 'watchdog'].map(id => hostHalf(carrier, host(id))),
+    ]
+    for (const state of ['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const) {
+      loader.slots.gate = state
+      for (const plugin of plugins) expect(code(await plugin.ask(action, args))).toBe('not-granted')
+    }
     expect(seen).toEqual([])
     expect(gate.asked).toEqual([])
   })
 
+  it('takes the window lifecycle actions from the windows the core table names', async () => {
+    const seen: string[] = []
+    const { carrier } = harness({ core: async call => { seen.push(`${call.caller.kind === 'window' ? call.caller.role : '?'} ${call.action}`); return null }, armed: () => true })
+    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    for (const [action, args] of securityActions) {
+      for (const sender of ['editor-1', 'trusted']) await way.ask(sender, action, args)
+    }
+    expect(seen).toEqual([
+      'editor security.request', 'trusted security.request', 'trusted security.confirm', 'trusted security.cancel',
+      'editor security.open', 'trusted security.open', 'trusted security.list', 'trusted core.stop',
+      'editor core.restart', 'trusted core.restart', 'editor core.quit', 'trusted core.quit', 'trusted core.relaunch',
+    ])
+  })
+
+  // The input delay: a Confirm that arrives before the trusted window armed counts for nothing, whatever the page did
+  it('refuses a Confirm from the trusted window before it armed, and takes one after', async () => {
+    const seen: Call[] = []
+    let armed = false
+    const { carrier } = harness({ core: async call => { seen.push(call); return null }, armed: caller => caller.kind === 'window' && armed })
+    const way = windowWay(carrier, { trusted })
+    expect(code(await way.ask('trusted', 'security.confirm', { requestId: 'req-1' }))).toBe('throttled')
+    expect(seen).toEqual([])
+    armed = true
+    expect((await way.ask('trusted', 'security.confirm', { requestId: 'req-1' })).ok).toBe(true)
+    expect(seen.map(call => call.action)).toEqual(['security.confirm'])
+  })
+
+  // Checkpoint B: with confirmOff on a request from the trusted window applies at once, so every action it sends that
+  // changes something waits for the delay like a Confirm. Reads don't
+  it('refuses the trusted window’s other actions before it armed, and answers its reads', async () => {
+    const seen: string[] = []
+    let armed = false
+    const { carrier } = harness({ core: async call => { seen.push(call.action); return null }, armed: () => armed })
+    const way = windowWay(carrier, { trusted, 'editor-1': editor })
+    for (const [action, args] of securityActions) {
+      if (action === 'security.list') continue
+      expect(code(await way.ask('trusted', action, args))).toBe('throttled')
+    }
+    expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
+    expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
+    // The editor has no delay of its own
+    expect((await way.ask('editor-1', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } })).ok).toBe(true)
+    armed = true
+    expect((await way.ask('trusted', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } })).ok).toBe(true)
+  })
+
+  it('refuses every Confirm when nothing says the trusted window armed', async () => {
+    const { carrier } = harness({ core: async () => null })
+    const way = windowWay(carrier, { trusted })
+    expect(code(await way.ask('trusted', 'security.confirm', { requestId: 'req-1' }))).toBe('throttled')
+  })
+
   it('takes security.request from any window and security.confirm only from the trusted one, with the gate failed', async () => {
     const seen: Call[] = []
-    const { carrier, loader, gate } = harness({ core: async call => { seen.push(call); return { held: true } } })
+    const { carrier, loader, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
     loader.slots.gate = 'failed'
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const change = { kind: 'plugin.on', plugin: 'search' }

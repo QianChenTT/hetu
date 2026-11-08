@@ -46,6 +46,8 @@ export class FakeLink implements CarrierLink {
   landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
   changes = 0
   stopped = 0
+  // How many records drain says still wait
+  waiting = 0
   limits: Partial<Record<FloorConstant, number>> = {}
   private readonly ports = new Map<string, Port>()
   private readonly receivers = new Map<string, (message: unknown) => void>()
@@ -99,6 +101,15 @@ export class FakeLink implements CarrierLink {
   stopping(): void {
     this.stopped++
     this.timeline.push('stopping')
+  }
+
+  async drain(_ms: number): Promise<number> {
+    this.timeline.push('drain')
+    return this.waiting
+  }
+
+  resume(): void {
+    this.timeline.push('resume')
   }
 
   limit(_plugin: string, name: FloorConstant): number {
@@ -169,8 +180,9 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
+  // A security control's module gives its role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
-    const exports: HostExports = {}
+    const exports: HostExports = id === 'gate' ? { gate: allowAll() } : id === 'watchdog' ? { watchdog: { sample() {} } } : {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
@@ -378,6 +390,8 @@ export async function harness(options: {
     installDir,
     link,
     runtime,
+    // A request counts at once unless a test is about the delay
+    confirmDelayMs: 0,
     ...options.loader,
   })
   const carrier = wire(loader, link)

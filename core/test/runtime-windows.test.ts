@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { guardContents, openEditor, quietPlacement, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer and the window open handler
 class FakeContents extends EventEmitter {
@@ -99,5 +99,46 @@ describe('quiet windows for runs from the source', () => {
     openEditor(FakeWindow as unknown as typeof BrowserWindow, session, false)
     for (const { window } of made) window.emit('ready-to-show')
     expect(made.map(({ options, shown }) => [options.x, options.y, shown])).toEqual([[1960, 40, ['showInactive']], [undefined, undefined, ['show']]])
+  })
+})
+
+describe('the trusted window', () => {
+  it('opens its own page in the trusted session with the bridge of the shell, shown once drawn', () => {
+    const made: { options: Record<string, unknown>, shown: string[], loaded: string[], window: EventEmitter }[] = []
+    class FakeWindow extends EventEmitter {
+      shown: string[] = []
+      loaded: string[] = []
+      webContents = {}
+      constructor(options: Record<string, unknown>) {
+        super()
+        made.push({ options, shown: this.shown, loaded: this.loaded, window: this })
+      }
+      show() { this.shown.push('show') }
+      showInactive() { this.shown.push('showInactive') }
+      loadURL(url: string) { this.loaded.push(url); return Promise.resolve() }
+    }
+    const session = { trusted: true } as unknown as Session
+    openTrusted(FakeWindow as unknown as typeof BrowserWindow, session, false, { quiet: false }, 'mount-preload.js')
+    const [{ options, shown, loaded, window }] = made
+    expect(loaded).toEqual([TRUSTED_URL])
+    expect(TRUSTED_URL).toBe('hetu://trusted/')
+    expect(options.show).toBe(false)
+    expect((options.webPreferences as Record<string, unknown>).session).toBe(session)
+    expect((options.webPreferences as Record<string, unknown>).preload).toBe('mount-preload.js')
+    expect((options.webPreferences as Record<string, unknown>).sandbox).toBe(true)
+    window.emit('ready-to-show')
+    expect(shown).toEqual(['show'])
+  })
+})
+
+// Checkpoint B: Electron's default menu put Reload and Close within a key of the trusted window
+describe('the application menu', () => {
+  it('is none on Windows and Linux', () => {
+    expect(appMenu('win32')).toBe(null)
+    expect(appMenu('linux')).toBe(null)
+  })
+
+  it('holds only Quit on macOS, where the menu bar is the app\u2019s', () => {
+    expect(appMenu('darwin')).toEqual([{ label: 'hetu', submenu: [{ role: 'quit' }] }])
   })
 })

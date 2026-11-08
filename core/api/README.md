@@ -2,11 +2,13 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 
 - `envelope.ts`: the messages on a port, requests and replies, the refusal and reason codes and the callers
 - `version.ts`: the envelope's version, apart from zod so the SDK loads it without the schemas
-- `changes.ts`: the change kinds a security request carries
+- `changes.ts`: the change kinds a security request carries, whether each widens, narrows or destroys data (`changeEffect`) and what the human types to switch protection off (`mustType`)
+- `describe.ts`: the core's own words for each change, which the trusted window draws above Confirm
+- `trusted.ts`: what the trusted page shares with the core, apart from zod: the input delay and how a capability reads
 - `capabilities.ts`: the fixed capability list with the install-only types marked
 - `scope.ts`: the scope grammar, the path matcher and the check for characters that could hide on a screen
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder
-- `ids.ts`: plugin ids and names, reserved ids and the slot, provider and guard ids
+- `ids.ts`: plugin ids and names, reserved ids, the slot, provider and guard ids and the security controls, whose failure stops hetu
 - `windows.ts`: what each window holds
 - `floor.ts`: the floor constants and the longest delay a timer takes, past which no time constant may be raised
 - `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema. `ActionArgs` and `ActionResults` type what the SDK's calls take and answer
