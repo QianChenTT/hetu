@@ -5,6 +5,7 @@ import { ipcRenderer } from 'electron'
 // copied field by field
 ipcRenderer.on('hetu:start', (event, start: object) => window.postMessage({ ...start, hetu: 'start' }, location.origin, event.ports))
 ipcRenderer.on('hetu:terminate', (_event, end: object) => window.postMessage({ ...end, hetu: 'terminate' }, location.origin))
+ipcRenderer.on('hetu:limits', (_event, limits: object) => window.postMessage({ ...limits, hetu: 'limits' }, location.origin))
 
 window.addEventListener('message', event => {
   if (event.source !== window || event.origin !== location.origin) return

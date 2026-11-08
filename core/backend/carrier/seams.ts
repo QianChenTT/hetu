@@ -92,4 +92,6 @@ export type CarrierOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   // How long the floor lane waits before it tries a failed append again
   floorRetryMs?: number
+  // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page
+  limited?: (plugin: string) => void
 }

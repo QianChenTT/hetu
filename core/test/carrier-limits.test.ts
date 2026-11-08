@@ -387,3 +387,34 @@ describe('watchdog.limit', () => {
     expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.limit', args))).toBe('invalid')
   })
 })
+
+describe('samples from the runtime', () => {
+  it('hands the watchdog a worker\'s errors, its drops in the page and its cutoff, while the watchdog slot is on', () => {
+    const { carrier, loader, samples } = harness()
+    carrier.sample({ kind: 'errors', caller: worker('search'), count: 2 })
+    carrier.sample({ kind: 'dropped', caller: worker('search'), count: 5 })
+    carrier.sample({ kind: 'cutoff', caller: worker('search'), reason: 'flood' })
+    expect(samples).toEqual([
+      { kind: 'errors', caller: worker('search'), count: 2 },
+      { kind: 'dropped', caller: worker('search'), count: 5 },
+      { kind: 'cutoff', caller: worker('search'), reason: 'flood' },
+    ])
+    loader.slots.watchdog = 'off'
+    carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })
+    expect(samples).toHaveLength(3)
+  })
+
+  it('goes on past a watchdog that throws on a sample', () => {
+    const { carrier } = harness({ watchdog: () => ({ sample: () => { throw new Error('broken') } }) })
+    expect(() => carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })).not.toThrow()
+  })
+
+  it('tells the runtime whose limits watchdog.limit lowered, so the relay in the page applies them too', async () => {
+    const limited: string[] = []
+    const { carrier, loader } = harness({ limited: plugin => { limited.push(plugin) } })
+    loader.sandboxed('search')
+    const watchdog = hostHalf(carrier, host('watchdog'))
+    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 })).ok).toBe(true)
+    expect(limited).toEqual(['search'])
+  })
+})

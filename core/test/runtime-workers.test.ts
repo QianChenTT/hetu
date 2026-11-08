@@ -16,7 +16,7 @@ class FakeRenderer implements Renderer {
   private page: ((message: unknown) => void) | null = null
   private gone: ((reason: string) => void) | null = null
 
-  post(channel: 'hetu:start' | 'hetu:terminate', message: unknown, ports: MessagePortMain[] = []): void {
+  post(channel: 'hetu:start' | 'hetu:terminate' | 'hetu:limits', message: unknown, ports: MessagePortMain[] = []): void {
     this.posted.push({ channel, message, ports })
   }
 
@@ -47,6 +47,7 @@ function runtime(readyMs = 1000, endingMs = 1000) {
   const renderers: FakeRenderer[] = []
   const records: { event: string, fields: Record<string, unknown> }[] = []
   const cutoffs: unknown[][] = []
+  const samples: unknown[] = []
   const workers = new WorkerRenderer({
     open: () => {
       const renderer = new FakeRenderer()
@@ -56,10 +57,11 @@ function runtime(readyMs = 1000, endingMs = 1000) {
     record: (event, fields) => records.push({ event, fields }),
     limits: id => ({ ...LIMITS, resultBytes: id.length }),
     cutoff: (id, incarnation, reason) => cutoffs.push([id, incarnation, reason]),
+    sample: sample => samples.push(sample),
     readyMs,
     endingMs,
   })
-  return { workers, renderers, records, cutoffs }
+  return { workers, renderers, records, cutoffs, samples }
 }
 
 const start = (id = 'search', incarnation = 1) => {
@@ -147,21 +149,36 @@ describe('the hidden renderer for workers', () => {
     expect(queued.port.closed).toBe(true)
   })
 
-  it('records a running worker\'s error count and ignores anything else the page says', () => {
-    const { workers, renderers, records } = runtime()
+  it('hands the watchdog a running worker\'s errors and drops and ignores anything else the page says', () => {
+    const { workers, renderers, records, samples } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
+    const caller = { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }
     renderers[0].says({ kind: 'errors', id: 'search', incarnation: 1, count: 3 })
+    renderers[0].says({ kind: 'dropped', id: 'search', incarnation: 1, count: 7 })
     renderers[0].says({ kind: 'errors', id: 'search', incarnation: 2, count: 3 })
     renderers[0].says({ kind: 'errors', id: 'search', incarnation: 1, count: -1 })
-    renderers[0].says({ kind: 'errors', id: 'git', incarnation: 1, count: 1 })
+    renderers[0].says({ kind: 'dropped', id: 'git', incarnation: 1, count: 1 })
     renderers[0].says({ kind: 'other' })
     renderers[0].says(null)
-    expect(records).toEqual([{ event: 'worker.errors', fields: { plugin: 'search', incarnation: 1, count: 3 } }])
+    expect(samples).toEqual([{ kind: 'errors', caller, count: 3 }, { kind: 'dropped', caller, count: 7 }])
+    expect(records).toEqual([])
   })
 
-  it('hands a cutoff from the page to the loader once, for a running worker, and has nothing left to end', () => {
-    const { workers, renderers, cutoffs } = runtime()
+  it('sends a plugin\'s limits again to each of its running workers when they change', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    workers.start(start('git').start)
+    renderers[0].says({ kind: 'ready' })
+    workers.limited('search')
+    workers.limited('files')
+    expect(renderers[0].posted.filter(post => post.channel === 'hetu:limits')).toEqual([
+      { channel: 'hetu:limits', message: { id: 'search', incarnation: 1, limits: { ...LIMITS, resultBytes: 6 } }, ports: [] },
+    ])
+  })
+
+  it('hands a cutoff from the page to the loader and the watchdog once, for a running worker, and has nothing left to end', () => {
+    const { workers, renderers, cutoffs, samples } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'other' })
@@ -170,6 +187,7 @@ describe('the hidden renderer for workers', () => {
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' })
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'flood' })
     expect(cutoffs).toEqual([['search', 1, 'malformed']])
+    expect(samples).toEqual([{ kind: 'cutoff', caller: { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }, reason: 'malformed' }])
     workers.terminate('search', 1)
     expect(renderers[0].posted.filter(post => post.channel === 'hetu:terminate')).toEqual([])
   })

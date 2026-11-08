@@ -93,11 +93,12 @@ async function start(): Promise<void> {
       record: (event, fields) => carrier?.floor(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
+      sample: sample => carrier?.sample(sample),
       readyMs: RENDERER_READY_MS,
     })
     workers = renderer
     const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit, { freeze: freezeIntrinsics, importer: url => import(url) })
-    const wired = wireCore({ booted, installDir, runtime })
+    const wired = wireCore({ booted, installDir, runtime, limited: plugin => renderer.limited(plugin) })
     carrier = wired.carrier
     loader = wired.loader
     parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }

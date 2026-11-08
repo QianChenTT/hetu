@@ -119,6 +119,16 @@ export class WorkerHost {
     worker.postMessage({ v: 1, kind: 'port', limits: start.limits }, [theirs])
   }
 
+  // The watchdog lowered one of the plugin's limits, which the relay applies from the next message on
+  relimit(id: unknown, incarnation: unknown, given: unknown): void {
+    if (typeof id !== 'string' || typeof incarnation !== 'number') return
+    const run = this.running.get(key(id, incarnation))
+    const limits = relayLimitsOf(given)
+    if (run === undefined || limits === null) return
+    run.limits = limits
+    run.cap = textCap(name => limits[name as keyof Limits])
+  }
+
   terminate(id: unknown, incarnation: unknown): void {
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     const run = this.running.get(key(id, incarnation))

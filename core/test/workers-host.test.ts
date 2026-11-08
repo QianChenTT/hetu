@@ -170,6 +170,17 @@ describe('the worker host page', () => {
     expect(reports).toEqual([{ kind: 'dropped', id: 'search', incarnation: 1, count: 1 }])
   })
 
+  it('applies a running worker\'s new limits from then on, and ignores limits that aren\'t whole and positive', () => {
+    const { own, main, page, at } = running()
+    at(1000)
+    page.relimit('search', 1, { ...limits, messagesPerSecond: 1, floodMs: 0 })
+    page.relimit('search', 1, { ...limits, messagesPerSecond: 1 })
+    page.relimit('search', 2, { ...limits, messagesPerSecond: 100 })
+    own.gets('m0')
+    own.gets('m1')
+    expect(main.posted).toEqual(['m0'])
+  })
+
   it('drops text over the budget, after one message of the cap went through at once', () => {
     const { own, main, at } = running({ textPerSecond: 10, resultBytes: 1 })
     at(0)

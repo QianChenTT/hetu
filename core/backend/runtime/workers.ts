@@ -1,4 +1,5 @@
 import type { BrowserWindow, MessagePortMain, Session } from 'electron'
+import type { Sample } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { WorkerStart } from '../loader/seams.ts'
 import { SCHEME } from './before-ready.ts'
@@ -9,7 +10,7 @@ export const WORKERS_URL = `${SCHEME}://workers/`
 // The hidden renderer as the runtime drives it, faked in the tests
 export type Renderer = {
   // To the page's preload, a start with the worker's port
-  post(channel: 'hetu:start' | 'hetu:terminate', message: unknown, ports?: MessagePortMain[]): void
+  post(channel: 'hetu:start' | 'hetu:terminate' | 'hetu:limits', message: unknown, ports?: MessagePortMain[]): void
   // What the page's own frame sent
   onPage(listener: (message: unknown) => void): void
   // Once, when the renderer's process is gone
@@ -25,6 +26,8 @@ export type WorkerRendererOptions = {
   limits(id: string): Readonly<Record<string, number>>
   // The page cut a worker off: it ended the worker and the plugin crashed for reason
   cutoff(id: string, incarnation: number, reason: 'malformed' | 'flood'): void
+  // For the watchdog: a worker's errors, its drops in the relay and its cutoff
+  sample(sample: Sample): void
   // How long whenReady waits for the page
   readyMs: number
   // How long an ended worker still counts as held for a renderer that dies. Its ports close a few ms before Electron
@@ -45,7 +48,7 @@ export class WorkerRenderer {
   private ready = false
   private closed = false
   private queue: Start[] = []
-  private readonly running = new Map<string, string>()
+  private readonly running = new Map<string, { id: string, incarnation: number }>()
   private readonly ending = new Map<string, { id: string, timer: ReturnType<typeof setTimeout> }>()
   private waiters: ((ready: boolean) => void)[] = []
 
@@ -121,8 +124,15 @@ export class WorkerRenderer {
     })
   }
 
+  // watchdog.limit lowered one of the plugin's constants, so each of its running workers' relays gets them again
+  limited(id: string): void {
+    for (const run of this.running.values()) {
+      if (run.id === id) this.renderer?.post('hetu:limits', { id, incarnation: run.incarnation, limits: this.options.limits(id) })
+    }
+  }
+
   private send(start: Start): void {
-    this.running.set(key(start.id, start.incarnation), start.id)
+    this.running.set(key(start.id, start.incarnation), { id: start.id, incarnation: start.incarnation })
     const limits = this.options.limits(start.id)
     this.renderer?.post('hetu:start', { id: start.id, incarnation: start.incarnation, code: start.code, limits }, [start.port])
   }
@@ -137,18 +147,21 @@ export class WorkerRenderer {
       return
     }
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
+    const caller = { kind: 'plugin' as const, id, half: 'worker' as const, incarnation }
     // The page already ended the worker, so the loader's end that follows has nothing to send
     if (kind === 'cutoff' && (reason === 'malformed' || reason === 'flood') && this.running.delete(key(id, incarnation))) {
       this.options.cutoff(id, incarnation, reason)
+      this.options.sample({ kind: 'cutoff', caller, reason })
       return
     }
-    if (kind !== 'errors') return
+    if (kind !== 'errors' && kind !== 'dropped') return
     if (!Number.isSafeInteger(count) || (count as number) <= 0 || !this.running.has(key(id, incarnation))) return
-    this.options.record('worker.errors', { plugin: id, incarnation, count: count as number })
+    this.options.sample({ kind, caller, count: count as number })
   }
 
   private gone(reason: string): void {
-    const plugins = [...new Set([...this.running.values(), ...[...this.ending.values()].map(ended => ended.id)])].sort()
+    const held = [...this.running.values()].map(run => run.id)
+    const plugins = [...new Set([...held, ...[...this.ending.values()].map(ended => ended.id)])].sort()
     for (const ended of this.ending.values()) clearTimeout(ended.timer)
     this.ending.clear()
     this.options.record('renderer.gone', { reason, plugins: plugins.join(',') })
