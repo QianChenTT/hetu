@@ -1,10 +1,13 @@
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { freezeIntrinsics } from '../backend/runtime/intrinsics.ts'
 
 // A fresh realm with its built-ins frozen, so the test runner's own stay as they were. Code runs in strict mode
 function frozenRealm(): (code: string) => unknown {
-  const context = vm.createContext({})
+  const context = vm.createContext({ structuredClone })
   vm.runInContext(`(${freezeIntrinsics.toString()})()`, context)
   return code => vm.runInContext(`'use strict';{${code}}`, context)
 }
@@ -37,12 +40,48 @@ describe('freezing the built-ins', () => {
     }
   })
 
-  it('still lets code set name, message, toString and constructor on its own objects', () => {
+  it('still lets code set name, message and toString on its own objects', () => {
     const run = frozenRealm()
     expect(run('class Odd extends Error { constructor() { super("m"); this.name = "Odd" } }; const e = new Odd(); `${e.name}:${e.message}`')).toBe('Odd:m')
     expect(run('const o = {}; o.toString = () => "mine"; `${o}`')).toBe('mine')
-    expect(run('function F() {}; const f = new F(); f.constructor = 5; f.constructor')).toBe(5)
     expect(run('const e = new TypeError("x"); e.message = "y"; e.message')).toBe('y')
+  })
+
+  it('leaves constructor a data property, since an accessor there takes V8\'s Array methods off their fast paths', () => {
+    const run = frozenRealm()
+    for (const name of ['Array', 'Object', 'Promise', 'Map', 'Set', 'RegExp', 'Uint8Array']) {
+      expect(run(`'value' in Object.getOwnPropertyDescriptor(${name}.prototype, 'constructor')`), name).toBe(true)
+    }
+    // The cost: assigning constructor on code's own plain object now throws
+    expect(throws(run, 'const o = {}; o.constructor = 5')).toBe('TypeError')
+  })
+
+  it('keeps the global names bound to the built-ins, so a host half can\'t swap Set or structuredClone under the core', () => {
+    // A VM's global is a proxy that lets a delete through, so this one runs in a real realm of its own
+    const freeze = pathToFileURL(path.join(import.meta.dirname, '..', 'backend', 'runtime', 'intrinsics.ts')).href
+    const script = `
+      'use strict'
+      import { freezeIntrinsics } from ${JSON.stringify(freeze)}
+      freezeIntrinsics()
+      const out = []
+      for (const code of ['globalThis.Set = function () {}', 'globalThis.structuredClone = x => x', 'delete globalThis.Map', 'globalThis.Array = 1']) {
+        try { new Function('"use strict";' + code)(); out.push('passed') } catch (err) { out.push(err.constructor.name) }
+      }
+      console.log(JSON.stringify(out))
+    `
+    const printed = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' })
+    expect(JSON.parse(printed)).toEqual(['TypeError', 'TypeError', 'TypeError', 'TypeError'])
+  })
+
+  it('freezes the iterators, the async iterator and Intl\'s constructors too', () => {
+    const run = frozenRealm()
+    for (const code of [
+      'Iterator', 'Iterator.prototype', 'Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype)',
+      'Object.getPrototypeOf([].values().map(x => x))', 'Intl.Collator.prototype', 'Intl.DateTimeFormat.prototype',
+      'Intl.NumberFormat', 'Intl.Segmenter.prototype',
+    ]) {
+      expect(run(`Object.isFrozen(${code})`), code).toBe(true)
+    }
   })
 
   it('keeps each of those on the built-in itself as it was', () => {

@@ -167,6 +167,8 @@ export class WorkerRenderer {
     this.options.record('renderer.gone', { reason, plugins: plugins.join(',') })
     this.running.clear()
     for (const start of this.queue.splice(0)) start.port.close()
+    // Its window stays until destroyed, so a run that loses renderers doesn't gather dead hidden windows
+    this.renderer?.destroy()
     this.renderer = null
     this.ready = false
   }

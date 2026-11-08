@@ -67,4 +67,18 @@ describe('the main bundle', () => {
     expect(['Worker', 'SharedWorker'].filter(name => name in scope)).toEqual([])
     expect('fetch' in scope).toBe(true)
   })
+
+  it.each([
+    ['a const', 'const globalThis = {}'],
+    ['a function', 'function globalThis() {}'],
+    ['a let named self', 'let self = {}; let globalThis = self'],
+  ])('keeps its removals when the plugin\'s own code declares %s at the top, in the same script', async (_name, declared) => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    const scope: Record<string, unknown> = { Worker: class {}, SharedWorker: class {} }
+    const context = vm.createContext(scope)
+    // One classic script, as the page builds it: the prelude, then the plugin's bytes
+    vm.runInContext(`${built.prelude}\n${declared}\nvar seen = typeof Worker`, context)
+    expect(scope.seen).toBe('undefined')
+  })
 })

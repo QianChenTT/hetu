@@ -123,6 +123,18 @@ describe('the probes in a worker', () => {
     expect(network.hits()).toBe(0)
   })
 
+  it('keeps Worker away from a plugin that declares its own globalThis at the top of its code', async () => {
+    // Playwright can't evaluate in a worker that shadows globalThis, so each plugin tries to start a nested worker,
+    // which Playwright would list
+    const tries = (declared: string) => `${declared}\n${lifecycle}\nif (typeof Worker === 'function') new Worker('data:text/javascript,1')`
+    const dataDir = await dataWith({ lexical: tries('const globalThis = self'), declared: tries('function globalThis() {}') })
+    const app = await launch(dataDir)
+    await until(async () => await logged(dataDir, 'plugin.started', { plugin: 'lexical' }) && await logged(dataDir, 'plugin.started', { plugin: 'declared' }))
+    const page = await workersPage(app)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    expect(page.workers()).toHaveLength(2)
+  })
+
   it('starts a worker whose script fits a data: URL and fails one past the cap, about 1.5 MiB of code', async () => {
     // The page base64s the prelude and the code into one data: URL, which Chromium caps at 2 MiB
     const padded = (bytes: number) => `${lifecycle}/*${'x'.repeat(bytes)}*/`

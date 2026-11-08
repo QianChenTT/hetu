@@ -1,7 +1,7 @@
 The worker host page: a hidden renderer page that starts each sandboxed plugin's worker from the bytes the loader verified, under its CSP and with the prelude, and relays its messages to the carrier
 
 - `index.html` and `page.ts`: the page. Starts, relays, ends and counts, through `host.ts`, which holds the logic apart from the DOM so it runs in tests
-- `prelude.ts`: runs first in every worker, in the same `data:` script as the plugin's bytes, and removes `Worker` and `SharedWorker`
+- `prelude.js`: runs first in every worker, in the same `data:` script as the plugin's bytes, copied in as written, and removes `Worker` and `SharedWorker` through top-level `this`, which the plugin's own declarations can't rebind
 - `preload.ts`: the only way between the page and main. Starts and ends come in, ready, error and drop counts and cutoffs go out
 
 A worker gets one message from the page, `{ v: 1, kind: 'port' }` carrying its end of a channel the page made. The page keeps the other end and holds main's end of the plugin's channel, so every message a worker sends passes the relay before main has to read it. Main reads a message whole before any check of its own, and a message of a million small objects stalled it 390 ms, so the relay checks first:

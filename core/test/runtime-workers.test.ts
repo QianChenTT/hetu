@@ -118,6 +118,8 @@ describe('the hidden renderer for workers', () => {
     const queuedBehind = start('files')
     renderers[0].dies('crashed')
     expect(records).toEqual([{ event: 'renderer.gone', fields: { reason: 'crashed', plugins: 'git,search' } }])
+    // Its hidden window goes with it, so a run doesn't gather dead windows
+    expect(renderers[0].destroyed).toBe(true)
     workers.start(queuedBehind.start)
     expect(renderers).toHaveLength(2)
     expect(starts(renderers[1])).toEqual([])

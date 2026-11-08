@@ -65,17 +65,8 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
   const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
 
-  // Not bundled, since it imports nothing, which also keeps esbuild's source path comment out of every worker
-  const preludeBuild = await build({
-    ...shared,
-    bundle: false,
-    entryPoints: [path.join(frontend, 'workers', 'prelude.ts')],
-    write: false,
-    platform: 'browser',
-    format: 'iife',
-    target: CHROMIUM,
-  })
-  const prelude = preludeBuild.outputFiles[0].text
+  // As written: a transform would turn its top-level this into undefined and make the plugin's code strict
+  const prelude = await readFile(path.join(frontend, 'workers', 'prelude.js'), 'utf8')
 
   const pagesOut = path.join(outDir, 'frontend')
   await rm(pagesOut, { recursive: true, force: true })
