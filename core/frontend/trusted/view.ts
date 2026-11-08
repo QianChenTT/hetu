@@ -144,8 +144,14 @@ export class TrustedPage {
     this.call('security.cancel', { requestId }, reply => this.settle(reply))
   }
 
+  // A choice in the stopped mode that applied at once, with confirmOff on, starts hetu again as a Confirm does
   ask(change: Change): void {
-    this.call('security.request', { change }, reply => this.settle(reply))
+    const stopped = this.last?.stopped ?? null
+    this.call('security.request', { change }, reply => {
+      const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
+      if (applied && stopped !== null) this.call('core.relaunch')
+      this.settle(reply, 'request')
+    })
   }
 
   stop(plugin: string): void {
@@ -164,9 +170,11 @@ export class TrustedPage {
     this.call('core.quit')
   }
 
-  private settle(reply: Reply): void {
+  private settle(reply: Reply, sent: 'request' | 'other' = 'other'): void {
     const code = reply.ok === true ? null : reply.refusal?.code
-    this.note = typeof code === 'string' ? notes[code] ?? `Refused: ${code}` : null
+    // A request answers throttled when its sender's places are full, a Confirm when it came too soon
+    if (code === 'throttled' && sent === 'request') this.note = 'Too many requests are waiting. Answer or cancel some first'
+    else this.note = typeof code === 'string' ? notes[code] ?? `Refused: ${code}` : null
     this.refresh()
   }
 

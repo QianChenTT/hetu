@@ -5,8 +5,12 @@ import type { Caller } from '../../api/envelope.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Landing } from './seams.ts'
 
-// Requests that wait for the human at once. A fixed cap and not a floor constant, since only windows send requests
+// Requests that wait for the human at once from one sender: each window role and the core. A plugin's own asks wait
+// within its firstUseAsks. A fixed cap and not a floor constant, so one window can't fill the places the trusted window
+// and the core need
 export const MAX_PENDING = 16
+// Every request waiting at once, whoever sent it
+const MAX_HELD = 4 * MAX_PENDING
 // How long a Confirm waits for its record to land before it applies nothing
 export const CONFIRM_RECORD_MS = 10_000
 
@@ -39,7 +43,7 @@ export type RequestHost = {
 export type RequestAnswer = { applied: true } | { held: string }
 
 // raisedBy is the plugin whose call raised the request, null for one a window or the core raised
-type Held = { id: string, key: string, change: Change, fingerprint: Promise<string>, window: string, raisedBy: string | null }
+type Held = { id: string, key: string, change: Change, fingerprint: Promise<string>, window: string, raisedBy: string | null, source: string }
 
 // The same text for a change whatever order its fields came in, so a change asked twice is found again and its hash
 // in the records doesn't depend on how a window spelled it
@@ -104,7 +108,7 @@ export class Requests {
       await this.host.exclusive(() => this.landThenApply(change, { ...fields, by: 'confirm-off' }))
       return { applied: true }
     }
-    const held = this.hold(change, key, fields, null, MAX_PENDING)
+    const held = this.hold(change, key, fields, null, MAX_PENDING, fields.window as string)
     if (typeof held !== 'string') throw held
     // Answered once the state it read is fingerprinted, so an edit made after the answer counts as a change
     await this.held.get(held)?.fingerprint
@@ -115,16 +119,20 @@ export class Requests {
   // hold open requests up to its limit, the same change asked again finds its id
   raise(change: Change, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
     const key = canonical(change)
-    return this.hold(change, key, { ...fieldsOf(change, key), window: raisedBy === null ? 'core' : 'plugin' }, raisedBy, limit)
+    const window = raisedBy === null ? 'core' : 'plugin'
+    return this.hold(change, key, { ...fieldsOf(change, key), window }, raisedBy, limit, raisedBy ?? 'core')
   }
 
-  private hold(change: Change, key: string, fields: Record<string, Field>, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
+  // source names whose places the request takes: a window role, the core or the plugin that raised it
+  private hold(
+    change: Change, key: string, fields: Record<string, Field>, raisedBy: string | null, limit: number, source: string,
+  ): string | { code: 'throttled' } {
     for (const one of this.held.values()) if (one.key === key) return one.id
-    const open = raisedBy === null ? this.held.size : [...this.held.values()].filter(one => one.raisedBy === raisedBy).length
-    if (open >= limit || this.held.size >= MAX_PENDING) return { code: 'throttled' }
+    const open = [...this.held.values()].filter(one => one.source === source).length
+    if (open >= limit || this.held.size >= MAX_HELD) return { code: 'throttled' }
     const id = randomUUID()
     const fingerprint = this.host.fingerprint(change).catch(() => 'unreadable')
-    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy })
+    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy, source })
     void this.host.record('security.request', fields)
     this.moved()
     return id

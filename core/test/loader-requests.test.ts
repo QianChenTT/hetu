@@ -74,6 +74,32 @@ describe('a security request', () => {
     expect(made.loader.pending()).toHaveLength(1)
   })
 
+  // Checkpoint B: one window could fill every place, so the trusted window's own requests and every prompt answered
+  // throttled. Each sender has places of its own
+  it('keeps places for the trusted window and the core when another window filled its own', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') } })
+    await made.loader.start()
+    for (let i = 0; i < 16; i++) {
+      held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 20000 + i, plugin: null }, editor))
+    }
+    expect(await code(made.loader.request({ kind: 'confirmOff', on: true }, editor))).toBe('throttled')
+    held(await made.loader.request({ kind: 'confirmOff', on: true }, trusted))
+    // The core raised alpha's approval at start, in its own places
+    expect(made.loader.pending().filter(request => request.kind === 'plugin.approve')).toHaveLength(1)
+  })
+
+  // Checkpoint B (planted break B42): two narrowings at once must both stand
+  it('applies two narrowings made at once to two switches, both standing', async () => {
+    const made = await harness({ switches: { devMode: ['alpha'], confirmOff: true } })
+    await made.loader.start()
+    await Promise.all([
+      made.loader.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor),
+      made.loader.request({ kind: 'confirmOff', on: false }, editor),
+    ])
+    const { switches } = await stateIn(made.dataDir)
+    expect([switches.devMode, switches.confirmOff]).toEqual([[], false])
+  })
+
   it('holds at most 16 and answers throttled past them', async () => {
     const made = await harness()
     await made.loader.start()

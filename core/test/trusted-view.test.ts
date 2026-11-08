@@ -172,6 +172,29 @@ describe('the trusted page', () => {
     }
   })
 
+  // Checkpoint B: with confirmOff on a choice applied through the request and hetu stayed stopped
+  it('starts hetu again once a choice in the stopped mode applied at once', () => {
+    const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
+    page.ask({ kind: 'plugin.reset', plugin: 'gate' })
+    hears(replyTo(sent[2], { applied: true }))
+    expect(sent.map(message => message.action)).toContain('core.relaunch')
+  })
+
+  it('starts nothing again for a choice that waits for its Confirm', () => {
+    const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
+    page.ask({ kind: 'plugin.reset', plugin: 'gate' })
+    hears(replyTo(sent[2], { held: 'r1' }))
+    expect(sent.map(message => message.action)).not.toContain('core.relaunch')
+  })
+
+  it('says when too many requests wait, apart from a Confirm sent too soon', () => {
+    const { sent, page, hears, drawn } = started()
+    page.ask({ kind: 'confirmOff', on: true })
+    hears(refuse(sent[2], 'throttled'))
+    hears(replyTo(sent.at(-1)!, calm()))
+    expect(drawn.at(-1)?.note).toBe('Too many requests are waiting. Answer or cancel some first')
+  })
+
   it('starts hetu again once a choice in the stopped mode applied', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
     page.confirm('r1', 'gate')
