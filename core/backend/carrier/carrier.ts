@@ -307,6 +307,11 @@ export class Carrier {
     }
   }
 
+  // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
+  quitting(): void {
+    if (!this.closed) this.bus.emit('core.quitting')
+  }
+
   // Writes what the audit queue holds, then the floor backlog: for a log that came back and for Quit, before close and
   // after it. Never throws
   async flush(): Promise<void> {

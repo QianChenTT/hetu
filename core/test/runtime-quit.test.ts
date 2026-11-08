@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { quitInOrder, relaunch } from '../backend/runtime/quit.ts'
+import { QUIT_GRACE_MS, quitInOrder, relaunch, relaunches } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -77,5 +77,21 @@ describe('quit', () => {
     const calls: string[] = []
     relaunch({ relaunch: () => calls.push('relaunch'), quit: () => calls.push('quit') })
     expect(calls).toEqual(['relaunch', 'quit'])
+  })
+})
+
+describe('starting again after a failure', () => {
+  it('starts again, and in a packaged build always', () => {
+    expect(relaunches({ packaged: false, env: {} })).toBe(true)
+    expect(relaunches({ packaged: true, env: { HETU_NO_RELAUNCH: '1' } })).toBe(true)
+  })
+
+  // The end-to-end tests start the next run themselves, so no hetu runs outside them
+  it('exits without starting again in a run from the source with HETU_NO_RELAUNCH set to 1', () => {
+    expect(relaunches({ packaged: false, env: { HETU_NO_RELAUNCH: '1' } })).toBe(false)
+  })
+
+  it('gives windows a grace of two seconds to keep a draft', () => {
+    expect(QUIT_GRACE_MS).toBe(2000)
   })
 })

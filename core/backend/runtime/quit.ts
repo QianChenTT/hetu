@@ -50,3 +50,13 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
   app.relaunch()
   app.quit()
 }
+
+// How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
+export const QUIT_GRACE_MS = 2000
+
+// Whether hetu starts again after quitting for a failure. A run from the source with HETU_NO_RELAUNCH set to 1, as the
+// end-to-end tests run it, exits without starting again, so the test starts the next run itself. A packaged build
+// ignores it
+export function relaunches(options: { packaged: boolean, env: Record<string, string | undefined> }): boolean {
+  return options.packaged || options.env.HETU_NO_RELAUNCH !== '1'
+}

@@ -4,14 +4,15 @@ import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
-import type { Loader } from './loader/loader.ts'
+import type { Failure, Loader } from './loader/loader.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { quitInOrder, type QuitParts } from './runtime/quit.ts'
+import { QUIT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
-import { guardContents, openEditor, quietPlacement } from './runtime/windows.ts'
+import { TrustedWindow } from './runtime/trusted.ts'
+import { guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
@@ -50,18 +51,27 @@ async function start(): Promise<void> {
   // still hold their workers, then the renderers end and the process exits. Before the core is wired there is only boot's
   // lock to give back. Electron closes no window itself, since the renderer must outlive the core's shutdown
   let parts: QuitParts | null = null
+  let loaderOf: Loader | null = null
   let workers: WorkerRenderers | null = null
   let quitting: Promise<void> | null = null
   let code = 0
+  // Restart hetu, and quitting after a failure, start a new run once this one has exited
+  let again = false
+  // A quit after a failure keeps the restart marker, a clean one clears it
+  let failed = false
   const seen = new Set<BrowserWindow>()
   app.on('before-quit', event => {
     event.preventDefault()
     quitting ??= (async () => {
       for (const window of seen) if (!window.isDestroyed()) window.close()
+      if (!failed) await loaderOf?.cleanQuit()
       const missed = parts === null ? (await booted.release(), []) : await quitInOrder(parts)
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
-    })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => app.exit(code))
+    })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => {
+      if (again) app.relaunch()
+      app.exit(code)
+    })
   })
   // The hidden renderers never close, so hetu quits when the last window a human sees does
   const show = (window: BrowserWindow) => {
@@ -99,12 +109,61 @@ async function start(): Promise<void> {
     }))
     workers = renderer
     const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit, { freeze: freezeIntrinsics, importer: url => import(url) })
-    const wired = wireCore({ booted, installDir, runtime, limited: plugin => renderer.limited(plugin) })
+
+    // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
+    // main, so a Confirm counts only once it armed
+    const trusted = new TrustedWindow({
+      open: () => {
+        const window = show(openTrusted(BrowserWindow, sessions.trusted, app.isPackaged, placement(), mountPreload))
+        if (carrier !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', carrier)
+        return window
+      },
+    })
+    let editor: BrowserWindow | null = null
+    const closeEditors = () => {
+      for (const window of seen) if (window !== trusted.window && !window.isDestroyed()) window.close()
+      editor = null
+    }
+    // A failure while running: windows hear core.quitting and get their grace, then hetu quits with an error and starts
+    // once more. Or the loader stopped in the stopped mode, which leaves only the trusted window
+    const onFailure = (failure: Failure) => {
+      if (failure.action === 'stopped') {
+        trusted.show()
+        closeEditors()
+        return
+      }
+      if (quitting !== null) return
+      failed = true
+      code = 1
+      again = relaunches({ packaged: app.isPackaged, env: process.env })
+      carrier?.quitting()
+      setTimeout(() => app.quit(), QUIT_GRACE_MS).unref?.()
+    }
+    const wired = wireCore({
+      booted,
+      installDir,
+      runtime,
+      limited: plugin => renderer.limited(plugin),
+      onFailure,
+      windows: {
+        // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
+        serve: async call => {
+          if (call.action === 'security.open') trusted.show()
+          else if (call.action === 'core.relaunch') {
+            again = true
+            app.quit()
+          } else if (call.action === 'core.quit') app.quit()
+          else throw { code: 'unavailable' }
+          return null
+        },
+        armed: caller => trusted.armed(caller),
+      },
+    })
     carrier = wired.carrier
     loader = wired.loader
+    loaderOf = wired.loader
     parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }
 
-    let editor: BrowserWindow | null = null
     // Each editor window comes with its way into the carrier, made before its page loads
     const editorWindow = () => {
       const window = openEditor(BrowserWindow, sessions.editor, app.isPackaged, placement(), mountPreload)
@@ -117,9 +176,14 @@ async function start(): Promise<void> {
       displays: screen.getAllDisplays(),
       cursorDisplay: screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id,
     })
-    // A second hetu on the same data folder quits before ready and this one comes to the front
+    // A second hetu on the same data folder quits before ready and this one comes to the front. In the stopped mode that
+    // is the trusted window
     app.on('second-instance', () => {
       if (quitting !== null) return
+      if (wired.loader.stopped() !== null) {
+        trusted.show()
+        return
+      }
       if (editor === null || editor.isDestroyed()) {
         editor = show(editorWindow())
         return
@@ -129,7 +193,10 @@ async function start(): Promise<void> {
     })
 
     await wired.loader.start()
-    if (quitting === null) editor = show(editorWindow())
+    if (quitting !== null) return
+    // A security control failed at start: only the trusted window opens, with the human's three choices
+    if (wired.loader.stopped() !== null) trusted.show()
+    else editor = show(editorWindow())
   } catch (err) {
     tell(err)
     code = 1

@@ -615,6 +615,14 @@ describe('core.*', () => {
     expect(events.every(message => !('path' in message) && eventShape.safeParse(message).success)).toBe(true)
   })
 
+  // So the editor can keep a draft before hetu ends
+  it('sends core.quitting to the windows that hear it when hetu is about to quit', async () => {
+    const { carrier, way } = setup()
+    await way.ask('editor-1', 'events.subscribe', { topics: ['core.quitting'] })
+    carrier.quitting()
+    expect(way.events().map(message => message.topic)).toEqual(['core.quitting'])
+  })
+
   it('refuses a core topic the core never sends', async () => {
     const { way } = setup()
     expect(code(await way.ask('editor-1', 'events.subscribe', { topics: ['core.secret'] }))).toBe('invalid')
