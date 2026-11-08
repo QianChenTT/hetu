@@ -11,6 +11,8 @@ const calm: CoreStatus = {
   recordNothing: false,
   logWrites: true,
   luoshuPicked: true,
+  pending: [],
+  stopped: null,
 }
 
 describe('the banner', () => {
@@ -28,6 +30,8 @@ describe('the banner', () => {
       recordNothing: true,
       logWrites: false,
       luoshuPicked: false,
+      pending: [],
+      stopped: null,
     })).toEqual([
       'gate: off', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
       'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',

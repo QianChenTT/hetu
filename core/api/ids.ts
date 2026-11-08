@@ -57,6 +57,19 @@ export type GuardableAction = typeof guardableActions[number]
 // expected guard that isn't running refuses every write
 export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({ 'luoshu.write': [] })
 
+// The security controls: the slot holders and every guard core/api expects. One that is on and fails stops hetu. The
+// log is the core's own and the providers serve powers without limiting anyone, so neither is one
+export function isSecurityControl(id: string): boolean {
+  return (slotIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+}
+
+// The security controls an install holds, in the order they start. A control the install list doesn't name isn't
+// part of the build
+export function securityControls(listed: readonly string[]): string[] {
+  const named = new Set(listed)
+  return [...slotIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
+}
+
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
   'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',

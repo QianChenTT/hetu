@@ -1,9 +1,9 @@
 import { z } from 'zod'
 import type { CapabilityType } from './capabilities.ts'
-import { change } from './changes.ts'
+import { change, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
-import { coreNamespaces, localName, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { LogSegment, LogVerification, SlotState } from './slots.ts'
@@ -32,9 +32,10 @@ export const MAX_LEASE_PATHS = 64
 // Topics one subscribe or unsubscribe names. A half holds at most topicsPerHalf in all
 export const MAX_CALL_TOPICS = 64
 
-// The topics the core sends, to windows only and never with a path: core.status says to read core.status again and
-// core.security that a security change was applied
-export const coreTopics = frozen(['core.status', 'core.security'] as const)
+// The topics the core sends, to windows only and never with a path: core.status says to read core.status again,
+// core.security that a security change was applied and core.quitting that hetu ends after a short grace, so a window can
+// keep a draft
+export const coreTopics = frozen(['core.status', 'core.security', 'core.quitting'] as const)
 export type CoreTopic = typeof coreTopics[number]
 
 // A topic a subscriber names: one the core sends or a plugin's <id>.<name>. The core's other namespaces carry no
@@ -85,8 +86,20 @@ const coreTable = {
   'log.history': { from: 'windows', args: nothing },
   'log.verify': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
-  // requestId is the request a needs-confirm refusal named
-  'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token }) },
+  // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
+  // attention, which the core checks where the change asks for it
+  'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token, typed: z.string().max(MAX_ID_LENGTH).optional() }) },
+  'security.cancel': { from: 'trusted', args: z.strictObject({ requestId: token }) },
+  // Opens the trusted window, at the named request or else at the plugin list, and focuses one already open. Only a
+  // human's click on a core control sends it, a notice's included
+  'security.open': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
+  // What the trusted window draws: the plugin list, the switches, the requests waiting and the stopped mode
+  'security.list': { from: 'trusted', args: nothing },
+  // The human's stop of a sandboxed plugin, from the plugin list only. A restart widens nothing, so any window may
+  'core.stop': { from: 'trusted', args: target },
+  'core.restart': { from: 'windows', args: target },
+  'core.quit': { from: 'windows', args: nothing },
+  'core.relaunch': { from: 'trusted', args: nothing },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -144,9 +157,18 @@ export const providerActions = lookup<ProviderAction>(providerTable)
 type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
 export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
 
+// A security change waiting for the human: its kind and the plugin it names or that raised it, null for a change no
+// plugin is named in. A window draws it as a notice that opens the trusted window
+export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
+
+// Why hetu stopped instead of starting: a security control that is on failed its check, is missing from the install
+// or failed at start, with the lifecycle reason. again says the same control failed in the run before, so hetu didn't
+// restart a second time
+export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
+
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
-// switches that weaken a check, whether the event log takes appends and whether a luoshu folder is picked. Pending
-// requests join with the trusted window
+// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the requests
+// waiting for the human and the stopped mode
 export type CoreStatus = {
   slots: Record<typeof slotIds[number], SlotState>
   crashed: string[]
@@ -156,6 +178,8 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
+  pending: PendingRequest[]
+  stopped: StoppedMode | null
 }
 
 // What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's

@@ -342,6 +342,8 @@ export class Loader implements Seam {
       recordNothing: switches.recordNothing,
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
+      pending: [],
+      stopped: null,
     }
   }
 

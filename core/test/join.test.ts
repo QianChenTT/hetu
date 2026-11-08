@@ -421,6 +421,8 @@ describe('core.status, for a window\'s banner', () => {
       recordNothing: false,
       logWrites: true,
       luoshuPicked: false,
+      pending: [],
+      stopped: null,
     })
     runtime.half('alpha').crash()
     await until(() => loader.plugin('alpha')?.state === 'crashed')
