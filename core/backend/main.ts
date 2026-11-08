@@ -1,17 +1,22 @@
 import path from 'node:path'
 import { app, BrowserWindow, dialog, MessageChannelMain, protocol, session, type Session } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
+import type { Carrier } from './carrier/carrier.ts'
 import { beforeReady } from './runtime/before-ready.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { quitInOrder, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { guardContents, openEditor } from './runtime/windows.ts'
+import { openWorkersRenderer, WorkerRenderer } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
-// The bundle sits in core/dist with the install list the build wrote beside it, and the pages are in core/frontend. A
-// packaged build keeps its install plugins beside app.asar
+// The bundle sits in core/dist with the install list, the built pages and the workers preload beside it. A packaged
+// build keeps its install plugins beside app.asar
 const here = import.meta.dirname
-const pages = path.join(here, '..', 'frontend')
+const pages = path.join(here, 'frontend')
+const workersPreload = path.join(here, 'workers-preload.js')
+// How long the core waits for the worker host page before it starts plugins anyway
+const RENDERER_READY_MS = 10_000
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -31,18 +36,32 @@ async function start(): Promise<void> {
     return app.exit(1)
   }
 
-  // Windows close first, then the core stops in its order and the process exits. Before the core is wired there is
-  // only boot's lock to give back
+  // Quit runs once, in order: the windows a human sees close, the core stops its plugins while the hidden renderer still
+  // holds their workers, then the renderer ends and the process exits. Before the core is wired there is only boot's
+  // lock to give back. Electron closes no window itself, since the renderer must outlive the core's shutdown
   let parts: QuitParts | null = null
+  let workers: WorkerRenderer | null = null
   let quitting: Promise<void> | null = null
   let code = 0
-  app.on('will-quit', event => {
+  const seen = new Set<BrowserWindow>()
+  app.on('before-quit', event => {
     event.preventDefault()
-    const order = parts === null ? booted.release().then(() => []) : quitInOrder(parts)
-    quitting ??= order.then(missed => {
+    quitting ??= (async () => {
+      for (const window of seen) if (!window.isDestroyed()) window.close()
+      const missed = parts === null ? (await booted.release(), []) : await quitInOrder(parts)
       for (const line of missed) console.error(`quit: ${line}`)
-    }, (err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => app.exit(code))
+      workers?.close()
+    })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => app.exit(code))
   })
+  // The hidden renderer never closes, so hetu quits when the last window a human sees does
+  const show = (window: BrowserWindow) => {
+    seen.add(window)
+    window.on('closed', () => {
+      seen.delete(window)
+      if (seen.size === 0) app.quit()
+    })
+    return window
+  }
   app.on('window-all-closed', () => app.quit())
 
   try {
@@ -55,22 +74,34 @@ async function start(): Promise<void> {
       lockDown(sessions[role], role, pages)
     }
 
-    const { loader, carrier } = wireCore({ booted, installDir, runtime: electronRuntime(() => new MessageChannelMain()) })
+    let carrier: Carrier | null = null
+    const renderer = new WorkerRenderer({
+      open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, app.isPackaged),
+      record: (event, fields) => carrier?.floor(event, fields),
+      readyMs: RENDERER_READY_MS,
+    })
+    workers = renderer
+    const runtime = electronRuntime(() => new MessageChannelMain(), renderer)
+    const wired = wireCore({ booted, installDir, runtime })
+    carrier = wired.carrier
+    const { loader } = wired
     parts = { loader, carrier, release: booted.release }
+
     let editor: BrowserWindow | null = null
     // A second hetu on the same data folder quits before ready and this one comes to the front
     app.on('second-instance', () => {
       if (quitting !== null) return
       if (editor === null || editor.isDestroyed()) {
-        editor = openEditor(BrowserWindow, sessions.editor, app.isPackaged)
+        editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
         return
       }
       if (editor.isMinimized()) editor.restore()
       editor.focus()
     })
 
+    await renderer.whenReady()
     await loader.start()
-    if (quitting === null) editor = openEditor(BrowserWindow, sessions.editor, app.isPackaged)
+    if (quitting === null) editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
   } catch (err) {
     tell(err)
     code = 1

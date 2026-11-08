@@ -1,7 +1,8 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST, installList } from '../api/install.ts'
 import { buildMain } from '../build/main.ts'
@@ -33,5 +34,33 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     expect(Object.keys(list.plugins)).toEqual([])
+  })
+
+  it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    for (const file of ['mount/index.html', 'workers/index.html', 'workers/page.js']) {
+      expect((await stat(path.join(out, 'frontend', file))).isFile(), file).toBe(true)
+    }
+    expect(built.pageImports).toEqual([])
+  })
+
+  it('bundles the workers preload as a script whose only import is electron', async () => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    expect((await stat(path.join(out, 'workers-preload.js'))).isFile()).toBe(true)
+    expect(built.preloadImports).toEqual(['electron'])
+  })
+
+  it('puts the prelude in the worker host page\'s script, and the prelude removes each constructor that starts a global', async () => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    // Only the prelude names SharedWorker
+    expect(await readFile(path.join(out, 'frontend', 'workers', 'page.js'), 'utf8')).toContain('SharedWorker')
+    expect(built.prelude).not.toContain('frontend/workers')
+    const scope: Record<string, unknown> = { Worker: class {}, SharedWorker: class {}, fetch: () => {} }
+    vm.runInContext(built.prelude, vm.createContext(scope))
+    expect(['Worker', 'SharedWorker'].filter(name => name in scope)).toEqual([])
+    expect('fetch' in scope).toBe(true)
   })
 })

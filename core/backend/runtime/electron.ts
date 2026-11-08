@@ -1,6 +1,6 @@
 import type { MessagePortMain } from 'electron'
 import type { Port } from '../carrier/seams.ts'
-import type { Runtime } from '../loader/seams.ts'
+import type { Runtime, WorkerStart } from '../loader/seams.ts'
 
 // A MessagePortMain as the carrier reads a port: message hands over the data itself, as a Node port does. A message
 // carrying ports is read as one that can't be read and its ports are closed, so a half holds no channel but its own
@@ -26,21 +26,25 @@ function asPort(port: MessagePortMain): Port {
   }
 }
 
-// The loader's runtime on Electron. Workers need the worker host page and host halves need the host loader, neither
-// built yet, so both refuse and the loader holds the plugin failed. The install list names none until they are
-export function electronRuntime(channel: () => { port1: MessagePortMain, port2: MessagePortMain }): Runtime {
+// The loader's runtime on Electron. Workers start and end in the hidden renderer. Host halves need the host loader, not
+// built yet, so they refuse and the loader holds the plugin failed. The install list names none until they can load
+export function electronRuntime(
+  channel: () => { port1: MessagePortMain, port2: MessagePortMain },
+  workers: Pick<Runtime, 'terminate'> & { start(start: WorkerStart): void },
+): Runtime {
   return {
     channel() {
       const { port1, port2 } = channel()
       return { core: asPort(port1), plugin: port2 }
     },
-    startWorker() {
-      throw new Error('no worker host page to start a worker in yet')
+    startWorker(start) {
+      workers.start(start)
     },
     startHost() {
       return Promise.reject(new Error('no host loader to start a host half with yet'))
     },
-    // Nothing started, so nothing to end
-    terminate() {},
+    terminate(id, incarnation) {
+      workers.terminate(id, incarnation)
+    },
   }
 }

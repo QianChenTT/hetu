@@ -14,6 +14,8 @@ beforeEach(async () => {
   await writeFile(path.join(root, 'mount', 'parts', 'shell.css'), 'body {}')
   await writeFile(path.join(root, 'mount', 'README.md'), 'notes')
   await writeFile(path.join(root, 'trusted', 'index.html'), '<!doctype html><title>trusted</title>')
+  await mkdir(path.join(root, 'workers'), { recursive: true })
+  await writeFile(path.join(root, 'workers', 'index.html'), '<!doctype html><title>workers</title>')
   await writeFile(path.join(root, 'secret.html'), 'outside')
 })
 
@@ -25,7 +27,7 @@ const get = (url: string, method = 'GET') => ({ url, method })
 
 describe('the sessions', () => {
   it('keeps each role in its own partition that never reaches the disk', () => {
-    expect(Object.keys(ROLES).map(role => partition(role as keyof typeof ROLES))).toEqual(['hetu-editor', 'hetu-trusted'])
+    expect(Object.keys(ROLES).map(role => partition(role as keyof typeof ROLES))).toEqual(['hetu-editor', 'hetu-trusted', 'hetu-workers'])
     for (const role of Object.keys(ROLES)) expect(partition(role as keyof typeof ROLES)).not.toMatch(/^persist:/)
   })
 
@@ -42,6 +44,9 @@ describe('the sessions', () => {
       expect(allowed('editor', url), url).toBe(false)
     }
     expect(allowed('trusted', 'hetu://editor/')).toBe(false)
+    expect(allowed('workers', 'hetu://workers/page.js')).toBe(true)
+    expect(allowed('workers', 'hetu://editor/')).toBe(false)
+    expect(allowed('editor', 'hetu://workers/')).toBe(false)
   })
 
   it('serves the role\'s page from the app with its CSP and type, never sniffed', async () => {
@@ -67,6 +72,17 @@ describe('the sessions', () => {
       expect((await serve(role, get(url), root)).status, url).toBe(404)
     }
     expect((await serve('trusted', get('hetu://trusted/'), root)).status).toBe(200)
+  })
+
+  it('gives the worker host page a CSP of its own: scripts from itself and WebAssembly, workers only from data:', async () => {
+    const page = await serve('workers', get('hetu://workers/'), root)
+    expect(page.status).toBe(200)
+    const csp = page.headers.get('content-security-policy') ?? ''
+    expect(csp).toContain("default-src 'none'")
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'")
+    expect(csp).toContain('worker-src data:')
+    const editor = await serve('editor', get('hetu://editor/'), root)
+    expect(editor.headers.get('content-security-policy')).not.toContain('worker-src')
   })
 
   it('answers only GET and HEAD', async () => {

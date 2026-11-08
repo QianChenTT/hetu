@@ -23,10 +23,14 @@ class FakePortMain extends EventEmitter {
   }
 }
 
+let seen: unknown[][] = []
+
 function channel() {
+  seen = []
+  const workers = { start: (start: unknown) => seen.push(['start', start]), terminate: (id: string, n: number) => seen.push(['terminate', id, n]) }
   const core = new FakePortMain()
   const plugin = new FakePortMain()
-  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }))
+  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers)
   return { runtime, core, plugin }
 }
 
@@ -69,11 +73,13 @@ describe('the Electron runtime', () => {
     expect(closed).toBe(1)
   })
 
-  it('refuses to start a worker or a host half until the core can run them', async () => {
-    const { runtime } = channel()
-    expect(() => runtime.startWorker({ id: 'search', incarnation: 1, code: Buffer.from(''), port: null })).toThrow()
+  it('starts and ends workers through the hidden renderer and refuses a host half until host halves can load', async () => {
+    const { runtime, plugin } = channel()
+    const start = { id: 'search', incarnation: 1, code: Buffer.from('// search'), port: plugin }
+    runtime.startWorker(start)
+    runtime.terminate('search', 1)
+    expect(seen).toEqual([['start', start], ['terminate', 'search', 1]])
     await expect(runtime.startHost({ id: 'log', incarnation: 1, root: '', files: [], entry: 'host.js', link: { post() {}, listen() {} } }))
       .rejects.toThrow()
-    expect(() => runtime.terminate('search', 1)).not.toThrow()
   })
 })

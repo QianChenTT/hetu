@@ -7,6 +7,7 @@ import { SCHEME } from './before-ready.ts'
 export const ROLES = Object.freeze({
   editor: Object.freeze(['editor', 'views', 'content']),
   trusted: Object.freeze(['trusted']),
+  workers: Object.freeze(['workers']),
 })
 export type Role = keyof typeof ROLES
 
@@ -14,7 +15,7 @@ export type Role = keyof typeof ROLES
 export const partition = (role: Role): string => `hetu-${role}`
 
 // The pages folder each host serves from. views and content have none until their pages exist
-const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'mount', trusted: 'trusted' })
+const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'mount', trusted: 'trusted', workers: 'workers' })
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
   html: 'text/html; charset=utf-8',
@@ -32,6 +33,13 @@ const SERVABLE = /^\/(?:(?:[a-z0-9][a-z0-9-]*\/)*[a-z0-9][a-z0-9-]*\.(html|css|j
 const CSP = [
   "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self'", "font-src 'self'", "base-uri 'none'",
   "form-action 'none'", "frame-ancestors 'none'",
+].join('; ')
+
+// The worker host page starts workers only from data: URLs, which take a copy of this policy: no eval, no network,
+// WebAssembly allowed
+const WORKERS_CSP = [
+  "default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", 'worker-src data:', "base-uri 'none'", "form-action 'none'",
+  "frame-ancestors 'none'",
 ].join('; ')
 
 function parsed(url: string): URL | null {
@@ -69,7 +77,7 @@ export async function serve(role: Role, request: { url: string, method: string }
   }
   const headers = {
     'content-type': TYPES[match[1] ?? 'html'],
-    'content-security-policy': CSP,
+    'content-security-policy': at.hostname === 'workers' ? WORKERS_CSP : CSP,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   }
