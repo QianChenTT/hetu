@@ -454,6 +454,7 @@ describe('the log plugin\'s handle through the joined core', () => {
     await parts.loader.start()
     await parts.loader.settled()
     const alpha = parts.runtime.half('alpha')
+    await parts.runtime.half('beta').ask('core.self', {})
     const asked = parts.runtime.half('beta').ask('alpha.hello', {})
     await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
     const delivered = alpha.inbox.find(message => message.kind === 'call' && message.action === 'alpha.hello')!
@@ -463,8 +464,13 @@ describe('the log plugin\'s handle through the joined core', () => {
     const taken = lent!.next(50)
     await lent!.append(taken.filter(record => record.action === 'alpha.hello'))
     lent!.ack(taken.at(-1)!.seq)
-    const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
+    await parts.carrier.flushFloor()
+    const records = await floorRecords(parts.dataDir)
+    const written = records.filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
+    // The records it took and never wrote leave a count
+    expect(taken.length).toBeGreaterThan(1)
+    expect(records.filter(record => record.event === 'audit.skipped')).toEqual([expect.objectContaining({ records: taken.length - 1 })])
   })
 })
 

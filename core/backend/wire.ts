@@ -93,7 +93,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     installDir: options.installDir,
     link,
     runtime: options.runtime,
-    audit: () => lendAudit(carrier.audit, options.booted.log),
+    audit: () => lendAudit(carrier.audit, options.booted.log, records => carrier.skipped(records)),
     logWrites: () => options.booted.log.healthy,
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })

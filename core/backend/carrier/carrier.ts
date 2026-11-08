@@ -269,6 +269,15 @@ export class Carrier {
     this.lane.write(event, fields)
   }
 
+  // The log plugin acknowledged records it never wrote, which is its choice to make and leaves a count: records is how
+  // many, summed over a second, and count how many acks
+  skipped(records: number): void {
+    this.coalesced.hit('audit.skipped', { records }, {
+      by: {},
+      join: (held, next) => ({ records: Number(held?.records ?? 0) + Number(next.records) }),
+    })
+  }
+
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
   // hears it while its slot is on. The page counts a second's worth before it reports
   sample(sample: Sample): void {

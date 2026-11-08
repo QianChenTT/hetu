@@ -1313,4 +1313,35 @@ describe('a batch', () => {
     expect((await recordsOf(2)).map(record => record.seq)).toEqual([2, 3])
     expect(await log.verify()).toEqual({ ok: true })
   })
+
+  const batch = [{ event: 'audit.call', fields: { n: 1 } }, { event: 'audit.call', fields: { n: 2 } }]
+
+  // The log takes lines that landed before their write threw as its own, so the same batch coming again isn't written
+  // again
+  it('writes a batch once when its fsync threw after its lines landed and the same batch comes again', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    const proto = await fileHandleProto()
+    const realSync = proto.sync
+    let fail = true
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: unknown) {
+      await realSync.call(this)
+      if (fail) {
+        fail = false
+        throw Object.assign(new Error('EIO'), { code: 'EIO' })
+      }
+    })
+    await expect(log.appendMany(batch, { id: 'b1' })).rejects.toThrow('EIO')
+    await log.appendMany(batch, { id: 'b1' })
+    await log.append('test.line', { n: 3 })
+    expect((await recordsOf(1)).map(r => r.n)).toEqual([1, 2, 3])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('writes a batch that never landed when the same batch comes again', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    vi.spyOn(await fileHandleProto(), 'writeFile').mockRejectedValueOnce(Object.assign(new Error('full'), { code: 'ENOSPC' }))
+    await expect(log.appendMany(batch, { id: 'b1' })).rejects.toThrow('full')
+    await log.appendMany(batch, { id: 'b1' })
+    expect((await recordsOf(1)).map(r => r.n)).toEqual([1, 2])
+  })
 })

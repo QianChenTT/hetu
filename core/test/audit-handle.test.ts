@@ -34,13 +34,14 @@ function push(action: string, more: Partial<AuditRecord> = {}) {
 const lines = async () => (await readFile(path.join(dir, 'events', 'events-1.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
 
 describe('a record as log fields', () => {
-  it('names the caller and root as text, the scope as a JSON list and the time of the call apart from the line\'s', () => {
+  // record is the queue's seq, which a reader uses to tell a record written twice from two calls, in this run's lines
+  it('names the record, the caller and root as text, the scope as a JSON list and the time of the call apart from the line\'s', () => {
     const record: AuditRecord = {
       seq: 9, at: AT, caller: editor, onBehalf: 'agent', root: alpha, action: 'luoshu.read', scope: { paths: ['a.md', 'b c.md'] },
       code: 'not-granted', ms: 12, gate: 'off', count: 3,
     }
     expect(auditFields(record)).toEqual({
-      caller: 'window/editor#3', onBehalf: 'agent', root: 'alpha/worker#2', action: 'luoshu.read', paths: '["a.md","b c.md"]',
+      record: 9, caller: 'window/editor#3', onBehalf: 'agent', root: 'alpha/worker#2', action: 'luoshu.read', paths: '["a.md","b c.md"]',
       pathCount: 2, code: 'not-granted', ms: 12, gate: 'off', count: 3, calledAt: '2026-11-07T12:00:00.000Z',
     })
     expect(auditFields({ ...record, scope: { target: 'search' }, onBehalf: undefined, code: null })).toMatchObject({ target: 'search', code: null })
@@ -145,5 +146,80 @@ describe('the audit handle', () => {
     expect(() => handle.next(1.5)).toThrow()
     expect(() => handle.next(-1)).toThrow()
     expect(handle.next(Number.MAX_SAFE_INTEGER)).toHaveLength(1)
+  })
+
+  // A write can throw after its lines landed. The same batch under the same id lets the log write it once, and any other
+  // batch could hold a record that is already on disk
+  it('names each batch to the log, and after a failed append takes only that batch again until it is written or acknowledged', async () => {
+    push('a.one')
+    push('a.two')
+    push('a.three')
+    const ids: (string | undefined)[] = []
+    let failing = true
+    const flaky: AuditLog = {
+      appendMany: async (batch, options) => {
+        ids.push(options?.id)
+        if (failing) throw new Error('EIO')
+        await log.appendMany(batch, options)
+      },
+      history: () => log.history(),
+      verify: () => log.verify(),
+    }
+    const { handle } = lendAudit(queue, flaky)
+    const [one, two, three] = handle.next(3)
+    await expect(handle.append([one, two])).rejects.toThrow('EIO')
+    await expect(handle.append([one])).rejects.toThrow()
+    await expect(handle.append([three])).rejects.toThrow()
+    failing = false
+    await handle.append([one, two])
+    expect(ids).toEqual([ids[0], ids[0]])
+    expect(ids[0]).toEqual(expect.any(String))
+    await handle.append([three])
+    expect((await lines()).map(line => line.action)).toEqual(['a.one', 'a.two', 'a.three'])
+  })
+
+  it('lets a failed batch go once the log plugin acknowledges past it', async () => {
+    push('a.one')
+    push('a.two')
+    let failing = true
+    const flaky: AuditLog = {
+      appendMany: async (batch, options) => {
+        if (failing) throw new Error('EIO')
+        await log.appendMany(batch, options)
+      },
+      history: () => log.history(),
+      verify: () => log.verify(),
+    }
+    const { handle } = lendAudit(queue, flaky)
+    const [one, two] = handle.next(2)
+    await expect(handle.append([one])).rejects.toThrow('EIO')
+    handle.ack(one.seq)
+    failing = false
+    await handle.append([two])
+    expect((await lines()).map(line => line.action)).toEqual(['a.two'])
+  })
+
+  it('takes records in the order it handed them out, never one below a record already written', async () => {
+    push('a.one')
+    push('a.two')
+    push('a.three')
+    const { handle } = lendAudit(queue, log)
+    const [one, two, three] = handle.next(3)
+    await expect(handle.append([two, one])).rejects.toThrow()
+    await handle.append([two])
+    await expect(handle.append([one])).rejects.toThrow()
+    await handle.append([three])
+    expect((await lines()).map(line => line.record)).toEqual([two.seq, three.seq])
+  })
+
+  it('counts the records the log plugin acknowledges without writing', async () => {
+    for (const action of ['a.one', 'a.two', 'a.three']) push(action)
+    const skipped: number[] = []
+    const { handle } = lendAudit(queue, log, count => { skipped.push(count) })
+    const taken = handle.next(3)
+    await handle.append([taken[1]])
+    handle.ack(taken[2].seq)
+    handle.ack(taken[2].seq)
+    expect(skipped).toEqual([2])
   })
 })

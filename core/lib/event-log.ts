@@ -219,6 +219,10 @@ export class EventLog {
   // The tip of a line being written, kept when its write throws, since the line may still have landed. Looking again
   // then takes it as this process's own line, not as a change made while hetu ran
   private pending: Tip | null = null
+  // The id of the batch pending holds, and of the last batch whose write threw and whose lines the log then found had
+  // landed. The same batch coming again under that id is already written
+  private pendingId: string | null = null
+  private landed: string | null = null
   // The read of each kind running now, which a caller asking meanwhile shares
   private verifying: Promise<Verification> | null = null
   private listing: Promise<Segment[]> | null = null
@@ -304,6 +308,7 @@ export class EventLog {
         segment: newest, first: found.first ?? 1, seq: found.last ?? 0, prev: found.tip, start: found.start ?? ZERO, at: found.at,
       }
       const at = (other: Tip | null) => other !== null && tip.segment === other.segment && tip.seq === other.seq && tip.prev === other.prev
+      if (at(this.pending) && !at(before)) this.landed = this.pendingId
       if (at(before) || at(this.pending)) return { tip, opened: { lastSeq: tip.seq, broken: null, unlinked: null } }
       if (before === null) {
         // At the first open the newest segment is checked against the file before it once. A healthy rotation is the
@@ -408,8 +413,10 @@ export class EventLog {
   }
 
   // A batch of records with one fsync, as the log plugin writes the audit records it takes. Each is checked first, so
-  // one the log wouldn't take refuses the whole batch and none of it is written
-  async appendMany(batch: readonly { event: string, fields?: Record<string, Field> }[]): Promise<void> {
+  // one the log wouldn't take refuses the whole batch and none of it is written. id names the batch for a writer that
+  // tries it again after a failure: a write can throw after its lines landed, which the log finds when it looks at the
+  // file again and takes as its own, so the same batch under the same id then resolves without writing it twice
+  async appendMany(batch: readonly { event: string, fields?: Record<string, Field> }[], options: { id?: string } = {}): Promise<void> {
     const checked = batch.map(({ event, fields }) => ({ event, fields: checkFields(event, fields === undefined ? {} : fields) }))
     if (checked.length === 0) return
     await this.serial(async () => {
@@ -417,6 +424,11 @@ export class EventLog {
       // A half written line then reads as a break. Until retryAfterMs has passed appends are refused at once
       if (!this.ok && this.tried && performance.now() >= this.quietUntil) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
+      if (options.id !== undefined && options.id === this.landed) {
+        this.landed = null
+        return
+      }
+      this.pendingId = options.id ?? null
       try {
         this.tip = await this.write(this.tip, checked)
       } catch (err) {
