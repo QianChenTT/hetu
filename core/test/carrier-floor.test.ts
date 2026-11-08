@@ -344,10 +344,10 @@ describe('the gate slot', () => {
     expect(luoshu.prepared).toEqual([])
   })
 
-  it.each(['on', 'off'] as const)('passes calls with power while the gate is off and the log is %s', async log => {
+  it.each([['on', false], ['off', true]] as const)('passes calls with power while the gate is off and recording is %s', async (_name, nothing) => {
     const { connect, loader, gate, luoshu } = harness()
     loader.slots.gate = 'off'
-    loader.slots.log = log
+    loader.nothing = nothing
     loader.sandboxed('git', { log: {} })
     luoshu.files.set('secret/a.md', 'x')
     const search = connect(worker('search'))
@@ -360,32 +360,33 @@ describe('the gate slot', () => {
     expect(gate.asked).toEqual([])
   })
 
-  it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is off and the log is %s', async log => {
-    const { connect, loader, luoshu } = harness()
+  // The log fails once a record waited logFailMs unwritten, timed on the carrier's clock
+  it('refuses calls with power policy-down while the gate is off and the log has failed', async () => {
+    let now = 0
+    const { connect, loader, log, luoshu } = harness({ clock: () => now })
     loader.slots.gate = 'off'
-    loader.slots.log = log
+    log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
+    expect((await search.ask('storage.get', { key: 'index' })).ok).toBe(true)
+    now = 30_000
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     // Free calls have no power and still pass
     expect((await search.ask('storage.get', { key: 'index' })).ok).toBe(true)
     expect(luoshu.prepared).toEqual([])
   })
 
-  it('answers starting while the gate is off and the log starts', async () => {
-    const { connect, loader } = harness()
+  it('passes calls with power while the gate is off and recording is off, the log failed', async () => {
+    let now = 0
+    const { connect, loader, log, luoshu } = harness({ clock: () => now })
     loader.slots.gate = 'off'
-    loader.slots.log = 'starting'
-    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
-  })
-
-  it.each(['failed', 'absent', 'starting'] as const)('passes calls with power while the gate is off and recording is off, the log %s', async log => {
-    const { connect, loader, luoshu } = harness()
-    loader.slots.gate = 'off'
-    loader.slots.log = log
-    loader.nothing = true
+    log.failing = true
     luoshu.files.set('a.md', 'x')
-    expect((await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'index' })
+    now = 30_000
+    loader.nothing = true
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
   it('never lets recording off pass a call while the gate is failed', async () => {

@@ -4,7 +4,7 @@ import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { filesFor, hostManifest, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, records, repo, temp, tick, until } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, records, repo, temp, until } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -17,10 +17,10 @@ async function shipped(id: string): Promise<Files> {
   }
 }
 
-// An install holding the shipped log and gate, with a plugin replaced, or left out where over names null
+// An install holding the shipped gate, with a plugin replaced, or left out where over names null
 async function install(over: Record<string, Listing | null> = {}): Promise<string> {
   const dir = await temp()
-  const plugins: Record<string, Listing | null> = { log: { files: await shipped('log') }, gate: { files: await shipped('gate') }, ...over }
+  const plugins: Record<string, Listing | null> = { gate: { files: await shipped('gate') }, ...over }
   await writeInstall(dir, Object.fromEntries(Object.entries(plugins).filter((entry): entry is [string, Listing] => entry[1] !== null)))
   return dir
 }
@@ -66,19 +66,22 @@ const banner = async (page: Page, line: string) => {
   await until(async () => (await page.locator('#banner li').allTextContents()).includes(line))
 }
 
-describe('the gate and the log on', () => {
-  it('decides a window\'s call on its grants, and the log writes its record', async () => {
+describe('the gate on and the core\'s log', () => {
+  it('decides a window\'s call on its grants, and the core writes its record and serves the log to the window', async () => {
     const { dataDir, page } = await started()
     expect(await read(page)).toBe('unavailable')
     // ** leaves dot files out of the editor's grant
     expect(await read(page, '.scratch.md')).toBe('not-granted')
+    await until(async () => (await records(dataDir)).some(record =>
+      record.event === 'audit.call' && record.action === 'luoshu.read' && record.code === 'unavailable' && record.gate === 'on'
+      && String(record.caller).startsWith('window/editor#')))
     const history = await ask(page, 'log.history')
     expect(history.ok).toBe(true)
     expect((history.result as { segment: number }[])[0]).toMatchObject({ segment: 1 })
-    await until(async () => (await records(dataDir)).some(record =>
-      record.event === 'audit.call' && record.action === 'log.history' && record.code === null && record.gate === 'on'
-      && String(record.caller).startsWith('window/editor#')))
-    expect(await page.locator('#banner li').allTextContents()).not.toContain('gate: on')
+    expect(await ask(page, 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })
+    const lines = await page.locator('#banner li').allTextContents()
+    expect(lines).not.toContain('gate: on')
+    expect(lines.some(line => line.startsWith('log:'))).toBe(false)
   })
 })
 
@@ -122,48 +125,14 @@ describe('the gate off by the human', () => {
     await banner(page, 'gate: off')
   })
 
-  it('refuses them while the log is down, since nothing would record them, and lets them through with the log off too', async () => {
-    const down = await started({ install: { log: null }, switches: { off: ['gate'] } })
-    expect(await read(down.page)).toBe('policy-down')
-    const off = await started({ switches: { off: ['gate', 'log'] } })
-    expect(await read(off.page)).toBe('unavailable')
-  })
-
-  it('refuses them once the log stops acknowledging past auditStallMs, which marks it failed', async () => {
-    // A log that takes its handle and never writes a record
-    const stalls = `${starts}export const log = { attach() {} }\n`
-    const { dataDir, page } = await started({
-      install: { log: host('log', stalls) },
-      switches: { off: ['gate'], limits: { all: {}, plugins: { log: { auditStallMs: 1500 } } } },
-    })
+  // Recording off writes no core.ready, so the banner says when the start is over
+  it('lets them through unrecorded once the human turned recording off too', async () => {
+    const dataDir = await data({ off: ['gate'], recordNothing: true })
+    const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
+    const page = await editorPage(app)
+    await banner(page, 'gate: off')
+    await banner(page, 'recording off')
     expect(await read(page)).toBe('unavailable')
-    await tick(1600)
-    expect(await read(page)).toBe('policy-down')
-    expect(await logged(dataDir, 'plugin.failed', { plugin: 'log', reason: 'stalled' })).toBe(true)
-    await until(() => logged(dataDir, 'audit.dropped', { why: 'log-down' }))
-    await banner(page, 'log: failed')
-  })
-})
-
-describe('the log down with the gate on', () => {
-  it('leaves the gate deciding and says so in the banner', async () => {
-    const { page } = await started({ install: { log: { files: await shipped('log'), hash: '0'.repeat(64) } } })
-    expect(await read(page)).toBe('unavailable')
-    expect(await read(page, '.scratch.md')).toBe('not-granted')
-    await banner(page, 'log: tampered')
-  })
-
-  it.each([
-    ['its module throws', 'throw new Error(\'the log module threw\')\n', 'start-failed'],
-    ['it hangs at start', `export default { kind: 'hetu-plugin', spec: { start() { return new Promise(() => {}) } } }\nexport const log = { attach() {} }\n`, 'start-timeout'],
-  ])('is marked failed when %s, the gate still deciding', async (_name, module, reason) => {
-    const { dataDir, page } = await started({
-      install: { log: host('log', module) },
-      switches: { limits: { all: {}, plugins: { log: { readyMs: 1500 } } } },
-    })
-    await until(() => logged(dataDir, 'plugin.failed', { plugin: 'log', reason }))
-    expect(await read(page)).toBe('unavailable')
-    expect(await read(page, '.scratch.md')).toBe('not-granted')
-    await banner(page, 'log: failed')
+    expect((await records(dataDir)).some(record => record.event === 'audit.call')).toBe(false)
   })
 })

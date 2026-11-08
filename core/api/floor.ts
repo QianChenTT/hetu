@@ -22,10 +22,10 @@ export const floorConstants = table({
   topicsPerHalf: 64,
   filterMsPerSecond: 100, // per plugin, the gate's time its core.filterReadable calls may take in a second
   auditQueue: 10000, // records
-  // How long the oldest record the audit queue holds may wait for the log plugin's ack before the log counts as stalled
-  // and is marked failed: six of the event log's 5 s retries after a failed write, so a disk locked for a moment doesn't
-  // fail the log for the run
-  auditStallMs: 30000,
+  // How long the oldest record the audit queue holds may wait to be written before the core's log counts as failed:
+  // six of the event log's 5 s retries after a failed write, so a disk locked for a moment costs nothing. The human may
+  // raise it for all, the watchdog can't lower it, since it is no plugin's
+  logFailMs: 30000,
   floorBacklog: 1000, // records
   floodFactor: 10, // the flood cap: this many times the message rate
   floodMs: 5000, // for this long

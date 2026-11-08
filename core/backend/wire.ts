@@ -3,7 +3,6 @@ import type { FloorConstant } from '../api/floor.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
-import { lendAudit } from './carrier/audit.ts'
 import { Carrier } from './carrier/carrier.ts'
 import type { Asks, CarrierOptions, Debug, Landing, Port } from './carrier/seams.ts'
 import { Loader } from './loader/loader.ts'
@@ -84,8 +83,7 @@ export function carrierOptions(
 
 // The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
 // every slot, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
-// the log plugin's audit handle writes through with the carrier's audit queue. The loader lends that handle only once
-// it starts the log, after the carrier is built
+// the carrier writes its floor records and its audit queue through and serves log.history and log.verify from
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
   const link = new LinkToCarrier()
   const loader = new Loader({
@@ -93,7 +91,6 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     installDir: options.installDir,
     link,
     runtime: options.runtime,
-    audit: () => lendAudit(carrier.audit, options.booted.log, records => carrier.skipped(records)),
     logWrites: () => options.booted.log.healthy,
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })

@@ -36,16 +36,16 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['gate', 'log', 'search'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['gate', 'search'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
 
-  it('writes the log and the gate into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
+  it('writes the gate into the install as a host half, one module importing nothing, with the hash of its files', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    for (const [id, role] of [['log', 'log'], ['gate', 'gate']]) {
+    for (const [id, role] of [['gate', 'gate']]) {
       const root = path.join(out, 'plugins', id)
       expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
       expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])

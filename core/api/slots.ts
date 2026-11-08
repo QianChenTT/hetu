@@ -140,18 +140,3 @@ export type LogSegment = {
 // Whether the open log file's chain checks out, and where it first doesn't
 export type LogVerification = { ok: true } | { ok: false, seq: number }
 
-// What the log plugin holds, lent for one incarnation. next takes the records not yet taken, oldest first. append
-// writes records next handed out, the core's own copy of each, as one batch with one fsync, so the log plugin chooses
-// which records to write and never what they say. A record not handed out, or written already, refuses the whole
-// batch. ack lets go of every record taken up to seq, written or not. Every method throws once the incarnation is over
-export type AuditHandle = {
-  next(max: number): AuditRecord[]
-  append(batch: readonly AuditRecord[]): Promise<void>
-  ack(seq: number): void
-  history(): Promise<LogSegment[]>
-  verify(): Promise<LogVerification>
-}
-
-// The log slot's role. attach takes the handle once, after the import and before the half counts as ready. A throw
-// marks the half failed
-export type LogRole = { attach(handle: AuditHandle): void }

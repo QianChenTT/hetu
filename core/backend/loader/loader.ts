@@ -15,7 +15,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { AuditHandle, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -42,9 +42,6 @@ export type LoaderOptions = {
   // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
   // trusted window
   raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
-  // Lends the install's log plugin its audit handle for one incarnation, with the revoke that ends it. The join builds
-  // it from the carrier's audit queue and boot's EventLog
-  audit?: () => { handle: AuditHandle, revoke(): void }
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
 }
@@ -74,8 +71,6 @@ type Live = {
   readonly n: number
   readonly halves: Map<HalfName, Run>
   exports: HostExports | null
-  // Ends the audit handle lent to the log for this incarnation
-  revoke: (() => void) | null
   imported: boolean
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
@@ -114,10 +109,10 @@ type Known = {
 
 type Staged = { dir: string, read: Read }
 
-// Section 6's order for install plugins: the slot holders with the log first, then the providers, then the guard and
-// the rest. A requirement still starts before its dependent
+// Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
+// requirement still starts before its dependent
 export const bootOrder = frozen([
-  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http',
+  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http',
   'editor-core', 'hidden-marks',
 ] as const)
 
@@ -194,7 +189,6 @@ export class Loader implements Seam {
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly raise: LoaderOptions['raise']
-  private readonly audit: LoaderOptions['audit']
   private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
@@ -233,7 +227,6 @@ export class Loader implements Seam {
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.raise = options.raise
-    this.audit = options.audit
     this.logWrites = options.logWrites ?? (() => true)
     this.markers = new Set(booted.markers)
     this.state = booted.state
@@ -297,14 +290,6 @@ export class Loader implements Seam {
     const found = this.runOf(caller)
     if (found === null) return
     this.die(found.k, reason)
-  }
-
-  // The carrier found the install plugin holding a slot failing at its job. Marked failed as a crash would be, so a host
-  // half stays failed until Restart hetu. Nothing for a plugin that isn't the install's or isn't running
-  fail(id: string, reason: 'stalled'): void {
-    const k = this.known.get(id)
-    if (k === undefined || k.from !== 'install' || k.live === null) return
-    this.die(k, reason)
   }
 
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
@@ -401,7 +386,7 @@ export class Loader implements Seam {
     })
   }
 
-  // Shutdown after the windows: sandboxed plugins in reverse graph order, then host plugins in reverse with the log
+  // Shutdown after the windows: sandboxed plugins in reverse graph order, then host plugins in reverse with the gate
   // last. The carrier hears it first, so nothing stopped for shutdown reads as down
   async shutdown(): Promise<void> {
     if (!this.closing) {
@@ -912,7 +897,7 @@ export class Loader implements Seam {
     this.minted.set(k.id, n)
     k.incarnations = n
     const live: Live = {
-      n, halves: new Map(), exports: null, revoke: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
+      n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
       with: [], over: false, deps: '', marked: false,
     }
     k.live = live
@@ -980,7 +965,6 @@ export class Loader implements Seam {
         if (live.over) return
         live.exports = exports ?? {}
         live.imported = true
-        if (!this.lend(k, live)) return
         this.readied(k, live)
       }, () => {
         if (!live.over) this.die(k, 'start-failed')
@@ -1007,27 +991,6 @@ export class Loader implements Seam {
     for (const run of live.halves.values()) this.link.send(run.caller, init)
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
-  }
-
-  // The install's log gets its audit handle once its module is imported and before it can count as ready, as the gate
-  // gets its first StateView. A throw from attach marks it failed, and retire revokes what was lent
-  private lend(k: Known, live: Live): boolean {
-    const role = live.exports?.log
-    if (k.id !== 'log' || k.from !== 'install' || this.audit === undefined) return true
-    // With no role nothing could take the handle and drain the records, so the slot can't read on
-    if (role === undefined) {
-      this.die(k, 'start-failed')
-      return false
-    }
-    try {
-      const lent = this.audit()
-      live.revoke = lent.revoke
-      role.attach(lent.handle)
-      return true
-    } catch {
-      this.die(k, 'start-failed')
-      return false
-    }
   }
 
   private readied(k: Known, live: Live): void {
@@ -1142,10 +1105,6 @@ export class Loader implements Seam {
   }
 
   private retire(k: Known, live: Live): void {
-    try {
-      live.revoke?.()
-    } catch {}
-    live.revoke = null
     if (live.beat !== null) clearInterval(live.beat.timer)
     live.beat = null
     live.over = true

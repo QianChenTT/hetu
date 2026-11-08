@@ -3,7 +3,7 @@ import type { CoreStatus } from '../api/actions.ts'
 import { bannerLines, Shell } from '../frontend/mount/shell.ts'
 
 const calm: CoreStatus = {
-  slots: { gate: 'on', capabilities: 'on', log: 'on', watchdog: 'on' },
+  slots: { gate: 'on', capabilities: 'on', watchdog: 'on' },
   crashed: [],
   devMode: [],
   allowUnsigned: 0,
@@ -20,7 +20,7 @@ describe('the banner', () => {
 
   it('names each slot not on, the plugins down, each switch that weakens a check and a luoshu not picked', () => {
     expect(bannerLines({
-      slots: { gate: 'off', capabilities: 'on', log: 'failed', watchdog: 'absent' },
+      slots: { gate: 'off', capabilities: 'on', watchdog: 'absent' },
       crashed: ['git', 'search'],
       devMode: ['notes'],
       allowUnsigned: 2,
@@ -29,7 +29,7 @@ describe('the banner', () => {
       logWrites: false,
       luoshuPicked: false,
     })).toEqual([
-      'gate: off', 'log: failed', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
+      'gate: off', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
       'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',
     ])
   })

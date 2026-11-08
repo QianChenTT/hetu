@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
+import type { Carrier } from '../backend/carrier/carrier.ts'
 import {
-  cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type Message, type Side,
+  cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type FakeLog, type Message, type Side,
 } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -414,10 +415,20 @@ describe('asking again', () => {
 })
 
 describe('the gate off by the human', () => {
-  it.each(['on', 'off'] as const)('lets any subscribe through and every path out while the log is %s', async log => {
+  // A bus on a clock the test moves and a log that can't write, with one record queued that waits from 0
+  async function failing() {
+    let now = 0
+    const parts = setup({ clock: () => now })
+    parts.loader.slots.gate = 'off'
+    parts.log.failing = true
+    await parts.mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
+    return { ...parts, at: (ms: number) => { now = ms } }
+  }
+
+  it.each([['on', false], ['off', true]] as const)('lets any subscribe through and every path out with recording %s', async (_name, nothing) => {
     const { carrier, loader, connect, gate, edited } = setup()
     loader.slots.gate = 'off'
-    loader.slots.log = log
+    loader.nothing = nothing
     carrier.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
@@ -427,38 +438,33 @@ describe('the gate off by the human', () => {
     expect(gate.reads).toEqual([])
   })
 
-  it('answers a subscribe policy-down while the log is down and starting while it starts, as any call with power', async () => {
-    const { loader, mcp } = setup()
-    loader.slots.gate = 'off'
-    for (const [log, expected] of [['failed', 'policy-down'], ['absent', 'policy-down'], ['starting', 'starting']] as const) {
-      loader.slots.log = log
-      expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe(expected)
-    }
+  it('answers a subscribe policy-down once the log has failed for logFailMs, as any call with power', async () => {
+    const { at, mcp } = await failing()
+    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    at(30_000)
+    expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe('policy-down')
     // Free subscribes have no power and still pass
     expect((await mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
   })
 
   // canRead is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
   // power doesn't reach them, as filterReadable passes every path then too
-  it('delivers every path with the log down, since only calls with power need the log', async () => {
-    const { carrier, loader, gate, search, edited } = setup()
+  it('delivers every path once the log has failed, since only calls with power need the log', async () => {
+    const { at, carrier, gate, search, edited } = await failing()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'off'
-    for (const log of ['failed', 'absent', 'starting', 'on'] as const) {
-      loader.slots.log = log
-      carrier.changed()
-      await edited(`secret/${log}.md`)
-    }
-    await until(() => paths(search.events()).length === 4)
-    expect(paths(search.events())).toEqual(['secret/failed.md', 'secret/absent.md', 'secret/starting.md', 'secret/on.md'])
+    at(30_000)
+    carrier.changed()
+    await edited('secret/a.md')
+    await edited('secret/b.md')
+    await until(() => paths(search.events()).length === 2)
+    expect(paths(search.events())).toEqual(['secret/a.md', 'secret/b.md'])
     expect(signals(search.events(), 'events.dropped')).toEqual([])
     expect(gate.reads).toEqual([])
   })
 
-  it('passes everything with the log down once the human turned recording off too', async () => {
-    const { carrier, loader, connect, edited } = setup()
-    loader.slots.gate = 'off'
-    loader.slots.log = 'failed'
+  it('passes everything once the log has failed if the human turned recording off too', async () => {
+    const { at, carrier, loader, connect, edited } = await failing()
+    at(30_000)
     loader.nothing = true
     carrier.changed()
     const ghost = connect(worker('ghost'))
@@ -1364,16 +1370,23 @@ describe('failing subscribers', () => {
   })
 })
 
+// What the core's writer put in the log as audit.call lines once the queue is flushed. idOf reads a line's caller id
+async function written(carrier: Carrier, log: FakeLog) {
+  await carrier.flush()
+  return log.events('audit.call').map(record => record.fields)
+}
+const idOf = (fields: Record<string, unknown>) => String(fields.caller).split('/')[0]
+
 describe('records', () => {
   it('keeps a subscribe one audit record with its topics as scope and the gate\'s state', async () => {
     const clock = 1_000_000
-    const { carrier, search } = setup({ now: () => clock })
+    const { carrier, log, search } = setup({ now: () => clock })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    const records = carrier.audit.next(10)
-    expect(records.map(record => [record.action, record.scope, record.code, record.gate, record.count])).toEqual([
-      ['events.subscribe', { topics: ['luoshu.changed'] }, null, 'on', 1],
-      ['events.subscribe', { topics: ['luoshu.changed'] }, null, 'on', 1],
+    const records = await written(carrier, log)
+    expect(records.map(record => [record.action, record.topics, record.code, record.gate, record.count])).toEqual([
+      ['events.subscribe', '["luoshu.changed"]', null, 'on', 1],
+      ['events.subscribe', '["luoshu.changed"]', null, 'on', 1],
     ])
   })
 
@@ -1383,7 +1396,7 @@ describe('records', () => {
     const clock = 1_000_000
     const { carrier, loader, gate, log, search, mcp, connect, git } = setup({ now: () => clock })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    carrier.audit.next(10)
+    const before = (await written(carrier, log)).length
     loader.slots.gate = 'failed'
     carrier.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
@@ -1393,10 +1406,11 @@ describe('records', () => {
     await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })
     // Its own topic goes live with no power and the luoshu's stands
     await panel.ask('events.subscribe', { topics: ['search.indexed', 'luoshu.changed'] })
-    expect(carrier.audit.next(10).map(record => [(record.caller as { id: string }).id, record.scope, record.code, record.gate, record.count])).toEqual([
+    const records = (await written(carrier, log)).slice(before)
+    expect(records.map(record => [idOf(record), record.topics, record.code, record.gate, record.count])).toEqual([
       ['mcp', undefined, null, 'failed', 1],
       ['ghost', undefined, null, 'failed', 2],
-      ['search', { topics: ['search.indexed'] }, null, 'failed', 1],
+      ['search', '["search.indexed"]', null, 'failed', 1],
     ])
     // git's grant goes while the gate is down, so its subscription waits
     gate.grants.git = []
@@ -1460,10 +1474,10 @@ describe('records', () => {
 
   it('coalesces publishes, free subscribes and unsubscribes per caller per second and records no delivery or ack', async () => {
     const clock = 1_000_000
-    const { carrier, connect, git, indexed } = setup({ now: () => clock })
+    const { carrier, connect, git, indexed, log } = setup({ now: () => clock })
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    carrier.audit.next(10)
+    const before = (await written(carrier, log)).length
     for (let i = 0; i < 3; i++) await indexed()
     await panel.ask('events.subscribe', { topics: ['search.indexed'] })
     await panel.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -1471,7 +1485,8 @@ describe('records', () => {
     await until(() => git.events().length === 3)
     git.ack(3)
     await settle()
-    expect(carrier.audit.next(10).map(record => [record.action, (record.caller as { id: string }).id, record.count])).toEqual([
+    const records = (await written(carrier, log)).slice(before)
+    expect(records.map(record => [record.action, idOf(record), record.count])).toEqual([
       ['events.publish', 'search', 3], ['events.subscribe', 'search', 2], ['events.unsubscribe', 'git', 1],
     ])
   })
@@ -1503,7 +1518,7 @@ describe('records', () => {
     gate.decision = access => access.caller.kind === 'window' ? { allow: false, code: 'not-granted', view: 2 } : gate.granted(access)
     loader.current = 2
     carrier.changed()
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(log.events('events.ended').map(record => record.fields)).toEqual([
       { plugin: 'search', half: 'worker', topics: 'luoshu.changed luoshu.outside', count: 2 },
       { window: 'editor', topics: 'luoshu.changed', count: 1 },
@@ -1521,10 +1536,9 @@ describe('records', () => {
     loader.current = 2
     carrier.changed()
     await until(() => signals(search.events(), 'events.ended').length === 1)
-    expect(carrier.audit.next(10)).toEqual([])
     loader.nothing = false
     carrier.close()
-    await tick()
+    await carrier.flush()
     expect(log.records).toEqual([])
   })
 })

@@ -2,15 +2,13 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Caller } from '../api/envelope.ts'
 import { EventLog } from '../lib/event-log.ts'
 import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
-import type { CarrierOptions, FloorLog, Landing } from '../backend/carrier/seams.ts'
-import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
+import type { Carrier } from '../backend/carrier/carrier.ts'
+import type { CarrierOptions, CoreLog, FloorLog, Landing } from '../backend/carrier/seams.ts'
+import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
-
-const idOf = (caller: Caller) => (caller as { id: string }).id
 
 // http reaches mcp and search, the two serving one action each
 function plugins(over: Partial<CarrierOptions> = {}) {
@@ -22,9 +20,15 @@ function plugins(over: Partial<CarrierOptions> = {}) {
   return { ...parts, http: connect(worker('http')), mcp: connect(worker('mcp')), search: connect(worker('search')) }
 }
 
-describe('the audit queue', () => {
-  it('holds one record per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
-    const { carrier, connect, gate, loader } = harness()
+// What the core's writer put in the log as audit.call lines, once the queue is flushed
+async function written(carrier: Carrier, log: FakeLog) {
+  await carrier.flush()
+  return log.events('audit.call').map(record => record.fields)
+}
+
+describe('audit records', () => {
+  it('writes one audit.call line per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
+    const { carrier, connect, gate, loader, log } = harness()
     loader.sandboxed('mcp', { handle: {} })
     gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
     gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
@@ -36,42 +40,42 @@ describe('the audit queue', () => {
     expect(write.ok).toBe(true)
     mcp.answer(parent.callId, { said: 'secret result' })
     await http.reply(id)
-    const records = carrier.audit.next(10)
+    const records = await written(carrier, log)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
-      caller: worker('mcp'), onBehalf: 'agent-a', root: worker('http'), action: 'luoshu.write',
-      scope: { paths: ['notes/a.md'] }, code: null, gate: 'on', count: 1,
+      caller: 'mcp/worker#1', onBehalf: 'agent-a', root: 'http/worker#1', action: 'luoshu.write',
+      paths: '["notes/a.md"]', pathCount: 1, code: null, gate: 'on', count: 1,
     })
-    expect(records[1]).toMatchObject({ caller: worker('http'), root: worker('http'), action: 'mcp.handle', scope: { target: 'mcp' }, code: null })
+    expect(records[1]).toMatchObject({ caller: 'http/worker#1', root: 'http/worker#1', action: 'mcp.handle', target: 'mcp', code: null })
     expect(typeof records[0].ms).toBe('number')
-    const text = JSON.stringify(records)
+    const text = JSON.stringify(log.records)
     for (const secret of ['secret prompt', 'secret note text', 'secret result']) expect(text).not.toContain(secret)
   })
 
   it('records a refusal with its code and the gate\'s state', async () => {
-    const { carrier, connect, loader } = harness()
+    const { carrier, connect, loader, log } = harness()
     loader.slots.gate = 'failed'
     await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })
-    expect(carrier.audit.next(10)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
+    expect(await written(carrier, log)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
   })
 
   // The caller's own text is no canonical scope, so a call refused at precheck records no path
   it('records no path for a call refused before prepare and the canonical one once prepare ran', async () => {
     let clock = 1_000_000
-    const { carrier, connect, gate } = harness({ now: () => clock })
+    const { carrier, connect, gate, log } = harness({ now: () => clock })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'secret/a.md' }))).toBe('not-granted')
     clock += 1000
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     expect(code(await search.ask('luoshu.read', { path: 'GIT~1/config' }))).toBe('not-granted')
-    const records = carrier.audit.next(10)
-    expect(records.map(record => [record.code, record.scope])).toEqual([['not-granted', undefined], ['not-granted', { paths: ['.git/config'] }]])
-    expect('scope' in records[0]).toBe(false)
+    const records = await written(carrier, log)
+    expect(records.map(record => [record.code, record.paths])).toEqual([['not-granted', undefined], ['not-granted', '[".git/config"]']])
+    expect('paths' in records[0]).toBe(false)
   })
 
   it('names onBehalf and the root of a live parent for a call refused before the ceiling took it', async () => {
-    const { carrier, http, mcp, loader } = plugins()
+    const { carrier, http, mcp, loader, log } = plugins()
     loader.human.plugins.http = { callsInFlight: 1 }
     http.call('mcp.handle', {}, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
@@ -79,31 +83,31 @@ describe('the audit queue', () => {
     expect(code(await mcp.ask('luoshu.read', { path: '' }, under))).toBe('invalid')
     expect(code(await mcp.ask('security.request', { change: { kind: 'plugin.on', plugin: 'search' } }, under))).toBe('not-granted')
     expect(code(await mcp.ask('core.self', undefined, under))).toBe('throttled')
-    const refused = carrier.audit.next(10).filter(record => record.code !== null)
-    expect(refused.map(record => [record.action, record.code, idOf(record.caller), idOf(record.root), record.onBehalf])).toEqual([
-      ['luoshu.read', 'invalid', 'mcp', 'http', 'agent-a'],
-      ['security.request', 'not-granted', 'mcp', 'http', 'agent-a'],
-      ['core.self', 'throttled', 'mcp', 'http', 'agent-a'],
+    const refused = (await written(carrier, log)).filter(record => record.code !== null)
+    expect(refused.map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])).toEqual([
+      ['luoshu.read', 'invalid', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
+      ['security.request', 'not-granted', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
+      ['core.self', 'throttled', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
     ])
   })
 
   it('records the gate\'s state for a call without power and a state outside the list as failed', async () => {
     let clock = 1_000_000
-    const { carrier, connect, loader } = harness({ now: () => clock })
+    const { carrier, connect, loader, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     loader.slots.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
     clock += 1000
     loader.slots.gate = 'ON' as never
     await search.ask('storage.get', { key: 'k' })
-    expect(carrier.audit.next(10).map(record => [record.action, record.code, record.gate])).toEqual([
+    expect((await written(carrier, log)).map(record => [record.action, record.code, record.gate])).toEqual([
       ['storage.get', null, 'failed'], ['storage.get', null, 'failed'],
     ])
   })
 
   it('coalesces reads and refusals per caller per second, and keeps writes one record each', async () => {
     let clock = 1_000_000
-    const { carrier, connect, gate, luoshu } = harness({ now: () => clock })
+    const { carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }]
     for (const name of ['a', 'b', 'c']) luoshu.files.set(`notes/${name}.md`, name)
     const search = connect(worker('search'))
@@ -115,7 +119,7 @@ describe('the audit queue', () => {
     await search.ask('storage.get', { key: 'other' })
     clock += 1000
     await search.ask('luoshu.read', { path: 'notes/a.md' })
-    const records = carrier.audit.next(100).map(record => [record.action, record.code, record.count])
+    const records = (await written(carrier, log)).map(record => [record.action, record.code, record.count])
     expect(records).toEqual([
       ['luoshu.read', null, 3],
       ['luoshu.read', 'not-granted', 4],
@@ -128,7 +132,7 @@ describe('the audit queue', () => {
 
   it('coalesces free calls between a plugin\'s own halves and keeps calls to other plugins one each', async () => {
     const clock = 1_000_000
-    const { carrier, connect, loader, gate } = harness({ now: () => clock })
+    const { carrier, connect, loader, gate, log } = harness({ now: () => clock })
     loader.sandboxed('search', { query: {} })
     loader.sandboxed('git', { log: {} })
     gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }]
@@ -149,35 +153,41 @@ describe('the audit queue', () => {
       git.answer(calls.at(-1)!.callId, i)
       await search.reply(id)
     }
-    expect(carrier.audit.next(100).map(record => [record.action, record.count])).toEqual([
+    expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
       ['search.query', 3], ['git.log', 1], ['git.log', 1],
     ])
   })
 
-  it('stops coalescing into a record once the log has taken it', async () => {
+  it('stops coalescing into a record once the writer has taken it', async () => {
     const clock = 1_000_000
-    const { carrier, connect } = harness({ now: () => clock })
+    const { carrier, connect, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     await search.ask('core.self')
-    expect(carrier.audit.next(10).map(record => record.count)).toEqual([1])
+    await carrier.flush()
     await search.ask('core.self')
     await search.ask('core.self')
-    expect(carrier.audit.next(10).map(record => record.count)).toEqual([2])
+    expect((await written(carrier, log)).map(record => record.count)).toEqual([1, 2])
   })
 
-  it('hands records out with next and lets go of them with ack', async () => {
-    const { carrier, connect } = harness()
-    const search = connect(worker('search'))
-    for (let i = 0; i < 3; i++) await search.ask('storage.set', { key: `k${i}`, value: i })
-    const first = carrier.audit.next(2)
-    expect(first).toHaveLength(2)
-    expect(carrier.audit.next(5)).toHaveLength(1)
-    carrier.audit.ack(first[1].seq)
-    // Acknowledged records are gone, the one taken after them stays until its own ack
-    expect(carrier.audit.next(5)).toEqual([])
-    await search.ask('storage.set', { key: 'k3', value: 3 })
-    const later = carrier.audit.next(5)
-    expect(later.map(record => record.seq)).toEqual([first[1].seq + 2])
+  // Only the interval is faked, so the ports and their timers run as they do
+  it('writes the queue on its own every 100 ms, each record once and in order, as one batch', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const { connect, log } = harness({ auditEveryMs: undefined })
+      const search = connect(worker('search'))
+      for (let i = 0; i < 3; i++) await search.ask('storage.set', { key: `k${i}`, value: i })
+      expect(log.events('audit.call')).toEqual([])
+      vi.advanceTimersByTime(100)
+      await tick()
+      expect(log.events('audit.call').map(record => record.fields.record)).toEqual([1, 2, 3])
+      expect(log.batches).toEqual([{ id: 'audit:1-3', size: 3 }])
+      await search.ask('storage.set', { key: 'k3', value: 3 })
+      vi.advanceTimersByTime(100)
+      await tick()
+      expect(log.events('audit.call').map(record => record.fields.record)).toEqual([1, 2, 3, 4])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('drops a record past the bound, counts it in a floor record and still answers the call', async () => {
@@ -185,10 +195,7 @@ describe('the audit queue', () => {
     loader.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
     for (let i = 0; i < 4; i++) expect((await search.ask('storage.set', { key: `k${i}`, value: i })).ok).toBe(true)
-    const taken = carrier.audit.next(10)
-    expect(taken).toHaveLength(2)
-    // Acknowledged, so close has nothing left to count as lost to shutdown
-    carrier.audit.ack(taken[1].seq)
+    expect(await written(carrier, log)).toHaveLength(2)
     carrier.close()
     await tick()
     expect(log.events('audit.dropped').map(record => record.fields)).toEqual([
@@ -196,66 +203,59 @@ describe('the audit queue', () => {
     ])
   })
 
-  it('queues records while the log starts and keeps none while it is off by the human', async () => {
-    const { carrier, connect, loader } = harness()
-    const search = connect(worker('search'))
-    loader.slots.log = 'starting'
-    await search.ask('core.self')
-    expect(carrier.audit.next(10)).toHaveLength(1)
-    loader.slots.log = 'off'
-    await search.ask('core.self')
-    expect(carrier.audit.next(10)).toEqual([])
-  })
-
-  it.each(['failed', 'absent', 'tampered'] as const)('counts what it held in audit.dropped when the log is %s', async state => {
+  it('frees the bound once a batch is written', async () => {
     const { carrier, connect, loader, log } = harness()
+    loader.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
-    for (let i = 0; i < 3; i++) await search.ask('storage.set', { key: `k${i}`, value: i })
-    carrier.audit.next(1)
-    loader.slots.log = state
-    await search.ask('core.self')
-    await tick()
-    expect(log.events('audit.dropped').map(record => record.fields)).toEqual([{ count: 3, why: 'log-down' }])
-    loader.slots.log = 'on'
-    expect(carrier.audit.next(10)).toEqual([])
-  })
-
-  it('writes audit.dropped only when the queue held something', async () => {
-    const { carrier, connect, loader, log } = harness()
-    loader.slots.log = 'off'
-    const search = connect(worker('search'))
-    await search.ask('core.self')
-    await search.ask('core.self')
-    await carrier.flushFloor()
+    for (const key of ['a', 'b']) await search.ask('storage.set', { key, value: 1 })
+    await carrier.flush()
+    for (const key of ['c', 'd']) await search.ask('storage.set', { key, value: 1 })
+    expect(await written(carrier, log)).toHaveLength(4)
     expect(log.events('audit.dropped')).toEqual([])
   })
 
-  it('starts coalescing afresh once the log came back', async () => {
-    const clock = 1_000_000
-    const { carrier, connect, loader } = harness({ now: () => clock })
+  it('keeps a batch while the log can\'t write and writes it once, in order, when the log is back', async () => {
+    const { carrier, connect, log } = harness()
     const search = connect(worker('search'))
+    log.failing = true
+    for (let i = 0; i < 3; i++) await search.ask('storage.set', { key: `k${i}`, value: i })
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+    log.failing = false
+    await search.ask('storage.set', { key: 'k3', value: 3 })
+    expect((await written(carrier, log)).map(record => record.record)).toEqual([1, 2, 3, 4])
+    expect(log.batches).toEqual([{ id: 'audit:1-3', size: 3 }, { id: 'audit:4-4', size: 1 }])
+  })
+
+  // A healthy log refused what the batch holds and trying it again would hold back every record after it
+  it('lets go of a batch a healthy log refused and counts its records in audit.dropped', async () => {
+    const { carrier, connect, log } = harness()
+    const search = connect(worker('search'))
+    log.refuses.add('audit.call')
     await search.ask('core.self')
-    loader.slots.log = 'failed'
-    await search.ask('core.self')
-    loader.slots.log = 'on'
-    await search.ask('core.self')
-    expect(carrier.audit.next(10).map(record => record.count)).toEqual([1])
+    await search.ask('storage.get', { key: 'k' })
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+    expect(log.events('audit.dropped').map(record => record.fields)).toEqual([{ why: 'refused', count: 2 }])
+    log.refuses.clear()
+    await search.ask('storage.get', { key: 'k' })
+    expect((await written(carrier, log)).map(record => record.action)).toEqual(['storage.get'])
   })
 
   it('coalesces refused writes and calls refused at shape', async () => {
     const clock = 1_000_000
-    const { carrier, connect } = harness({ now: () => clock })
+    const { carrier, connect, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     for (let i = 0; i < 3; i++) await search.ask('luoshu.write', { path: 'a.md', text: 'x' })
     for (let i = 0; i < 3; i++) await search.ask('luoshu.read', { path: '' })
-    expect(carrier.audit.next(10).map(record => [record.action, record.code, record.count])).toEqual([
+    expect((await written(carrier, log)).map(record => [record.action, record.code, record.count])).toEqual([
       ['luoshu.write', 'not-granted', 3], ['luoshu.read', 'invalid', 3],
     ])
   })
 
   it('keeps each security request and each watchdog action one record', async () => {
     const clock = 1_000_000
-    const { carrier, loader } = harness({ now: () => clock, core: async () => null })
+    const { carrier, loader, log } = harness({ now: () => clock, core: async () => null })
     loader.sandboxed('search')
     const way = windowWay(carrier, { 'editor-1': editor })
     const change = { kind: 'plugin.on', plugin: 'search' }
@@ -264,7 +264,7 @@ describe('the audit queue', () => {
     const watchdog = hostHalf(carrier, host('watchdog'))
     await watchdog.ask('watchdog.stop', { plugin: 'search' })
     await watchdog.ask('watchdog.stop', { plugin: 'search' })
-    expect(carrier.audit.next(10).map(record => [record.action, record.count])).toEqual([
+    expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
       ['security.request', 1], ['security.request', 1], ['watchdog.stop', 1], ['watchdog.stop', 1],
     ])
   })
@@ -272,67 +272,84 @@ describe('the audit queue', () => {
   // A record joins only calls that share every field it names, the A-05 case of two agents behind one MCP among them
   it('keeps two agents behind one caller apart', async () => {
     const clock = 1_000_000
-    const { carrier, connect, gate, luoshu } = harness({ now: () => clock })
+    const { carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
     gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
     const mcp = connect(worker('mcp'))
     await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-a' })
     await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-b' })
-    expect(carrier.audit.next(10).map(record => [record.onBehalf, record.count])).toEqual([['agent-a', 1], ['agent-b', 1]])
+    expect((await written(carrier, log)).map(record => [record.onBehalf, record.count])).toEqual([['agent-a', 1], ['agent-b', 1]])
   })
 
   it('keeps calls with different roots apart', async () => {
     const clock = 1_000_000
-    const { carrier, http, mcp } = plugins({ now: () => clock })
+    const { carrier, http, log, mcp } = plugins({ now: () => clock })
     http.call('mcp.handle')
     const parent = await mcp.delivered('mcp.handle')
     await mcp.ask('core.self', undefined, { parent: parent.callId })
     await mcp.ask('core.self')
-    const selves = carrier.audit.next(10).filter(record => record.action === 'core.self')
-    expect(selves.map(record => [idOf(record.root), record.count])).toEqual([['http', 1], ['mcp', 1]])
+    const selves = (await written(carrier, log)).filter(record => record.action === 'core.self')
+    expect(selves.map(record => [record.root, record.count])).toEqual([['http/worker#1', 1], ['mcp/worker#1', 1]])
   })
 
   it('keeps calls under different gate states apart', async () => {
     const clock = 1_000_000
-    const { carrier, connect, loader } = harness({ now: () => clock })
+    const { carrier, connect, loader, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
     loader.slots.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
-    expect(carrier.audit.next(10).map(record => [record.gate, record.count])).toEqual([['on', 1], ['failed', 1]])
+    expect((await written(carrier, log)).map(record => [record.gate, record.count])).toEqual([['on', 1], ['failed', 1]])
   })
 
   it('keeps two callers under one root apart', async () => {
     const clock = 1_000_000
-    const { carrier, http, mcp, search } = plugins({ now: () => clock })
+    const { carrier, http, log, mcp, search } = plugins({ now: () => clock })
     http.call('mcp.handle')
     http.call('search.query')
     const one = await mcp.delivered('mcp.handle')
     const two = await search.delivered('search.query')
     await mcp.ask('core.self', undefined, { parent: one.callId })
     await search.ask('core.self', undefined, { parent: two.callId })
-    const selves = carrier.audit.next(10).filter(record => record.action === 'core.self')
-    expect(selves.map(record => [idOf(record.caller), record.count])).toEqual([['mcp', 1], ['search', 1]])
+    const selves = (await written(carrier, log)).filter(record => record.action === 'core.self')
+    expect(selves.map(record => [record.caller, record.count])).toEqual([['mcp/worker#1', 1], ['search/worker#1', 1]])
   })
 
-  it('lets go of the record ack names, so the bound frees up', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.human.all = { auditQueue: 2 }
-    const search = connect(worker('search'))
-    for (const key of ['a', 'b']) await search.ask('storage.set', { key, value: 1 })
-    const taken = carrier.audit.next(2)
-    carrier.audit.ack(taken[1].seq)
-    for (const key of ['c', 'd']) await search.ask('storage.set', { key, value: 1 })
-    expect(carrier.audit.next(10)).toHaveLength(2)
+  // Quit flushes, closes and flushes again, so the calls close stops still leave their records
+  it('writes on the flush after close the records of the calls close stopped', async () => {
+    const { carrier, http, log, mcp } = plugins()
+    http.call('mcp.handle')
+    await mcp.delivered('mcp.handle')
+    await carrier.flush()
+    carrier.stopping()
+    carrier.close()
+    await carrier.flush()
+    expect(log.events('audit.call').map(record => [record.fields.action, record.fields.code])).toEqual([['mcp.handle', 'stopped']])
+  })
+})
+
+describe('reading the log', () => {
+  it('serves log.history and log.verify to every window from the log the core writes', async () => {
+    const { carrier, log } = harness()
+    const way = windowWay(carrier, { editor, trusted })
+    expect(await way.ask('editor', 'log.history')).toMatchObject({ ok: true, result: log.segments })
+    log.verification = { ok: false, seq: 7 }
+    expect(await way.ask('trusted', 'log.verify')).toMatchObject({ ok: true, result: { ok: false, seq: 7 } })
   })
 
-  it('keeps the records the log has not taken, whatever seq ack names', async () => {
-    const { carrier, connect } = harness()
+  // Reading the log is first-party work, which waits for the shipper
+  it('refuses them to plugins, whatever the gate granted', async () => {
+    const { connect, gate } = harness()
+    gate.grants.search = [{ type: 'log.read' }]
     const search = connect(worker('search'))
-    for (const key of ['a', 'b', 'c']) await search.ask('storage.set', { key, value: 1 })
-    carrier.audit.next(1)
-    carrier.audit.ack(1000)
-    expect(carrier.audit.next(10)).toHaveLength(2)
+    expect(code(await search.ask('log.history'))).toBe('not-granted')
+    expect(code(await search.ask('log.verify'))).toBe('not-granted')
+  })
+
+  it('answers unavailable with no log', async () => {
+    const { carrier } = harness({ log: null })
+    const way = windowWay(carrier, { editor })
+    expect(code(await way.ask('editor', 'log.history'))).toBe('unavailable')
   })
 })
 
@@ -343,15 +360,14 @@ describe('the floor lane', () => {
     dir = null
   })
 
-  it('writes floor records straight through the EventLog with the log plugin off', async () => {
+  it('writes floor records straight through the EventLog, one append each', async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'hetu-carrier-'))
     const log = new EventLog(dir)
     await log.open()
-    const { carrier, loader } = harness({ log })
-    loader.slots.log = 'off'
+    const { carrier } = harness({ log })
     carrier.floor('plugin.found', { plugin: 'search' })
     carrier.floor('plugin.checked', { plugin: 'search', ok: true })
-    await carrier.flushFloor()
+    await carrier.flush()
     const lines = (await readFile(path.join(dir, 'events', 'events-1.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(lines.map(line => [line.event, line.plugin])).toEqual([['plugin.found', 'search'], ['plugin.checked', 'search']])
   })
@@ -384,7 +400,7 @@ describe('the floor lane', () => {
     await tick()
     expect(way.events().map(event => event.topic)).toEqual(['core.status'])
     log.failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(way.events().map(event => event.topic)).toEqual(['core.status', 'core.status'])
   })
 
@@ -396,7 +412,7 @@ describe('the floor lane', () => {
     await tick()
     expect(log.records).toEqual([])
     log.failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(log.records.map(record => record.fields.plugin)).toEqual(['a', 'b', 'c'])
   })
 
@@ -408,7 +424,7 @@ describe('the floor lane', () => {
     for (const plugin of ['a', 'b', 'c', 'd', 'e']) carrier.floor('plugin.found', { plugin })
     await tick()
     log.failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(log.records.map(record => [record.event, record.fields.plugin ?? record.fields.count])).toEqual([
       ['plugin.found', 'a'], ['plugin.found', 'b'], ['plugin.found', 'c'], ['floor.dropped', 2],
     ])
@@ -431,7 +447,7 @@ describe('the floor lane', () => {
     log.refuses.add('bad')
     carrier.floor('bad', {})
     carrier.floor('plugin.found', { plugin: 'a' })
-    await carrier.flushFloor()
+    await carrier.flush()
     await tick()
     expect(log.records.map(record => record.event)).toEqual(['plugin.found', 'floor.dropped'])
   })
@@ -453,7 +469,7 @@ describe('the floor lane', () => {
     }
     const { carrier } = harness({ log })
     carrier.floor('bad', {})
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(appends).toBe(2)
   })
 
@@ -461,17 +477,20 @@ describe('the floor lane', () => {
   it('keeps a record when a log with no health flag fails', async () => {
     let failing = true
     const records: string[] = []
-    const log: FloorLog = {
+    const log: CoreLog = {
       append: async event => {
         if (failing) throw new Error('down')
         records.push(event)
       },
+      appendMany: async () => {},
+      history: async () => [],
+      verify: async () => ({ ok: true }),
     }
     const { carrier } = harness({ log })
     carrier.floor('plugin.found', { plugin: 'a' })
     await tick()
     failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(records).toEqual(['plugin.found'])
   })
 
@@ -484,7 +503,7 @@ describe('the floor lane', () => {
     await tick()
     fields.plugin = 'b'
     log.failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(log.records.map(record => record.fields)).toEqual([{ plugin: 'a' }])
   })
 
@@ -532,11 +551,10 @@ describe('record nothing', () => {
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     carrier.floor('plugin.found', { plugin: 'search' })
-    await carrier.flushFloor()
+    await carrier.flush()
     carrier.close()
-    await tick()
+    await carrier.flush()
     expect(log.records).toEqual([])
-    expect(carrier.audit.next(10)).toEqual([])
   })
 
   // A coalesced record counts what follows its first, so a count made in the gap would land once recording is back on
@@ -550,7 +568,7 @@ describe('record nothing', () => {
     loader.nothing = false
     carrier.close()
     await tick()
-    expect(log.records).toEqual([])
+    expect(log.events('fault')).toEqual([])
   })
 
   it('records again once recording is back on, with nothing from the gap', async () => {
@@ -563,9 +581,9 @@ describe('record nothing', () => {
     loader.nothing = false
     await search.ask('storage.get', { key: 'k' })
     carrier.floor('plugin.found', { plugin: 'after' })
-    await carrier.flushFloor()
-    expect(carrier.audit.next(10).map(record => record.action)).toEqual(['storage.get'])
-    expect(log.records.map(record => record.fields.plugin)).toEqual(['after'])
+    await carrier.flush()
+    expect(log.events('audit.call').map(record => record.fields.action)).toEqual(['storage.get'])
+    expect(log.events('plugin.found').map(record => record.fields.plugin)).toEqual(['after'])
   })
 
   // Only the human's own switch mutes, so a loader that throws or answers something truthy keeps every record and the
@@ -574,18 +592,20 @@ describe('record nothing', () => {
     ['throws', () => { throw new Error('no state') }],
     ['answers 1', () => 1],
   ])('keeps recording and the log rule when recordNothing %s', async (_name, nothing) => {
-    const { carrier, connect, loader } = harness()
+    let now = 0
+    const { carrier, connect, loader, log } = harness({ clock: () => now })
     loader.recordNothing = nothing as unknown as () => boolean
     const search = connect(worker('search'))
     await search.ask('core.self')
-    expect(carrier.audit.next(10)).toHaveLength(1)
+    await carrier.flush()
+    expect(log.events('audit.call')).toHaveLength(1)
     loader.slots.gate = 'off'
-    loader.slots.log = 'failed'
+    await search.ask('core.self')
+    now = 30_000
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 })
 
-// The loader applies a copy, a restore or an update only once its record is on disk, so each record says where it went
 describe('a floor record\'s landing', () => {
   const laneOf = (log: FloorLog, options: { bound?: number, muted?: boolean } = {}) =>
     new FloorLane(log, { bound: () => options.bound ?? 10, muted: () => options.muted ?? false, retryMs: 60_000 })
@@ -750,94 +770,86 @@ describe('a floor record\'s landing', () => {
   })
 })
 
-describe('a stalled log', () => {
-  // A carrier on a clock the test moves, as the stall is timed on the carrier's own
-  function stalling(over: Partial<CarrierOptions> = {}) {
+describe('a failing log', () => {
+  // A carrier on a clock the test moves, since the wait is timed on the carrier's own clock, with a log that can't write
+  function failing(over: Partial<CarrierOptions> = {}) {
     let now = 0
     const parts = harness({ clock: () => now, ...over })
-    const fails: { id: string, reason: string }[] = []
-    parts.loader.fail = (id: string, reason: 'stalled') => {
-      fails.push({ id, reason })
-      parts.loader.slots[id] = 'failed'
-    }
-    return { ...parts, fails, at: (ms: number) => { now = ms } }
+    parts.log.failing = true
+    return { ...parts, at: (ms: number) => { now = ms } }
   }
 
-  it('marks the log failed once its oldest record waits unacknowledged for 30 s, then counts what it held', async () => {
-    const { at, carrier, connect, fails, log } = stalling()
-    const search = connect(worker('search'))
-    await search.ask('storage.set', { key: 'a', value: 1 })
-    carrier.audit.next(1)
-    at(29_999)
-    await search.ask('storage.set', { key: 'b', value: 2 })
-    expect(fails).toEqual([])
-    at(30_000)
-    await search.ask('storage.set', { key: 'c', value: 3 })
-    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
-    await tick()
-    expect(log.events('audit.dropped').map(record => record.fields)).toEqual([{ count: 2, why: 'log-down' }])
-  })
-
-  it('starts the wait again from the oldest record still held once the log acknowledges', async () => {
-    const { at, carrier, connect, fails } = stalling()
-    const search = connect(worker('search'))
-    await search.ask('storage.set', { key: 'a', value: 1 })
-    at(20_000)
-    carrier.audit.ack(carrier.audit.next(1)[0].seq)
-    at(25_000)
-    await search.ask('storage.set', { key: 'b', value: 2 })
-    at(54_999)
-    await search.ask('storage.set', { key: 'c', value: 3 })
-    expect(fails).toEqual([])
-    at(55_000)
-    await search.ask('storage.set', { key: 'd', value: 4 })
-    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
-  })
-
-  // Allow all, still logged: a log that stopped acknowledging can't let calls with power through on a count alone
-  it('refuses a call with power with the gate off once the log stalls, rather than letting it pass with only a count', async () => {
-    const { at, connect, fails, loader } = stalling()
+  // Allow all, still logged: with the gate off a call with power passes only while its record can still land
+  it('refuses a call with power with the gate off once the oldest record waited 30 s unwritten', async () => {
+    const { at, connect, loader } = failing()
     loader.slots.gate = 'off'
     const search = connect(worker('search'))
     // Past the gate to the provider, which holds no such note
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    at(29_999)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
     at(30_000)
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
-    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
   })
 
-  it('refuses with the gate off even when the loader couldn\'t mark the log failed', async () => {
-    const { at, connect, loader } = stalling()
-    loader.fail = () => { throw new Error('no') }
+  it('lets them pass again once the records are written', async () => {
+    const { at, carrier, connect, loader, log } = failing()
     loader.slots.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('luoshu.read', { path: 'notes/a.md' })
     at(30_000)
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    log.failing = false
+    await carrier.flush()
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
   })
 
-  it('never counts the log stalled while it starts or once shutdown began, when it stops last', async () => {
-    const { at, carrier, connect, fails, loader } = stalling()
+  it('starts the wait again from the oldest record still held once a batch is written', async () => {
+    const { at, carrier, connect, loader, log } = failing()
+    log.failing = false
+    loader.slots.gate = 'off'
     const search = connect(worker('search'))
-    loader.slots.log = 'starting'
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(20_000)
+    await carrier.flush()
+    at(25_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    at(54_999)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    at(55_000)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+  })
+
+  // The human's switches: gate off and recording off pass calls with power unrecorded
+  it('passes calls with power with the gate and recording off, however long the log has failed', async () => {
+    const { at, connect, loader } = failing()
+    loader.slots.gate = 'off'
+    const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(40_000)
-    await search.ask('storage.set', { key: 'b', value: 2 })
-    expect(fails).toEqual([])
-    loader.slots.log = 'on'
-    carrier.stopping()
-    await search.ask('storage.set', { key: 'c', value: 3 })
-    expect(fails).toEqual([])
+    loader.nothing = true
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
   })
 
-  it('takes the wait from the floor constants, which the human may set for the log', async () => {
-    const { at, connect, fails, loader } = stalling()
-    loader.human.plugins = { log: { auditStallMs: 1000 } }
+  // Step 14 turns a log that fails into a quit. Until then the gate on decides as it did
+  it('leaves the gate on deciding while the log fails', async () => {
+    const { at, connect, gate, luoshu } = failing()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(40_000)
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
+  })
+
+  it('takes the wait from logFailMs, which the human may set for all', async () => {
+    const { at, connect, loader } = failing()
+    loader.human.all = { logFailMs: 1000 }
+    loader.slots.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(1000)
-    await search.ask('storage.set', { key: 'b', value: 2 })
-    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
   })
 
   it('times a record from when it was queued, not from when its call started', () => {
@@ -848,23 +860,6 @@ describe('a stalled log', () => {
     now = 41_000
     queue.ack(queue.next(1)[0].seq)
     expect(queue.oldest()).toBe(null)
-  })
-
-  // Only the interval is faked, so the ports and their timers run as they do
-  it('marks a stalled log failed while hetu is idle, looking once a second', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    try {
-      const { at, connect, fails } = stalling()
-      const search = connect(worker('search'))
-      await search.ask('storage.set', { key: 'a', value: 1 })
-      at(30_000)
-      vi.advanceTimersByTime(999)
-      expect(fails).toEqual([])
-      vi.advanceTimersByTime(1)
-      expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('tells windows to read core.status again when the log\'s health changes through a write the floor lane didn\'t make', async () => {

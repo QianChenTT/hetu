@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access, AuditHandle } from '../api/slots.ts'
+import type { Access } from '../api/slots.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
@@ -62,7 +62,7 @@ async function joined(options: {
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
     // also won't remove a folder a write is still filling
     carrier.close()
-    await carrier.flushFloor()
+    await carrier.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
@@ -90,7 +90,7 @@ describe('wiring the core', () => {
   it('builds link, loader and carrier so the loader reaches the real carrier', async () => {
     const { carrier, loader, dataDir } = await joined()
     await loader.start()
-    await carrier.flushFloor()
+    await carrier.flush()
     const events = await floorEvents(dataDir)
     expect(events).toContain('install.checked')
     expect(events).toContain('plugin.started')
@@ -103,10 +103,11 @@ describe('wiring the core', () => {
   it('ends its start with core.ready, which holds every slot\'s state', async () => {
     const { carrier, loader, dataDir } = await joined()
     await loader.start()
-    await carrier.flushFloor()
+    await carrier.flush()
     const records = await floorRecords(dataDir)
     expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
-    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', log: 'on', capabilities: 'absent', watchdog: 'absent' })
+    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', capabilities: 'absent', watchdog: 'absent' })
+    expect(records.at(-1)).not.toHaveProperty('log')
   })
 
   it('writes no core.ready when shutdown began during the start', async () => {
@@ -114,7 +115,7 @@ describe('wiring the core', () => {
     const started = loader.start()
     await loader.shutdown()
     await started
-    await carrier.flushFloor()
+    await carrier.flush()
     expect(await floorEvents(dataDir)).not.toContain('core.ready')
   })
 
@@ -157,7 +158,7 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('takes its call through the eleven steps and records it', async () => {
-    const { carrier, runtime } = await lives()
+    const { carrier, dataDir, runtime } = await lives()
     const alpha = runtime.half('alpha')
     const asked = runtime.half('beta').ask('alpha.hello', { name: 'beta' })
     await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
@@ -165,8 +166,9 @@ describe('a plugin\'s life through the joined core', () => {
     expect(delivered.caller).toEqual(worker('beta'))
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: 'hello beta' })
     expect((await asked)?.result).toBe('hello beta')
-    const records = carrier.audit.next(20).filter(record => record.action === 'alpha.hello')
-    expect(records.map(record => [record.caller, record.code])).toEqual([[worker('beta'), null]])
+    await carrier.flush()
+    const records = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'alpha.hello')
+    expect(records.map(record => [record.caller, record.code])).toEqual([['beta/worker#1', null]])
   })
 
   it('delivers its published event to a subscriber that may read it', async () => {
@@ -260,7 +262,7 @@ describe('a plugin\'s life through the joined core', () => {
     expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(false)
     expect(loader.plugin('git')).toBe(null)
     failing = false
-    await carrier.flushFloor()
+    await carrier.flush()
     await started
     await loader.settled()
     expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(true)
@@ -293,7 +295,6 @@ describe('shutdown through the joined core', () => {
     const shutdown = loader.shutdown()
     await until(() => alpha.got('stop').length === 1)
     expect(loader.slot('gate')).toBe('on')
-    expect(loader.slot('log')).toBe('on')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'last words' }))?.ok).toBe(true)
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
@@ -303,11 +304,11 @@ describe('shutdown through the joined core', () => {
   it('records no slot as failed when shutdown stops it', async () => {
     const { carrier, dataDir, loader } = await quitting()
     await loader.shutdown()
-    await carrier.flushFloor()
+    await carrier.flush()
     const records = await floorRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
     const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'stopped'], ['log', 'stopped']])
+    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'stopped']])
   })
 
   it('records a host slot that fails during shutdown, before its own stop, as failed', async () => {
@@ -316,18 +317,18 @@ describe('shutdown through the joined core', () => {
     const shutdown = loader.shutdown()
     await until(() => alpha.got('stop').length === 1)
     // What the carrier tells the loader when a host half floods its way
-    loader.crashed({ kind: 'plugin', id: 'log', half: 'host', incarnation: 1 }, 'flood')
-    await until(() => loader.slot('log') === 'failed')
+    loader.crashed({ kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 }, 'flood')
+    await until(() => loader.slot('gate') === 'failed')
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
-    await carrier.flushFloor()
+    await carrier.flush()
     const records = await floorRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
     const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['log', 'failed'], ['gate', 'stopped']])
+    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'failed']])
   })
 
-  it('keeps the audit queue through shutdown and counts what is left once the carrier closes', async () => {
+  it('keeps the audit queue through shutdown and writes it on the flush after close', async () => {
     const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'one' }))?.ok).toBe(true)
@@ -337,9 +338,10 @@ describe('shutdown through the joined core', () => {
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     carrier.close()
-    await carrier.flushFloor()
-    const dropped = (await floorRecords(dataDir)).filter(record => record.event === 'audit.dropped')
-    expect(dropped.map(record => [record.why, record.count])).toEqual([['shutdown', 2]])
+    await carrier.flush()
+    const records = await floorRecords(dataDir)
+    expect(records.filter(record => record.event === 'audit.call' && record.action === 'storage.set')).toHaveLength(2)
+    expect(records.filter(record => record.event === 'audit.dropped')).toEqual([])
   })
 
   // The Confirm behind it already landed, so a narrowing confirmed just before Quit must outlast the run
@@ -411,7 +413,7 @@ describe('core.status, for a window\'s banner', () => {
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
-      slots: { gate: 'on', capabilities: 'absent', log: 'on', watchdog: 'absent' },
+      slots: { gate: 'on', capabilities: 'absent', watchdog: 'absent' },
       crashed: [],
       devMode: [],
       allowUnsigned: 0,
@@ -441,39 +443,31 @@ describe('core.status, for a window\'s banner', () => {
   })
 })
 
-describe('the log plugin\'s handle through the joined core', () => {
-  it('lends the log the carrier\'s audit queue and boot\'s event log, so a record it takes lands as audit.call', async () => {
-    let lent: AuditHandle | null = null
+describe('the core\'s log through the joined core', () => {
+  it('writes each call as audit.call through boot\'s event log and serves log.history and log.verify to windows', async () => {
     const parts = await joined({
       folder: {
         alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} } } })),
         beta: filesFor(workerManifest('beta')),
       },
-      behave: {
-        gate: { exports: { gate: allowAll() } },
-        log: { exports: { log: { attach: (handle: AuditHandle) => { lent = handle } } } },
-      },
+      behave: { gate: { exports: { gate: allowAll() } } },
     })
     await parts.loader.start()
     await parts.loader.settled()
     const alpha = parts.runtime.half('alpha')
-    await parts.runtime.half('beta').ask('core.self', {})
     const asked = parts.runtime.half('beta').ask('alpha.hello', {})
     await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
     const delivered = alpha.inbox.find(message => message.kind === 'call' && message.action === 'alpha.hello')!
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: null })
     await asked
-    expect(lent).not.toBe(null)
-    const taken = lent!.next(50)
-    await lent!.append(taken.filter(record => record.action === 'alpha.hello'))
-    lent!.ack(taken.at(-1)!.seq)
-    await parts.carrier.flushFloor()
-    const records = await floorRecords(parts.dataDir)
-    const written = records.filter(record => record.event === 'audit.call')
+    await parts.carrier.flush()
+    const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
-    // The records it took and never wrote leave a count
-    expect(taken.length).toBeGreaterThan(1)
-    expect(records.filter(record => record.event === 'audit.skipped')).toEqual([expect.objectContaining({ records: taken.length - 1 })])
+    const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const history = await way.ask('editor', 'log.history')
+    expect(history).toMatchObject({ ok: true })
+    expect((history.result as { segment: number, breaks: number[] }[]).at(-1)).toMatchObject({ breaks: [] })
+    expect(await way.ask('editor', 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })
   })
 })
 

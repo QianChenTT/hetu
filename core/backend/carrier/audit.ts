@@ -1,16 +1,17 @@
 import type { Caller } from '../../api/envelope.ts'
-import { frozen } from '../../api/plain.ts'
-import type { AuditHandle, AuditRecord, LogSegment, LogVerification } from '../../api/slots.ts'
+import type { AuditRecord, LogSegment, LogVerification } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 
-// The EventLog's part the handle writes and reads through
+// The EventLog's part the writer writes through and log.history and log.verify read. healthy still true after a failed
+// append means the log refused that batch, not that the log is down
 export type AuditLog = {
   appendMany(batch: readonly { event: string, fields: Record<string, Field> }[], options?: { id?: string }): Promise<void>
   history(): Promise<LogSegment[]>
   verify(): Promise<LogVerification>
+  readonly healthy?: boolean
 }
 
-// The audit queue's pair, as the carrier exposes it
+// The audit queue's pair the writer takes records through and lets go of them
 export type AuditSource = { next(max: number): AuditRecord[], ack(seq: number): void }
 
 // The log refuses a longer value, so a long one is cut here and never refuses a whole batch
@@ -64,97 +65,90 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
   return fields
 }
 
-// The handle the log plugin holds for one incarnation, and revoke, which the loader calls when that incarnation is
-// over. The handle keeps its own copy of each record it hands out, so what the plugin does to its copy writes nothing,
-// and forgets a copy once it is written or acknowledged. Records go in the order they were handed out, never below one
-// already written, and a record being written can't be in another batch. A write can throw after its lines landed, so
-// after a failed append only the same batch goes, under the same id, which the log then writes once, until it is
-// written or acknowledged. skipped hears how many records an ack let go of that were never written
-export function lendAudit(source: AuditSource, log: AuditLog, skipped?: (count: number) => void): { handle: AuditHandle, revoke(): void } {
-  let live = true
-  const handed = new Map<number, AuditRecord>()
-  const writing = new Set<number>()
-  let lastWritten = 0
-  let failed: readonly number[] | null = null
-  const check = () => {
-    if (!live) throw new Error('the audit handle was revoked')
+// What one write came to: a batch on disk, nothing to write, a batch held to try again or a batch the log refused
+export type Written = 'written' | 'empty' | 'failed' | 'dropped'
+
+export type AuditWriterOptions = {
+  // Records a batch takes at most
+  max?: number
+  // How often a started writer writes
+  everyMs?: number
+  // How many records a batch held that a healthy log refused
+  refused?: (count: number) => void
+}
+
+// The core's own audit writer. Every everyMs it takes up to max records from the audit queue, writes them as audit.call
+// lines in one batch with one fsync and lets go of them once on disk. A batch is named by its first and last seq, which
+// no other batch in the run holds. A write can throw after its lines landed, so after a failed append with the log down
+// only the same batch goes, under the same id, which the log then writes once. The queue holds those records meanwhile,
+// so the oldest still times how long the log has been failing. A batch a healthy log refused would hold back every
+// record after it, so it is let go and counted. One write at a time: a write asked for during one waits on it
+export class AuditWriter {
+  private readonly source: AuditSource
+  private readonly log: AuditLog
+  private readonly max: number
+  private readonly everyMs: number
+  private readonly refused: (count: number) => void
+  private held: AuditRecord[] | null = null
+  private running: Promise<Written> | null = null
+  private timer: ReturnType<typeof setInterval> | null = null
+
+  constructor(source: AuditSource, log: AuditLog, options: AuditWriterOptions = {}) {
+    this.source = source
+    this.log = log
+    this.max = options.max ?? 256
+    this.everyMs = options.everyMs ?? 100
+    this.refused = options.refused ?? (() => {})
   }
 
-  const handle: AuditHandle = {
-    next(max: number): AuditRecord[] {
-      check()
-      if (!Number.isSafeInteger(max) || max < 0) throw new Error('next takes a whole number of records')
-      const records = source.next(max)
-      for (const record of records) handed.set(record.seq, record)
-      return records.map(record => structuredClone(record))
-    },
+  start(): void {
+    if (this.timer !== null) return
+    this.timer = setInterval(() => void this.write(), this.everyMs)
+    this.timer.unref?.()
+  }
 
-    async append(batch: readonly AuditRecord[]): Promise<void> {
-      check()
-      if (!Array.isArray(batch)) throw new Error('append takes a list of records')
-      const seqs = batch.map(record => (record as { seq?: unknown } | null)?.seq)
-      const own: AuditRecord[] = []
-      let below = lastWritten
-      for (const seq of seqs) {
-        const record = typeof seq === 'number' ? handed.get(seq) : undefined
-        if (record === undefined || writing.has(record.seq) || record.seq <= below) {
-          throw new Error('a record the handle didn\'t hand out, one written already or one out of order')
-        }
-        below = record.seq
-        own.push(record)
+  // A write under way still finishes
+  stop(): void {
+    if (this.timer !== null) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  write(): Promise<Written> {
+    if (this.running !== null) return this.running
+    const batch = this.held ?? this.source.next(this.max)
+    if (batch.length === 0) return Promise.resolve('empty')
+    this.running = this.append(batch).finally(() => {
+      this.running = null
+    })
+    return this.running
+  }
+
+  // Writes until nothing is left or a write failed. Never throws
+  async flush(): Promise<void> {
+    for (;;) {
+      const written = await this.write()
+      if (written === 'empty' || written === 'failed') return
+    }
+  }
+
+  private async append(batch: AuditRecord[]): Promise<Written> {
+    const last = batch[batch.length - 1].seq
+    try {
+      await this.log.appendMany(batch.map(record => ({ event: 'audit.call', fields: auditFields(record) })), { id: `audit:${batch[0].seq}-${last}` })
+    } catch {
+      if (this.log.healthy !== true) {
+        this.held = batch
+        return 'failed'
       }
-      if (failed !== null && (failed.length !== own.length || own.some((record, i) => record.seq !== failed![i]))) {
-        throw new Error('the batch that failed goes first')
-      }
-      const mine = own.map(record => record.seq)
-      for (const seq of mine) writing.add(seq)
+      this.held = null
+      this.source.ack(last)
       try {
-        await log.appendMany(own.map(record => ({ event: 'audit.call', fields: auditFields(record) })), { id: `audit:${mine.join(',')}` })
-      } catch (err) {
-        failed = mine
-        throw err
-      } finally {
-        for (const seq of mine) writing.delete(seq)
-      }
-      failed = null
-      lastWritten = mine[mine.length - 1]
-      for (const seq of mine) handed.delete(seq)
-    },
-
-    ack(seq: number): void {
-      check()
-      if (!Number.isSafeInteger(seq)) throw new Error('ack takes a seq')
-      source.ack(seq)
-      let unwritten = 0
-      for (const taken of handed.keys()) {
-        if (taken > seq) continue
-        handed.delete(taken)
-        if (!writing.has(taken)) unwritten++
-      }
-      if (failed !== null && failed.every(taken => taken <= seq)) failed = null
-      if (unwritten > 0) {
-        try {
-          skipped?.(unwritten)
-        } catch {}
-      }
-    },
-
-    async history(): Promise<LogSegment[]> {
-      check()
-      return log.history()
-    },
-
-    async verify(): Promise<LogVerification> {
-      check()
-      return log.verify()
-    },
-  }
-
-  return {
-    handle: frozen(handle),
-    revoke() {
-      live = false
-      handed.clear()
-    },
+        this.refused(batch.length)
+      } catch {}
+      return 'dropped'
+    }
+    this.held = null
+    this.source.ack(last)
+    return 'written'
   }
 }

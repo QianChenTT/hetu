@@ -6,7 +6,7 @@ import { floorConstantNames } from './floor.ts'
 import { coreNamespaces, localName, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
-import type { SlotState } from './slots.ts'
+import type { LogSegment, LogVerification, SlotState } from './slots.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
@@ -80,6 +80,10 @@ const coreTable = {
   },
   // What a window's banner shows, read again whenever core.status is sent
   'core.status': { from: 'windows', args: nothing },
+  // The event log the core writes: each file's chain as history reads it and whether the open file checks out. A
+  // window only, until the first-party shipper, which log.read is kept for
+  'log.history': { from: 'windows', args: nothing },
+  'log.verify': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal named
   'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token }) },
@@ -133,8 +137,6 @@ const providerTable = {
   'cache.get': { capability: null, args: key, scope: null, write: false },
   'cache.set': { capability: null, args: keyed, scope: null, write: true },
   'cache.delete': { capability: null, args: key, scope: null, write: true },
-  'log.history': { capability: 'log.read', args: nothing, scope: null, write: false },
-  'log.verify': { capability: 'log.read', args: nothing, scope: null, write: false },
 } satisfies Record<string, ProviderAction>
 export const providerActions = lookup<ProviderAction>(providerTable)
 
@@ -162,6 +164,8 @@ export type ActionResults = {
   'core.self': Caller
   'core.status': CoreStatus
   'core.filterReadable': string[]
+  'log.history': LogSegment[]
+  'log.verify': LogVerification
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null
   'events.publish': null

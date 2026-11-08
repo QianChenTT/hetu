@@ -64,8 +64,8 @@ describe('the requires graph', () => {
   })
 
   it('orders every plugin after what it requires, the lowest rank first among the rest', () => {
-    const nodes = [node('search', ['luoshu'], ok, 1000), node('luoshu', ['storage'], ok, 5), node('storage', [], ok, 4), node('log', [], ok, 0), node('git', [], ok, 1000)]
-    expect(plan(nodes).order).toEqual(['log', 'storage', 'luoshu', 'git', 'search'])
+    const nodes = [node('search', ['luoshu'], ok, 1000), node('luoshu', ['storage'], ok, 5), node('storage', [], ok, 4), node('gate', [], ok, 0), node('git', [], ok, 1000)]
+    expect(plan(nodes).order).toEqual(['gate', 'storage', 'luoshu', 'git', 'search'])
   })
 
   it('puts plugins in a cycle and behind one last, so every other plugin keeps its place', () => {
@@ -82,10 +82,10 @@ describe('the requires graph', () => {
 })
 
 describe('the boot order', () => {
-  it('names every install plugin once, the slot holders first with the log at their head', () => {
+  it('names every install plugin once, the slot holders first with the gate at their head', () => {
     expect([...bootOrder].sort()).toEqual([...installIds].sort())
     expect(new Set(bootOrder.slice(0, slotIds.length))).toEqual(new Set(slotIds))
-    expect(bootOrder[0]).toBe('log')
+    expect(bootOrder[0]).toBe('gate')
   })
 
   it('starts the providers before leases, the guard', () => {

@@ -16,6 +16,7 @@ import {
   type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
+import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
@@ -197,6 +198,9 @@ export class Carrier {
   private readonly lane: FloorLane
   private readonly coalesced: Coalesced
   private readonly queue: AuditQueue
+  // The core's own writer of the audit queue, none with no log
+  private readonly writer: AuditWriter | null
+  private readonly logReads: Served | undefined
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
   private readonly inflight = new Map<string, { calls: number, bytes: number }>()
@@ -229,6 +233,16 @@ export class Carrier {
     })
     this.coalesced = new Coalesced(this.lane)
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
+    const log = options.log
+    // A batch the log refused while healthy is let go and counted, one record a batch
+    this.writer = log === null ? null : new AuditWriter(this.queue, log, {
+      everyMs: options.auditEveryMs ?? 100,
+      refused: count => {
+        void this.lane.write('audit.dropped', { why: 'refused', count })
+      },
+    })
+    this.writer?.start()
+    this.logReads = log === null ? undefined : async call => (call.action === 'log.history' ? log.history() : log.verify())
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logHealthy = options.log?.healthy
     this.looking = setInterval(() => this.look(), 1000)
@@ -250,17 +264,11 @@ export class Carrier {
     })
   }
 
-  // The audit queue's pair, which the log plugin's handle is to wrap
-  readonly audit = {
-    next: (max: number) => this.queue.next(max),
-    ack: (seq: number) => this.queue.ack(seq),
-  }
-
   // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
   // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
   // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
   // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
-  // holds. Audit records keep queueing until close counts them
+  // holds. Audit records keep queueing and the flush after close writes them
   stopping(): void {
     this.shutting = true
   }
@@ -273,15 +281,6 @@ export class Carrier {
   // A floor record from the core: boot, the loader and the carrier itself
   floor(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
-  }
-
-  // The log plugin acknowledged records it never wrote, which is its choice to make and leaves a count: records is how
-  // many, summed over a second, and count how many acks
-  skipped(records: number): void {
-    this.coalesced.hit('audit.skipped', { records }, {
-      by: {},
-      join: (held, next) => ({ records: Number(held?.records ?? 0) + Number(next.records) }),
-    })
   }
 
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
@@ -297,9 +296,11 @@ export class Carrier {
     }
   }
 
-  // The floor lane's backlog, for a log that came back
-  flushFloor(): Promise<void> {
-    return this.lane.flush()
+  // Writes what the audit queue holds, then the floor backlog: for a log that came back and for Quit, before close and
+  // after it. Never throws
+  async flush(): Promise<void> {
+    await this.writer?.flush()
+    await this.lane.flush()
   }
 
   // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
@@ -411,14 +412,14 @@ export class Carrier {
     return this.limits.of(plugin, name)
   }
 
+  // The records of the calls it stops stay queued for the flush after close. What the log can't take by then is lost
+  // with the run and a count of it couldn't land either
   close(): void {
     this.closed = true
     clearInterval(this.looking)
+    this.writer?.stop()
     for (const way of [...this.ways.values()]) this.end(way.caller)
     this.coalesced.close()
-    // Records the log plugin never acknowledged are lost with the run and counted
-    const held = this.queue.clear()
-    if (held > 0 && !this.muted()) this.lane.write('audit.dropped', { count: held, why: 'shutdown' })
     this.lane.close()
   }
 
@@ -750,17 +751,14 @@ export class Carrier {
   }
 
   // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-  // call with power still needs the log running unless the human switched it off too or turned recording off
+  // call with power passes while its record can still land and passes unrecorded once the human turned recording off
   private gateOpen(): 'decide' | 'pass' | RefusalCode {
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
     if (gate !== 'off') return this.down('policy-down')
-    if (this.muted()) return 'pass'
-    if (this.stalled()) return this.down('policy-down')
-    const log = this.slot('log')
-    if (log === 'on' || log === 'off') return 'pass'
-    return log === 'starting' ? 'starting' : this.down('policy-down')
+    if (this.muted() || !this.logFailing()) return 'pass'
+    return this.down('policy-down')
   }
 
   // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
@@ -824,6 +822,7 @@ export class Carrier {
   private async coreAction(pending: Pending, args: unknown): Promise<void> {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
+    if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
       this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
@@ -1226,45 +1225,28 @@ export class Carrier {
     }
   }
 
-  // One audit record per call while the log is on or starting. Nothing while recording is off. A log that went down
-  // or was switched off loses what the queue held, which is counted in a floor record. During shutdown the log stops
-  // last and reads failed then, so records keep queueing and close counts what is left
+  // One audit record per call, which the writer takes to the log. Nothing while recording is off or with no log. One
+  // past the queue's bound is dropped and counted
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
-    if (this.muted()) return
-    this.stalled()
-    const log = this.slot('log')
-    if (log !== 'on' && log !== 'starting' && !this.shutting) {
-      const held = this.queue.clear()
-      if (held > 0) this.lane.write('audit.dropped', { count: held, why: 'log-down' })
-      return
-    }
+    if (this.writer === null || this.muted()) return
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
   }
 
-  // Once a second, so a stalled log is marked failed while hetu is idle and windows hear when the log's health changed
-  // through an audit write, which the floor lane doesn't see
+  // Once a second, so windows hear when the log's health changed through an audit write, which the floor lane doesn't see
   private look(): void {
     if (this.closed || this.shutting) return
-    this.stalled()
     const healthy = this.options.log?.healthy
     if (healthy === this.logHealthy) return
     this.logHealthy = healthy
     this.bus.emit('core.status')
   }
 
-  // A log plugin whose oldest record waited unacknowledged for auditStallMs has stalled, and the loader marks it failed
-  // as it would a crash, so with the gate off a call with power is refused rather than passing with only a count of
-  // what was dropped. Timed from when the record was queued, so a long call doesn't read as stalled. Never while the log
-  // starts, which readyMs bounds, or once shutdown began, when the log stops last. true even when the loader couldn't
-  // mark it, so the gate off still refuses
-  private stalled(): boolean {
-    if (this.shutting || this.closed || this.slot('log') !== 'on') return false
+  // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
+  // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
+  // count. Step 14 makes this a quit. Until then the gate off refuses a call with power meanwhile
+  private logFailing(): boolean {
     const oldest = this.queue.oldest()
-    if (oldest === null || this.clock() - oldest < this.limits.of('log', 'auditStallMs')) return false
-    try {
-      this.options.loader.fail('log', 'stalled')
-    } catch {}
-    return true
+    return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')
   }
 
   private callOf(pending: Pending, args: unknown): Call {
