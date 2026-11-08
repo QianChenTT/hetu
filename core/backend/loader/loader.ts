@@ -14,7 +14,8 @@ import {
 import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
-import type { PluginState, SlotState } from '../../api/slots.ts'
+import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import type { GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -1188,6 +1189,9 @@ export class Loader implements Seam {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
         return this.bump()
+      case 'item.on':
+      case 'item.off':
+        return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
       default:
         throw new Error(`${change.kind} comes with a later step`)
     }
@@ -1210,11 +1214,48 @@ export class Loader implements Seam {
     this.refresh()
   }
 
+  // One item a folder plugin was granted switched on or off. An install plugin's grants are its manifest, so it has
+  // no entry to hold a switch
+  private async switchItem(id: string, capability: Capability, on: boolean): Promise<void> {
+    const k = this.known.get(id)
+    const entry = k?.from === 'folder' ? k.entry : null
+    if (k === undefined || entry === null) throw new Error(`no plugin entry for ${id}`)
+    const key = capabilityKey(capability)
+    const item = entry.granted.find(granted => capabilityKey(granted) === key)
+    if (item === undefined) throw new Error(`${id} wasn't granted that item`)
+    const others = (entry.off ?? []).filter(off => capabilityKey(off) !== key)
+    const next: Plugin = { ...entry, off: on ? others : [...others, item] }
+    await this.store.writePlugin(id, next)
+    this.putEntry(id, next)
+    this.bump()
+  }
+
+  // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
+  // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
+  // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
+  // switched off is off. No item asks at its first use until the Confirm flow and the classes come, since with nothing to
+  // raise the prompt an ask could only refuse
+  private stateView(): StateView {
+    const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
+    const items = (granted: readonly Capability[], switchedOff: readonly Capability[]) => {
+      const off = new Set(switchedOff.map(capabilityKey))
+      return granted.map(capability => ({ capability: structuredClone(capability), off: off.has(capabilityKey(capability)), firstUse: false }))
+    }
+    for (const [id, entry] of Object.entries(this.state.plugins)) {
+      if (this.known.get(id)?.from !== 'install' && entry.granted.length > 0) plugins[id] = items(entry.granted, entry.off ?? [])
+    }
+    for (const k of this.known.values()) {
+      const granted = k.from === 'install' ? k.read.manifest?.capabilities ?? [] : []
+      if (granted.length > 0) plugins[k.id] = items(granted, [])
+    }
+    return frozen({ n: this.n, foldCase: false, plugins })
+  }
+
   private pushTo(gate: Known): boolean {
     const target = gate.live?.exports?.gate
     if (target === undefined) return true
     try {
-      target.stateChanged(frozen({ n: this.n }))
+      target.stateChanged(this.stateView())
       return true
     } catch {
       this.die(gate, 'state-changed')

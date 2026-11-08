@@ -1,4 +1,4 @@
-import type { CapabilityType } from './capabilities.ts'
+import type { Capability, CapabilityType } from './capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from './envelope.ts'
 import { frozen } from './plain.ts'
 
@@ -47,9 +47,19 @@ export type Decision =
   | { allow: false, code: 'not-granted' | 'switched-off', view: number }
   | { ask: string, view: number }
 
-// What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. The grants it
-// carries come with the gate plugin
-export type StateView = { readonly n: number }
+// One capability a plugin holds, as the gate judges it: off once the human switched it off, firstUse while its first
+// use still asks for a Confirm
+export type GrantedItem = { readonly capability: Capability, readonly off: boolean, readonly firstUse: boolean }
+
+// What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
+// each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest, and leaves
+// out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
+// volume ignores case
+export type StateView = {
+  readonly n: number
+  readonly foldCase: boolean
+  readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
+}
 
 export type Gate = {
   decide(access: Access): Decision

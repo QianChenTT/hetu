@@ -296,6 +296,16 @@ describe('writing', () => {
     expect(loaded.state.plugins.search.granted).toEqual(everyCapability)
   })
 
+  it('keeps the items the human switched off, and reads an entry written without the list as none switched off', async () => {
+    const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
+    await addPlugin('search', { granted: [read, { type: 'ui.panel' }], off: [read] })
+    await addPlugin('git', { granted: [read] })
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.plugins.search.off).toEqual([read])
+    expect(loaded.state.plugins.git.off ?? []).toEqual([])
+  })
+
   it('keeps a null class, which counts as 4 elsewhere', async () => {
     await addPlugin('search', { class: null })
     const loaded = await store.load()
