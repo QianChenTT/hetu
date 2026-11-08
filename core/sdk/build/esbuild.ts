@@ -142,3 +142,37 @@ export async function checkHostImports(entry: string, node: readonly string[]): 
   }
   return [...problems].sort()
 }
+
+// A host half as one ES module for Node. The runtime imports it from a data: URL, which can't import by a relative path,
+// so everything is bundled but Node's built-ins, and each of those must be in the manifest's node list. Anything else
+// left to load at run time is refused, an Electron import among them
+export async function buildHost(root: string, entry: string, node: readonly string[]): Promise<{ text: string, imports: string[] }> {
+  const result = await build({
+    absWorkingDir: root,
+    entryPoints: [path.join(root, entry)],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node24.22',
+    // The npm package would bundle as the path to Electron's binary, so an import of it is refused below instead
+    external: ['electron'],
+    legalComments: 'none',
+    charset: 'utf8',
+    write: false,
+    metafile: true,
+    logLevel: 'silent',
+  })
+  const allowed = new Set(node.map(name => name.replace(/^node:/, '').split('/')[0]))
+  const imports = new Set<string>()
+  const problems = new Set<string>()
+  for (const output of Object.values(result.metafile.outputs)) {
+    for (const item of output.imports) {
+      if (!item.external) continue
+      imports.add(item.path)
+      if (!isBuiltin(item.path)) problems.add(`${item.path} would load at run time`)
+      else if (!allowed.has(item.path.replace(/^node:/, '').split('/')[0])) problems.add(`${item.path} isn't in the manifest's node list`)
+    }
+  }
+  if (problems.size > 0) throw new Error(`the host half can't ship as built:\n${[...problems].sort().join('\n')}`)
+  return { text: result.outputFiles[0].text, imports: [...imports].sort() }
+}

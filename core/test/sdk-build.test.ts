@@ -4,7 +4,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
-import { buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
+import { buildHost, buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
 
 const search = path.join(import.meta.dirname, '..', '..', 'plugins', 'search')
 const dirs: string[] = []
@@ -128,5 +128,27 @@ describe('search as it ships', () => {
     expect(outputs).toHaveLength(1)
     expect(outputs[0].bytes).toBeLessThan(1.5 * 1024 * 1024)
     expect(outputs[0].inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])
+  })
+})
+
+describe('building a host half', () => {
+  const sdk = path.join(import.meta.dirname, '..', 'sdk', 'index.ts').split(path.sep).join('/')
+  const host = (imports: string) => `${imports}\nimport { definePlugin } from '${sdk}'\nexport default definePlugin({ start() {} })\nexport const provider = { name: basename('a/b') }\n`
+
+  it('bundles one ES module whose only imports are the Node built-ins its manifest names, which loads from a data: URL', async () => {
+    const dir = await folder({ 'src/host.ts': host("import { basename } from 'node:path'") })
+    const built = await buildHost(dir, 'src/host.ts', ['path'])
+    expect(built.imports).toEqual(['node:path'])
+    const module = await import(`data:text/javascript;base64,${Buffer.from(built.text).toString('base64')}`) as { default: { kind: string }, provider: { name: string } }
+    expect(module.default.kind).toBe('hetu-plugin')
+    expect(module.provider.name).toBe('b')
+  })
+
+  it('refuses a Node built-in the manifest\'s node list doesn\'t name, and a package it would have to load at run time', async () => {
+    // A bare import of a built-in nothing uses is dropped from the bundle, so this one is used
+    const dir = await folder({ 'src/host.ts': `${host("import { basename } from 'node:path'\nimport { execFile } from 'node:child_process'")}export const run = execFile\n` })
+    await expect(buildHost(dir, 'src/host.ts', ['path'])).rejects.toThrow('child_process')
+    const external = await folder({ 'src/host.ts': host("import { basename } from 'node:path'\nimport 'electron'") })
+    await expect(buildHost(external, 'src/host.ts', ['path'])).rejects.toThrow()
   })
 })
