@@ -41,9 +41,12 @@ class FakeRenderer implements Renderer {
   }
 }
 
+const LIMITS = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, textPerSecond: 100, resultBytes: 1 }
+
 function runtime(readyMs = 1000, endingMs = 1000) {
   const renderers: FakeRenderer[] = []
   const records: { event: string, fields: Record<string, unknown> }[] = []
+  const cutoffs: unknown[][] = []
   const workers = new WorkerRenderer({
     open: () => {
       const renderer = new FakeRenderer()
@@ -51,10 +54,12 @@ function runtime(readyMs = 1000, endingMs = 1000) {
       return renderer
     },
     record: (event, fields) => records.push({ event, fields }),
+    limits: id => ({ ...LIMITS, resultBytes: id.length }),
+    cutoff: (id, incarnation, reason) => cutoffs.push([id, incarnation, reason]),
     readyMs,
     endingMs,
   })
-  return { workers, renderers, records }
+  return { workers, renderers, records, cutoffs }
 }
 
 const start = (id = 'search', incarnation = 1) => {
@@ -75,8 +80,8 @@ describe('the hidden renderer for workers', () => {
     expect(starts(renderers[0])).toEqual([])
     renderers[0].says({ kind: 'ready' })
     expect(starts(renderers[0])).toEqual([
-      { channel: 'hetu:start', message: { id: 'search', incarnation: 1, code: Buffer.from('// search') }, ports: [first.start.port] },
-      { channel: 'hetu:start', message: { id: 'git', incarnation: 1, code: Buffer.from('// git') }, ports: [second.start.port] },
+      { channel: 'hetu:start', message: { id: 'search', incarnation: 1, code: Buffer.from('// search'), limits: { ...LIMITS, resultBytes: 6 } }, ports: [first.start.port] },
+      { channel: 'hetu:start', message: { id: 'git', incarnation: 1, code: Buffer.from('// git'), limits: { ...LIMITS, resultBytes: 3 } }, ports: [second.start.port] },
     ])
   })
 
@@ -153,6 +158,20 @@ describe('the hidden renderer for workers', () => {
     renderers[0].says({ kind: 'other' })
     renderers[0].says(null)
     expect(records).toEqual([{ event: 'worker.errors', fields: { plugin: 'search', incarnation: 1, count: 3 } }])
+  })
+
+  it('hands a cutoff from the page to the loader once, for a running worker, and has nothing left to end', () => {
+    const { workers, renderers, cutoffs } = runtime()
+    workers.start(start('search').start)
+    renderers[0].says({ kind: 'ready' })
+    renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'other' })
+    renderers[0].says({ kind: 'cutoff', id: 'git', incarnation: 1, reason: 'flood' })
+    expect(cutoffs).toEqual([])
+    renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' })
+    renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'flood' })
+    expect(cutoffs).toEqual([['search', 1, 'malformed']])
+    workers.terminate('search', 1)
+    expect(renderers[0].posted.filter(post => post.channel === 'hetu:terminate')).toEqual([])
   })
 
   it('ends the renderer at close and refuses later starts by closing their ports', () => {

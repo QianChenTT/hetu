@@ -21,6 +21,10 @@ export type WorkerRendererOptions = {
   open(): Renderer
   // A floor record
   record(event: string, fields: Record<string, Field>): void
+  // The limits the page's relay applies to a plugin's messages, sent with its start
+  limits(id: string): Readonly<Record<string, number>>
+  // The page cut a worker off: it ended the worker and the plugin crashed for reason
+  cutoff(id: string, incarnation: number, reason: 'malformed' | 'flood'): void
   // How long whenReady waits for the page
   readyMs: number
   // How long an ended worker still counts as held for a renderer that dies. Its ports close a few ms before Electron
@@ -119,19 +123,26 @@ export class WorkerRenderer {
 
   private send(start: Start): void {
     this.running.set(key(start.id, start.incarnation), start.id)
-    this.renderer?.post('hetu:start', { id: start.id, incarnation: start.incarnation, code: start.code }, [start.port])
+    const limits = this.options.limits(start.id)
+    this.renderer?.post('hetu:start', { id: start.id, incarnation: start.incarnation, code: start.code, limits }, [start.port])
   }
 
   private heard(message: unknown): void {
     if (typeof message !== 'object' || message === null) return
-    const { kind, id, incarnation, count } = message as Record<string, unknown>
+    const { kind, id, incarnation, count, reason } = message as Record<string, unknown>
     if (kind === 'ready' && !this.ready) {
       this.ready = true
       for (const start of this.queue.splice(0)) this.send(start)
       for (const settle of this.waiters.splice(0)) settle(true)
       return
     }
-    if (kind !== 'errors' || typeof id !== 'string' || typeof incarnation !== 'number') return
+    if (typeof id !== 'string' || typeof incarnation !== 'number') return
+    // The page already ended the worker, so the loader's end that follows has nothing to send
+    if (kind === 'cutoff' && (reason === 'malformed' || reason === 'flood') && this.running.delete(key(id, incarnation))) {
+      this.options.cutoff(id, incarnation, reason)
+      return
+    }
+    if (kind !== 'errors') return
     if (!Number.isSafeInteger(count) || (count as number) <= 0 || !this.running.has(key(id, incarnation))) return
     this.options.record('worker.errors', { plugin: id, incarnation, count: count as number })
   }

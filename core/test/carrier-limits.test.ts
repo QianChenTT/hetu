@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { floorConstants } from '../api/floor.ts'
-import { countMessage, Limits, newRate } from '../backend/carrier/limits.ts'
+import { countMessage, newRate } from '../api/rate.ts'
+import { Limits } from '../backend/carrier/limits.ts'
 import type { HumanLimits, Port } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
 

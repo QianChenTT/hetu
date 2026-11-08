@@ -1,7 +1,9 @@
 import path from 'node:path'
 import { app, BrowserWindow, dialog, MessageChannelMain, protocol, session, type Session } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
+import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import type { Carrier } from './carrier/carrier.ts'
+import type { Loader } from './loader/loader.ts'
 import { beforeReady } from './runtime/before-ready.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { quitInOrder, type QuitParts } from './runtime/quit.ts'
@@ -17,6 +19,8 @@ const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
 // How long the core waits for the worker host page before it starts plugins anyway
 const RENDERER_READY_MS = 10_000
+// The limits the page's relay applies before a worker's message reaches main
+const RELAY_LIMITS: readonly FloorConstant[] = ['messagesPerSecond', 'floodFactor', 'floodMs', 'textPerSecond', 'resultBytes']
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -74,18 +78,23 @@ async function start(): Promise<void> {
       lockDown(sessions[role], role, pages)
     }
 
+    // The carrier and the loader exist once the core is wired, before any worker starts
     let carrier: Carrier | null = null
+    let loader: Loader | null = null
+    const limit = (plugin: string, name: FloorConstant) => carrier?.limit(plugin, name) ?? floorConstants[name]
     const renderer = new WorkerRenderer({
       open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, app.isPackaged),
       record: (event, fields) => carrier?.floor(event, fields),
+      limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
+      cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
       readyMs: RENDERER_READY_MS,
     })
     workers = renderer
-    const runtime = electronRuntime(() => new MessageChannelMain(), renderer)
+    const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit)
     const wired = wireCore({ booted, installDir, runtime })
     carrier = wired.carrier
-    const { loader } = wired
-    parts = { loader, carrier, release: booted.release }
+    loader = wired.loader
+    parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }
 
     let editor: BrowserWindow | null = null
     // A second hetu on the same data folder quits before ready and this one comes to the front
@@ -100,7 +109,7 @@ async function start(): Promise<void> {
     })
 
     await renderer.whenReady()
-    await loader.start()
+    await wired.loader.start()
     if (quitting === null) editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
   } catch (err) {
     tell(err)

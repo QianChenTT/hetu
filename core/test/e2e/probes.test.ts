@@ -10,10 +10,12 @@ self.onmessage = event => {
   const port = event.ports[0]
   self.onmessage = null
   self.hetuPort = port
+  const send = message => port.postMessage(JSON.stringify(message))
   port.onmessage = ({ data }) => {
-    if (data.kind === 'init') port.postMessage({ v: 1, kind: 'ready' })
-    else if (data.kind === 'ping') port.postMessage({ v: 1, kind: 'pong' })
-    else if (data.kind === 'stop') port.postMessage({ v: 1, kind: 'stopped' })
+    const message = JSON.parse(data)
+    if (message.kind === 'init') send({ v: 1, kind: 'ready' })
+    else if (message.kind === 'ping') send({ v: 1, kind: 'pong' })
+    else if (message.kind === 'stop') send({ v: 1, kind: 'stopped' })
   }
 }
 `
@@ -130,15 +132,15 @@ describe('the probes in a worker', () => {
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'past', reason: 'start-timeout' }))
   })
 
-  it('measures what one huge message from a worker costs main', async () => {
-    const dataDir = await dataWith({ big: lifecycle })
+  it('keeps main free of one huge message: the relay cuts its sender off before main reads it', async () => {
+    const dataDir = await dataWith({ objects: lifecycle, past: lifecycle, within: lifecycle })
     const app = await launch(dataDir)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'big' }))
-    const [worker] = (await probes(app, 1)).values()
-    const lags: Record<string, number> = {}
-    // A string copies in one piece, many small objects one by one
-    const sends = ['16 MiB string', '64 MiB string', 'a million small objects']
-    for (const name of sends) {
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'within' }))
+    const workers = await probes(app, 3)
+    const stalls: Record<string, number> = {}
+    // Through main's port before the relay, a million small objects stalled main 390 ms
+    const sends: [string, string][] = [['objects', 'a million small objects'], ['past', '64 MiB of text'], ['within', '16 MiB of text']]
+    for (const [plugin, name] of sends) {
       await app.evaluate(() => {
         const scope = globalThis as unknown as { lag: number, last: number, timer: NodeJS.Timeout }
         clearInterval(scope.timer)
@@ -150,18 +152,20 @@ describe('the probes in a worker', () => {
           scope.last = now
         }, 10)
       })
-      await worker.evaluate(which => {
-        const message = which === '16 MiB string' ? 'x'.repeat(16 * 1024 * 1024)
-          : which === '64 MiB string' ? 'x'.repeat(64 * 1024 * 1024)
+      await workers.get(plugin)!.evaluate(which => {
+        const message = which === '16 MiB of text' ? 'x'.repeat(16 * 1024 * 1024)
+          : which === '64 MiB of text' ? 'x'.repeat(64 * 1024 * 1024)
           : Array.from({ length: 1_000_000 }, (_, i) => ({ i, name: 'n' }))
         ;(self as unknown as { hetuPort: MessagePort }).hetuPort.postMessage(message)
       }, name)
       await new Promise(resolve => setTimeout(resolve, 3000))
-      lags[name] = Math.round(await app.evaluate(() => (globalThis as unknown as { lag: number }).lag))
+      stalls[name] = Math.round(await app.evaluate(() => (globalThis as unknown as { lag: number }).lag))
     }
-    console.log(JSON.stringify({ 'longest stall of main in ms': lags }))
-    // main came through and the plugin is still up
-    expect(await app.evaluate(() => 1)).toBe(1)
-    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'big' })).toBe(false)
+    console.log(JSON.stringify({ 'longest stall of main in ms': stalls }))
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'objects', reason: 'malformed' })).toBe(true)
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'past', reason: 'malformed' })).toBe(true)
+    // Text within the cap reaches main as one cheap copy, and isn't an envelope, so the carrier reads it as unreadable
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'within' })).toBe(false)
+    for (const [name, ms] of Object.entries(stalls)) expect(ms, name).toBeLessThan(100)
   })
 })

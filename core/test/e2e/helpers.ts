@@ -64,7 +64,12 @@ export async function pageAt(app: ElectronApplication, url: string): Promise<Pag
   return found!
 }
 
-export const editorPage = (app: ElectronApplication) => pageAt(app, 'hetu://editor/')
+// The editor once its window shows, which waits for its first paint and can come after its page loaded
+export async function editorPage(app: ElectronApplication): Promise<Page> {
+  const page = await pageAt(app, 'hetu://editor/')
+  await until(async () => (await visibleWindows(app)).includes('hetu://editor/'))
+  return page
+}
 export const workersPage = (app: ElectronApplication) => pageAt(app, 'hetu://workers/')
 
 // The windows a human sees, by URL

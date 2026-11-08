@@ -131,6 +131,14 @@ describe('a crash', () => {
     expect(stateOf(made.loader, 'mapper')).toBe('crashed')
     expect(reasonOf(made.loader, 'mapper')).toBe('flood')
   })
+
+  it('takes a worker the relay cut off for a malformed message as crashed with malformed', async () => {
+    const made = await harness({ folder: { mapper: worker('mapper') }, entries: { mapper: signed() } })
+    await made.loader.start()
+    made.loader.crashed(wkr('mapper'), 'malformed')
+    expect(stateOf(made.loader, 'mapper')).toBe('crashed')
+    expect(reasonOf(made.loader, 'mapper')).toBe('malformed')
+  })
 })
 
 describe('a dead incarnation', () => {

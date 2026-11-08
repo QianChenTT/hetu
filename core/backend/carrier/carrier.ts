@@ -17,7 +17,8 @@ import {
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
-import { countMessage, Limits, newRate, type Rate } from './limits.ts'
+import { countMessage, newRate, type Rate } from '../../api/rate.ts'
+import { Limits } from './limits.ts'
 import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 

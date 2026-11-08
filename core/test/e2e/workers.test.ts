@@ -5,19 +5,21 @@ afterEach(cleanup)
 
 const at = (record: Record<string, unknown>) => Date.parse(record.at as string)
 
-// A worker that speaks the lifecycle on the port the page hands it, the way the SDK will. after runs once it is ready.
+// A worker that speaks the lifecycle as text on the port the page hands it, the way the SDK will. after runs once it is ready.
 // It answers a stop after saveMs, as a plugin saving its state would
 const lifecycle = (after = '', saveMs = 0) => `
 self.onmessage = event => {
   const port = event.ports[0]
   self.onmessage = null
+  const send = message => port.postMessage(JSON.stringify(message))
   port.onmessage = ({ data }) => {
-    if (data.kind === 'init') {
-      port.postMessage({ v: 1, kind: 'ready' })
+    const message = JSON.parse(data)
+    if (message.kind === 'init') {
+      send({ v: 1, kind: 'ready' })
       ${after}
     }
-    else if (data.kind === 'ping') port.postMessage({ v: 1, kind: 'pong' })
-    else if (data.kind === 'stop') setTimeout(() => port.postMessage({ v: 1, kind: 'stopped' }), ${saveMs})
+    else if (message.kind === 'ping') send({ v: 1, kind: 'pong' })
+    else if (message.kind === 'stop') setTimeout(() => send({ v: 1, kind: 'stopped' }), ${saveMs})
   }
 }
 `
@@ -52,8 +54,9 @@ describe('sandboxed plugins as workers', () => {
       self.onmessage = event => {
         const port = event.ports[0]
         port.onmessage = ({ data }) => {
-          if (data.kind === 'init') port.postMessage({ v: 1, kind: 'ready' })
-          else if (data.kind === 'ping') for (;;) {}
+          const message = JSON.parse(data)
+          if (message.kind === 'init') port.postMessage(JSON.stringify({ v: 1, kind: 'ready' }))
+          else if (message.kind === 'ping') for (;;) {}
         }
       }
     `
@@ -101,5 +104,12 @@ describe('sandboxed plugins as workers', () => {
     const dataDir = await dataWith({ quits: lifecycle('setTimeout(() => self.close(), 100)') })
     await launch(dataDir)
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'quits', reason: 'closed' }))
+  })
+
+  it('has the relay cut off a worker that floods, before main reads its messages', async () => {
+    const dataDir = await dataWith({ floods: lifecycle('for (let i = 0; i < 200000; i++) send({ v: 1, kind: "pong" })') })
+    const app = await launch(dataDir)
+    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'floods', reason: 'flood' }))
+    expect(await app.evaluate(() => 1)).toBe(1)
   })
 })

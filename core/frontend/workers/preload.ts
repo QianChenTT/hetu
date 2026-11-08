@@ -10,5 +10,5 @@ window.addEventListener('message', event => {
   if (event.source !== window || event.origin !== location.origin) return
   const data = event.data as Record<string, unknown> | null
   if (data?.hetu !== 'to-main') return
-  ipcRenderer.send('hetu:page', { kind: data.kind, id: data.id, incarnation: data.incarnation, count: data.count })
+  ipcRenderer.send('hetu:page', { kind: data.kind, id: data.id, incarnation: data.incarnation, count: data.count, reason: data.reason })
 })
