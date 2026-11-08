@@ -1,12 +1,12 @@
 import { z } from 'zod'
-import type { CapabilityType } from './capabilities.ts'
+import type { Capability, CapabilityType } from './capabilities.ts'
 import { change, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
-import type { LogSegment, LogVerification, SlotState } from './slots.ts'
+import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
@@ -166,6 +166,38 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // restart a second time
 export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
 
+// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs, its state and
+// why, whether it is a security control, the human's switch and, for a plugin-folder plugin, each item it was granted
+export type ListedPlugin = {
+  id: string
+  from: 'install' | 'folder'
+  place: 'host' | 'sandboxed' | 'page'
+  state: PluginState
+  reason: string | null
+  security: boolean
+  on: boolean
+  items: { capability: Capability, off: boolean, firstUse: boolean }[]
+}
+
+// A request waiting for the human in the core's own words, with the word to type where the change asks for one
+export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null }
+
+// What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest
+// first, and the stopped mode
+export type SecurityList = {
+  plugins: ListedPlugin[]
+  switches: {
+    devMode: string[]
+    execAnyCommand: string[]
+    skipVerification: boolean
+    allowUnsigned: string[]
+    confirmOff: boolean
+    recordNothing: boolean
+  }
+  requests: HeldRequest[]
+  stopped: StoppedMode | null
+}
+
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
 // switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the requests
 // waiting for the human and the stopped mode
@@ -187,6 +219,8 @@ export type CoreStatus = {
 export type ActionResults = {
   'core.self': Caller
   'core.status': CoreStatus
+  'security.list': SecurityList
+  'security.request': { applied: true } | { held: string }
   'core.filterReadable': string[]
   'log.history': LogSegment[]
   'log.verify': LogVerification

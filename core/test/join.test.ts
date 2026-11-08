@@ -38,7 +38,7 @@ async function joined(options: {
   entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
-  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -429,6 +429,14 @@ describe('core.status, for a window\'s banner', () => {
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
   })
 
+  it('names the requests waiting for the human, a plugin found in the folder among them', async () => {
+    const { carrier, loader, dataDir } = await joined()
+    await writeFolder(path.join(dataDir, 'plugins', 'beta'), filesFor(workerManifest('beta')))
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.status')).result).toMatchObject({ pending: [{ kind: 'plugin.approve', plugin: 'beta' }] })
+  })
+
   it('says the log can\'t write while boot\'s event log is failing', async () => {
     const { carrier, loader } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
     await loader.start()
@@ -560,5 +568,42 @@ describe('the gate plugin on the joined core', () => {
     expect(parts.loader.slot('gate')).toBe('failed')
     expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
+  })
+})
+
+describe('the windows\' own actions', () => {
+  const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
+  const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
+
+  it('go to the runtime for opening the trusted window, Quit and Restart hetu, and the rest to the loader', async () => {
+    const served: string[] = []
+    const { carrier, loader } = await joined({
+      wire: { windows: { serve: async call => { served.push(call.action); return null }, armed: () => true } },
+    })
+    await loader.start()
+    const way = windowWay(carrier, { editor, trusted })
+    for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
+    expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
+    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch'])
+    expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
+  })
+
+  it('count a Confirm only once the runtime says the trusted window armed', async () => {
+    let armed = false
+    const { carrier, loader } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
+    await loader.start()
+    const way = windowWay(carrier, { editor, trusted })
+    const reply = await way.ask('editor', 'security.request', { change: { kind: 'skipVerification', on: true } })
+    const id = (reply.result as { held: string }).held
+    expect((await way.ask('trusted', 'security.confirm', { requestId: id })).refusal).toMatchObject({ code: 'throttled' })
+    armed = true
+    expect((await way.ask('trusted', 'security.confirm', { requestId: id })).ok).toBe(true)
+  })
+
+  it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {
+    const { carrier, loader } = await joined()
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
   })
 })

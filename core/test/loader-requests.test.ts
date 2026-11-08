@@ -2,6 +2,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { capabilityKey, type Capability } from '../api/capabilities.ts'
+import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { carrierOptions } from '../backend/wire.ts'
@@ -383,5 +384,74 @@ describe('the wiring', () => {
     expect(carrierOptions(made.loader, { log: null }).asks).toBe(made.loader.asks)
     const other = { raise: () => 'req-1' }
     expect(carrierOptions(made.loader, { log: null, asks: other }).asks).toBe(other)
+  })
+})
+
+describe('the core actions the loader serves', () => {
+  const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
+
+  it('takes a security request from a window and confirms or cancels it from the trusted one', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const answer = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'skipVerification', on: true } })) as { held: string }
+    expect(answer).toEqual({ held: expect.any(String) })
+    await made.loader.serve(call(trusted, 'security.confirm', { requestId: answer.held }))
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
+    const again = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'confirmOff', on: true } })) as { held: string }
+    expect(await made.loader.serve(call(trusted, 'security.cancel', { requestId: again.held }))).toBe(null)
+    expect(made.loader.pending()).toEqual([])
+  })
+
+  it('passes what the human typed on to the Confirm', async () => {
+    const made = await harness({ behave: { gate: { exports: { gate: allowAll() } } } })
+    await made.loader.start()
+    const { held: id } = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'plugin.off', plugin: 'gate' } })) as { held: string }
+    expect(await code(made.loader.serve(call(trusted, 'security.confirm', { requestId: id })))).toBe('invalid')
+    await made.loader.serve(call(trusted, 'security.confirm', { requestId: id, typed: 'gate' }))
+    expect(made.loader.slot('gate')).toBe('off')
+  })
+
+  it('lists each plugin, the switches, the requests in the core\'s words and the stopped mode for the trusted window', async () => {
+    const made = await harness({
+      behave: { gate: { exports: { gate: allowAll() } } },
+      folder: { alpha: worker('alpha') },
+      entries: { alpha: signed({ granted: [notes, panel], off: [panel] }) },
+    })
+    await made.loader.start()
+    await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, editor)
+    const list = await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+    expect(list.plugins.find(plugin => plugin.id === 'gate')).toMatchObject({ from: 'install', place: 'host', state: 'ready', security: true, on: true })
+    expect(list.plugins.find(plugin => plugin.id === 'alpha')).toMatchObject({
+      from: 'folder', place: 'sandboxed', security: false, on: true,
+      items: [{ capability: notes, off: false, firstUse: false }, { capability: panel, off: true, firstUse: false }],
+    })
+    expect(list.requests).toEqual([{
+      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate',
+    }])
+    expect(list.switches).toEqual({
+      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
+    })
+    expect(list.stopped).toBe(null)
+  })
+
+  it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    await made.loader.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
+    expect(stateOf(made.loader, 'alpha')).toBe('stopped')
+    expect(reasonOf(made.loader, 'alpha')).toBe('human')
+    await made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' }))
+    await made.loader.settled()
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-granted')
+    expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
+  })
+
+  it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {
+    const made = await harness()
+    await made.loader.start()
+    for (const action of ['security.open', 'core.quit', 'core.relaunch']) {
+      expect(await code(made.loader.serve(call(editor, action)))).toBe('unavailable')
+    }
   })
 })

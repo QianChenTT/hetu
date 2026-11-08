@@ -67,6 +67,11 @@ export class Requests {
     this.host = host
   }
 
+  // Each request with its change, oldest first
+  changes(): { id: string, change: Change }[] {
+    return [...this.held.values()].map(({ id, change }) => ({ id, change }))
+  }
+
   // Oldest first, the order the trusted window shows them in
   pending(): PendingRequest[] {
     return [...this.held.values()].map(({ id, change }) => ({ id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null }))

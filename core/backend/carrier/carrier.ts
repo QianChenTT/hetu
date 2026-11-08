@@ -851,6 +851,8 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    // A Confirm sent inside the trusted window's input delay counts for nothing, whatever the page did
+    if (pending.action === 'security.confirm' && !this.armed(pending.caller)) return this.finish(pending, no('throttled'))
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
       this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
@@ -1324,6 +1326,14 @@ export class Carrier {
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
+    }
+  }
+
+  private armed(caller: Caller): boolean {
+    try {
+      return this.options.armed?.(caller) === true
+    } catch {
+      return false
     }
   }
 

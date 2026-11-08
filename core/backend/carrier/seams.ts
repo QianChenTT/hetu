@@ -85,6 +85,9 @@ export type CarrierOptions = {
   watchdog: () => Watchdog | null
   log: CoreLog | null
   asks?: Asks
+  // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or
+  // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
+  armed?: (caller: Caller) => boolean
   // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
   // the trusted window exists
   core?: Served

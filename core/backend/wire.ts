@@ -4,7 +4,7 @@ import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, Landing, Port } from './carrier/seams.ts'
+import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/seams.ts'
 import { Loader } from './loader/loader.ts'
 import type { CarrierLink, Runtime } from './loader/seams.ts'
 
@@ -18,7 +18,13 @@ export type WireOptions = {
   asks?: Asks
   // watchdog.limit lowered one of this plugin's constants, for the runtime to pass on
   limited?: (plugin: string) => void
+  // The windows' own actions the runtime serves, opening the trusted window, Quit and Restart hetu, and whether the
+  // trusted window is past its input delay
+  windows?: { serve: Served, armed: (caller: Caller) => boolean }
 }
+
+// The core actions the runtime serves, since only it opens windows and ends the process
+const runtimeActions = new Set(['security.open', 'core.quit', 'core.relaunch'])
 
 // The loader needs its link before the carrier exists, since the carrier needs the loader. Each call goes to the
 // carrier once wireCore attached it. One made before that throws
@@ -72,7 +78,7 @@ export class LinkToCarrier implements CarrierLink {
 // that ships
 export function carrierOptions(
   loader: Loader,
-  rest: Omit<CarrierOptions, 'loader' | 'gate' | 'guards' | 'providers' | 'watchdog' | 'core'>,
+  rest: Omit<CarrierOptions, 'loader' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
 ): CarrierOptions {
   return {
     loader,
@@ -99,8 +105,11 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     logWrites: () => options.booted.log.healthy,
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })
+  const { windows } = options
   const carrier = new Carrier(carrierOptions(loader, {
     log: options.booted.log,
+    core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : loader.serve(call)),
+    ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),

@@ -1,11 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { CoreStatus, PendingRequest } from '../../api/actions.ts'
-import { change as changeSchema, changeEffect, type Change } from '../../api/changes.ts'
+import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList } from '../../api/actions.ts'
+import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
+import { describeChange } from '../../api/describe.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
-  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, pluginId, providers, slotIds,
+  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers, slotIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import {
@@ -332,6 +333,28 @@ ${capabilityKey(change.capability)}`)
   // guard role
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
+    const args = (call.args ?? {}) as Record<string, unknown>
+    switch (call.action) {
+      case 'security.request':
+        return this.request(args.change, call.caller)
+      case 'security.confirm':
+        await this.confirm(args.requestId as string, args.typed === undefined ? {} : { typed: args.typed as string })
+        return null
+      case 'security.cancel':
+        await this.cancel(args.requestId as string)
+        return null
+      case 'security.list':
+        return this.securityList()
+      case 'core.stop':
+      case 'core.restart': {
+        const k = this.known.get(args.plugin as string)
+        if (k === undefined) throw { code: 'not-found' }
+        if (k.place !== 'sandboxed') throw { code: 'not-granted' }
+        if (call.action === 'core.stop') await this.stop(k.id, 'human')
+        else await this.restart(k.id, 'human')
+        return null
+      }
+    }
     const target = (call.args as { plugin?: unknown } | null)?.plugin
     if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
     const k = typeof target === 'string' ? this.known.get(target) : undefined
@@ -339,6 +362,37 @@ ${capabilityKey(change.capability)}`)
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words
+  private securityList(): SecurityList {
+    const { switches } = this.state
+    const plugins: ListedPlugin[] = this.list().map(row => {
+      const k = this.known.get(row.id)
+      const entry = row.from === 'folder' ? k?.entry ?? null : null
+      const off = new Set((entry?.off ?? []).map(capabilityKey))
+      const asking = new Set((entry?.firstUse ?? []).map(capabilityKey))
+      return {
+        id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
+        security: row.from === 'install' && isSecurityControl(row.id),
+        on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
+        items: (entry?.granted ?? []).map(capability => ({
+          capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
+        })),
+      }
+    })
+    const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => ({
+      id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, ...describeChange(change), type: mustType(change),
+    }))
+    return {
+      plugins,
+      switches: {
+        devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
+        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
+      },
+      requests,
+      stopped: null,
+    }
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -354,7 +408,7 @@ ${capabilityKey(change.capability)}`)
       recordNothing: switches.recordNothing,
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
-      pending: [],
+      pending: this.pending(),
       stopped: null,
     }
   }
