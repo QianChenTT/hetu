@@ -150,7 +150,7 @@ async function start(): Promise<void> {
         serve: async call => {
           if (call.action === 'security.open') trusted.show()
           else if (call.action === 'core.relaunch') {
-            again = true
+            again = relaunches({ packaged: app.isPackaged, env: process.env })
             app.quit()
           } else if (call.action === 'core.quit') app.quit()
           else throw { code: 'unavailable' }

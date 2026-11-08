@@ -3,8 +3,8 @@ import path from 'node:path'
 import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
-import { filesFor, hostManifest, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, records, repo, temp, until } from './helpers.ts'
+import { writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { cleanup, editorPage, launch, records, repo, temp, until } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -24,12 +24,6 @@ async function install(over: Record<string, Listing | null> = {}): Promise<strin
   await writeInstall(dir, Object.fromEntries(Object.entries(plugins).filter((entry): entry is [string, Listing] => entry[1] !== null)))
   return dir
 }
-
-// A host half written as the loader imports one: the plugin as its default export and its roles beside it
-const host = (id: string, module: string): Listing => ({ files: filesFor(hostManifest(id), { 'host.js': module }) })
-const starts = 'export default { kind: \'hetu-plugin\', spec: { start() {} } }\n'
-const gateRole = (stateChanged: string) =>
-  `export const gate = { decide() { return { allow: true, view: 0 } }, canRead() { return true }, verbs() { return [] }, stateChanged() { ${stateChanged} } }\n`
 
 async function data(switches: Partial<Switches> = {}): Promise<string> {
   const dataDir = await temp()
@@ -85,35 +79,13 @@ describe('the gate on and the core\'s log', () => {
   })
 })
 
-describe('the gate down', () => {
-  it.each([
-    ['absent from the install', { gate: null }, 'gate: absent'],
-    ['failing its hash check', { gate: { files: {}, hash: '0'.repeat(64) } }, 'gate: tampered'],
-  ] as const)('refuses calls with power while %s, and the banner says so', async (_name, over, line) => {
-    const files = over.gate === null ? null : { files: await shipped('gate'), hash: over.gate.hash }
-    const { page } = await started({ install: { gate: files } })
+// Not part of the build, so no security control to stop hetu for: calls with power wait for a gate that never comes.
+// A gate the install names that fails stops hetu, in trusted.test.ts
+describe('the gate absent from the install', () => {
+  it('refuses calls with power, and the banner says so', async () => {
+    const { page } = await started({ install: { gate: null } })
     expect(await read(page)).toBe('policy-down')
-    await banner(page, line)
-  })
-
-  it.each([
-    ['its module throws', 'throw new Error(\'the gate module threw\')\n', 'start-failed'],
-    ['its stateChanged throws', `${starts}${gateRole('throw new Error(\'no\')')}`, 'state-changed'],
-  ])('is marked failed when %s, refusing calls with power', async (_name, module, reason) => {
-    const { dataDir, page } = await started({ install: { gate: host('gate', module) } })
-    expect(await logged(dataDir, 'plugin.failed', { plugin: 'gate', reason })).toBe(true)
-    expect(await read(page)).toBe('policy-down')
-    await banner(page, 'gate: failed')
-  })
-
-  it('is marked failed when it hangs at start, once readyMs runs out, and refuses calls with power', async () => {
-    const hangs = 'export default { kind: \'hetu-plugin\', spec: { start() { return new Promise(() => {}) } } }\n'
-    const { dataDir, page } = await started({
-      install: { gate: host('gate', `${hangs}${gateRole('')}`) },
-      switches: { limits: { all: {}, plugins: { gate: { readyMs: 1500 } } } },
-    })
-    await until(() => logged(dataDir, 'plugin.failed', { plugin: 'gate', reason: 'start-timeout' }))
-    expect(await read(page)).toBe('policy-down')
+    await banner(page, 'gate: absent')
   })
 })
 
