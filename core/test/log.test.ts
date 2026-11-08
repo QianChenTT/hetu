@@ -1211,6 +1211,71 @@ describe('a segment of any size', () => {
   })
 })
 
+describe('reading while appending', () => {
+  // Every read of the file waits until let go, so a test can hold a read part way
+  async function holdReads() {
+    const proto = await fileHandleProto()
+    const realRead = proto.read
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const read = vi.spyOn(proto, 'read').mockImplementation(async function (this: unknown, ...args: unknown[]) {
+      await held
+      return realRead.apply(this, args)
+    })
+    return { read, release }
+  }
+
+  it.each([
+    ['verify', (log: EventLog) => log.verify()],
+    ['history', (log: EventLog) => log.history()],
+  ])('reads the open segment for %s outside the append queue, so an append waits for no read', async (_name, reading) => {
+    const log = await opened()
+    await fill(log, 3)
+    const { read, release } = await holdReads()
+    const result = reading(log)
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    await log.append('test.line', { n: 4 })
+    release()
+    await result
+    expect((await recordsOf(1)).map(record => record.n)).toEqual([1, 2, 3, 4])
+  })
+
+  it('reads up to where the log was when the read began, past which an append goes on', async () => {
+    const log = await opened()
+    await fill(log, 3)
+    const { read, release } = await holdReads()
+    const verified = log.verify()
+    const listed = log.history()
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    await log.append('test.line', { n: 4 })
+    release()
+    expect(await verified).toEqual({ ok: true })
+    expect(await listed).toEqual([{ segment: 1, lines: 3, first: 1, last: 3, start: 'zero', breaks: [] }])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('shares one read among the callers who ask while it runs', async () => {
+    const log = await opened()
+    await fill(log, 3)
+    const proto = await fileHandleProto()
+    const read = vi.spyOn(proto, 'read')
+    await log.verify()
+    const once = read.mock.calls.length
+    read.mockClear()
+    const [a, b, c] = await Promise.all([log.verify(), log.verify(), log.verify()])
+    expect([a, b, c]).toEqual([{ ok: true }, { ok: true }, { ok: true }])
+    expect(read.mock.calls.length).toBe(once)
+    read.mockClear()
+    await log.history()
+    const historyOnce = read.mock.calls.length
+    read.mockClear()
+    await Promise.all([log.history(), log.history()])
+    expect(read.mock.calls.length).toBe(historyOnce)
+  })
+})
+
 describe('a batch', () => {
   it('writes each record of a batch as its line, in order, chained, with one fsync for the batch', async () => {
     const log = await opened()
