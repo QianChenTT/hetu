@@ -97,10 +97,10 @@ class FakeLoader implements Loader {
     this.all = all
   }
 
-  // The log, capabilities and watchdog slots read off, as with the human's switch, so calls pass unlogged
+  // The capabilities and watchdog slots read off, as with the human's switch
   slot(id: string): SlotState {
     if (id === 'gate') return this.gateSlot
-    return id === 'log' || id === 'capabilities' || id === 'watchdog' ? 'off' : 'absent'
+    return id === 'capabilities' || id === 'watchdog' ? 'off' : 'absent'
   }
 
   view(): number {
@@ -126,9 +126,6 @@ class FakeLoader implements Loader {
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
     for (const listener of [...this.listeners]) listener(caller, kind)
   }
-
-  // The fake core's log slot reads off and never stalls
-  fail(): void {}
 
   // Resolves true once caller sends kind, false after ms
   waitFor(caller: Caller, kind: string, ms: number): Promise<boolean> {
@@ -224,7 +221,14 @@ export class FakeCore {
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       watchdog: () => null,
-      log: { append: async (event, fields = {}) => { this.floor.push({ event, fields }) }, healthy: true },
+      // Floor records are kept and the call records are taken and dropped, so calls pass unlogged
+      log: {
+        append: async (event, fields = {}) => { this.floor.push({ event, fields }) },
+        appendMany: async () => {},
+        history: async () => [],
+        verify: async () => ({ ok: true }),
+        healthy: true,
+      },
     })
     this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
     this.luoshu = {
@@ -308,7 +312,7 @@ export class FakeCore {
 
   async close(): Promise<void> {
     this.carrier.close()
-    await this.carrier.flushFloor()
+    await this.carrier.flush()
   }
 
   private async launch(plugin: Plugin): Promise<FakeState> {

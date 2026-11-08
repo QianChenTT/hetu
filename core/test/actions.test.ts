@@ -14,6 +14,8 @@ describe('the core actions', () => {
       'core.self': 'any',
       'core.filterReadable': 'any',
       'core.status': 'windows',
+      'log.history': 'windows',
+      'log.verify': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
       'watchdog.stop': 'watchdog',
@@ -123,8 +125,6 @@ describe('the provider actions', () => {
       'cache.get': null,
       'cache.set': null,
       'cache.delete': null,
-      'log.history': 'log.read',
-      'log.verify': 'log.read',
     })
   })
 
@@ -141,7 +141,7 @@ describe('the provider actions', () => {
   it('takes the raw scope from the argument it names', () => {
     expect(providerActions['luoshu.read'].scope).toBe('path')
     expect(providerActions['leases.acquire'].scope).toBe('paths')
-    expect(providerActions['log.history'].scope).toBeNull()
+    expect(providerActions['leases.list'].scope).toBeNull()
   })
 
   it.each([
@@ -179,7 +179,7 @@ describe('the provider actions', () => {
     ['storage.set', { key: '../search/index', value: 1 }, false],
     ['cache.set', { key: 'a/b', value: 1 }, false],
     ['storage.get', { key: 'index', plugin: 'search' }, false],
-    ['log.history', undefined, true],
+    ['leases.list', undefined, true],
   ])('checks %s with %j', (action, args, ok) => {
     expect(providerActions[action].args.safeParse(args).success).toBe(ok)
   })

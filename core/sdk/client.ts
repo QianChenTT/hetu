@@ -8,7 +8,6 @@ export const providerActionNames = [
   'leases.acquire', 'leases.renew', 'leases.release', 'leases.list',
   'storage.get', 'storage.set', 'storage.delete',
   'cache.get', 'cache.set', 'cache.delete',
-  'log.history', 'log.verify',
 ] as const satisfies readonly (keyof ActionArgs)[]
 
 type ProviderAction = typeof providerActionNames[number]

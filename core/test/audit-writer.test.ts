@@ -113,7 +113,7 @@ describe('the core\'s audit writer', () => {
     expect((await lines()).map(line => line.action)).toEqual(['a.n1', 'a.n2', 'a.n3', 'a.n4', 'a.n5'])
   })
 
-  // A write can throw after its lines landed. The same batch under the same id lets the log write it once, and any other
+  // A write can throw after its lines landed. The same batch under the same id lets the log write it once and any other
   // batch could hold a record that is already on disk
   it('after a failed append with the log down tries only that batch again under the same id, the records held meanwhile', async () => {
     push('a.one')
@@ -146,7 +146,7 @@ describe('the core\'s audit writer', () => {
     expect((await lines()).map(line => line.action)).toEqual(['a.one'])
   })
 
-  // A healthy log that refused a batch refused what it holds, and trying it again would hold back every record after it
+  // A healthy log that refused a batch refused what it holds and trying it again would hold back every record after it
   it('lets go of a batch a healthy log refused, counts it and goes on with the next', async () => {
     push('a.one')
     push('a.two')

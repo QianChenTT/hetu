@@ -1,7 +1,7 @@
 // What Quit needs from the joined core and from boot
 export type QuitParts = {
   loader: { shutdown(): Promise<void> }
-  carrier: { flushFloor(): Promise<void>, close(): void }
+  carrier: { flush(): Promise<void>, close(): void }
   release(): Promise<void>
 }
 
@@ -12,8 +12,9 @@ export const QUIT_DEADLINES: Deadlines = Object.freeze({ shutdown: 30_000, flush
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-// shutdown, flushFloor, close, flushFloor and release. The first flush gives a backlog waiting to retry one more try
-// before close drops it. The second waits for the drain close leaves running, which carries the counts close writes.
+// shutdown, flush, close, flush and release. The first flush writes what the audit queue holds and gives a floor
+// backlog waiting to retry one more try before close drops it. The second writes the records of the calls close
+// stopped and waits for the drain close leaves running, which carries the counts close writes.
 // The lock goes last, once nothing more is written. Returns each step that didn't finish and why, since the log is
 // closed by then
 export async function quitInOrder(parts: QuitParts, deadlines: Deadlines = QUIT_DEADLINES): Promise<string[]> {
@@ -33,13 +34,13 @@ export async function quitInOrder(parts: QuitParts, deadlines: Deadlines = QUIT_
     }
   }
   await wait('shutdown', () => parts.loader.shutdown(), deadlines.shutdown)
-  await wait('flushFloor', () => parts.carrier.flushFloor(), deadlines.flush)
+  await wait('flush', () => parts.carrier.flush(), deadlines.flush)
   try {
     parts.carrier.close()
   } catch (err) {
     missed.push(`close: ${reason(err)}`)
   }
-  await wait('flushFloor', () => parts.carrier.flushFloor(), deadlines.flush)
+  await wait('flush', () => parts.carrier.flush(), deadlines.flush)
   await wait('release', () => parts.release(), deadlines.release)
   return missed
 }

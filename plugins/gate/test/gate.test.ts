@@ -127,7 +127,8 @@ describe('windows', () => {
   it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })
     expect(gate.decide(access(editor, 'luoshu.write', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
-    expect(gate.decide(access(editor, 'log.read', {}))).toMatchObject({ allow: true })
+    // Windows read the log through core actions the floor decides, so the editor holds no log.read
+    expect(gate.decide(access(editor, 'log.read', {}))).toMatchObject({ code: 'not-granted' })
     expect(gate.decide(access(editor, 'events.subscribe', { topics: ['luoshu.changed'] }))).toMatchObject({ allow: true })
     // ** leaves out dot files and dot folders
     expect(gate.decide(access(editor, 'luoshu.read', { paths: ['.scratch.md'] }))).toMatchObject({ code: 'not-granted' })
@@ -189,8 +190,6 @@ describe('coverage', () => {
       ['luoshu.read', 'luoshu.read', 'path', 'paths'],
       ['luoshu.write', 'luoshu.write', 'path', 'paths'],
       ['leases.acquire', 'luoshu.write', 'paths', 'paths'],
-      ['log.history', 'log.read', null, 'held'],
-      ['log.verify', 'log.read', null, 'held'],
     ])
     for (const [, , scope, rule] of rows) {
       expect(rule).not.toBe('none')

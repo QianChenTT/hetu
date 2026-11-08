@@ -286,7 +286,7 @@ describe('the scan', () => {
     expect(reasonOf(made.loader, 'outline')).toBe('entry')
     expect(reasonOf(made.loader, 'tagger')).toBe('newer')
     expect(reasonOf(made.loader, 'mapper')).toBe('entry')
-    expect(made.runtime.order()).toEqual(['log', 'gate'])
+    expect(made.runtime.order()).toEqual(['gate'])
   })
 
   it('counts what in the plugin folder is no plugin folder, a file or a bad name, without reading it', async () => {

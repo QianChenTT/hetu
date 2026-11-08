@@ -3,6 +3,7 @@ import type { FloorConstant } from '../../api/floor.ts'
 import type { GuardableAction } from '../../api/ids.ts'
 import type { Access, Call, Gate, Guard, PluginState, Provider, SlotState, Watchdog } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
+import type { AuditLog } from './audit.ts'
 
 // What the later parts give the carrier, each a small interface the tests fake. The carrier imports nothing from boot
 
@@ -47,9 +48,6 @@ export type Loader = {
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
   // Lifecycle messages a plugin sends, which the carrier only passes on
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
-  // The carrier found the install plugin holding a slot failing at its job: the log stopped acknowledging. The loader
-  // marks it failed as it would a crash, so it stays failed until Restart hetu
-  fail(id: string, reason: 'stalled'): void
 }
 
 // Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window
@@ -64,9 +62,13 @@ export type Debug = (entry: { plugin: string | null, caller: Caller, action: str
 // the carrier
 export type Served = (call: Call) => Promise<unknown>
 
-// The one EventLog boot opened, or something with its append. healthy still true after a failed append means the log
-// refused that record, not that the log is down
+// What the floor lane writes through: the one EventLog boot opened, or something with its append. healthy still true
+// after a failed append means the log refused that record, not that the log is down
 export type FloorLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
+
+// The one EventLog boot opened as the carrier holds it: the floor lane appends one record at a time, the audit writer
+// appends batches and log.history and log.verify read it
+export type CoreLog = FloorLog & AuditLog
 
 // What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a
 // full backlog, refused by the log or still waiting when the lane closed
@@ -79,7 +81,7 @@ export type CarrierOptions = {
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null
   watchdog: () => Watchdog | null
-  log: FloorLog | null
+  log: CoreLog | null
   asks?: Asks
   // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
   // the trusted window exists
@@ -95,6 +97,8 @@ export type CarrierOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   // How long the floor lane waits before it tries a failed append again
   floorRetryMs?: number
+  // How often the audit writer writes the queue, 100 ms unless a test names another
+  auditEveryMs?: number
   // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page
   limited?: (plugin: string) => void
 }

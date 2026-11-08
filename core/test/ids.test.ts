@@ -68,18 +68,18 @@ describe('names', () => {
 })
 
 describe('slots, providers and guards', () => {
-  it('has the four policy slots', () => {
-    expect(slotIds).toEqual(['gate', 'capabilities', 'log', 'watchdog'])
+  it('has the three policy slots, the log being the core\'s own', () => {
+    expect(slotIds).toEqual(['gate', 'capabilities', 'watchdog'])
   })
 
   it("names the provider of every namespace", () => {
     expect(providers).toEqual({
-      luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', log: 'log', net: 'net',
+      luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net',
     })
   })
 
-  it('serves core, security, watchdog, events, ui and plugin in the core', () => {
-    expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin'])
+  it('serves core, security, watchdog, events, ui, plugin and log in the core', () => {
+    expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log'])
   })
 
   it('lets guards hook luoshu.write and expects none until leases ships', () => {
@@ -89,7 +89,7 @@ describe('slots, providers and guards', () => {
 
   it('lists the install plugins, host-level and in-page', () => {
     expect(installIds).toEqual([
-      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
+      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
       'editor-core', 'hidden-marks',
     ])
   })

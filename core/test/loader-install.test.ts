@@ -3,7 +3,6 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST } from '../api/install.ts'
-import type { AuditHandle } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { Loader } from '../backend/loader/loader.ts'
 import { readInstalled, writeInstalled } from '../backend/loader/folders.ts'
@@ -20,13 +19,15 @@ afterEach(async () => {
 })
 
 const host = (id: string, extra: object = {}): Listing => ({ files: filesFor(hostManifest(id, extra)) })
+// The gate and a provider after it, for what needs a second host half
+const twoHosts = (): Record<string, Listing> => ({ ...coreInstall(), storage: host('storage') })
 const wrongHash = 'b'.repeat(64)
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 
 describe('the start order', () => {
   it('starts the slot holders, then the providers, then the guard, then sandboxed plugins in graph order', async () => {
     const { loader, runtime } = await harness({
-      install: Object.fromEntries(['log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
+      install: Object.fromEntries(['gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
       folder: {
         outline: filesFor(workerManifest('outline', { requires: ['luoshu'] })),
         indexer: filesFor(workerManifest('indexer', { requires: ['outline'] })),
@@ -37,21 +38,21 @@ describe('the start order', () => {
     })
     await loader.start()
     expect(runtime.order()).toEqual([
-      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
+      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
     ])
-    for (const id of ['log', 'gate', 'leases', 'outline', 'indexer']) expect(stateOf(loader, id)).toBe('ready')
+    for (const id of ['gate', 'leases', 'outline', 'indexer']) expect(stateOf(loader, id)).toBe('ready')
   })
 
   it('starts a host half only after the one before it settled', async () => {
-    const { loader, runtime, link } = await harness({ behave: { log: { ready: false } } })
+    const { loader, runtime, link } = await harness({ install: twoHosts(), behave: { gate: { ready: false } } })
     const starting = loader.start()
-    await until(() => runtime.order().includes('log'))
+    await until(() => runtime.order().includes('gate'))
     await new Promise(resolve => setTimeout(resolve, 30))
-    expect(runtime.order()).toEqual(['log'])
-    runtime.half('log', 1, 'host').ready()
+    expect(runtime.order()).toEqual(['gate'])
+    runtime.half('gate', 1, 'host').ready()
     await starting
-    expect(runtime.order()).toEqual(['log', 'gate'])
-    expect(link.events('plugin.started').map(fields => fields.plugin)).toEqual(['log', 'gate'])
+    expect(runtime.order()).toEqual(['gate', 'storage'])
+    expect(link.events('plugin.started').map(fields => fields.plugin)).toEqual(['gate', 'storage'])
   })
 
   it('mints each port or handle and registers it with the carrier in the same step, before the half starts', async () => {
@@ -71,7 +72,6 @@ describe('the start order', () => {
     runtime.startHost = start => { seen.push(`start ${start.id} ${start.incarnation}`); return startHost(start) }
     await loader.start()
     expect(seen).toEqual([
-      'handle {"kind":"plugin","id":"log","half":"host","incarnation":1}', 'start log 1',
       'handle {"kind":"plugin","id":"gate","half":"host","incarnation":1}', 'start gate 1',
       'register {"kind":"plugin","id":"outline","half":"worker","incarnation":1}', 'start outline 1',
     ])
@@ -113,14 +113,14 @@ describe('the start order', () => {
 
 describe('install plugins', () => {
   it('refuses one whose bytes fail the install list, which reads tampered, and starts the rest', async () => {
-    const { loader, runtime, link } = await harness({ install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash } } })
+    const { loader, runtime, link } = await harness({ install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } } })
     await loader.start()
     expect(loader.slot('gate')).toBe('tampered')
     expect(stateOf(loader, 'gate')).toBe('refused')
     expect(reasonOf(loader, 'gate')).toBe('tampered')
-    expect(runtime.order()).toEqual(['log'])
+    expect(runtime.order()).toEqual(['storage'])
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'tampered' })
-    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'log', from: 'install', result: 'ok' })
+    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'storage', from: 'install', result: 'ok' })
   })
 
   it('reads a slot absent when the install holds no plugin for it', async () => {
@@ -147,13 +147,13 @@ describe('install plugins', () => {
 
   it('switched off by the human, reads off and starts nothing, even when its check failed too', async () => {
     const { loader, runtime, link } = await harness({
-      install: { ...coreInstall(), gate: { ...host('gate'), hash: wrongHash } },
+      install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } },
       switches: { off: ['gate'] },
     })
     await loader.start()
     expect(loader.slot('gate')).toBe('off')
     expect(stateOf(loader, 'gate')).toBe('off')
-    expect(runtime.order()).toEqual(['log'])
+    expect(runtime.order()).toEqual(['storage'])
     // The failed check is still recorded, it never reads as the switch-off
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'tampered' })
   })
@@ -198,7 +198,7 @@ describe('install plugins', () => {
     const { loader } = await harness({
       install: {
         ...coreInstall(),
-        log: host('log', { requires: ['storage'] }),
+        gate: host('gate', { requires: ['storage'] }),
         storage: host('storage'),
         luoshu: host('luoshu', { requires: ['outline'] }),
       },
@@ -206,7 +206,7 @@ describe('install plugins', () => {
       entries: { outline: signed() },
     })
     await loader.start()
-    expect(reasonOf(loader, 'log')).toBe('requires')
+    expect(reasonOf(loader, 'gate')).toBe('requires')
     expect(reasonOf(loader, 'luoshu')).toBe('requires')
     expect(reasonOf(loader, 'outline')).toBe('requires')
     expect(stateOf(loader, 'storage')).toBe('ready')
@@ -273,7 +273,7 @@ describe('start markers', () => {
   const exists = (file: string) => stat(file).then(() => true, () => false)
 
   it('writes starting/<id> before a host half starts and removes it at ready', async () => {
-    const made = await harness()
+    const made = await harness({ install: twoHosts() })
     const seen: boolean[] = []
     const startHost = made.runtime.startHost.bind(made.runtime)
     made.runtime.startHost = async start => {
@@ -285,11 +285,11 @@ describe('start markers', () => {
     await until(() => true)
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(await exists(marker(made.dataDir, 'gate'))).toBe(false)
-    expect(await exists(marker(made.dataDir, 'log'))).toBe(false)
+    expect(await exists(marker(made.dataDir, 'storage'))).toBe(false)
   })
 
   it('leaves the marker of a host half that never reached ready, and the next boot holds that half failed', async () => {
-    const made = await harness({ behave: { gate: { ready: false } }, limits: { readyMs: 40 } })
+    const made = await harness({ install: twoHosts(), behave: { gate: { ready: false } }, limits: { readyMs: 40 } })
     await made.loader.start()
     expect(await exists(marker(made.dataDir, 'gate'))).toBe(true)
     await made.loader.shutdown()
@@ -297,11 +297,11 @@ describe('start markers', () => {
     const booted = await boot({ packaged: false, installDir: made.installDir, env: { HETU_DATA_DIR: made.dataDir }, platform: process.platform })
     try {
       expect(booted.markers).toEqual(['gate'])
-      const next = await harness({ base: path.join(made.base, 'second'), markers: booted.markers })
+      const next = await harness({ base: path.join(made.base, 'second'), markers: booted.markers, install: twoHosts() })
       await next.loader.start()
       expect(next.loader.slot('gate')).toBe('failed')
       expect(reasonOf(next.loader, 'gate')).toBe('marker')
-      expect(next.runtime.order()).toEqual(['log'])
+      expect(next.runtime.order()).toEqual(['storage'])
       expect(next.link.events('plugin.failed')).toContainEqual({ plugin: 'gate', incarnation: 0, reason: 'marker' })
     } finally {
       await booted.release()
@@ -314,8 +314,8 @@ describe('start markers', () => {
     const changed = made.link.changed.bind(made.link)
     made.link.changed = () => {
       changed()
-      // The turn after the log shows starting, its launch is writing the marker
-      if (stopping === null && stateOf(made.loader, 'log') === 'starting') {
+      // The turn after the gate shows starting, its launch is writing the marker
+      if (stopping === null && stateOf(made.loader, 'gate') === 'starting') {
         stopping = new Promise(resolve => queueMicrotask(() => resolve(made.loader.shutdown())))
       }
     }
@@ -324,7 +324,7 @@ describe('start markers', () => {
     await until(() => stopping !== null)
     await stopping
     await starting
-    expect(await exists(marker(made.dataDir, 'log'))).toBe(false)
+    expect(await exists(marker(made.dataDir, 'gate'))).toBe(false)
   })
 
   it('removes the marker of a host half a planned stop ended before ready, so the next boot starts it', async () => {
@@ -384,8 +384,8 @@ describe('start markers', () => {
 
 describe('an app update to an install plugin', () => {
   it('writes plugin.updated, clears the plugin\'s cache and passes previousVersion, then marks the new version', async () => {
-    const made = await harness()
-    await writeInstalled(made.dataDir, { gate: { version: '0.9.0', hash: 'c'.repeat(64) }, log: { version: '1.0.0', hash: (await readInstalledHash(made, 'log')) } })
+    const made = await harness({ install: twoHosts() })
+    await writeInstalled(made.dataDir, { gate: { version: '0.9.0', hash: 'c'.repeat(64) }, storage: { version: '1.0.0', hash: (await readInstalledHash(made, 'storage')) } })
     await mkdir(path.join(made.dataDir, 'cache', 'gate'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'cache', 'gate', 'index'), 'old')
     await made.loader.start()
@@ -395,8 +395,8 @@ describe('an app update to an install plugin', () => {
     expect(await stat(path.join(made.dataDir, 'cache', 'gate', 'index')).then(() => true, () => false)).toBe(false)
     expect(made.runtime.half('gate', 1, 'host').got('init')[0].previousVersion).toBe('0.9.0')
     expect((await readInstalled(made.dataDir)).gate.version).toBe('1.0.0')
-    // The log had no change, so it heard of none
-    expect(made.runtime.half('log', 1, 'host').got('init')[0].previousVersion).toBe(null)
+    // Storage had no change, so it heard of none
+    expect(made.runtime.half('storage', 1, 'host').got('init')[0].previousVersion).toBe(null)
   })
 
   it('waits for plugin.updated to land before the plugin starts', async () => {
@@ -407,10 +407,10 @@ describe('an app update to an install plugin', () => {
     const starting = made.loader.start()
     await until(() => made.link.events('plugin.updated').length === 1)
     await new Promise(resolve => setTimeout(resolve, 20))
-    expect(made.runtime.order()).toEqual(['log'])
+    expect(made.runtime.order()).toEqual([])
     land('landed')
     await starting
-    expect(made.runtime.order()).toEqual(['log', 'gate'])
+    expect(made.runtime.order()).toEqual(['gate'])
   })
 
   it('starts the plugin by its ready deadline when plugin.updated never lands, withdrawing the record, and the next start finds the change again', async () => {
@@ -424,7 +424,7 @@ describe('an app update to an install plugin', () => {
       return new Promise<Landing>(() => {})
     }
     await made.loader.start()
-    expect(made.runtime.order()).toEqual(['log', 'gate'])
+    expect(made.runtime.order()).toEqual(['gate'])
     expect(signal?.aborted).toBe(true)
     expect(made.runtime.half('gate', 1, 'host').got('init')[0].previousVersion).toBe(null)
     expect((await readInstalled(made.dataDir)).gate.version).toBe('0.9.0')
@@ -446,7 +446,7 @@ describe('an app update to an install plugin', () => {
     const made = await harness()
     await made.loader.start()
     expect(made.link.events('plugin.updated')).toEqual([])
-    expect(Object.keys(await readInstalled(made.dataDir)).sort()).toEqual(['gate', 'log'])
+    expect(Object.keys(await readInstalled(made.dataDir)).sort()).toEqual(['gate'])
   })
 })
 
@@ -457,84 +457,3 @@ async function readInstalledHash(made: { installDir: string }, id: string): Prom
 
 // Loader is used for its type in the harness. Kept so a rename shows here too
 export type { Loader }
-
-describe('the log\'s audit handle', () => {
-  const lending = () => {
-    const handle = {} as AuditHandle
-    const seen = { lent: 0, revoked: 0, attached: [] as { given: boolean, slot: string }[] }
-    const audit = () => {
-      seen.lent++
-      return { handle, revoke: () => { seen.revoked++ } }
-    }
-    return { handle, seen, audit }
-  }
-
-  it('is lent once to the install\'s log, after the import and before the log reads ready, and revoked when its incarnation ends', async () => {
-    const { handle, seen, audit } = lending()
-    let made: Awaited<ReturnType<typeof harness>> | null = null
-    const role = { attach: (given: AuditHandle) => { seen.attached.push({ given: given === handle, slot: made!.loader.slot('log') }) } }
-    made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
-    await made.loader.start()
-    expect(seen.attached).toEqual([{ given: true, slot: 'starting' }])
-    expect(made.loader.slot('log')).toBe('on')
-    expect(seen.revoked).toBe(0)
-    await made.loader.shutdown()
-    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
-  })
-
-  it('marks the log failed when attach throws, revoking what it lent', async () => {
-    const { seen, audit } = lending()
-    const role = { attach: () => { throw new Error('no') } }
-    const made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
-    await made.loader.start()
-    expect(made.loader.slot('log')).toBe('failed')
-    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
-    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
-  })
-
-  it('lends nothing to another plugin holding a log role', async () => {
-    const { seen, audit } = lending()
-    const role = { attach: () => { seen.attached.push({ given: true, slot: 'gate' }) } }
-    const made = await harness({ behave: { gate: { exports: { gate: allowAll(), log: role } } }, loader: { audit } })
-    await made.loader.start()
-    // One handle, the install's log's
-    expect(seen).toMatchObject({ lent: 1, attached: [] })
-  })
-})
-
-describe('a slot holder the carrier finds failing', () => {
-  it('is marked failed with the carrier\'s reason, held until Restart hetu, and ends its way', async () => {
-    const made = await harness()
-    await made.loader.start()
-    expect(made.loader.slot('log')).toBe('on')
-    made.loader.fail('log', 'stalled')
-    expect(made.loader.slot('log')).toBe('failed')
-    expect(reasonOf(made.loader, 'log')).toBe('stalled')
-    await made.loader.settled()
-    expect(made.loader.slot('log')).toBe('failed')
-    expect(made.runtime.started.filter(start => start.id === 'log')).toHaveLength(1)
-  })
-
-  it('does nothing for a plugin that isn\'t running or isn\'t the install\'s', async () => {
-    const made = await harness({ folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: signed() } })
-    await made.loader.start()
-    made.loader.fail('alpha', 'stalled')
-    made.loader.fail('nobody', 'stalled')
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
-  })
-})
-
-describe('a slot holder missing its role', () => {
-  it('marks the install\'s log failed at start when its module holds no log role, since nothing could drain the records', async () => {
-    let lent = 0
-    const audit = () => {
-      lent++
-      return { handle: {} as AuditHandle, revoke: () => {} }
-    }
-    const made = await harness({ behave: { log: { exports: {} } }, loader: { audit } })
-    await made.loader.start()
-    expect(made.loader.slot('log')).toBe('failed')
-    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
-    expect(lent).toBe(0)
-  })
-})

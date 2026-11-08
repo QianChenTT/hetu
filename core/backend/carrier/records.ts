@@ -11,8 +11,8 @@ type FloorRecord = {
   done?: () => void,
 }
 
-// Floor records go straight through the one EventLog in the order they were made, ahead of the audit queue and with
-// the log plugin off. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
+// Floor records go straight through the one EventLog in the order they were made, one append each, apart from the
+// audit queue's batches. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
 // counted and the count lands as floor.dropped once the backlog has. A write never blocks and never throws. Nothing is
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
 // the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
@@ -219,11 +219,11 @@ export class Coalesced {
 
 const callerKey = (caller: Caller) => JSON.stringify(caller)
 
-// queued is when the record went into the queue on the carrier's clock, which a stalled log is timed from
+// queued is when the record went into the queue on the carrier's clock, which a failing log is timed from
 type Entry = { record: AuditRecord, key: string | null, queued: number }
 
-// Audit records wait here for the log plugin, which takes them with next and acknowledges them with ack once they are
-// on disk. Its handle comes with the log plugin. Bounded: one past the bound is dropped and counted. Coalescing joins a
+// Audit records wait here for the core's audit writer, which takes them with next and lets go of them with ack once
+// they are on disk. Bounded: one past the bound is dropped and counted. Coalescing joins a
 // record to the one not yet taken with the same caller, onBehalf, root, action, code and gate state in the same second
 export class AuditQueue {
   private readonly bound: () => number
