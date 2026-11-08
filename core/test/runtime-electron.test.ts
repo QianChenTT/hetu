@@ -24,13 +24,20 @@ class FakePortMain extends EventEmitter {
 }
 
 let seen: unknown[][] = []
+let frozen = 0
+const hosts = {
+  freeze: () => {
+    frozen++
+  },
+  importer: async () => ({ default: { kind: 'hetu-plugin', spec: { start() {} } }, provider: { prepare: async () => ({ scope: {} }), perform: async () => ({}) } }),
+}
 
 function channel() {
   seen = []
   const workers = { start: (start: unknown) => seen.push(['start', start]), terminate: (id: string, n: number) => seen.push(['terminate', id, n]) }
   const core = new FakePortMain()
   const plugin = new FakePortMain()
-  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1))
+  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1), hosts)
   return { runtime, core, plugin }
 }
 
@@ -89,13 +96,17 @@ describe('the Electron runtime', () => {
     expect(closed).toBe(1)
   })
 
-  it('starts and ends workers through the hidden renderer and refuses a host half until host halves can load', async () => {
+  it('starts and ends workers through the hidden renderer and loads a host half from its verified bytes', async () => {
     const { runtime, plugin } = channel()
     const start = { id: 'search', incarnation: 1, code: Buffer.from('// search'), port: plugin }
     runtime.startWorker(start)
     runtime.terminate('search', 1)
     expect(seen).toEqual([['start', start], ['terminate', 'search', 1]])
-    await expect(runtime.startHost({ id: 'log', incarnation: 1, root: '', files: [], entry: 'host.js', link: { post() {}, listen() {} } }))
-      .rejects.toThrow()
+    frozen = 0
+    const host = { id: 'luoshu', incarnation: 1, root: '', files: [{ path: 'host.js', bytes: Buffer.from('') }], entry: 'host.js', link: { post() {}, listen() {} } }
+    expect(Object.keys(await runtime.startHost(host))).toEqual(['provider'])
+    await runtime.startHost({ ...host, id: 'gate' })
+    // The built-ins freeze once, before the first host half
+    expect(frozen).toBe(1)
   })
 })

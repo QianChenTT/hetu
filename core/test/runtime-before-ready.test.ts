@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { beforeReady, DEBUG_SWITCHES, type EarlyApp, type EarlyProtocol } from '../backend/runtime/before-ready.ts'
+import { beforeReady, DEBUG_SWITCHES, type EarlyApp, type EarlyProtocol, installDirFor } from '../backend/runtime/before-ready.ts'
 
 const made: string[] = []
 
@@ -108,5 +108,22 @@ describe('before ready', () => {
     const { app, protocol, calls } = fakes()
     expect(() => beforeReady(app, protocol, { env: { HETU_DATA_DIR: 'relative' }, platform: process.platform })).toThrow('absolute')
     expect(calls).toEqual([])
+  })
+})
+
+describe('the install folder', () => {
+  const where = { here: '/app/core/dist', resourcesPath: '/app/resources', platform: 'linux' }
+
+  it('is beside app.asar in a packaged build, whatever HETU_INSTALL_DIR says', () => {
+    expect(installDirFor({ ...where, packaged: true, env: { HETU_INSTALL_DIR: '/elsewhere' } })).toBe('/app/resources')
+  })
+
+  it('is the built main\'s folder in a run from the source, or HETU_INSTALL_DIR when that is set, for the tests', () => {
+    expect(installDirFor({ ...where, packaged: false, env: {} })).toBe('/app/core/dist')
+    expect(installDirFor({ ...where, packaged: false, env: { HETU_INSTALL_DIR: '/tmp/install' } })).toBe('/tmp/install')
+  })
+
+  it('refuses a HETU_INSTALL_DIR that isn\'t absolute', () => {
+    expect(() => installDirFor({ ...where, packaged: false, env: { HETU_INSTALL_DIR: 'relative' } })).toThrow('absolute')
   })
 })

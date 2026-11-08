@@ -49,3 +49,21 @@ export function beforeReady(
   protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true } }])
   return found
 }
+
+// Where the install list and the install plugins are. A packaged build keeps them beside app.asar and ignores the
+// environment, as it does for the data folder. A run from the source uses the built main's folder, or HETU_INSTALL_DIR
+// so the tests can hand it an install of their own
+export function installDirFor(options: {
+  packaged: boolean
+  env: Record<string, string | undefined>
+  here: string
+  resourcesPath: string
+  platform: string
+}): string {
+  if (options.packaged) return options.resourcesPath
+  const override = options.env.HETU_INSTALL_DIR
+  if (override === undefined) return options.here
+  const paths = options.platform === 'win32' ? path.win32 : path.posix
+  if (!paths.isAbsolute(override)) throw new Error('HETU_INSTALL_DIR is not an absolute path')
+  return override
+}

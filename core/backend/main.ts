@@ -5,8 +5,9 @@ import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
 import type { Loader } from './loader/loader.ts'
-import { beforeReady } from './runtime/before-ready.ts'
+import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { electronRuntime } from './runtime/electron.ts'
+import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { quitInOrder, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { guardContents, openEditor } from './runtime/windows.ts'
@@ -30,7 +31,13 @@ function tell(err: unknown): void {
 }
 
 async function start(): Promise<void> {
-  const installDir = app.isPackaged ? process.resourcesPath : here
+  let installDir: string
+  try {
+    installDir = installDirFor({ packaged: app.isPackaged, env: process.env, here, resourcesPath: process.resourcesPath, platform: process.platform })
+  } catch (err) {
+    tell(err)
+    return app.exit(1)
+  }
   let booted: Booted
   try {
     booted = await boot({ packaged: app.isPackaged, installDir, env: process.env, platform: process.platform })
@@ -89,7 +96,7 @@ async function start(): Promise<void> {
       readyMs: RENDERER_READY_MS,
     })
     workers = renderer
-    const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit)
+    const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit, { freeze: freezeIntrinsics, importer: url => import(url) })
     const wired = wireCore({ booted, installDir, runtime })
     carrier = wired.carrier
     loader = wired.loader
