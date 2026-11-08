@@ -328,4 +328,21 @@ describe("the StateView's grants", () => {
     await expect(made.loader.apply({ kind: 'item.off', plugin: 'gate', capability: { type: 'log.read' } })).rejects.toThrow()
     expect(made.loader.view()).toBe(1)
   })
+
+  // Its stop grace runs after the switch, and a call it makes then must not pass on grants the human took away
+  it("leave out a plugin the human switched off from the next one, before its stop has ended, and an install plugin switched off", async () => {
+    const gate = allowAll()
+    const made = await harness({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu', { capabilities: [{ type: 'log.read' }] })) } },
+      folder: { alpha: worker('alpha', { capabilities: [read] }) },
+      entries: { alpha: signed({ granted: [read] }) },
+      switches: { off: ['luoshu'] },
+      behave: { gate: { exports: { gate } }, alpha: { stopped: false } },
+    })
+    await made.loader.start()
+    expect(Object.keys(gate.seen[0].plugins)).toEqual(['alpha'])
+    void made.loader.apply({ kind: 'plugin.off', plugin: 'alpha' })
+    await until(() => stateOf(made.loader, 'alpha') === 'stopping')
+    expect(gate.seen.at(-1)!.plugins.alpha).toBeUndefined()
+  })
 })

@@ -126,6 +126,21 @@ const FOLDER_RANK = 1000
 const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const isOne = (list: readonly string[], value: string) => list.includes(value)
 const refused = (reason: string): Status => ({ kind: 'refused', reason })
+
+// The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
+// off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
+// off unless it is exactly an item that was on. An item no longer granted goes with its switch
+function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
+  const off = old?.off ?? []
+  if (off.length === 0) return []
+  const offKeys = new Set(off.map(capabilityKey))
+  const offTypes = new Set<string>(off.map(item => item.type))
+  const onKeys = new Set((old?.granted ?? []).map(capabilityKey).filter(key => !offKeys.has(key)))
+  return granted.filter(item => {
+    const key = capabilityKey(item)
+    return offKeys.has(key) || (offTypes.has(item.type) && !onKeys.has(key))
+  })
+}
 const ok: Status = { kind: 'ok' }
 const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
@@ -527,13 +542,16 @@ export class Loader implements Seam {
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await clear(folders.cache(this.dataDir, id)).catch(() => {})
+    const granted = read.manifest!.capabilities ?? []
+    const off = carriedOff(this.state.plugins[id] ?? null, granted)
     const entry: Plugin = {
       version: listed.version,
       contentHash: listed.hash,
       signer: FIRST_PARTY_SIGNER,
-      granted: read.manifest!.capabilities ?? [],
+      granted,
       class: null,
       enabled,
+      ...(off.length > 0 ? { off } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -1282,11 +1300,14 @@ export class Loader implements Seam {
       const off = new Set(switchedOff.map(capabilityKey))
       return granted.map(capability => ({ capability: structuredClone(capability), off: off.has(capabilityKey(capability)), firstUse: false }))
     }
+    // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
+    // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
-      if (this.known.get(id)?.from !== 'install' && entry.granted.length > 0) plugins[id] = items(entry.granted, entry.off ?? [])
+      if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
+      plugins[id] = items(entry.granted, entry.off ?? [])
     }
     for (const k of this.known.values()) {
-      const granted = k.from === 'install' ? k.read.manifest?.capabilities ?? [] : []
+      const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
     return frozen({ n: this.n, foldCase: false, plugins })
