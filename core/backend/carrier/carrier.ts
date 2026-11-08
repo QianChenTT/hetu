@@ -106,10 +106,6 @@ type Shaped =
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
-// How long the oldest record the audit queue holds may wait for the log plugin's ack before the log counts as stalled:
-// six of the EventLog's 5 s retries after a failed write, so a disk locked for a moment doesn't fail the log for the run
-const AUDIT_STALL_MS = 30_000
-
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
 
@@ -1229,7 +1225,7 @@ export class Carrier {
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
   }
 
-  // A log plugin whose oldest record waited unacknowledged for AUDIT_STALL_MS has stalled, and the loader marks it failed
+  // A log plugin whose oldest record waited unacknowledged for auditStallMs has stalled, and the loader marks it failed
   // as it would a crash, so with the gate off a call with power is refused rather than passing with only a count of
   // what was dropped. Timed from when the record was queued, so a long call doesn't read as stalled. Never while the log
   // starts, which readyMs bounds, or once shutdown began, when the log stops last. true even when the loader couldn't
@@ -1237,7 +1233,7 @@ export class Carrier {
   private stalled(): boolean {
     if (this.shutting || this.closed || this.slot('log') !== 'on') return false
     const oldest = this.queue.oldest()
-    if (oldest === null || this.clock() - oldest < AUDIT_STALL_MS) return false
+    if (oldest === null || this.clock() - oldest < this.limits.of('log', 'auditStallMs')) return false
     try {
       this.options.loader.fail('log', 'stalled')
     } catch {}

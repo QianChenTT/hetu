@@ -830,6 +830,16 @@ describe('a stalled log', () => {
     expect(fails).toEqual([])
   })
 
+  it('takes the wait from the floor constants, which the human may set for the log', async () => {
+    const { at, connect, fails, loader } = stalling()
+    loader.human.plugins = { log: { auditStallMs: 1000 } }
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(1000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+  })
+
   it('times a record from when it was queued, not from when its call started', () => {
     let now = 40_000
     const queue = new AuditQueue(() => 10, () => now)
