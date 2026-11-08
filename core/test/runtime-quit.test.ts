@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QUIT_GRACE_MS, quitInOrder, relaunch, relaunches } from '../backend/runtime/quit.ts'
+import { afterFailure, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, type FailureParts } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -93,5 +93,54 @@ describe('starting again after a failure', () => {
 
   it('gives windows a grace of two seconds to keep a draft', () => {
     expect(QUIT_GRACE_MS).toBe(2000)
+  })
+})
+
+// Checkpoint B: main's handling of a failure ran only end to end, where hetu never starts itself again
+describe('after a failure', () => {
+  function parts(over: Partial<FailureParts> = {}) {
+    const did: string[] = []
+    const timers: { ms: number, run: () => void }[] = []
+    const made: FailureParts = {
+      quitting: () => false,
+      announce: () => { did.push('announce') },
+      quit: (code, again) => { did.push(`quit ${code} ${again}`) },
+      showTrusted: () => { did.push('trusted') },
+      closeEditors: () => { did.push('close editors') },
+      packaged: false,
+      env: {},
+      later: (run, ms) => { timers.push({ ms, run }) },
+      ...over,
+    }
+    return { made, did, timers }
+  }
+
+  it('tells the windows hetu is quitting, then quits with exit code 1 and starts again after the grace', () => {
+    const { made, did, timers } = parts()
+    afterFailure({ action: 'relaunch', control: 'gate', reason: 'state-changed' }, made)
+    expect(did).toEqual(['announce'])
+    expect(timers.map(timer => timer.ms)).toEqual([QUIT_GRACE_MS])
+    timers[0].run()
+    expect(did).toEqual(['announce', 'quit 1 true'])
+  })
+
+  it('quits without starting again where HETU_NO_RELAUNCH says so', () => {
+    const { made, did, timers } = parts({ env: { HETU_NO_RELAUNCH: '1' } })
+    afterFailure({ action: 'relaunch', control: 'log', reason: 'log-failing' }, made)
+    timers[0].run()
+    expect(did.at(-1)).toBe('quit 1 false')
+  })
+
+  it('does nothing more once hetu is already quitting', () => {
+    const { made, did, timers } = parts({ quitting: () => true })
+    afterFailure({ action: 'relaunch', control: 'gate', reason: 'state-changed' }, made)
+    expect([did, timers]).toEqual([[], []])
+  })
+
+  it('opens the trusted window and closes the editors in the stopped mode, and quits nothing', () => {
+    const { made, did, timers } = parts()
+    afterFailure({ action: 'stopped', mode: { control: 'gate', why: 'failed', reason: 'state-changed', again: true } }, made)
+    expect(did).toEqual(['trusted', 'close editors'])
+    expect(timers).toEqual([])
   })
 })

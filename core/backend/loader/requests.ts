@@ -28,6 +28,8 @@ export type RequestHost = {
   // A clock no change of the wall clock moves, and how long a request must be first in line before its Confirm counts
   clock(): number
   delayMs: number
+  // How long a Confirm waits for its record to land, CONFIRM_RECORD_MS unless a test names another
+  recordMs?: number
   // Writes what waits to be recorded, within ms, and gives back how many records still wait. The audit writer then
   // writes nothing until recording is off or resume is called
   drain(ms: number): Promise<number>
@@ -196,7 +198,8 @@ export class Requests {
   // record share the one wait
   private async landThenApply(change: Change, fields: Record<string, Field>): Promise<void> {
     const stopping = change.kind === 'recordNothing' && change.on
-    const wait = stopping ? CONFIRM_RECORD_MS / 2 : CONFIRM_RECORD_MS
+    const whole = this.host.recordMs ?? CONFIRM_RECORD_MS
+    const wait = stopping ? whole / 2 : whole
     if (stopping) fields = { ...fields, unwritten: await this.host.drain(wait) }
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), wait)

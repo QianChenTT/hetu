@@ -8,7 +8,7 @@ import type { Failure, Loader } from './loader/loader.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { QUIT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { TrustedWindow } from './runtime/trusted.ts'
@@ -128,19 +128,23 @@ async function start(): Promise<void> {
     }
     // A failure while running: windows hear core.quitting and get their grace, then hetu quits with an error and starts
     // once more. Or the loader stopped in the stopped mode, which leaves only the trusted window
-    const onFailure = (failure: Failure) => {
-      if (failure.action === 'stopped') {
-        trusted.show()
-        closeEditors()
-        return
-      }
-      if (quitting !== null) return
-      failed = true
-      code = 1
-      again = relaunches({ packaged: app.isPackaged, env: process.env })
-      carrier?.quitting()
-      setTimeout(() => app.quit(), QUIT_GRACE_MS).unref?.()
-    }
+    const onFailure = (failure: Failure) => afterFailure(failure, {
+      quitting: () => quitting !== null,
+      announce: () => {
+        failed = true
+        carrier?.quitting()
+      },
+      quit: (exitCode, restart) => {
+        code = exitCode
+        again = restart
+        app.quit()
+      },
+      showTrusted: () => trusted.show(),
+      closeEditors,
+      packaged: app.isPackaged,
+      env: process.env,
+      later: (run, ms) => setTimeout(run, ms).unref?.(),
+    })
     const wired = wireCore({
       booted,
       installDir,

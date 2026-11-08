@@ -51,6 +51,8 @@ export type LoaderOptions = {
   onFailure?: (failure: Failure) => void
   // How long a request must be first in line before its Confirm counts. The input delay unless a test names another
   confirmDelayMs?: number
+  // How long a Confirm waits for its record to land, 10 s unless a test names another
+  confirmRecordMs?: number
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -271,6 +273,7 @@ export class Loader implements Seam {
       changed: () => this.refresh(),
       clock: () => performance.now(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
+      ...(options.confirmRecordMs !== undefined ? { recordMs: options.confirmRecordMs } : {}),
       declined: (plugin, change) => {
         if (change.kind === 'item.on') this.declinedAsks.add(`${plugin}
 ${capabilityKey(change.capability)}`)

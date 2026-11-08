@@ -112,6 +112,20 @@ describe('a security request', () => {
     expect(made.loader.pending()).toHaveLength(1)
   })
 
+  // Checkpoint B: nothing tested the wait running out on a record that never settles
+  it('applies nothing once its record\u2019s wait runs out on a log that never answers', async () => {
+    const made = await harness({ loader: { confirmRecordMs: 100 } })
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    made.link.landing = (event, _fields, signal) => event === 'security.confirm'
+      ? new Promise(resolve => signal?.addEventListener('abort', () => resolve('lost')))
+      : 'landed'
+    const started = performance.now()
+    expect(await code(made.loader.confirm(id, {}))).toBe('failed')
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+  })
+
   // Record nothing is on, so the record is muted and the change still applies
   it('applies on a muted Confirm record', async () => {
     const made = await harness()
