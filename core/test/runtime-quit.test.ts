@@ -96,7 +96,7 @@ describe('starting again after a failure', () => {
   })
 })
 
-// Checkpoint B: main's handling of a failure ran only end to end, where hetu never starts itself again
+// Main's handling of a failure ran only end to end, where hetu never starts itself again
 describe('after a failure', () => {
   function parts(over: Partial<FailureParts> = {}) {
     const did: string[] = []

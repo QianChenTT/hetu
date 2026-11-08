@@ -30,7 +30,7 @@ function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   else if (mode.why === 'tampered') lines.push(`hetu stopped: the security plugin ${mode.control} failed its hash check`)
   else if (mode.why === 'absent') lines.push(`hetu stopped: the security plugin ${mode.control} is missing from the install`)
   else lines.push(`hetu stopped: the security plugin ${mode.control} failed to start${mode.reason !== null ? ` (${mode.reason})` : ''}`)
-  if (mode.again) lines.push('It failed in the run before too, so hetu didn’t start again on its own')
+  if (mode.again) lines.push('hetu already started again once after a failure, so it didn’t start again on its own')
   // Bytes that don't check out are hetu's own files damaged, which only its installer puts back
   const damaged = mode.why !== 'failed' || mode.control === 'install'
   if (damaged) lines.push('Repair hetu with its installer to get its files back')

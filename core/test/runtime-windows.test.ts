@@ -131,7 +131,7 @@ describe('the trusted window', () => {
   })
 })
 
-// Checkpoint B: Electron's default menu put Reload and Close within a key of the trusted window
+// Electron's default menu put Reload and Close within a key of the trusted window
 describe('the application menu', () => {
   it('is none on Windows and Linux', () => {
     expect(appMenu('win32')).toBe(null)

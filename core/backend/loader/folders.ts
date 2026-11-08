@@ -97,7 +97,7 @@ export async function writeMarker(dataDir: string, id: string): Promise<void> {
 }
 
 // The security control that failed while hetu ran, written before hetu quits to start again. A run that finds it and
-// meets a failure of the same control stops in the stopped mode instead of restarting a second time. Like a start
+// meets a failure of any control stops in the stopped mode instead of restarting a second time. Like a start
 // marker it can only hold hetu stopped, so it needs no hash. Only a clean Quit or the human's choice clears it
 export async function readFailedOnce(dataDir: string): Promise<string | null> {
   try {

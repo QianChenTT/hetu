@@ -3,7 +3,8 @@ import { frozen, table } from './frozen.ts'
 const MiB = 1024 * 1024
 
 // Fixed constants that protect main, starting values until they are measured in Electron. The watchdog may lower one
-// per plugin and only the human may raise one, per plugin or for all. A higher value is always the wider one
+// per plugin and only the human may set one, per plugin or for all, raised or lowered with a Confirm, since a lower value
+// can starve hetu's own controls or its audit. A window's own way never runs below these
 export const floorConstants = table({
   messagesPerSecond: 1000, // per port
   bytesPerSecond: 4 * MiB, // per port, what a worker's messages may weigh in a second, see weigh in rate.ts

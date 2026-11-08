@@ -157,7 +157,7 @@ describe('the trusted window', () => {
     expect(window.armed(trustedCaller)).toBe(false)
   })
 
-  // Checkpoint B: a reload was a new page armed at once
+  // A reload was a new page armed at once
   it('starts the delay again whenever its page starts loading', () => {
     const { window, windows, at } = trusted()
     window.show()

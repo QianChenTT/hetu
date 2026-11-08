@@ -629,7 +629,7 @@ describe('a failing log', () => {
   })
 })
 
-// #101 and decision 16 (Han, 2026-11-06: "No use"): every switch keeps this design's fail-safe default and none has an
+// #101: every switch keeps this design's fail-safe default and none has an
 // off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {

@@ -71,7 +71,7 @@ const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.ki
 
 // Security requests: a narrowing change applies at once with its record. A widening or destroying one waits under a
 // core id with the fingerprint of the state it read, until the trusted window's Confirm or Cancel. The Confirm record
-// lands first, so a widening never applies without it (decision 4)
+// lands first, so a widening never applies without it
 export class Requests {
   private readonly held = new Map<string, Held>()
   private readonly host: RequestHost
@@ -101,7 +101,7 @@ export class Requests {
       void this.host.record('security.applied', { ...fields, by: 'narrows' })
       return { applied: true }
     }
-    // The human's second deliberate step: changes the trusted window itself asks for skip the Confirm (decision 18).
+    // The human's second deliberate step: changes the trusted window itself asks for skip the Confirm.
     // The record still lands before anything widens. A change that asks for typing still waits for it, since the
     // switch skips the click and not the proof of attention that switching protection off asks for
     if (from.kind === 'window' && from.role === 'trusted' && this.host.confirmOff() && mustType(change) === null) {
@@ -201,7 +201,7 @@ export class Requests {
 
   // The Confirm record on disk, or muted with recording off, then the change. A record that doesn't land in time
   // applies nothing, and a write that fails applies nothing either. Turning recording off is the one exception: it
-  // writes what waits first and counts what still does in its own record, which is then the last one written (S4-5),
+  // writes what waits first and counts what still does in its own record, which is then the last one written,
   // and it applies even when that record is lost, since the log it switches off is what can't write. The drain and the
   // record share the one wait
   private async landThenApply(change: Change, fields: Record<string, Field>): Promise<void> {
