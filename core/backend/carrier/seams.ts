@@ -50,8 +50,10 @@ export type Loader = {
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
 }
 
-// Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window
-export type Asks = { raise(ask: string, access: Access): string }
+// Raises the prompt behind a gate's ask and names the held request, or refuses: throttled while another ask from the
+// same plugin is open, not-granted for an item that doesn't ask and with declined for one the human cancelled this run
+export type AskRefusal = { code: 'throttled' } | { code: 'not-granted', reason?: 'declined' }
+export type Asks = { raise(ask: string, access: Access): string | AskRefusal }
 
 // Where an error's text goes, never to a reply or a record. plugin is whose code threw: a provider, the gate or a
 // guard, or null for the core's own code. The text belongs in that plugin's debug, never the caller's, since a

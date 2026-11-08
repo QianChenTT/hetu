@@ -1,9 +1,10 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Capability } from '../api/capabilities.ts'
+import { capabilityKey, type Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
+import { carrierOptions } from '../backend/wire.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, workerManifest, type Files,
 } from './loader-fakes.ts'
@@ -294,5 +295,93 @@ describe('recording off and on', () => {
     }
     expect(await made.loader.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
     expect(recording).toBe(true)
+  })
+})
+
+describe('first-use asks', () => {
+  const key = (capability: Capability) => capabilityKey(capability)
+  const access = (id: string, capability: Capability = notes) => ({
+    stage: 'canonical' as const, caller: { kind: 'plugin' as const, id, half: 'worker', incarnation: 1 }, action: 'luoshu.read',
+    capability: capability.type, scope: { paths: ['notes/a.md'] },
+  })
+  const asking = (extra: object = {}) => harness({
+    behave: { gate: { exports: { gate: allowAll() } } },
+    folder: { alpha: worker('alpha'), beta: worker('beta') },
+    entries: { alpha: signed({ granted: [notes, panel], firstUse: [notes, panel] }), beta: signed({ granted: [notes] }) },
+    ...extra,
+  })
+
+  it('reach the gate as items whose first use asks, from the firstUse list in the entry', async () => {
+    const gate = allowAll()
+    const made = await asking({ behave: { gate: { exports: { gate } } } })
+    await made.loader.start()
+    const view = gate.seen.at(-1)!
+    expect(view.plugins.alpha.map(item => item.firstUse)).toEqual([true, true])
+    expect(view.plugins.beta.map(item => item.firstUse)).toEqual([false])
+  })
+
+  it('hold an item.on for the item asked, named for the plugin', async () => {
+    const made = await asking()
+    await made.loader.start()
+    const id = made.loader.asks.raise(key(notes), access('alpha'))
+    expect(typeof id).toBe('string')
+    expect(made.loader.pending()).toEqual([{ id, kind: 'item.on', plugin: 'alpha' }])
+  })
+
+  it('answer the same ask with the same id and another one while it is open with throttled', async () => {
+    const made = await asking()
+    await made.loader.start()
+    const id = made.loader.asks.raise(key(notes), access('alpha'))
+    expect(made.loader.asks.raise(key(notes), access('alpha'))).toBe(id)
+    expect(made.loader.asks.raise(key(panel), access('alpha', panel))).toEqual({ code: 'throttled' })
+  })
+
+  it('answer not-granted for an item the plugin holds with no first use, or doesn\'t hold', async () => {
+    const made = await asking()
+    await made.loader.start()
+    expect(made.loader.asks.raise(key(notes), access('beta'))).toEqual({ code: 'not-granted' })
+    expect(made.loader.asks.raise(key({ type: 'storage' }), access('alpha', { type: 'storage' }))).toEqual({ code: 'not-granted' })
+    expect(made.loader.asks.raise(key(notes), { ...access('alpha'), caller: editor })).toEqual({ code: 'not-granted' })
+  })
+
+  it('switch the item on for good once confirmed', async () => {
+    const gate = allowAll()
+    const made = await asking({ behave: { gate: { exports: { gate } } } })
+    await made.loader.start()
+    const id = made.loader.asks.raise(key(notes), access('alpha')) as string
+    await made.loader.confirm(id, {})
+    expect(gate.seen.at(-1)!.plugins.alpha.map(item => item.firstUse)).toEqual([false, true])
+    expect((await stateIn(made.dataDir)).plugins.alpha.firstUse).toEqual([panel])
+  })
+
+  it('answer declined for the rest of the run once the human cancelled one', async () => {
+    const made = await asking()
+    await made.loader.start()
+    const id = made.loader.asks.raise(key(notes), access('alpha')) as string
+    await made.loader.cancel(id)
+    expect(made.loader.asks.raise(key(notes), access('alpha'))).toEqual({ code: 'not-granted', reason: 'declined' })
+    // Another item still asks
+    expect(typeof made.loader.asks.raise(key(panel), access('alpha', panel))).toBe('string')
+  })
+})
+
+describe('requests the core raises itself', () => {
+  it('raise plugin.approve for a plugin found in the folder', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') } })
+    await made.loader.start()
+    expect(stateOf(made.loader, 'alpha')).toBe('found')
+    const [request] = made.loader.pending()
+    expect(request).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
+    await made.loader.confirm(request.id, {})
+    expect((await stateIn(made.dataDir)).plugins.alpha).toBeDefined()
+  })
+})
+
+describe('the wiring', () => {
+  it('hands the carrier the loader\'s asks unless a test names others', async () => {
+    const made = await harness()
+    expect(carrierOptions(made.loader, { log: null }).asks).toBe(made.loader.asks)
+    const other = { raise: () => 'req-1' }
+    expect(carrierOptions(made.loader, { log: null, asks: other }).asks).toBe(other)
   })
 })

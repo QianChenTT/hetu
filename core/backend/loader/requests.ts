@@ -21,13 +21,16 @@ export type RequestHost = {
   applyNow(change: Change): Promise<void>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   confirmOff(): boolean
+  // The human cancelled a request a plugin's call raised
+  declined(plugin: string, change: Change): void
   // Writes what waits to be recorded, within ms, and gives back how many records still wait
   drain(ms: number): Promise<number>
 }
 
 export type RequestAnswer = { applied: true } | { held: string }
 
-type Held = { id: string, key: string, change: Change, fingerprint: string, window: string }
+// raisedBy is the plugin whose call raised the request, null for one a window or the core raised
+type Held = { id: string, key: string, change: Change, fingerprint: Promise<string>, window: string, raisedBy: string | null }
 
 // The same text for a change whatever order its fields came in, so a change asked twice is found again and its hash
 // in the records doesn't depend on how a window spelled it
@@ -84,13 +87,29 @@ export class Requests {
       await this.host.exclusive(() => this.landThenApply(change, { ...fields, by: 'confirm-off' }))
       return { applied: true }
     }
-    const fingerprint = await this.host.fingerprint(change)
-    for (const one of this.held.values()) if (one.key === key) return { held: one.id }
-    if (this.held.size >= MAX_PENDING) throw { code: 'throttled' }
+    const held = this.hold(change, key, fields, null, MAX_PENDING)
+    if (typeof held !== 'string') throw held
+    // Answered once the state it read is fingerprinted, so an edit made after the answer counts as a change
+    await this.held.get(held)?.fingerprint
+    return { held }
+  }
+
+  // A request a plugin's call or the core raised: never applied at once, since nobody clicked anything. A plugin may
+  // hold open requests up to its limit, the same change asked again finds its id
+  raise(change: Change, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
+    const key = canonical(change)
+    return this.hold(change, key, { ...fieldsOf(change, key), window: raisedBy === null ? 'core' : 'plugin' }, raisedBy, limit)
+  }
+
+  private hold(change: Change, key: string, fields: Record<string, Field>, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
+    for (const one of this.held.values()) if (one.key === key) return one.id
+    const open = raisedBy === null ? this.held.size : [...this.held.values()].filter(one => one.raisedBy === raisedBy).length
+    if (open >= limit || this.held.size >= MAX_PENDING) return { code: 'throttled' }
     const id = randomUUID()
-    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string })
+    const fingerprint = this.host.fingerprint(change).catch(() => 'unreadable')
+    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy })
     void this.host.record('security.request', fields)
-    return { held: id }
+    return id
   }
 
   // Only the trusted window's Confirm reaches here, which the carrier checks first. A change that asks for typing
@@ -102,7 +121,7 @@ export class Requests {
       const word = mustType(one.change)
       if (word !== null && options.typed !== word) throw { code: 'invalid' }
       const fields = { ...fieldsOf(one.change, one.key), window: 'trusted' }
-      if (await this.host.fingerprint(one.change) !== one.fingerprint) {
+      if (await this.host.fingerprint(one.change) !== await one.fingerprint) {
         this.held.delete(id)
         void this.host.record('security.stale', fields)
         throw { code: 'stale' }
@@ -117,6 +136,7 @@ export class Requests {
     if (one === undefined) throw { code: 'not-found' }
     this.held.delete(id)
     void this.host.record('security.cancel', { ...fieldsOf(one.change, one.key), window: 'trusted' })
+    if (one.raisedBy !== null) this.host.declined(one.raisedBy, one.change)
   }
 
   // The Confirm record on disk, or muted with recording off, then the change. A record that doesn't land in time

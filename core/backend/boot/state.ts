@@ -88,6 +88,9 @@ const plugin = z.strictObject({
   // Items of granted the human switched off, each as granted holds it. Left out of an entry written before the switches
   // came, which then has none off. One granted doesn't hold switches nothing off
   off: folderCapabilities.optional(),
+  // Items of granted whose first use still asks for the human's Confirm, each as granted holds it. The capabilities
+  // plugin names them from step 17. Left out of an entry written before first use came, which then asks for none
+  firstUse: folderCapabilities.optional(),
 })
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against

@@ -31,15 +31,14 @@ async function stage(dataDir: string, files: Files): Promise<string> {
 
 describe('a staged update', () => {
   it('applies once confirmed and its record has landed: the folder swapped, the entry written last, the old incarnation stopped and the new one started', async () => {
-    const raised: unknown[] = []
-    const made = await running({ loader: { raise: request => { raised.push(request) } } })
+    const made = await running()
     const next = worker('alpha', { version: '1.1.0' })
     const dir = await stage(made.dataDir, next)
     const hash = await hashOf(dir)
     // Only a class 0 update may load on its own and nothing reads a class yet, so every update waits for a Confirm
     // naming what it stops: the plugin itself and what requires it
     expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
-    expect(raised).toEqual([{ kind: 'plugin.update', plugin: 'alpha', stops: ['alpha', 'beta'] }])
+    expect(made.loader.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'alpha' }])
     expect(made.link.events('plugin.updated')).toEqual([])
     expect(made.loader.plugin('alpha')?.incarnation).toBe(1)
     await made.loader.apply({ kind: 'plugin.update', plugin: 'alpha' })
@@ -67,11 +66,10 @@ describe('a staged update', () => {
   })
 
   it('needs a Confirm naming the plugins it stops when it would leave a running dependent unsatisfied, raised as plugin.update', async () => {
-    const raised: unknown[] = []
-    const made = await running({ loader: { raise: request => { raised.push(request) } } })
+    const made = await running()
     const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0', requires: ['not-installed'] }))
     expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
-    expect(raised).toEqual([{ kind: 'plugin.update', plugin: 'alpha', stops: ['alpha', 'beta'] }])
+    expect(made.loader.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'alpha' }])
     // Nothing applies until the Confirm
     expect(made.link.events('plugin.updated')).toEqual([])
     expect(stateOf(made.loader, 'beta')).toBe('ready')

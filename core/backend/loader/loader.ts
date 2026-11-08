@@ -20,13 +20,13 @@ import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import type { FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/state.ts'
-import type { HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
+import type { AskRefusal, Asks, HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
 import {
   clear, folders, readInstalled, removeMarker, stage, swapIn, writeInstalled, writeMarker, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
-import { Requests, type RequestAnswer } from './requests.ts'
+import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
 export type LoaderOptions = {
@@ -40,9 +40,6 @@ export type LoaderOptions = {
   platform?: string
   // The guards expected on an action. Defaults to core/api's list, which is empty until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
-  // trusted window
-  raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
 }
@@ -189,7 +186,6 @@ export class Loader implements Seam {
   private readonly installDir: string
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
-  private readonly raise: LoaderOptions['raise']
   private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
@@ -218,6 +214,8 @@ export class Loader implements Seam {
   private again = false
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
+  // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
+  private readonly declinedAsks = new Set<string>()
 
   constructor(options: LoaderOptions) {
     const { booted } = options
@@ -228,7 +226,6 @@ export class Loader implements Seam {
     this.installDir = options.installDir
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
-    this.raise = options.raise
     this.logWrites = options.logWrites ?? (() => true)
     this.markers = new Set(booted.markers)
     this.state = booted.state
@@ -244,6 +241,10 @@ export class Loader implements Seam {
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
+      declined: (plugin, change) => {
+        if (change.kind === 'item.on') this.declinedAsks.add(`${plugin}
+${capabilityKey(change.capability)}`)
+      },
     })
   }
 
@@ -766,6 +767,8 @@ export class Loader implements Seam {
       this.note('plugin.refused', { plugin: k.id, reason: shown.reason })
     } else if (shown.state === 'found' && shown.reason === 'new') {
       this.note('plugin.found', { plugin: k.id })
+      // A plugin found in the folder waits as a notice for the human's approval
+      this.requests.raise({ kind: 'plugin.approve', plugin: k.id }, null, MAX_PENDING)
     }
   }
 
@@ -1192,6 +1195,22 @@ export class Loader implements Seam {
     return this.requests.pending()
   }
 
+  // The prompt behind the gate's ask: an item.on held for the item a plugin's call asked to use for the first time,
+  // which the human opens from its notice. ask is the item's key as the gate gave it. Only a plugin's item whose first
+  // use asks can be raised, one open per plugin within firstUseAsks
+  readonly asks: Asks = {
+    raise: (ask, access): string | AskRefusal => {
+      const { caller } = access
+      if (caller.kind !== 'plugin') return { code: 'not-granted' }
+      const entry = this.known.get(caller.id)?.entry ?? null
+      const item = entry?.firstUse?.find(asked => capabilityKey(asked) === ask)
+      if (entry === null || item === undefined || !entry.granted.some(granted => capabilityKey(granted) === ask)) return { code: 'not-granted' }
+      if (this.declinedAsks.has(`${caller.id}
+${ask}`)) return { code: 'not-granted', reason: 'declined' }
+      return this.requests.raise({ kind: 'item.on', plugin: caller.id, capability: item }, caller.id, this.link.limit(caller.id, 'firstUseAsks'))
+    },
+  }
+
   // The value a limit has now for one plugin: its own, else the value for all, else the floor's
   private limitInForce(constant: FloorConstant, plugin: string | null): number {
     const { limits } = this.state.switches
@@ -1354,6 +1373,8 @@ export class Loader implements Seam {
     if (item === undefined) throw new Error(`${id} wasn't granted that item`)
     const others = (entry.off ?? []).filter(off => capabilityKey(off) !== key)
     const next: Plugin = { ...entry, off: on ? others : [...others, item] }
+    // Switching an item on is the human's Confirm of its first use too
+    if (on && entry.firstUse !== undefined) next.firstUse = entry.firstUse.filter(asked => capabilityKey(asked) !== key)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
     this.bump()
@@ -1362,19 +1383,23 @@ export class Loader implements Seam {
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
   // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
-  // switched off is off. No item asks at its first use until the Confirm flow and the classes come, since with nothing to
-  // raise the prompt an ask could only refuse
+  // switched off is off. An item in the entry's firstUse list asks at its first use, which nothing writes until the
+  // capabilities plugin at step 17. An install plugin's items never ask
   private stateView(): StateView {
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
-    const items = (granted: readonly Capability[], switchedOff: readonly Capability[]) => {
+    const items = (granted: readonly Capability[], switchedOff: readonly Capability[], asking: readonly Capability[] = []) => {
       const off = new Set(switchedOff.map(capabilityKey))
-      return granted.map(capability => ({ capability: structuredClone(capability), off: off.has(capabilityKey(capability)), firstUse: false }))
+      const firstUse = new Set(asking.map(capabilityKey))
+      return granted.map(capability => {
+        const key = capabilityKey(capability)
+        return { capability: structuredClone(capability), off: off.has(key), firstUse: firstUse.has(key) }
+      })
     }
     // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
     // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
       if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
-      plugins[id] = items(entry.granted, entry.off ?? [])
+      plugins[id] = items(entry.granted, entry.off ?? [], entry.firstUse ?? [])
     }
     for (const k of this.known.values()) {
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
@@ -1525,9 +1550,7 @@ export class Loader implements Seam {
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    try {
-      this.raise?.({ kind: 'plugin.update', plugin: id, stops })
-    } catch {}
+    this.requests.raise({ kind: 'plugin.update', plugin: id }, null, MAX_PENDING)
     return { outcome: 'confirm', stops }
   }
 

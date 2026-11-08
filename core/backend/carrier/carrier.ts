@@ -826,15 +826,21 @@ export class Carrier {
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
       const request = prompt ? this.raise(ask, access) : null
-      return request === null ? { code: 'not-granted' } : { code: 'needs-confirm', request }
+      if (typeof request === 'string') return { code: 'needs-confirm', request }
+      return request ?? { code: 'not-granted' }
     }
     return { code: allow === false && code === 'switched-off' ? 'switched-off' : 'not-granted' }
   }
 
-  private raise(ask: string, access: Access): string | null {
+  // A request id in the grammar, or one of the refusals the prompt may give. Anything else refuses not-granted
+  private raise(ask: string, access: Access): string | No | null {
     try {
       const request = this.options.asks?.raise(ask, access)
-      return token.safeParse(request).success ? request as string : null
+      if (token.safeParse(request).success) return request as string
+      if (request === null || typeof request !== 'object') return null
+      if (request.code === 'throttled') return { code: 'throttled' }
+      if (request.code === 'not-granted') return request.reason === 'declined' ? { code: 'not-granted', reason: 'declined' } : { code: 'not-granted' }
+      return null
     } catch {
       return null
     }

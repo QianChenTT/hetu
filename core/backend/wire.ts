@@ -81,6 +81,7 @@ export function carrierOptions(
     providers: id => loader.role(id, 'provider'),
     watchdog: () => loader.role('watchdog', 'watchdog'),
     core: loader.serve,
+    asks: loader.asks,
     ...rest,
   }
 }
