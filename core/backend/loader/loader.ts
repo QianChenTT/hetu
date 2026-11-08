@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
 import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
-import { INPUT_DELAY_MS } from '../../api/trusted.ts'
+import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -410,9 +410,13 @@ ${capabilityKey(change.capability)}`)
         })),
       }
     })
-    const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => ({
-      id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, ...describeChange(change), type: mustType(change),
-    }))
+    const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => {
+      const { text, notes } = describeChange(change)
+      return {
+        id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
+        type: mustType(change),
+      }
+    })
     return {
       plugins,
       switches: {
@@ -422,6 +426,23 @@ ${capabilityKey(change.capability)}`)
       requests,
       stopped: this.stoppedMode,
     }
+  }
+
+  // What an approval or an update would load, from the one read it was found or staged with: the version and every
+  // grant an approval takes from the manifest, the versions an update goes from and to
+  private what(change: Change): string[] {
+    if (change.kind === 'plugin.approve') {
+      const manifest = this.known.get(change.plugin)?.read.manifest
+      if (manifest === undefined || manifest === null) return []
+      const asks = manifest.capabilities ?? []
+      return [`Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`))]
+    }
+    if (change.kind === 'plugin.update') {
+      const to = this.staged.get(change.plugin)?.read.manifest?.version
+      const from = this.known.get(change.plugin)?.entry?.version
+      return to === undefined || from === undefined ? [] : [`From ${from} to ${to}`]
+    }
+    return []
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -1710,6 +1731,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
+    // A newer update replaces the staged one, so the request the human may have seen for the older one goes
+    this.requests.withdraw(change => change.kind === 'plugin.update' && change.plugin === id)
     this.requests.raise({ kind: 'plugin.update', plugin: id }, null, MAX_PENDING)
     return { outcome: 'confirm', stops }
   }

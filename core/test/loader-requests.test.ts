@@ -543,3 +543,21 @@ describe('the delay before a request counts', () => {
     expect((await stateIn(made.dataDir)).plugins.beta.granted).toEqual([notes])
   })
 })
+
+// Checkpoint B: an approval was confirmed with no word of what it grants
+describe('the request to approve a plugin', () => {
+  it('lists its version and every grant its manifest asks for', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [notes, { type: 'net.fetch', hosts: ['example.com'] }] }) } })
+    await made.loader.start()
+    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"'])
+  })
+
+  it('says when it asks for nothing', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') } })
+    await made.loader.start()
+    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing'])
+  })
+})

@@ -164,6 +164,16 @@ export class Requests {
     })
   }
 
+  // Drops the requests a change made pointless, such as an update a newer one replaced, so none can be confirmed for
+  // something the human no longer sees
+  withdraw(match: (change: Change) => boolean): void {
+    for (const one of [...this.held.values()]) {
+      if (!match(one.change)) continue
+      this.drop(one.id)
+      void this.host.record('security.withdrawn', { ...fieldsOf(one.change, one.key), window: one.window })
+    }
+  }
+
   // In the same queue as a Confirm, so a Cancel made while a Confirm waits on its record waits for it and then finds
   // nothing to cancel
   cancel(id: string): Promise<void> {

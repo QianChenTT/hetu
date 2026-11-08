@@ -185,3 +185,30 @@ describe('a staged update', () => {
     expect(stateOf(again.loader, 'alpha')).toBe('ready')
   })
 })
+
+// Checkpoint B: a second staged update kept the first one's request, so its Confirm applied a version the human never saw
+describe('the request for an update', () => {
+  const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
+  const call = (action: string) => ({ callId: 'c1', caller: trusted, action, args: undefined, deadline: Date.now() + 30_000 })
+
+  it('names the version it goes from and to', async () => {
+    const made = await running()
+    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    await made.loader.update('alpha', dir)
+    const list = await made.loader.serve(call('security.list')) as { requests: { kind: string, notes: string[] }[] }
+    expect(list.requests[0].notes).toContain('From 1.0.0 to 1.1.0')
+  })
+
+  it('is withdrawn when a newer update is staged, which raises a request of its own', async () => {
+    const made = await running()
+    await made.loader.update('alpha', await stage(made.dataDir, worker('alpha', { version: '1.1.0' })))
+    const [first] = made.loader.pending()
+    const later = path.join(made.dataDir, 'staging', 'alpha-later')
+    await writeFolder(later, worker('alpha', { version: '1.2.0' }))
+    await made.loader.update('alpha', later)
+    const [second] = made.loader.pending()
+    expect(made.loader.pending()).toHaveLength(1)
+    expect(second.id).not.toBe(first.id)
+    await expect(made.loader.confirm(first.id, {})).rejects.toEqual({ code: 'not-found' })
+  })
+})
