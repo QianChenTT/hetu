@@ -209,6 +209,9 @@ export class Carrier {
   private closed = false
   // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
   private shutting = false
+  // The once a second look, and the log's health it last saw
+  private readonly looking: ReturnType<typeof setInterval>
+  private logHealthy: boolean | undefined
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -227,6 +230,9 @@ export class Carrier {
     this.coalesced = new Coalesced(this.lane)
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
+    this.logHealthy = options.log?.healthy
+    this.looking = setInterval(() => this.look(), 1000)
+    this.looking.unref?.()
     this.bus = new Bus({
       state: () => this.busState(),
       canRead: (caller, path) => this.readable(caller, path),
@@ -407,6 +413,7 @@ export class Carrier {
 
   close(): void {
     this.closed = true
+    clearInterval(this.looking)
     for (const way of [...this.ways.values()]) this.end(way.caller)
     this.coalesced.close()
     // Records the log plugin never acknowledged are lost with the run and counted
@@ -1232,6 +1239,17 @@ export class Carrier {
       return
     }
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
+  }
+
+  // Once a second, so a stalled log is marked failed while hetu is idle and windows hear when the log's health changed
+  // through an audit write, which the floor lane doesn't see
+  private look(): void {
+    if (this.closed || this.shutting) return
+    this.stalled()
+    const healthy = this.options.log?.healthy
+    if (healthy === this.logHealthy) return
+    this.logHealthy = healthy
+    this.bus.emit('core.status')
   }
 
   // A log plugin whose oldest record waited unacknowledged for auditStallMs has stalled, and the loader marks it failed

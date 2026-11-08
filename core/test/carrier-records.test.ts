@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
 import { EventLog } from '../lib/event-log.ts'
 import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
@@ -848,5 +848,43 @@ describe('a stalled log', () => {
     now = 41_000
     queue.ack(queue.next(1)[0].seq)
     expect(queue.oldest()).toBe(null)
+  })
+
+  // Only the interval is faked, so the ports and their timers run as they do
+  it('marks a stalled log failed while hetu is idle, looking once a second', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const { at, connect, fails } = stalling()
+      const search = connect(worker('search'))
+      await search.ask('storage.set', { key: 'a', value: 1 })
+      at(30_000)
+      vi.advanceTimersByTime(999)
+      expect(fails).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tells windows to read core.status again when the log\'s health changes through a write the floor lane didn\'t make', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const log = new FakeLog()
+      const { carrier } = harness({ log })
+      const way = windowWay(carrier, { editor })
+      await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
+      vi.advanceTimersByTime(1000)
+      expect(way.events()).toEqual([])
+      log.healthy = false
+      vi.advanceTimersByTime(1000)
+      await tick()
+      expect(way.events().map(event => event.topic)).toEqual(['core.status'])
+      vi.advanceTimersByTime(1000)
+      await tick()
+      expect(way.events()).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
