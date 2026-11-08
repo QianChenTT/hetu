@@ -25,7 +25,7 @@ Hetu and Luoshu are the two diagrams of an old Chinese story, the Yellow River C
 ## Layout
 
 - [core/](core/): the core, the four parts that can't be switched off (boot, loader, carrier and runtime), being built here. Each folder's README says what it holds and where it moves
-- [plugins/](plugins/): everything that decides or adds a feature, the gate and the log among them
+- [plugins/](plugins/): everything that decides or adds a feature, the gate among them
 - [daemon/](daemon/): today's vault daemon, removed file by file as the core replaces it. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
 - [editor/](editor/): today's text-first CodeMirror 6 editor, removed the same way. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note
 - [docs/](docs/): the interactive core map, published with GitHub Pages
