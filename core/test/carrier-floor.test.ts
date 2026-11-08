@@ -165,6 +165,25 @@ describe('the floor', () => {
     expect(seen.map(call => call.action)).toEqual(['security.confirm'])
   })
 
+  // Checkpoint B: with confirmOff on a request from the trusted window applies at once, so every action it sends that
+  // changes something waits for the delay like a Confirm. Reads don't
+  it('refuses the trusted window’s other actions before it armed, and answers its reads', async () => {
+    const seen: string[] = []
+    let armed = false
+    const { carrier } = harness({ core: async call => { seen.push(call.action); return null }, armed: () => armed })
+    const way = windowWay(carrier, { trusted, 'editor-1': editor })
+    for (const [action, args] of securityActions) {
+      if (action === 'security.list') continue
+      expect(code(await way.ask('trusted', action, args))).toBe('throttled')
+    }
+    expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
+    expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
+    // The editor has no delay of its own
+    expect((await way.ask('editor-1', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } })).ok).toBe(true)
+    armed = true
+    expect((await way.ask('trusted', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } })).ok).toBe(true)
+  })
+
   it('refuses every Confirm when nothing says the trusted window armed', async () => {
     const { carrier } = harness({ core: async () => null })
     const way = windowWay(carrier, { trusted })

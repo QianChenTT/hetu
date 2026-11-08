@@ -187,6 +187,15 @@ describe('confirmOff', () => {
     held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
   })
 
+  // Checkpoint B: confirmOff skips the Confirm, never the typing that switching protection off asks for
+  it('still holds a change that asks for typing, so the word is typed', async () => {
+    const made = await harness({ switches: { confirmOff: true } })
+    await made.loader.start()
+    held(await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
+    held(await made.loader.request({ kind: 'recordNothing', on: true }, trusted))
+    expect(made.loader.slot('gate')).toBe('on')
+  })
+
   it('still holds one from the trusted window while it is off', async () => {
     const made = await harness()
     await made.loader.start()

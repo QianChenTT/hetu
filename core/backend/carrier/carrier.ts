@@ -107,6 +107,9 @@ type Shaped =
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
+// The core actions the trusted window may send inside its input delay, since they only read
+const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.history', 'log.verify'])
+
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
 
@@ -869,8 +872,12 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
-    // A Confirm sent inside the trusted window's input delay counts for nothing, whatever the page did
-    if (pending.action === 'security.confirm' && !this.armed(pending.caller)) return this.finish(pending, no('throttled'))
+    // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
+    // with confirmOff on a request that applies at once. Its reads answer
+    const { caller } = pending
+    if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !this.armed(caller)) {
+      return this.finish(pending, no('throttled'))
+    }
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
       this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)

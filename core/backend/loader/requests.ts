@@ -96,8 +96,9 @@ export class Requests {
       return { applied: true }
     }
     // The human's second deliberate step: changes the trusted window itself asks for skip the Confirm (decision 18).
-    // The record still lands before anything widens
-    if (from.kind === 'window' && from.role === 'trusted' && this.host.confirmOff()) {
+    // The record still lands before anything widens. A change that asks for typing still waits for it, since the
+    // switch skips the click and not the proof of attention that switching protection off asks for
+    if (from.kind === 'window' && from.role === 'trusted' && this.host.confirmOff() && mustType(change) === null) {
       await this.host.exclusive(() => this.landThenApply(change, { ...fields, by: 'confirm-off' }))
       return { applied: true }
     }
