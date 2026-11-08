@@ -414,11 +414,19 @@ describe('core.status, for a window\'s banner', () => {
       allowUnsigned: 0,
       skipVerification: false,
       recordNothing: false,
+      logWrites: true,
       luoshuPicked: false,
     })
     runtime.half('alpha').crash()
     await until(() => loader.plugin('alpha')?.state === 'crashed')
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
+  })
+
+  it('says the log can\'t write while boot\'s event log is failing', async () => {
+    const { carrier, loader } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.status')).result).toMatchObject({ logWrites: false })
   })
 
   it('answers the trusted window too and refuses a plugin, since the banner is the windows\' own', async () => {

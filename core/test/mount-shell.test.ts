@@ -9,6 +9,7 @@ const calm: CoreStatus = {
   allowUnsigned: 0,
   skipVerification: false,
   recordNothing: false,
+  logWrites: true,
   luoshuPicked: true,
 }
 
@@ -25,10 +26,11 @@ describe('the banner', () => {
       allowUnsigned: 2,
       skipVerification: true,
       recordNothing: true,
+      logWrites: false,
       luoshuPicked: false,
     })).toEqual([
       'gate: off', 'log: failed', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
-      'verification skipped', 'recording off', 'pick a luoshu folder',
+      'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',
     ])
   })
 })

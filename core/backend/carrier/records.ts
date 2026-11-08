@@ -29,12 +29,25 @@ export class FloorLane {
   private current: Promise<void> = Promise.resolve()
   private retry: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  // The log stopped taking appends and none has landed since
+  private failing = false
+  private readonly noticed: () => void
 
-  constructor(log: FloorLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number }) {
+  // noticed runs once when the log stops taking appends and once when one lands again, so the banner can say so
+  constructor(log: FloorLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number, noticed?: () => void }) {
     this.log = log
     this.bound = options.bound
     this.muted = options.muted
     this.retryMs = options.retryMs
+    this.noticed = options.noticed ?? (() => {})
+  }
+
+  private failed(failing: boolean): void {
+    if (failing === this.failing) return
+    this.failing = failing
+    try {
+      this.noticed()
+    } catch {}
   }
 
   // Records waiting for the log and records dropped since the backlog last emptied
@@ -104,6 +117,7 @@ export class FloorLane {
           first.writing = false
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
+            this.failed(true)
             if (first.withdrawn) {
               this.backlog.shift()
               first.landed?.('lost')
@@ -116,6 +130,7 @@ export class FloorLane {
           // Not for the count's own record, which would count itself forever
           if (first.event !== 'floor.dropped') this.overflowed++
         }
+        if (landing === 'landed') this.failed(false)
         this.backlog.shift()
         first.landed?.(landing)
         if (this.backlog.length === 0 && this.overflowed > 0) {

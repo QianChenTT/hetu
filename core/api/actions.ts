@@ -143,7 +143,8 @@ type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in ke
 export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
 
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
-// switches that weaken a check and whether a luoshu folder is picked. Pending requests join with the trusted window
+// switches that weaken a check, whether the event log takes appends and whether a luoshu folder is picked. Pending
+// requests join with the trusted window
 export type CoreStatus = {
   slots: Record<typeof slotIds[number], SlotState>
   crashed: string[]
@@ -151,6 +152,7 @@ export type CoreStatus = {
   allowUnsigned: number
   skipVerification: boolean
   recordNothing: boolean
+  logWrites: boolean
   luoshuPicked: boolean
 }
 

@@ -356,6 +356,38 @@ describe('the floor lane', () => {
     expect(lines.map(line => [line.event, line.plugin])).toEqual([['plugin.found', 'search'], ['plugin.checked', 'search']])
   })
 
+  it('says once when the log stops writing and once when it writes again', async () => {
+    const log = new FakeLog()
+    let noticed = 0
+    const lane = new FloorLane(log, { bound: () => 10, muted: () => false, retryMs: 60_000, noticed: () => { noticed++ } })
+    log.failing = true
+    void lane.write('plugin.found', { plugin: 'a' })
+    void lane.write('plugin.found', { plugin: 'b' })
+    await tick()
+    expect(noticed).toBe(1)
+    log.failing = false
+    await lane.flush()
+    expect(noticed).toBe(2)
+    void lane.write('plugin.found', { plugin: 'c' })
+    await lane.flush()
+    expect(noticed).toBe(2)
+    lane.close()
+  })
+
+  it('tells windows to read core.status again when the log stops writing and when it writes again', async () => {
+    const log = new FakeLog()
+    const { carrier } = harness({ log })
+    const way = windowWay(carrier, { editor })
+    await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
+    log.failing = true
+    carrier.floor('plugin.found', { plugin: 'a' })
+    await tick()
+    expect(way.events().map(event => event.topic)).toEqual(['core.status'])
+    log.failing = false
+    await carrier.flushFloor()
+    expect(way.events().map(event => event.topic)).toEqual(['core.status', 'core.status'])
+  })
+
   it('keeps records in a backlog while the log can not write and lands them in order once an append works', async () => {
     const log = new FakeLog()
     const { carrier } = harness({ log })

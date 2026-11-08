@@ -223,6 +223,10 @@ export class Carrier {
       bound: () => this.limits.of(null, 'floorBacklog'),
       muted: () => this.muted(),
       retryMs: options.floorRetryMs ?? 5000,
+      // Windows read core.status again, which says whether the log takes appends
+      noticed: () => {
+        if (!this.closed && !this.shutting) this.bus.emit('core.status')
+      },
     })
     this.coalesced = new Coalesced(this.lane)
     this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)

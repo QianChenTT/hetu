@@ -45,6 +45,8 @@ export type LoaderOptions = {
   // Lends the install's log plugin its audit handle for one incarnation, with the revoke that ends it. The join builds
   // it from the carrier's audit queue and boot's EventLog
   audit?: () => { handle: AuditHandle, revoke(): void }
+  // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
+  logWrites?: () => boolean
 }
 
 // What an update staged beside the old version came to
@@ -178,6 +180,7 @@ export class Loader implements Seam {
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly raise: LoaderOptions['raise']
   private readonly audit: LoaderOptions['audit']
+  private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
   private readonly known = new Map<string, Known>()
@@ -216,6 +219,7 @@ export class Loader implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.raise = options.raise
     this.audit = options.audit
+    this.logWrites = options.logWrites ?? (() => true)
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -336,6 +340,7 @@ export class Loader implements Seam {
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
       recordNothing: switches.recordNothing,
+      logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
     }
   }
