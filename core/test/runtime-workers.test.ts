@@ -1,6 +1,6 @@
 import type { MessagePortMain } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { type Renderer, WorkerRenderer } from '../backend/runtime/workers.ts'
+import { type Renderer, WorkerRenderer, WorkerRenderers } from '../backend/runtime/workers.ts'
 
 class FakePort {
   closed = false
@@ -43,7 +43,7 @@ class FakeRenderer implements Renderer {
 
 const LIMITS = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, bytesPerSecond: 100, resultBytes: 1 }
 
-function runtime(readyMs = 1000, endingMs = 1000) {
+function runtime(endingMs = 1000) {
   const renderers: FakeRenderer[] = []
   const records: { event: string, fields: Record<string, unknown> }[] = []
   const cutoffs: unknown[][] = []
@@ -58,7 +58,6 @@ function runtime(readyMs = 1000, endingMs = 1000) {
     limits: id => ({ ...LIMITS, resultBytes: id.length }),
     cutoff: (id, incarnation, reason) => cutoffs.push([id, incarnation, reason]),
     sample: sample => samples.push(sample),
-    readyMs,
     endingMs,
   })
   return { workers, renderers, records, cutoffs, samples }
@@ -85,16 +84,6 @@ describe('the hidden renderer for workers', () => {
       { channel: 'hetu:start', message: { id: 'search', incarnation: 1, code: Buffer.from('// search'), limits: { ...LIMITS, resultBytes: 6 } }, ports: [first.start.port] },
       { channel: 'hetu:start', message: { id: 'git', incarnation: 1, code: Buffer.from('// git'), limits: { ...LIMITS, resultBytes: 3 } }, ports: [second.start.port] },
     ])
-  })
-
-  it('resolves whenReady once the page says ready, or false once readyMs passed', async () => {
-    const ready = runtime()
-    const waiting = ready.workers.whenReady()
-    ready.renderers[0].says({ kind: 'ready' })
-    expect(await waiting).toBe(true)
-    const late = runtime(30)
-    expect(await late.workers.whenReady()).toBe(false)
-    expect(late.records).toEqual([{ event: 'renderer.late', fields: { ms: 30 } }])
   })
 
   it('ends a running worker through the page and drops a queued one, closing its port', () => {
@@ -128,7 +117,7 @@ describe('the hidden renderer for workers', () => {
   })
 
   it('names a plugin ended just before the renderer died, since its port closes first and the loader ends it then', async () => {
-    const { workers, renderers, records } = runtime(1000, 40)
+    const { workers, renderers, records } = runtime(40)
     workers.start(start('search').start)
     workers.start(start('git').start)
     renderers[0].says({ kind: 'ready' })
@@ -203,5 +192,84 @@ describe('the hidden renderer for workers', () => {
     workers.start(late.start)
     expect(late.port.closed).toBe(true)
     expect(renderers).toHaveLength(1)
+  })
+})
+
+describe('a renderer per community plugin', () => {
+  function routed(idleMs = 20) {
+    const made: { group: string, workers: WorkerRenderer, renderers: FakeRenderer[] }[] = []
+    const records: { event: string, fields: Record<string, unknown> }[] = []
+    const router = new WorkerRenderers(group => {
+      const renderers: FakeRenderer[] = []
+      const workers = new WorkerRenderer({
+        open: () => {
+          const renderer = new FakeRenderer()
+          renderers.push(renderer)
+          return renderer
+        },
+        record: (event, fields) => records.push({ event, fields }),
+        limits: () => LIMITS,
+        cutoff: () => {},
+        sample: () => {},
+      })
+      made.push({ group, workers, renderers })
+      return workers
+    }, idleMs)
+    return { router, made, records }
+  }
+
+  const later = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+  it('gives each community plugin a renderer of its own and the first-party plugins one between them', () => {
+    const { router, made } = routed()
+    for (const id of ['search', 'git', 'hello', 'notes']) router.start(start(id).start)
+    expect(made.map(group => group.group)).toEqual(['first-party', 'hello', 'notes'])
+    expect(made.map(group => group.renderers.length)).toEqual([1, 1, 1])
+  })
+
+  it('closes a community plugin\'s renderer a moment after it holds nothing, and keeps the first-party one', async () => {
+    const { router, made } = routed()
+    router.start(start('hello').start)
+    router.start(start('search').start)
+    for (const group of made) group.renderers[0].says({ kind: 'ready' })
+    router.terminate('hello', 1)
+    router.terminate('search', 1)
+    expect(made.map(group => group.renderers[0].destroyed)).toEqual([false, false])
+    await later(40)
+    expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, false])
+    // The next start of that plugin opens a new one
+    router.start(start('hello', 2).start)
+    expect(made.map(group => group.group)).toEqual(['hello', 'first-party', 'hello'])
+  })
+
+  it('records a renderer that died just as its last plugin ended, since the loader ends the plugin when its port closes', async () => {
+    const { router, made, records } = routed()
+    router.start(start('hello').start)
+    made[0].renderers[0].says({ kind: 'ready' })
+    router.terminate('hello', 1)
+    made[0].renderers[0].dies('crashed')
+    expect(records).toEqual([{ event: 'renderer.gone', fields: { reason: 'crashed', plugins: 'hello' } }])
+  })
+
+  it('keeps an emptied renderer that gets a start before it closes', async () => {
+    const { router, made } = routed()
+    router.start(start('hello').start)
+    made[0].renderers[0].says({ kind: 'ready' })
+    router.terminate('hello', 1)
+    router.start(start('hello', 2).start)
+    await later(40)
+    expect(made).toHaveLength(1)
+    expect(made[0].renderers[0].destroyed).toBe(false)
+  })
+
+  it('sends a lowered limit to the plugin\'s own renderer and closes every renderer at the end', () => {
+    const { router, made } = routed()
+    router.start(start('hello').start)
+    router.start(start('search').start)
+    for (const group of made) group.renderers[0].says({ kind: 'ready' })
+    router.limited('hello')
+    expect(made.map(group => group.renderers[0].posted.filter(post => post.channel === 'hetu:limits').length)).toEqual([1, 0])
+    router.close()
+    expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, true])
   })
 })

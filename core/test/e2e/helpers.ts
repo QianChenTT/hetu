@@ -71,7 +71,8 @@ export async function editorPage(app: ElectronApplication): Promise<Page> {
   await until(async () => (await visibleWindows(app)).includes('hetu://editor/'))
   return page
 }
-export const workersPage = (app: ElectronApplication) => pageAt(app, 'hetu://workers/')
+// A plugin's worker host page: each community plugin has a renderer of its own and the first-party plugins share one
+export const workersPage = (app: ElectronApplication, group: string) => pageAt(app, `hetu://workers/?for=${encodeURIComponent(group)}`)
 
 // The windows a human sees, by URL
 export const visibleWindows = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) =>

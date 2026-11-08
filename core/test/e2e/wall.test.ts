@@ -62,7 +62,7 @@ describe('one call across the wall', () => {
     const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'hello' }))
-    const page = await workersPage(app)
+    const page = await workersPage(app, 'hello')
     await until(() => page.workers().length === 1)
     let answer: unknown
     await until(async () => {

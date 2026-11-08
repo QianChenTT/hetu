@@ -1,6 +1,7 @@
 import type { BrowserWindow, MessagePortMain, Session } from 'electron'
 import type { Sample } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
+import { firstPartyIds } from '../../api/ids.ts'
 import type { WorkerStart } from '../loader/seams.ts'
 import { SCHEME } from './before-ready.ts'
 import { webPreferences } from './windows.ts'
@@ -28,8 +29,6 @@ export type WorkerRendererOptions = {
   cutoff(id: string, incarnation: number, reason: 'malformed' | 'flood'): void
   // For the watchdog: a worker's errors, its drops in the relay and its cutoff
   sample(sample: Sample): void
-  // How long whenReady waits for the page
-  readyMs: number
   // How long an ended worker still counts as held for a renderer that dies. Its ports close a few ms before Electron
   // tells the renderer is gone, and the loader ends the plugin on that close
   endingMs?: number
@@ -50,28 +49,9 @@ export class WorkerRenderer {
   private queue: Start[] = []
   private readonly running = new Map<string, { id: string, incarnation: number }>()
   private readonly ending = new Map<string, { id: string, timer: ReturnType<typeof setTimeout> }>()
-  private waiters: ((ready: boolean) => void)[] = []
 
   constructor(options: WorkerRendererOptions) {
     this.options = options
-  }
-
-  // Opens the renderer if there is none. True once its page says ready, false once readyMs passed first
-  whenReady(): Promise<boolean> {
-    this.open()
-    if (this.ready) return Promise.resolve(true)
-    return new Promise(resolve => {
-      const timer = setTimeout(() => {
-        this.waiters = this.waiters.filter(waiter => waiter !== settle)
-        this.options.record('renderer.late', { ms: this.options.readyMs })
-        resolve(false)
-      }, this.options.readyMs)
-      const settle = (ready: boolean) => {
-        clearTimeout(timer)
-        resolve(ready)
-      }
-      this.waiters.push(settle)
-    })
   }
 
   start(start: WorkerStart): void {
@@ -101,6 +81,11 @@ export class WorkerRenderer {
     timer.unref?.()
     this.ending.set(at, { id, timer })
     this.renderer?.post('hetu:terminate', { id, incarnation })
+  }
+
+  // Nothing running and nothing waiting to start
+  empty(): boolean {
+    return this.running.size === 0 && this.queue.length === 0
   }
 
   // At the end of Quit, once the core has stopped its plugins
@@ -143,7 +128,6 @@ export class WorkerRenderer {
     if (kind === 'ready' && !this.ready) {
       this.ready = true
       for (const start of this.queue.splice(0)) this.send(start)
-      for (const settle of this.waiters.splice(0)) settle(true)
       return
     }
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
@@ -176,13 +160,20 @@ export class WorkerRenderer {
 
 // The hidden window behind a Renderer: the workers session, the page's preload and no throttling, since its workers
 // answer heartbeats. Messages count only from the page's own main frame
-export function openWorkersRenderer(Window: typeof BrowserWindow, session: Session, preload: string, packaged: boolean): Renderer {
+export function openWorkersRenderer(
+  Window: typeof BrowserWindow,
+  session: Session,
+  preload: string,
+  packaged: boolean,
+  group: string,
+): Renderer {
   const window = new Window({
     show: false,
     webPreferences: { ...webPreferences(session, packaged), preload, backgroundThrottling: false },
   })
   const contents = window.webContents
-  window.loadURL(WORKERS_URL).catch((err: unknown) => console.error(`the worker host page didn't load: ${String(err)}`))
+  // The group in the URL tells the windows apart, for the tests and for a human looking at them
+  window.loadURL(`${WORKERS_URL}?for=${encodeURIComponent(group)}`).catch((err: unknown) => console.error(`the worker host page didn't load: ${String(err)}`))
   return {
     post(channel, message, ports = []) {
       if (!contents.isDestroyed()) contents.postMessage(channel, message, ports)
@@ -198,5 +189,66 @@ export function openWorkersRenderer(Window: typeof BrowserWindow, session: Sessi
     destroy() {
       if (!window.isDestroyed()) window.destroy()
     },
+  }
+}
+
+export const FIRST_PARTY_GROUP = 'first-party'
+
+// The renderer a plugin's worker runs in: the first-party plugins share one, each other plugin gets its own, so a
+// plugin that floods or exhausts its renderer takes no other plugin down with it (decision 20)
+export const groupOf = (id: string): string => ((firstPartyIds as readonly string[]).includes(id) ? FIRST_PARTY_GROUP : id)
+
+// The hidden renderers, one per group, each opened when its first worker starts. A community plugin's renderer closes a
+// moment after it holds nothing, which a stop, a crash or a cutoff leaves, so a run doesn't keep one for every plugin it
+// ever started. The moment lets a renderer whose death ended its plugin still be recorded, since its ports close and
+// the loader ends the plugin a few ms before Electron tells the renderer is gone. About 70 MB each while it runs
+export class WorkerRenderers {
+  private readonly make: (group: string) => WorkerRenderer
+  private readonly idleMs: number
+  private readonly groups = new Map<string, WorkerRenderer>()
+  private readonly closing = new Map<string, ReturnType<typeof setTimeout>>()
+
+  constructor(make: (group: string) => WorkerRenderer, idleMs = 1000) {
+    this.make = make
+    this.idleMs = idleMs
+  }
+
+  start(start: WorkerStart): void {
+    const group = groupOf(start.id)
+    clearTimeout(this.closing.get(group))
+    this.closing.delete(group)
+    let workers = this.groups.get(group)
+    if (workers === undefined) {
+      workers = this.make(group)
+      this.groups.set(group, workers)
+    }
+    workers.start(start)
+  }
+
+  terminate(id: string, incarnation: number): void {
+    const group = groupOf(id)
+    const workers = this.groups.get(group)
+    if (workers === undefined) return
+    workers.terminate(id, incarnation)
+    if (group === FIRST_PARTY_GROUP || !workers.empty() || this.closing.has(group)) return
+    const timer = setTimeout(() => {
+      this.closing.delete(group)
+      if (this.groups.get(group) !== workers || !workers.empty()) return
+      workers.close()
+      this.groups.delete(group)
+    }, this.idleMs)
+    timer.unref?.()
+    this.closing.set(group, timer)
+  }
+
+  limited(id: string): void {
+    this.groups.get(groupOf(id))?.limited(id)
+  }
+
+  close(): void {
+    for (const timer of this.closing.values()) clearTimeout(timer)
+    this.closing.clear()
+    for (const workers of this.groups.values()) workers.close()
+    this.groups.clear()
   }
 }

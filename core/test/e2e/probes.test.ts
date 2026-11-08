@@ -84,11 +84,14 @@ if (channel) {
 Promise.allSettled(pending).then(() => setTimeout(() => { results.done = true }, 1000))
 `
 
-async function probes(app: ElectronApplication, count: number): Promise<Map<string, Worker>> {
-  const page = await workersPage(app)
-  await until(() => page.workers().length === count)
+// Each plugin's worker, in the renderer of its own
+async function probes(app: ElectronApplication, names: readonly string[]): Promise<Map<string, Worker>> {
   const byName = new Map<string, Worker>()
-  for (const worker of page.workers()) byName.set(await worker.evaluate(() => self.name), worker)
+  for (const name of names) {
+    const page = await workersPage(app, name)
+    await until(() => page.workers().length === 1)
+    byName.set(name, page.workers()[0])
+  }
   return byName
 }
 
@@ -101,7 +104,7 @@ describe('the probes in a worker', () => {
     const dataDir = await dataWith({ 'probe-a': probe(network.url), 'probe-b': probe(network.url) })
     const app = await launch(dataDir)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'probe-b' }))
-    const workers = await probes(app, 2)
+    const workers = await probes(app, ['probe-a', 'probe-b'])
     const a = workers.get('probe-a')!
     const b = workers.get('probe-b')!
     await until(async () => (await results(a)).done === true && (await results(b)).done === true, 10_000)
@@ -130,9 +133,8 @@ describe('the probes in a worker', () => {
     const dataDir = await dataWith({ lexical: tries('const globalThis = self'), declared: tries('function globalThis() {}') })
     const app = await launch(dataDir)
     await until(async () => await logged(dataDir, 'plugin.started', { plugin: 'lexical' }) && await logged(dataDir, 'plugin.started', { plugin: 'declared' }))
-    const page = await workersPage(app)
     await new Promise(resolve => setTimeout(resolve, 1000))
-    expect(page.workers()).toHaveLength(2)
+    for (const name of ['lexical', 'declared']) expect((await workersPage(app, name)).workers(), name).toHaveLength(1)
   })
 
   it('starts a worker whose script fits a data: URL and fails one past the cap, about 1.5 MiB of code', async () => {
@@ -148,7 +150,7 @@ describe('the probes in a worker', () => {
     const dataDir = await dataWith({ objects: lifecycle, nested: lifecycle, past: lifecycle, heaviest: lifecycle })
     const app = await launch(dataDir)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'heaviest' }))
-    const workers = await probes(app, 4)
+    const workers = await probes(app, ['objects', 'nested', 'past', 'heaviest'])
     const stalls: Record<string, number> = {}
     // Before the relay a million small objects stalled main 390 ms, and before it weighed, 16 MiB of nesting 827 ms
     const sends: [string, string][] = [

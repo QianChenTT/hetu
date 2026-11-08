@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, dataWith, exited, launch, logged, records, until, visibleWindows, workersPage } from './helpers.ts'
+import { filesFor, workerManifest, writeInstall } from '../loader-fakes.ts'
+import { cleanup, dataWith, exited, launch, logged, records, temp, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -25,11 +26,30 @@ self.onmessage = event => {
 `
 
 describe('sandboxed plugins as workers', () => {
-  it('opens the worker host page in a hidden window', async () => {
-    const app = await launch(await dataWith({}))
-    const page = await workersPage(app)
-    expect(page.url()).toBe('hetu://workers/')
-    expect(await visibleWindows(app)).not.toContain('hetu://workers/')
+  it('opens a plugin\'s worker host page in a hidden window of its own', async () => {
+    const dataDir = await dataWith({ hello: lifecycle() })
+    const app = await launch(dataDir)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'hello' }))
+    const page = await workersPage(app, 'hello')
+    expect(page.workers()).toHaveLength(1)
+    expect((await visibleWindows(app)).filter(url => url.startsWith('hetu://workers/'))).toEqual([])
+  })
+
+  it('keeps two community plugins in renderers of their own, so one renderer dying leaves the other plugin up', async () => {
+    const dataDir = await dataWith({ one: lifecycle(), two: lifecycle() })
+    const app = await launch(dataDir)
+    await until(async () => await logged(dataDir, 'plugin.started', { plugin: 'one' }) && await logged(dataDir, 'plugin.started', { plugin: 'two' }))
+    const pids = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+      .filter(window => window.webContents.getURL().startsWith('hetu://workers/'))
+      .map(window => window.webContents.getOSProcessId()))
+    expect(new Set(pids).size).toBe(2)
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=one')?.webContents.forcefullyCrashRenderer()
+    })
+    await until(() => logged(dataDir, 'renderer.gone', { plugins: 'one' }))
+    await new Promise(resolve => setTimeout(resolve, 500))
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'two' })).toBe(false)
+    expect((await workersPage(app, 'two')).workers()).toHaveLength(1)
   })
 
   it('starts an approved folder plugin as a worker that reaches ready, then stops it at Quit while its worker still runs', async () => {
@@ -73,20 +93,38 @@ describe('sandboxed plugins as workers', () => {
     expect(at(stopped) - at(stopping)).toBeGreaterThanOrEqual(550)
   })
 
-  it('ends a worker that hangs before ready with terminate() at its ready deadline, while its page runs on', async () => {
+  it('ends a community plugin\'s worker that hangs before ready by closing its renderer, a second after its crash', async () => {
     const spins = 'setTimeout(() => { for (;;) {} }, 300)'
     const dataDir = await dataWith({ spins }, { readyMs: 1500 })
     const app = await launch(dataDir)
-    const page = await workersPage(app)
+    const page = await workersPage(app, 'spins')
+    await until(() => page.workers().length === 1)
+    let closedAt = 0
+    page.workers()[0].on('close', () => {
+      closedAt = Date.now()
+    })
+    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'spins', reason: 'start-timeout' }))
+    await until(() => closedAt > 0, 5000)
+    const crashed = (await records(dataDir)).find(record => record.event === 'plugin.crashed' && record.plugin === 'spins')!
+    expect(closedAt - at(crashed)).toBeLessThan(1500)
+  })
+
+  it('ends a first-party worker that hangs before ready with terminate(), its shared renderer running on', async () => {
+    // git ships in this install as a first-party copy, so it runs in the renderer the first-party plugins share, which
+    // stays open. Chromium forces a busy worker's end about 2 s after terminate()
+    const installDir = await temp()
+    await writeInstall(installDir, { git: { files: filesFor(workerManifest('git'), { 'worker.js': 'setTimeout(() => { for (;;) {} }, 300)' }), firstParty: true } })
+    const dataDir = await dataWith({}, { readyMs: 1500 })
+    const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
+    const page = await workersPage(app, 'first-party')
     await until(() => page.workers().length === 1)
     let closed = false
     page.workers()[0].on('close', () => {
       closed = true
     })
-    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'spins', reason: 'start-timeout' }))
-    await until(() => closed, 5000)
+    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'git', reason: 'start-timeout' }))
+    await until(() => closed, 3500)
     expect(page.isClosed()).toBe(false)
-    expect(page.workers()).toHaveLength(0)
   })
 
   it('records a renderer that crashed, with the plugins it held, and each of their workers as crashed', async () => {
@@ -94,7 +132,7 @@ describe('sandboxed plugins as workers', () => {
     const app = await launch(dataDir)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'hello' }))
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/')?.webContents.forcefullyCrashRenderer()
+      BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=hello')?.webContents.forcefullyCrashRenderer()
     })
     await until(() => logged(dataDir, 'renderer.gone', { plugins: 'hello' }))
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'hello', reason: 'closed' }))

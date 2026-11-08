@@ -11,7 +11,7 @@ import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { quitInOrder, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { guardContents, openEditor } from './runtime/windows.ts'
-import { openWorkersRenderer, WorkerRenderer } from './runtime/workers.ts'
+import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
 // The bundle sits in core/dist with the install list, the built pages and the workers preload beside it. A packaged
@@ -19,8 +19,6 @@ import { wireCore } from './wire.ts'
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
-// How long the core waits for the worker host page before it starts plugins anyway
-const RENDERER_READY_MS = 10_000
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -46,11 +44,11 @@ async function start(): Promise<void> {
     return app.exit(1)
   }
 
-  // Quit runs once, in order: the windows a human sees close, the core stops its plugins while the hidden renderer still
-  // holds their workers, then the renderer ends and the process exits. Before the core is wired there is only boot's
+  // Quit runs once, in order: the windows a human sees close, the core stops its plugins while the hidden renderers
+  // still hold their workers, then the renderers end and the process exits. Before the core is wired there is only boot's
   // lock to give back. Electron closes no window itself, since the renderer must outlive the core's shutdown
   let parts: QuitParts | null = null
-  let workers: WorkerRenderer | null = null
+  let workers: WorkerRenderers | null = null
   let quitting: Promise<void> | null = null
   let code = 0
   const seen = new Set<BrowserWindow>()
@@ -63,7 +61,7 @@ async function start(): Promise<void> {
       workers?.close()
     })().catch((err: unknown) => console.error(`quit: ${reason(err)}`)).finally(() => app.exit(code))
   })
-  // The hidden renderer never closes, so hetu quits when the last window a human sees does
+  // The hidden renderers never close, so hetu quits when the last window a human sees does
   const show = (window: BrowserWindow) => {
     seen.add(window)
     window.on('closed', () => {
@@ -88,14 +86,15 @@ async function start(): Promise<void> {
     let carrier: Carrier | null = null
     let loader: Loader | null = null
     const limit = (plugin: string, name: FloorConstant) => carrier?.limit(plugin, name) ?? floorConstants[name]
-    const renderer = new WorkerRenderer({
-      open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, app.isPackaged),
+    // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
+    // A worker's start waits for its page, within the plugin's own ready deadline
+    const renderer = new WorkerRenderers(group => new WorkerRenderer({
+      open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, app.isPackaged, group),
       record: (event, fields) => carrier?.floor(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
       sample: sample => carrier?.sample(sample),
-      readyMs: RENDERER_READY_MS,
-    })
+    }))
     workers = renderer
     const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit, { freeze: freezeIntrinsics, importer: url => import(url) })
     const wired = wireCore({ booted, installDir, runtime, limited: plugin => renderer.limited(plugin) })
@@ -115,7 +114,6 @@ async function start(): Promise<void> {
       editor.focus()
     })
 
-    await renderer.whenReady()
     await wired.loader.start()
     if (quitting === null) editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
   } catch (err) {
