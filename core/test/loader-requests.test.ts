@@ -195,14 +195,15 @@ describe('confirmOff', () => {
 })
 
 describe('limits', () => {
-  it('apply one lowered at once and hold one raised past the value in force', async () => {
+  // Checkpoint B: a lowered value applied at once let a window lock the trusted window out, force a fail-stop or drop
+  // the audit, so a limit waits for the human's Confirm either way
+  it('hold one lowered as well as one raised', async () => {
     const made = await harness({ switches: { limits: { all: { readyMs: 20000 }, plugins: {} } } })
     await made.loader.start()
-    expect(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 15000, plugin: null }, editor)).toEqual({ applied: true })
-    held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 16000, plugin: null }, editor))
-    // One plugin's own value wins over the value for all
-    expect(await made.loader.request({ kind: 'limit.set', constant: 'callsInFlight', value: 63, plugin: 'alpha' }, editor)).toEqual({ applied: true })
-    held(await made.loader.request({ kind: 'limit.set', constant: 'callsInFlight', value: 64, plugin: 'alpha' }, editor))
+    held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 15000, plugin: null }, editor))
+    held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 30000, plugin: null }, editor))
+    held(await made.loader.request({ kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }, editor))
+    expect((await stateIn(made.dataDir)).switches.limits.all.readyMs).toBe(20000)
   })
 })
 
@@ -249,6 +250,19 @@ describe('the kinds the loader applies since the trusted window', () => {
     for (const kind of ['storage', 'cache']) expect(await readdir(path.join(made.dataDir, kind, 'alpha')).catch(() => [])).toEqual([])
     // The code stays, it waits to be approved again
     expect(await readdir(path.join(made.dataDir, 'plugins', 'alpha'))).toContain('hetu-plugin.json')
+  })
+
+  // Checkpoint B: Recover left a readyMs of 1 standing, so the gate failed again at every start
+  it('plugin.reset clears the limits the human set for that plugin', async () => {
+    const made = await harness({
+      folder: { alpha: worker('alpha') }, entries: { alpha: signed() },
+      switches: { limits: { all: { readyMs: 20000 }, plugins: { alpha: { readyMs: 1 }, beta: { readyMs: 2 } } } },
+    })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'plugin.reset', plugin: 'alpha' })
+    const { limits } = (await stateIn(made.dataDir)).switches
+    expect(limits.plugins).toEqual({ beta: { readyMs: 2 } })
+    expect(limits.all).toEqual({ readyMs: 20000 })
   })
 
   it('plugin.reset clears an install plugin\'s start marker, so it starts at the next start', async () => {

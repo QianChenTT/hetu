@@ -257,7 +257,7 @@ export class Loader implements Seam {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
     }
     this.requests = new Requests({
-      effect: change => changeEffect(change, change.kind === 'limit.set' ? { limit: this.limitInForce(change.constant, change.plugin) } : {}),
+      effect: change => changeEffect(change),
       fingerprint: change => this.store.fingerprint('plugin' in change ? change.plugin : null),
       exclusive: work => this.serial(work),
       applyNow: change => this.applyNow(change),
@@ -1363,13 +1363,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     },
   }
 
-  // The value a limit has now for one plugin: its own, else the value for all, else the floor's
-  private limitInForce(constant: FloorConstant, plugin: string | null): number {
-    const { limits } = this.state.switches
-    const own = plugin === null ? undefined : limits.plugins[plugin]?.[constant]
-    return own ?? limits.all[constant] ?? floorConstants[constant]
-  }
-
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
   // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
   // directly
@@ -1487,6 +1480,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       for (const dir of [folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) await clear(dir)
       await removeMarker(this.dataDir, id)
       this.markers.delete(id)
+      // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
+      const { limits } = this.state.switches
+      if (Object.hasOwn(limits.plugins, id)) {
+        const plugins = bare({ ...limits.plugins })
+        delete plugins[id]
+        await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
+      }
       if (k.from === 'folder' && k.entry !== null) {
         await this.store.removePlugin(id)
         delete this.state.plugins[id]

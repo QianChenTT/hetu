@@ -55,13 +55,12 @@ export type ChangeKind = Change['kind']
 // widening one waits for the human's Confirm in the trusted window and so does one that destroys data
 export type ChangeEffect = 'narrows' | 'widens' | 'destroys'
 
-// The values in force a change is weighed against: for limit.set the value the constant has now for that plugin
-export type InForce = { limit?: number }
-
-// Read from the change's structure alone, never from what a plugin says about it. A security control switched off
-// widens and switched back on narrows, every other plugin the other way round. A switch that weakens a check widens
-// when it goes on. A limit is wider the higher it is, and one whose value in force is unknown counts as widening
-export function changeEffect(change: Change, inForce: InForce): ChangeEffect {
+// Read from the change's structure alone, never from what a plugin says about it or from the state, so no change
+// applied meanwhile can move it. A security control switched off widens and switched back on narrows, every other plugin
+// the other way round. A switch that weakens a check widens when it goes on. A limit waits for the Confirm either way:
+// a higher value widens and a lower one can starve hetu's own controls or its audit, which the core can't tell apart
+// from a safe one (checkpoint B)
+export function changeEffect(change: Change): ChangeEffect {
   switch (change.kind) {
     case 'plugin.approve':
     case 'plugin.update':
@@ -89,7 +88,7 @@ export function changeEffect(change: Change, inForce: InForce): ChangeEffect {
     case 'allowUnsigned':
       return change.on ? 'widens' : 'narrows'
     case 'limit.set':
-      return inForce.limit === undefined || change.value > inForce.limit ? 'widens' : 'narrows'
+      return 'widens'
   }
 }
 

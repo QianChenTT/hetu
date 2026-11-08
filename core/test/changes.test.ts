@@ -169,7 +169,7 @@ describe('keys that reach Object', () => {
 })
 
 describe('whether a change widens', () => {
-  const effect = (one: unknown, limit?: number) => changeEffect(change.parse(one), limit === undefined ? {} : { limit })
+  const effect = (one: unknown) => changeEffect(change.parse(one))
   const cap = { type: 'luoshu.read', paths: ['notes/**'] }
 
   it.each([
@@ -190,6 +190,9 @@ describe('whether a change widens', () => {
     ['an unsigned build trusted', { kind: 'allowUnsigned', hash: HASH, on: true }],
     ['the Confirm switched off', { kind: 'confirmOff', on: true }],
     ['recording stopped', { kind: 'recordNothing', on: true }],
+    ['a limit raised', { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' }],
+    // A lower value can starve hetu's own controls or its audit, which the core can't tell apart from a safe one
+    ['a limit lowered', { kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }],
   ])('widens with %s', (_name, one) => {
     expect(effect(one)).toBe('widens')
   })
@@ -219,20 +222,8 @@ describe('whether a change widens', () => {
     expect(effect(one)).toBe('destroys')
   })
 
-  it('widens with a limit raised past the value in force and narrows with one lowered or kept', () => {
-    const set = { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' }
-    expect(effect(set, 64)).toBe('widens')
-    expect(effect(set, 256)).toBe('narrows')
-    expect(effect(set, 128)).toBe('narrows')
-  })
-
-  // The fail-safe reading: with nothing to compare against, the human confirms
-  it('widens with a limit whose value in force it was not told', () => {
-    expect(effect({ kind: 'limit.set', constant: 'callsInFlight', value: 1, plugin: null })).toBe('widens')
-  })
-
   it('answers every kind', () => {
-    for (const one of everyKind) expect(['widens', 'narrows', 'destroys']).toContain(changeEffect(change.parse(one) as Change, { limit: 1 }))
+    for (const one of everyKind) expect(['widens', 'narrows', 'destroys']).toContain(changeEffect(change.parse(one) as Change))
   })
 })
 
