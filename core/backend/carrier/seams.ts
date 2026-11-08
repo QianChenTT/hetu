@@ -47,6 +47,9 @@ export type Loader = {
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
   // Lifecycle messages a plugin sends, which the carrier only passes on
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
+  // The carrier found the install plugin holding a slot failing at its job: the log stopped acknowledging. The loader
+  // marks it failed as it would a crash, so it stays failed until Restart hetu
+  fail(id: string, reason: 'stalled'): void
 }
 
 // Raises the prompt behind a gate's ask and names the held request. Comes with the trusted window

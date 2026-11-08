@@ -278,3 +278,71 @@ describe('the human\'s switches, applied', () => {
     await expect(made.loader.apply({ kind: 'off-everything' } as never)).rejects.toThrow()
   })
 })
+
+describe("the StateView's grants", () => {
+  const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
+  const panel = { type: 'ui.panel' as const }
+  const item = (capability: object, off = false) => ({ capability, off, firstUse: false })
+
+  async function started() {
+    const gate = allowAll()
+    const made = await harness({
+      install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate', { capabilities: [{ type: 'log.read' }] })) } },
+      folder: { alpha: worker('alpha', { capabilities: [read, panel] }), beta: worker('beta') },
+      entries: { alpha: signed({ granted: [read, panel] }), beta: signed() },
+      behave: { gate: { exports: { gate } } },
+    })
+    await made.loader.start()
+    return { ...made, gate }
+  }
+
+  it("carry each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest", async () => {
+    const { gate } = await started()
+    const view = gate.seen[0]
+    expect(view.n).toBe(1)
+    expect(view.foldCase).toBe(false)
+    expect(view.plugins.alpha).toEqual([item(read), item(panel)])
+    expect(view.plugins.gate).toEqual([item({ type: 'log.read' })])
+    // A plugin holding nothing is left out, and an id every object has finds nothing
+    expect(Object.keys(view.plugins).sort()).toEqual(['alpha', 'gate'])
+    expect(Object.getPrototypeOf(view.plugins)).toBe(null)
+    expect(view.plugins.constructor).toBeUndefined()
+    expect(Object.isFrozen(view.plugins.alpha[0].capability)).toBe(true)
+  })
+
+  it("switch one item off with item.off, kept in the plugin's entry and in the next StateView, and back on with item.on", async () => {
+    const made = await started()
+    await made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
+    expect(made.gate.seen.at(-1)!.n).toBe(2)
+    expect(made.gate.seen.at(-1)!.plugins.alpha).toEqual([item(read, true), item(panel)])
+    expect((await made.store.load()).state.plugins.alpha.off).toEqual([read])
+    await made.loader.apply({ kind: 'item.on', plugin: 'alpha', capability: read })
+    expect(made.gate.seen.at(-1)!.plugins.alpha).toEqual([item(read), item(panel)])
+    expect((await made.store.load()).state.plugins.alpha.off ?? []).toEqual([])
+  })
+
+  it("refuse a switch for an item the plugin wasn't granted, a plugin with no entry and an install plugin, applying nothing", async () => {
+    const made = await started()
+    await expect(made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: { type: 'luoshu.read', paths: ['other/**'] } })).rejects.toThrow()
+    await expect(made.loader.apply({ kind: 'item.off', plugin: 'nobody', capability: read })).rejects.toThrow()
+    await expect(made.loader.apply({ kind: 'item.off', plugin: 'gate', capability: { type: 'log.read' } })).rejects.toThrow()
+    expect(made.loader.view()).toBe(1)
+  })
+
+  // Its stop grace runs after the switch, and a call it makes then must not pass on grants the human took away
+  it("leave out a plugin the human switched off from the next one, before its stop has ended, and an install plugin switched off", async () => {
+    const gate = allowAll()
+    const made = await harness({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu', { capabilities: [{ type: 'log.read' }] })) } },
+      folder: { alpha: worker('alpha', { capabilities: [read] }) },
+      entries: { alpha: signed({ granted: [read] }) },
+      switches: { off: ['luoshu'] },
+      behave: { gate: { exports: { gate } }, alpha: { stopped: false } },
+    })
+    await made.loader.start()
+    expect(Object.keys(gate.seen[0].plugins)).toEqual(['alpha'])
+    void made.loader.apply({ kind: 'plugin.off', plugin: 'alpha' })
+    await until(() => stateOf(made.loader, 'alpha') === 'stopping')
+    expect(gate.seen.at(-1)!.plugins.alpha).toBeUndefined()
+  })
+})

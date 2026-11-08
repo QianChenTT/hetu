@@ -29,12 +29,25 @@ export class FloorLane {
   private current: Promise<void> = Promise.resolve()
   private retry: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  // The log stopped taking appends and none has landed since
+  private failing = false
+  private readonly noticed: () => void
 
-  constructor(log: FloorLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number }) {
+  // noticed runs once when the log stops taking appends and once when one lands again, so the banner can say so
+  constructor(log: FloorLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number, noticed?: () => void }) {
     this.log = log
     this.bound = options.bound
     this.muted = options.muted
     this.retryMs = options.retryMs
+    this.noticed = options.noticed ?? (() => {})
+  }
+
+  private failed(failing: boolean): void {
+    if (failing === this.failing) return
+    this.failing = failing
+    try {
+      this.noticed()
+    } catch {}
   }
 
   // Records waiting for the log and records dropped since the backlog last emptied
@@ -104,6 +117,7 @@ export class FloorLane {
           first.writing = false
           // A log that stays healthy refused the record itself, which would hold back every record after it
           if (log.healthy !== true) {
+            this.failed(true)
             if (first.withdrawn) {
               this.backlog.shift()
               first.landed?.('lost')
@@ -116,6 +130,7 @@ export class FloorLane {
           // Not for the count's own record, which would count itself forever
           if (first.event !== 'floor.dropped') this.overflowed++
         }
+        if (landing === 'landed') this.failed(false)
         this.backlog.shift()
         first.landed?.(landing)
         if (this.backlog.length === 0 && this.overflowed > 0) {
@@ -204,13 +219,15 @@ export class Coalesced {
 
 const callerKey = (caller: Caller) => JSON.stringify(caller)
 
-type Entry = { record: AuditRecord, key: string | null }
+// queued is when the record went into the queue on the carrier's clock, which a stalled log is timed from
+type Entry = { record: AuditRecord, key: string | null, queued: number }
 
 // Audit records wait here for the log plugin, which takes them with next and acknowledges them with ack once they are
 // on disk. Its handle comes with the log plugin. Bounded: one past the bound is dropped and counted. Coalescing joins a
 // record to the one not yet taken with the same caller, onBehalf, root, action, code and gate state in the same second
 export class AuditQueue {
   private readonly bound: () => number
+  private readonly clock: () => number
   private readonly entries: Entry[] = []
   private readonly open = new Map<string, AuditRecord>()
   private second = Number.NEGATIVE_INFINITY
@@ -219,8 +236,15 @@ export class AuditQueue {
   // Records dropped since the queue was made, for the floor record
   dropped = 0
 
-  constructor(bound: () => number) {
+  // clock is the carrier's, which no change of the wall clock moves
+  constructor(bound: () => number, clock: () => number = () => performance.now()) {
     this.bound = bound
+    this.clock = clock
+  }
+
+  // When the oldest record still held went into the queue, taken or not, or null for an empty queue
+  oldest(): number | null {
+    return this.entries.length > 0 ? this.entries[0].queued : null
   }
 
   get size(): number {
@@ -249,7 +273,7 @@ export class AuditQueue {
       return false
     }
     const full: AuditRecord = { ...record, seq: ++this.seq, count: 1 }
-    this.entries.push({ record: full, key })
+    this.entries.push({ record: full, key, queued: this.clock() })
     if (key !== null) this.open.set(key, full)
     return true
   }

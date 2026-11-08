@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { MAX_SCOPE_LENGTH, pathProblem, scope, scopeMatches, scopeProblem } from '../api/scope.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { compileScopes, MAX_SCOPE_LENGTH, pathProblem, scope, scopeMatches, scopeProblem } from '../api/scope.ts'
 
 const fold = { foldCase: true }
 const exact = { foldCase: false }
@@ -407,5 +407,54 @@ describe('against a plain recursion', () => {
     // 5 grants, almost all of them **
     expect(grants.size).toBeGreaterThan(10000)
     expect(matched).toBeGreaterThan(500)
+  })
+})
+
+describe('scopes compiled once', () => {
+  it('matches a path as scopeMatches does against any of the scopes, on 5000 random sets', () => {
+    let seed = 13
+    const random = (n: number) => {
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
+      return (seed >>> 16) % n
+    }
+    const word = (letters: string) => Array.from({ length: 1 + random(4) }, () => letters[random(letters.length)]).join('')
+    let matched = 0
+    for (let n = 0; n < 5000; n++) {
+      const grants = Array.from({ length: random(4) }, () =>
+        Array.from({ length: 1 + random(3) }, () => random(4) === 0 ? '**' : word('ab*.A:')).join('/'))
+      const path = Array.from({ length: 1 + random(4) }, () => random(9) === 0 ? '.git' : word('abA.:')).join('/')
+      const foldCase = random(2) === 0
+      const answer = compileScopes(grants, { foldCase })(path)
+      const expected = grants.some(grant => scopeMatches(grant, path, { foldCase }))
+      expect({ grants, path, foldCase, answer }).toEqual({ grants, path, foldCase, answer: expected })
+      if (answer) matched++
+    }
+    expect(matched).toBeGreaterThan(100)
+  })
+
+  it('leaves out a scope outside the grammar and still matches the rest', () => {
+    const matches = compileScopes(['notes/**', 'a\b/**', ''], { foldCase: false })
+    expect(matches('notes/a.md')).toBe(true)
+    expect(matches('a\b/c.md')).toBe(false)
+  })
+
+  it('matches nothing for no scopes, a .git segment or a path outside the grammar', () => {
+    expect(compileScopes([], { foldCase: false })('a.md')).toBe(false)
+    const all = compileScopes(['**', '*/**'], { foldCase: true })
+    expect(all('a.md')).toBe(true)
+    expect(all('notes/.GIT/config')).toBe(false)
+    expect(all('notes//a.md')).toBe(false)
+    expect(all('c:/a.md')).toBe(false)
+  })
+
+  // scopeProblem normalises every scope it checks, so a match that called it again would normalise
+  it('checks each scope\'s grammar once, when compiled, and never again as it matches', () => {
+    const scopes = Array.from({ length: 64 }, (_, i) => `folder${i}/**`)
+    const normalize = vi.spyOn(String.prototype, 'normalize')
+    const matches = compileScopes(scopes, { foldCase: false })
+    expect(normalize).toHaveBeenCalledTimes(64)
+    normalize.mockClear()
+    for (let i = 0; i < 100; i++) expect(matches(`folder${i % 70}/a.md`)).toBe(i % 70 < 64)
+    expect(normalize).not.toHaveBeenCalled()
   })
 })

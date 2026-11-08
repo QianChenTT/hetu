@@ -1,10 +1,10 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
 import { EventLog } from '../lib/event-log.ts'
-import { FloorLane } from '../backend/carrier/records.ts'
+import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
 import type { CarrierOptions, FloorLog, Landing } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
 
@@ -354,6 +354,38 @@ describe('the floor lane', () => {
     await carrier.flushFloor()
     const lines = (await readFile(path.join(dir, 'events', 'events-1.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(lines.map(line => [line.event, line.plugin])).toEqual([['plugin.found', 'search'], ['plugin.checked', 'search']])
+  })
+
+  it('says once when the log stops writing and once when it writes again', async () => {
+    const log = new FakeLog()
+    let noticed = 0
+    const lane = new FloorLane(log, { bound: () => 10, muted: () => false, retryMs: 60_000, noticed: () => { noticed++ } })
+    log.failing = true
+    void lane.write('plugin.found', { plugin: 'a' })
+    void lane.write('plugin.found', { plugin: 'b' })
+    await tick()
+    expect(noticed).toBe(1)
+    log.failing = false
+    await lane.flush()
+    expect(noticed).toBe(2)
+    void lane.write('plugin.found', { plugin: 'c' })
+    await lane.flush()
+    expect(noticed).toBe(2)
+    lane.close()
+  })
+
+  it('tells windows to read core.status again when the log stops writing and when it writes again', async () => {
+    const log = new FakeLog()
+    const { carrier } = harness({ log })
+    const way = windowWay(carrier, { editor })
+    await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
+    log.failing = true
+    carrier.floor('plugin.found', { plugin: 'a' })
+    await tick()
+    expect(way.events().map(event => event.topic)).toEqual(['core.status'])
+    log.failing = false
+    await carrier.flushFloor()
+    expect(way.events().map(event => event.topic)).toEqual(['core.status', 'core.status'])
   })
 
   it('keeps records in a backlog while the log can not write and lands them in order once an append works', async () => {
@@ -715,5 +747,144 @@ describe('a floor record\'s landing', () => {
     giveUp.abort()
     appends[0].resolve()
     expect(await writing).toBe('landed')
+  })
+})
+
+describe('a stalled log', () => {
+  // A carrier on a clock the test moves, as the stall is timed on the carrier's own
+  function stalling(over: Partial<CarrierOptions> = {}) {
+    let now = 0
+    const parts = harness({ clock: () => now, ...over })
+    const fails: { id: string, reason: string }[] = []
+    parts.loader.fail = (id: string, reason: 'stalled') => {
+      fails.push({ id, reason })
+      parts.loader.slots[id] = 'failed'
+    }
+    return { ...parts, fails, at: (ms: number) => { now = ms } }
+  }
+
+  it('marks the log failed once its oldest record waits unacknowledged for 30 s, then counts what it held', async () => {
+    const { at, carrier, connect, fails, log } = stalling()
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    carrier.audit.next(1)
+    at(29_999)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(fails).toEqual([])
+    at(30_000)
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+    await tick()
+    expect(log.events('audit.dropped').map(record => record.fields)).toEqual([{ count: 2, why: 'log-down' }])
+  })
+
+  it('starts the wait again from the oldest record still held once the log acknowledges', async () => {
+    const { at, carrier, connect, fails } = stalling()
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(20_000)
+    carrier.audit.ack(carrier.audit.next(1)[0].seq)
+    at(25_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    at(54_999)
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    expect(fails).toEqual([])
+    at(55_000)
+    await search.ask('storage.set', { key: 'd', value: 4 })
+    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+  })
+
+  // Allow all, still logged: a log that stopped acknowledging can't let calls with power through on a count alone
+  it('refuses a call with power with the gate off once the log stalls, rather than letting it pass with only a count', async () => {
+    const { at, connect, fails, loader } = stalling()
+    loader.slots.gate = 'off'
+    const search = connect(worker('search'))
+    // Past the gate to the provider, which holds no such note
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    at(30_000)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+  })
+
+  it('refuses with the gate off even when the loader couldn\'t mark the log failed', async () => {
+    const { at, connect, loader } = stalling()
+    loader.fail = () => { throw new Error('no') }
+    loader.slots.gate = 'off'
+    const search = connect(worker('search'))
+    await search.ask('luoshu.read', { path: 'notes/a.md' })
+    at(30_000)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+  })
+
+  it('never counts the log stalled while it starts or once shutdown began, when it stops last', async () => {
+    const { at, carrier, connect, fails, loader } = stalling()
+    const search = connect(worker('search'))
+    loader.slots.log = 'starting'
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(40_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(fails).toEqual([])
+    loader.slots.log = 'on'
+    carrier.stopping()
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    expect(fails).toEqual([])
+  })
+
+  it('takes the wait from the floor constants, which the human may set for the log', async () => {
+    const { at, connect, fails, loader } = stalling()
+    loader.human.plugins = { log: { auditStallMs: 1000 } }
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(1000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+  })
+
+  it('times a record from when it was queued, not from when its call started', () => {
+    let now = 40_000
+    const queue = new AuditQueue(() => 10, () => now)
+    queue.push({ at: 0, caller: worker('search'), root: worker('search'), action: 'a.b', code: null, ms: 40_000, gate: 'on' }, false, 0)
+    expect(queue.oldest()).toBe(40_000)
+    now = 41_000
+    queue.ack(queue.next(1)[0].seq)
+    expect(queue.oldest()).toBe(null)
+  })
+
+  // Only the interval is faked, so the ports and their timers run as they do
+  it('marks a stalled log failed while hetu is idle, looking once a second', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const { at, connect, fails } = stalling()
+      const search = connect(worker('search'))
+      await search.ask('storage.set', { key: 'a', value: 1 })
+      at(30_000)
+      vi.advanceTimersByTime(999)
+      expect(fails).toEqual([])
+      vi.advanceTimersByTime(1)
+      expect(fails).toEqual([{ id: 'log', reason: 'stalled' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tells windows to read core.status again when the log\'s health changes through a write the floor lane didn\'t make', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const log = new FakeLog()
+      const { carrier } = harness({ log })
+      const way = windowWay(carrier, { editor })
+      await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
+      vi.advanceTimersByTime(1000)
+      expect(way.events()).toEqual([])
+      log.healthy = false
+      vi.advanceTimersByTime(1000)
+      await tick()
+      expect(way.events().map(event => event.topic)).toEqual(['core.status'])
+      vi.advanceTimersByTime(1000)
+      await tick()
+      expect(way.events()).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

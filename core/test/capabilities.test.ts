@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  capabilities, capability, capabilityTypes, folderCapabilities, folderCapability, installOnlyTypes, isInstallOnly,
-  MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, text,
+  capabilities, capability, capabilityKey, capabilityTypes, type Capability, folderCapabilities, folderCapability,
+  installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, text,
 } from '../api/capabilities.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -221,5 +221,14 @@ describe('keys that reach Object', () => {
 
   it('refuses one nested in a list entry', () => {
     expect(capabilities.safeParse(raw('[{"type":"ui.panel"},{"type":"plugin.call","targets":["search"],"__proto__":{}}]')).success).toBe(false)
+  })
+})
+
+describe('an item as text', () => {
+  it('is the same for two copies of one item whatever order their fields came in, and differs for another item', () => {
+    const key = capabilityKey({ type: 'luoshu.read', paths: ['notes/**'] })
+    expect(capabilityKey({ paths: ['notes/**'], type: 'luoshu.read' } as Capability)).toBe(key)
+    expect(capabilityKey({ type: 'luoshu.read', paths: ['notes/*'] })).not.toBe(key)
+    expect(capabilityKey({ type: 'luoshu.write', paths: ['notes/**'] })).not.toBe(key)
   })
 })

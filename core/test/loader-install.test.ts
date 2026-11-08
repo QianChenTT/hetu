@@ -3,6 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST } from '../api/install.ts'
+import type { AuditHandle } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { Loader } from '../backend/loader/loader.ts'
 import { readInstalled, writeInstalled } from '../backend/loader/folders.ts'
@@ -456,3 +457,84 @@ async function readInstalledHash(made: { installDir: string }, id: string): Prom
 
 // Loader is used for its type in the harness. Kept so a rename shows here too
 export type { Loader }
+
+describe('the log\'s audit handle', () => {
+  const lending = () => {
+    const handle = {} as AuditHandle
+    const seen = { lent: 0, revoked: 0, attached: [] as { given: boolean, slot: string }[] }
+    const audit = () => {
+      seen.lent++
+      return { handle, revoke: () => { seen.revoked++ } }
+    }
+    return { handle, seen, audit }
+  }
+
+  it('is lent once to the install\'s log, after the import and before the log reads ready, and revoked when its incarnation ends', async () => {
+    const { handle, seen, audit } = lending()
+    let made: Awaited<ReturnType<typeof harness>> | null = null
+    const role = { attach: (given: AuditHandle) => { seen.attached.push({ given: given === handle, slot: made!.loader.slot('log') }) } }
+    made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
+    await made.loader.start()
+    expect(seen.attached).toEqual([{ given: true, slot: 'starting' }])
+    expect(made.loader.slot('log')).toBe('on')
+    expect(seen.revoked).toBe(0)
+    await made.loader.shutdown()
+    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
+  })
+
+  it('marks the log failed when attach throws, revoking what it lent', async () => {
+    const { seen, audit } = lending()
+    const role = { attach: () => { throw new Error('no') } }
+    const made = await harness({ behave: { log: { exports: { log: role } } }, loader: { audit } })
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
+    expect(seen).toMatchObject({ lent: 1, revoked: 1 })
+  })
+
+  it('lends nothing to another plugin holding a log role', async () => {
+    const { seen, audit } = lending()
+    const role = { attach: () => { seen.attached.push({ given: true, slot: 'gate' }) } }
+    const made = await harness({ behave: { gate: { exports: { gate: allowAll(), log: role } } }, loader: { audit } })
+    await made.loader.start()
+    // One handle, the install's log's
+    expect(seen).toMatchObject({ lent: 1, attached: [] })
+  })
+})
+
+describe('a slot holder the carrier finds failing', () => {
+  it('is marked failed with the carrier\'s reason, held until Restart hetu, and ends its way', async () => {
+    const made = await harness()
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('on')
+    made.loader.fail('log', 'stalled')
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('stalled')
+    await made.loader.settled()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(made.runtime.started.filter(start => start.id === 'log')).toHaveLength(1)
+  })
+
+  it('does nothing for a plugin that isn\'t running or isn\'t the install\'s', async () => {
+    const made = await harness({ folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: signed() } })
+    await made.loader.start()
+    made.loader.fail('alpha', 'stalled')
+    made.loader.fail('nobody', 'stalled')
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+  })
+})
+
+describe('a slot holder missing its role', () => {
+  it('marks the install\'s log failed at start when its module holds no log role, since nothing could drain the records', async () => {
+    let lent = 0
+    const audit = () => {
+      lent++
+      return { handle: {} as AuditHandle, revoke: () => {} }
+    }
+    const made = await harness({ behave: { log: { exports: {} } }, loader: { audit } })
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('start-failed')
+    expect(lent).toBe(0)
+  })
+})

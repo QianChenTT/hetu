@@ -26,6 +26,7 @@ export class FakeLoader implements Loader {
   nothing = false
   crashes: { caller: Caller, reason: string }[] = []
   lifecycle: { caller: Caller, kind: string }[] = []
+  fails: { id: string, reason: string }[] = []
 
   slot(id: string): SlotState {
     return this.slots[id] ?? 'absent'
@@ -53,6 +54,10 @@ export class FakeLoader implements Loader {
 
   heard(caller: Caller, kind: string): void {
     this.lifecycle.push({ caller, kind })
+  }
+
+  fail(id: string, reason: 'stalled'): void {
+    this.fails.push({ id, reason })
   }
 
   // A sandboxed plugin answering from its worker

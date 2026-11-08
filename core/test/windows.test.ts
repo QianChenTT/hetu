@@ -111,6 +111,7 @@ describe('floor constants', () => {
       topicsPerHalf: 64,
       filterMsPerSecond: 100,
       auditQueue: 10000,
+      auditStallMs: 30000,
       floorBacklog: 1000,
       floodFactor: 10,
       floodMs: 5000,

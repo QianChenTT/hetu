@@ -121,6 +121,25 @@ describe('the first-party reconcile', () => {
     expect(await exists(path.join(on.dataDir, 'cache', 'git', 'index'))).toBe(false)
   })
 
+  // A new version can change an item's paths, so an item of a type the human switched one off in starts off unless it
+  // is exactly an item that was on
+  it('keeps the items the human switched off across a newer bundled version, and starts a changed item of that type off', async () => {
+    const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
+    const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
+    const wider = { type: 'luoshu.write' as const, paths: ['**'] }
+    const panel = { type: 'ui.panel' as const }
+    const granted = (version: string, capabilities: object[]) => filesFor(workerManifest('git', { version, capabilities }))
+    const made = await harness({
+      install: installWith({ git: granted('1.1.0', [read, wider, panel]) }),
+      folder: { git: granted('1.0.0', [read, write, panel]) },
+      entries: { git: async root => firstPartyEntry(await hashOf(root), { granted: [read, write, panel], off: [write, panel] }) },
+    })
+    await made.loader.start()
+    const entry = (await new StateStore(made.dataDir).load()).state.plugins.git
+    expect(entry.version).toBe('1.1.0')
+    expect(entry.off).toEqual([wider, panel])
+  })
+
   it('copies a release that changed only the patch number', async () => {
     const made = await harness({
       install: installWith({ git: gitFiles('1.0.1') }),
@@ -334,11 +353,12 @@ describe('removing and restoring a first-party plugin', () => {
     expect((await new StateStore(made.dataDir).load()).state.switches.removed).toEqual([])
   })
 
-  it('restores the install\'s bytes over a copy whose check failed, keeping its switch', async () => {
+  it('restores the install\'s bytes over a copy whose check failed, keeping its switch and the items switched off', async () => {
+    const commit = { type: 'history' as const, access: 'commit' as const, paths: ['**'] }
     const made = await harness({
       install: installWith({ git: gitFiles() }),
       folder: { git: gitFiles() },
-      entries: { git: async root => firstPartyEntry(await hashOf(root), { enabled: true }) },
+      entries: { git: async root => firstPartyEntry(await hashOf(root), { enabled: true, granted: [commit], off: [commit] }) },
     })
     await writeFile(path.join(folderOf(made.dataDir, 'git'), 'worker.js'), 'edited()')
     await made.loader.start()
@@ -348,6 +368,7 @@ describe('removing and restoring a first-party plugin', () => {
     expect(stateOf(made.loader, 'git')).toBe('ready')
     expect(made.link.events('plugin.restored')).toEqual([{ plugin: 'git', version: '1.0.0' }])
     expect(await hashOf(folderOf(made.dataDir, 'git'))).toBe(await hashOf(path.join(made.installDir, 'plugins', 'git')))
+    expect((await new StateStore(made.dataDir).load()).state.plugins.git.off).toEqual([commit])
   })
 
   it('gives up on plugin.restored at the deadline, withdraws it and applies the next change', async () => {

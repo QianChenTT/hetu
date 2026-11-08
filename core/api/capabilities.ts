@@ -78,3 +78,10 @@ function capped<T extends z.ZodType<Capability>>(item: T) {
 
 export const capabilities = capped(capability)
 export const folderCapabilities = capped(folderCapability)
+
+// One item as text that is the same whatever order its fields came in, so two copies of an item compare equal and an
+// ask can name the item it would grant
+export function capabilityKey(granted: Capability): string {
+  const fields = granted as Record<string, unknown>
+  return JSON.stringify(Object.keys(fields).sort().map(key => [key, fields[key]]))
+}
