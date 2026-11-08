@@ -170,8 +170,6 @@ describe('a security control that fails while hetu runs', () => {
     expect(failures).toEqual([])
   })
 })
-
-// Checkpoint B
 describe('the restart marker, after the review', () => {
   it('stops hetu on a failure of any control once the run before restarted, so two controls can\u2019t take turns', async () => {
     const failures: Failure[] = []

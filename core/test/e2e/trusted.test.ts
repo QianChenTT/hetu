@@ -196,12 +196,12 @@ describe('a security control that fails while hetu runs', () => {
     const second = await editorPage(again)
     await ask(second, 'security.request', { change: { kind: 'confirmOff', on: false } })
     const page = await trustedPage(again)
-    await showing(page, 'It failed in the run before too')
+    await showing(page, 'hetu already started again once after a failure')
     await until(async () => (await visibleWindows(again)).length === 1)
   })
 })
 
-describe('a prompt a plugin\'s call raises (A-29)', () => {
+describe('a prompt a plugin\'s call raises', () => {
   // asker's plugin.call to target asks at its first use. asker calls target.hello as soon as it is ready
   const workers = {
     target: { code: lifecycle(), manifest: { provides: { actions: { hello: {} } } } },

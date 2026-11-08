@@ -74,7 +74,7 @@ describe('a security request', () => {
     expect(made.loader.pending()).toHaveLength(1)
   })
 
-  // Checkpoint B: one window could fill every place, so the trusted window's own requests and every prompt answered
+  // One window could fill every place, so the trusted window's own requests and every prompt answered
   // throttled. Each sender has places of its own
   it('keeps places for the trusted window and the core when another window filled its own', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
@@ -88,7 +88,7 @@ describe('a security request', () => {
     expect(made.loader.pending().filter(request => request.kind === 'plugin.approve')).toHaveLength(1)
   })
 
-  // Checkpoint B (planted break B42): two narrowings at once must both stand
+  // Two narrowings at once must both stand
   it('applies two narrowings made at once to two switches, both standing', async () => {
     const made = await harness({ switches: { devMode: ['alpha'], confirmOff: true } })
     await made.loader.start()
@@ -138,7 +138,7 @@ describe('a security request', () => {
     expect(made.loader.pending()).toHaveLength(1)
   })
 
-  // Checkpoint B: nothing tested the wait running out on a record that never settles
+  // Nothing tested the wait running out on a record that never settles
   it('applies nothing once its record\u2019s wait runs out on a log that never answers', async () => {
     const made = await harness({ loader: { confirmRecordMs: 100 } })
     await made.loader.start()
@@ -227,7 +227,7 @@ describe('confirmOff', () => {
     held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
   })
 
-  // Checkpoint B: confirmOff skips the Confirm, never the typing that switching protection off asks for
+  // confirmOff skips the Confirm, never the typing that switching protection off asks for
   it('still holds a change that asks for typing, so the word is typed', async () => {
     const made = await harness({ switches: { confirmOff: true } })
     await made.loader.start()
@@ -244,7 +244,7 @@ describe('confirmOff', () => {
 })
 
 describe('limits', () => {
-  // Checkpoint B: a lowered value applied at once let a window lock the trusted window out, force a fail-stop or drop
+  // A lowered value applied at once let a window lock the trusted window out, force a fail-stop or drop
   // the audit, so a limit waits for the human's Confirm either way
   it('hold one lowered as well as one raised', async () => {
     const made = await harness({ switches: { limits: { all: { readyMs: 20000 }, plugins: {} } } })
@@ -301,7 +301,7 @@ describe('the kinds the loader applies since the trusted window', () => {
     expect(await readdir(path.join(made.dataDir, 'plugins', 'alpha'))).toContain('hetu-plugin.json')
   })
 
-  // Checkpoint B: Recover left a readyMs of 1 standing, so the gate failed again at every start
+  // Recover left a readyMs of 1 standing, so the gate failed again at every start
   it('plugin.reset clears the limits the human set for that plugin', async () => {
     const made = await harness({
       folder: { alpha: worker('alpha') }, entries: { alpha: signed() },
@@ -327,7 +327,7 @@ describe('the kinds the loader applies since the trusted window', () => {
   })
 })
 
-// Record nothing's own record is the last one (S4-5)
+// Record nothing's own record is the last one
 describe('recording off and on', () => {
   it('drains what waits before the record of recording going off and counts what still waits in it', async () => {
     const made = await harness()
@@ -512,7 +512,7 @@ describe('the core actions the loader serves', () => {
     expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
   })
 
-  // Checkpoint B: the human stops a plugin from the trusted window, so only the trusted window starts it again
+  // The human stops a plugin from the trusted window, so only the trusted window starts it again
   it('restarts a plugin the human stopped only from the trusted window, never from the editor or the watchdog', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.loader.start()
@@ -535,7 +535,7 @@ describe('the core actions the loader serves', () => {
   })
 })
 
-// Checkpoint B: each request applies or waits in the loader's one queue, with Cancel, so nothing slips between a
+// Each request applies or waits in the loader's one queue, with Cancel, so nothing slips between a
 // Confirm and its change
 describe('requests in one queue', () => {
   it('lets a Cancel made while a Confirm waits on its record wait for that Confirm', async () => {
@@ -584,7 +584,7 @@ describe('requests in one queue', () => {
   })
 })
 
-// Checkpoint B: after the human's Confirm the next request was drawn under the cursor and a second click counted. A
+// After the human's Confirm the next request was drawn under the cursor and a second click counted. A
 // request counts only once it has been first in line for the input delay
 describe('the delay before a request counts', () => {
   it('refuses a Confirm until the request has been first in line for the delay, and starts it again for the next one', async () => {
@@ -609,7 +609,7 @@ describe('the delay before a request counts', () => {
   })
 })
 
-// Checkpoint B: an approval was confirmed with no word of what it grants
+// An approval was confirmed with no word of what it grants
 describe('the request to approve a plugin', () => {
   it('lists its version and every grant its manifest asks for', async () => {
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [notes, { type: 'net.fetch', hosts: ['example.com'] }] }) } })
@@ -627,7 +627,7 @@ describe('the request to approve a plugin', () => {
   })
 })
 
-// Checkpoint B: with the log down, the stopped mode's stop recording waited for a record the dead log could never take
+// With the log down, the stopped mode's stop recording waited for a record the dead log could never take
 describe('stopping recording with the log down', () => {
   it('applies though its own record was lost, since the log is what it switches off', async () => {
     const made = await harness()

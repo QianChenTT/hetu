@@ -165,7 +165,7 @@ describe('the floor', () => {
     expect(seen.map(call => call.action)).toEqual(['security.confirm'])
   })
 
-  // Checkpoint B: with confirmOff on a request from the trusted window applies at once, so every action it sends that
+  // With confirmOff on a request from the trusted window applies at once, so every action it sends that
   // changes something waits for the delay like a Confirm. Reads don't
   it('refuses the trusted window’s other actions before it armed, and answers its reads', async () => {
     const seen: string[] = []

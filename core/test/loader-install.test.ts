@@ -122,7 +122,7 @@ describe('install plugins', () => {
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'ok' })
   })
 
-  // Han, 2026-11-08: a tampered security plugin always stops hetu from starting
+  // A tampered security plugin always stops hetu from starting
   it('stops hetu when the tampered one is a security control, before the rest start', async () => {
     const { loader, runtime } = await harness({ install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } } })
     await loader.start()

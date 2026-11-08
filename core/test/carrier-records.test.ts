@@ -938,7 +938,7 @@ describe('a failing log', () => {
   })
 })
 
-// Record nothing's own record is the last one (S4-5): the loader drains what waits before it writes that record, and
+// Record nothing's own record is the last one: the loader drains what waits before it writes that record, and
 // what still waits once recording is off is let go, counted in that record
 describe('recording going off', () => {
   it('drains the audit queue and the floor backlog and says nothing still waits', async () => {
@@ -978,7 +978,7 @@ describe('recording going off', () => {
   })
 })
 
-// Checkpoint B: a call record could land after the switch's own record, written while the switch was being applied
+// A call record could land after the switch's own record, written while the switch was being applied
 describe('the writer while recording goes off', () => {
   it('writes nothing more once drained until it resumes, then writes what waited', async () => {
     const log = new FakeLog()

@@ -50,7 +50,7 @@ describe('limits', () => {
   })
 })
 
-// Checkpoint B: a window that lowered a value for all locked the trusted window out of every request. The values for all
+// A window that lowered a value for all locked the trusted window out of every request. The values for all
 // reach windows only where they raise the floor, while the core-wide ones follow the human either way
 describe('the limits a window runs on', () => {
   const human = (all: Record<string, number>) => new Limits(() => ({ all, plugins: {} }))

@@ -90,7 +90,7 @@ describe('what the trusted window draws', () => {
         control: 'gate',
         lines: [
           'hetu stopped: the security plugin gate failed its hash check',
-          'It failed in the run before too, so hetu didn’t start again on its own',
+          'hetu already started again once after a failure, so it didn’t start again on its own',
           'Repair hetu with its installer to get its files back',
         ],
         choices: ['switch-off', 'quit'],
@@ -172,7 +172,7 @@ describe('the trusted page', () => {
     }
   })
 
-  // Checkpoint B: with confirmOff on a choice applied through the request and hetu stayed stopped
+  // With confirmOff on a choice applied through the request and hetu stayed stopped
   it('starts hetu again once a choice in the stopped mode applied at once', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
     page.ask({ kind: 'plugin.reset', plugin: 'gate' })

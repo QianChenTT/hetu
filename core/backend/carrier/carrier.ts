@@ -242,7 +242,7 @@ export class Carrier {
     const log = options.log
     // A batch the log refused while healthy is let go and counted, one record a batch
     // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
-    // and is the last record written (S4-5). Between the drain and the switch nothing is written, so no call record
+    // and is the last record written. Between the drain and the switch nothing is written, so no call record
     // lands after the switch's own
     const source = {
       next: (max: number) => {

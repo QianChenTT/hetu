@@ -59,7 +59,7 @@ export type ChangeEffect = 'narrows' | 'widens' | 'destroys'
 // applied meanwhile can move it. A security control switched off widens and switched back on narrows, every other plugin
 // the other way round. A switch that weakens a check widens when it goes on. A limit waits for the Confirm either way:
 // a higher value widens and a lower one can starve hetu's own controls or its audit, which the core can't tell apart
-// from a safe one (checkpoint B)
+// from a safe one
 export function changeEffect(change: Change): ChangeEffect {
   switch (change.kind) {
     case 'plugin.approve':
