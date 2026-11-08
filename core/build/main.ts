@@ -3,10 +3,12 @@ import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
-import { buildPlugin } from '../sdk/build/esbuild.ts'
+import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 
 // The first-party plugins built, each a worker from src/worker.ts
 const FIRST_PARTY = ['search']
+// The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
+const INSTALL = ['log', 'gate']
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')
@@ -33,8 +35,8 @@ export type Built = {
   prelude: string
 }
 
-// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list and the
-// first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
+// main.ts and everything it imports as one ES module, electron left to the runtime, with the install list, the
+// install plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
 export async function buildMain(outDir: string = path.join(core, 'dist')): Promise<Built> {
   await mkdir(outDir, { recursive: true })
@@ -47,9 +49,23 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     target: NODE,
     external: ['electron'],
   })
-  // The first-party plugins the install carries, each built into dist/plugins/<id> and listed with the hash of its files,
-  // which the loader copies into the plugin folder. search waits for the luoshu until the luoshu is built
+  // The install plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
+  // before it starts the host half
   const plugins: Record<string, unknown> = {}
+  for (const id of INSTALL) {
+    const source = path.join(core, '..', 'plugins', id)
+    const root = path.join(outDir, 'plugins', id)
+    await rm(root, { recursive: true, force: true })
+    await mkdir(path.join(root, 'dist'), { recursive: true })
+    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
+    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
+    const { version, node = [] } = JSON.parse(manifest.toString('utf8')) as { version: string, node?: string[] }
+    const built = await buildHost(source, 'src/host.ts', node)
+    await writeFile(path.join(root, 'dist', 'host.js'), built.text)
+    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
+  }
+  // The first-party plugins the install carries, each built the same way and listed as first-party, which the loader
+  // copies into the plugin folder. search waits for the luoshu until the luoshu is built
   for (const id of FIRST_PARTY) {
     const source = path.join(core, '..', 'plugins', id)
     const root = path.join(outDir, 'plugins', id)

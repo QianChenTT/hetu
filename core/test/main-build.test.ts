@@ -8,6 +8,7 @@ import { INSTALL_LIST, installList } from '../api/install.ts'
 import { buildMain } from '../build/main.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
+import { checkManifest } from '../sdk/build/check-manifest.ts'
 
 const made: string[] = []
 
@@ -35,9 +36,25 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins)).toEqual(['search'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['gate', 'log', 'search'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
+  })
+
+  it('writes the log and the gate into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    for (const [id, role] of [['log', 'log'], ['gate', 'gate']]) {
+      const root = path.join(out, 'plugins', id)
+      expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+      expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
+      expect(await checkManifest(root, { install: true, built: true })).toEqual([])
+      const text = await readFile(path.join(root, 'dist', 'host.js'))
+      expect(text.toString('utf8')).not.toMatch(/^\s*import\b/m)
+      const module = await import(`data:text/javascript;base64,${text.toString('base64')}`) as Record<string, unknown>
+      expect(typeof module[role]).toBe('object')
+    }
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {

@@ -21,7 +21,7 @@ describe('a window\'s way in', () => {
     const page = await editorPage(app)
     await until(async () => (await page.locator('#banner li').count()) > 0)
     const lines = await page.locator('#banner li').allTextContents()
-    expect(lines).toEqual(expect.arrayContaining(['gate: absent', 'log: absent', 'pick a luoshu folder']))
+    expect(lines).toEqual(['capabilities: absent', 'watchdog: absent', 'pick a luoshu folder'])
   })
 
   it('gives each load of the window its own way: a reload takes the next n', async () => {
