@@ -23,6 +23,8 @@ export type WireOptions = {
   windows?: { serve: Served, armed: (caller: Caller) => boolean }
   // A security control or the log failed while hetu ran, for the runtime to quit and start hetu again
   onFailure?: (failure: Failure) => void
+  // How long a request must be first in line before its Confirm counts, the input delay unless a test names another
+  confirmDelayMs?: number
 }
 
 // The core actions the runtime serves, since only it opens windows and ends the process
@@ -106,6 +108,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     runtime: options.runtime,
     logWrites: () => options.booted.log.healthy,
     ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
+    ...(options.confirmDelayMs !== undefined ? { confirmDelayMs: options.confirmDelayMs } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
   })
   const { windows } = options

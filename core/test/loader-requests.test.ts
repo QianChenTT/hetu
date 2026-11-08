@@ -469,3 +469,77 @@ describe('the core actions the loader serves', () => {
     }
   })
 })
+
+// Checkpoint B: each request applies or waits in the loader's one queue, with Cancel, so nothing slips between a
+// Confirm and its change
+describe('requests in one queue', () => {
+  it('lets a Cancel made while a Confirm waits on its record wait for that Confirm', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    let land!: (landing: 'landed') => void
+    made.link.landing = event => (event === 'security.confirm' ? new Promise(resolve => { land = resolve }) : 'landed')
+    const confirmed = made.loader.confirm(id, {})
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const cancelled = code(made.loader.cancel(id))
+    land('landed')
+    await confirmed
+    expect(await cancelled).toBe('not-found')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
+    expect(made.link.events('security.cancel')).toEqual([])
+  })
+
+  it('applies a narrowing change only after a Confirm already under way', async () => {
+    const made = await harness({ switches: { devMode: ['alpha'] } })
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    let land!: (landing: 'landed') => void
+    made.link.landing = event => (event === 'security.confirm' ? new Promise(resolve => { land = resolve }) : 'landed')
+    const confirmed = made.loader.confirm(id, {})
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const narrowed = made.loader.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect((await stateIn(made.dataDir)).switches.devMode).toEqual(['alpha'])
+    land('landed')
+    await confirmed
+    expect(await narrowed).toEqual({ applied: true })
+    const { switches } = await stateIn(made.dataDir)
+    expect([switches.skipVerification, switches.devMode]).toEqual([true, []])
+  })
+
+  it('tells the windows when a request is raised and when one goes', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const before = made.link.changes
+    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    expect(made.link.changes).toBeGreaterThan(before)
+    const raised = made.link.changes
+    await made.loader.cancel(id)
+    expect(made.link.changes).toBeGreaterThan(raised)
+  })
+})
+
+// Checkpoint B: after the human's Confirm the next request was drawn under the cursor and a second click counted. A
+// request counts only once it has been first in line for the input delay
+describe('the delay before a request counts', () => {
+  it('refuses a Confirm until the request has been first in line for the delay, and starts it again for the next one', async () => {
+    // Two changes to two plugins' entries, so confirming the first leaves the second fresh
+    const made = await harness({
+      loader: { confirmDelayMs: 200 },
+      folder: { alpha: worker('alpha'), beta: worker('beta') },
+      entries: { alpha: signed(), beta: signed() },
+    })
+    await made.loader.start()
+    const first = held(await made.loader.request({ kind: 'grant.widen', plugin: 'alpha', capability: notes }, editor))
+    const second = held(await made.loader.request({ kind: 'grant.widen', plugin: 'beta', capability: notes }, editor))
+    expect(await code(made.loader.confirm(first, {}))).toBe('throttled')
+    // Only the first in line counts
+    await new Promise(resolve => setTimeout(resolve, 250))
+    expect(await code(made.loader.confirm(second, {}))).toBe('throttled')
+    await made.loader.confirm(first, {})
+    expect(await code(made.loader.confirm(second, {}))).toBe('throttled')
+    await new Promise(resolve => setTimeout(resolve, 250))
+    await made.loader.confirm(second, {})
+    expect((await stateIn(made.dataDir)).plugins.beta.granted).toEqual([notes])
+  })
+})

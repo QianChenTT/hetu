@@ -56,7 +56,7 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, ...options.wire })
+  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     await loader.shutdown().catch(() => {})
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows

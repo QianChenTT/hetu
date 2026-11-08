@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
 import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
+import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -48,6 +49,8 @@ export type LoaderOptions = {
   // A security control failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the
   // trusted window once the loader stopped in the stopped mode
   onFailure?: (failure: Failure) => void
+  // How long a request must be first in line before its Confirm counts. The input delay unless a test names another
+  confirmDelayMs?: number
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -264,6 +267,9 @@ export class Loader implements Seam {
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
+      changed: () => this.refresh(),
+      clock: () => performance.now(),
+      delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
       declined: (plugin, change) => {
         if (change.kind === 'item.on') this.declinedAsks.add(`${plugin}
 ${capabilityKey(change.capability)}`)

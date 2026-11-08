@@ -23,6 +23,11 @@ export type RequestHost = {
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
   declined(plugin: string, change: Change): void
+  // A request was raised or went, so windows read core.status again
+  changed(): void
+  // A clock no change of the wall clock moves, and how long a request must be first in line before its Confirm counts
+  clock(): number
+  delayMs: number
   // Writes what waits to be recorded, within ms, and gives back how many records still wait
   drain(ms: number): Promise<number>
 }
@@ -62,6 +67,8 @@ const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.ki
 export class Requests {
   private readonly held = new Map<string, Held>()
   private readonly host: RequestHost
+  // The request first in line, which the trusted window draws, and since when
+  private head: { id: string, at: number } | null = null
 
   constructor(host: RequestHost) {
     this.host = host
@@ -114,34 +121,59 @@ export class Requests {
     const fingerprint = this.host.fingerprint(change).catch(() => 'unreadable')
     this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy })
     void this.host.record('security.request', fields)
+    this.moved()
     return id
   }
 
-  // Only the trusted window's Confirm reaches here, which the carrier checks first. A change that asks for typing
-  // needs the word typed exactly. One whose state moved since the request is dropped as stale
+  // The list changed: the request first in line starts its delay when it becomes first, and windows hear of it
+  private moved(): void {
+    const first = this.held.keys().next()
+    const id = first.done === true ? null : first.value
+    if (id === null) this.head = null
+    else if (this.head?.id !== id) this.head = { id, at: this.host.clock() }
+    try {
+      this.host.changed()
+    } catch {}
+  }
+
+  private drop(id: string): void {
+    this.held.delete(id)
+    this.moved()
+  }
+
+  // Only the trusted window's Confirm reaches here, which the carrier checks first. Only the request first in line counts,
+  // once it has been first for the delay, so a click aimed at the request before can't land on the next one drawn in its
+  // place. A change that asks for typing needs the word typed exactly. One whose state moved since the request is
+  // dropped as stale
   confirm(id: string, options: { typed?: string }): Promise<void> {
     return this.host.exclusive(async () => {
       const one = this.held.get(id)
       if (one === undefined) throw { code: 'not-found' }
+      const head = this.head
+      if (head === null || head.id !== id || this.host.clock() - head.at < this.host.delayMs) throw { code: 'throttled' }
       const word = mustType(one.change)
       if (word !== null && options.typed !== word) throw { code: 'invalid' }
       const fields = { ...fieldsOf(one.change, one.key), window: 'trusted' }
       if (await this.host.fingerprint(one.change) !== await one.fingerprint) {
-        this.held.delete(id)
+        this.drop(id)
         void this.host.record('security.stale', fields)
         throw { code: 'stale' }
       }
       await this.landThenApply(one.change, { ...fields, by: 'confirm' })
-      this.held.delete(id)
+      this.drop(id)
     })
   }
 
-  async cancel(id: string): Promise<void> {
-    const one = this.held.get(id)
-    if (one === undefined) throw { code: 'not-found' }
-    this.held.delete(id)
-    void this.host.record('security.cancel', { ...fieldsOf(one.change, one.key), window: 'trusted' })
-    if (one.raisedBy !== null) this.host.declined(one.raisedBy, one.change)
+  // In the same queue as a Confirm, so a Cancel made while a Confirm waits on its record waits for it and then finds
+  // nothing to cancel
+  cancel(id: string): Promise<void> {
+    return this.host.exclusive(async () => {
+      const one = this.held.get(id)
+      if (one === undefined) throw { code: 'not-found' }
+      this.drop(id)
+      void this.host.record('security.cancel', { ...fieldsOf(one.change, one.key), window: 'trusted' })
+      if (one.raisedBy !== null) this.host.declined(one.raisedBy, one.change)
+    })
   }
 
   // The Confirm record on disk, or muted with recording off, then the change. A record that doesn't land in time

@@ -131,6 +131,8 @@ describe('the stopped mode\'s three choices', () => {
     const confirm = page.getByRole('button', { name: 'Confirm' })
     expect(await confirm.isDisabled()).toBe(true)
     await page.getByLabel('Type gate to confirm').fill('gate')
+    // The request counts once it has been first in line for the delay
+    await tick(PAST_DELAY)
     const done = exited(app)
     await confirm.click()
     expect(await done).toBe(0)
@@ -165,6 +167,7 @@ describe('the stopped mode\'s three choices', () => {
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Recover' }).click()
     await showing(page, 'Reset gate')
+    await tick(PAST_DELAY)
     const done = exited(app)
     await page.getByRole('button', { name: 'Confirm' }).click()
     expect(await done).toBe(0)

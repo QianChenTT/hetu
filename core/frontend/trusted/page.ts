@@ -33,6 +33,8 @@ window.addEventListener('focus', () => {
   armedAt = performance.now() + INPUT_DELAY_MS
   arm()
 })
+// A new request drawn under Confirm waits the delay too, as the core does, so a click aimed at the one before can't land
+let drawnRequest: string | null = null
 
 function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   const root = document.getElementById('root')
@@ -58,6 +60,8 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
 
   if (shown.request !== null) {
     const request = shown.request
+    if (request.id !== drawnRequest) armedAt = Math.max(armedAt, performance.now() + INPUT_DELAY_MS)
+    drawnRequest = request.id
     const section = element('section')
     section.className = 'request'
     section.append(element('h1', request.text))

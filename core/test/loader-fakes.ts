@@ -386,6 +386,8 @@ export async function harness(options: {
     installDir,
     link,
     runtime,
+    // A request counts at once unless a test is about the delay
+    confirmDelayMs: 0,
     ...options.loader,
   })
   const carrier = wire(loader, link)
