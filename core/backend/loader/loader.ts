@@ -280,6 +280,14 @@ export class Loader implements Seam {
     this.die(found.k, reason)
   }
 
+  // The carrier found the install plugin holding a slot failing at its job. Marked failed as a crash would be, so a host
+  // half stays failed until Restart hetu. Nothing for a plugin that isn't the install's or isn't running
+  fail(id: string, reason: 'stalled'): void {
+    const k = this.known.get(id)
+    if (k === undefined || k.from !== 'install' || k.live === null) return
+    this.die(k, reason)
+  }
+
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
     const found = this.runOf(caller)
     if (found === null) return

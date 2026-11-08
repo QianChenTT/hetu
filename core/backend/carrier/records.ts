@@ -204,13 +204,15 @@ export class Coalesced {
 
 const callerKey = (caller: Caller) => JSON.stringify(caller)
 
-type Entry = { record: AuditRecord, key: string | null }
+// queued is when the record went into the queue on the carrier's clock, which a stalled log is timed from
+type Entry = { record: AuditRecord, key: string | null, queued: number }
 
 // Audit records wait here for the log plugin, which takes them with next and acknowledges them with ack once they are
 // on disk. Its handle comes with the log plugin. Bounded: one past the bound is dropped and counted. Coalescing joins a
 // record to the one not yet taken with the same caller, onBehalf, root, action, code and gate state in the same second
 export class AuditQueue {
   private readonly bound: () => number
+  private readonly clock: () => number
   private readonly entries: Entry[] = []
   private readonly open = new Map<string, AuditRecord>()
   private second = Number.NEGATIVE_INFINITY
@@ -219,8 +221,15 @@ export class AuditQueue {
   // Records dropped since the queue was made, for the floor record
   dropped = 0
 
-  constructor(bound: () => number) {
+  // clock is the carrier's, which no change of the wall clock moves
+  constructor(bound: () => number, clock: () => number = () => performance.now()) {
     this.bound = bound
+    this.clock = clock
+  }
+
+  // When the oldest record still held went into the queue, taken or not, or null for an empty queue
+  oldest(): number | null {
+    return this.entries.length > 0 ? this.entries[0].queued : null
   }
 
   get size(): number {
@@ -249,7 +258,7 @@ export class AuditQueue {
       return false
     }
     const full: AuditRecord = { ...record, seq: ++this.seq, count: 1 }
-    this.entries.push({ record: full, key })
+    this.entries.push({ record: full, key, queued: this.clock() })
     if (key !== null) this.open.set(key, full)
     return true
   }

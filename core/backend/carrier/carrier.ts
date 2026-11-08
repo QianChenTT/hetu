@@ -106,6 +106,10 @@ type Shaped =
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
+// How long the oldest record the audit queue holds may wait for the log plugin's ack before the log counts as stalled:
+// six of the EventLog's 5 s retries after a failed write, so a disk locked for a moment doesn't fail the log for the run
+const AUDIT_STALL_MS = 30_000
+
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
 
@@ -221,7 +225,7 @@ export class Carrier {
       retryMs: options.floorRetryMs ?? 5000,
     })
     this.coalesced = new Coalesced(this.lane)
-    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'))
+    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.bus = new Bus({
       state: () => this.busState(),
@@ -737,6 +741,7 @@ export class Carrier {
     if (gate === 'starting') return 'starting'
     if (gate !== 'off') return this.down('policy-down')
     if (this.muted()) return 'pass'
+    if (this.stalled()) return this.down('policy-down')
     const log = this.slot('log')
     if (log === 'on' || log === 'off') return 'pass'
     return log === 'starting' ? 'starting' : this.down('policy-down')
@@ -1210,6 +1215,7 @@ export class Carrier {
   // last and reads failed then, so records keep queueing and close counts what is left
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.muted()) return
+    this.stalled()
     const log = this.slot('log')
     if (log !== 'on' && log !== 'starting' && !this.shutting) {
       const held = this.queue.clear()
@@ -1217,6 +1223,21 @@ export class Carrier {
       return
     }
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
+  }
+
+  // A log plugin whose oldest record waited unacknowledged for AUDIT_STALL_MS has stalled, and the loader marks it failed
+  // as it would a crash, so with the gate off a call with power is refused rather than passing with only a count of
+  // what was dropped. Timed from when the record was queued, so a long call doesn't read as stalled. Never while the log
+  // starts, which readyMs bounds, or once shutdown began, when the log stops last. true even when the loader couldn't
+  // mark it, so the gate off still refuses
+  private stalled(): boolean {
+    if (this.shutting || this.closed || this.slot('log') !== 'on') return false
+    const oldest = this.queue.oldest()
+    if (oldest === null || this.clock() - oldest < AUDIT_STALL_MS) return false
+    try {
+      this.options.loader.fail('log', 'stalled')
+    } catch {}
+    return true
   }
 
   private callOf(pending: Pending, args: unknown): Call {

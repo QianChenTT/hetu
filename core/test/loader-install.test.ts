@@ -500,3 +500,25 @@ describe('the log\'s audit handle', () => {
     expect(seen).toMatchObject({ lent: 0, attached: [] })
   })
 })
+
+describe('a slot holder the carrier finds failing', () => {
+  it('is marked failed with the carrier\'s reason, held until Restart hetu, and ends its way', async () => {
+    const made = await harness()
+    await made.loader.start()
+    expect(made.loader.slot('log')).toBe('on')
+    made.loader.fail('log', 'stalled')
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(reasonOf(made.loader, 'log')).toBe('stalled')
+    await made.loader.settled()
+    expect(made.loader.slot('log')).toBe('failed')
+    expect(made.runtime.started.filter(start => start.id === 'log')).toHaveLength(1)
+  })
+
+  it('does nothing for a plugin that isn\'t running or isn\'t the install\'s', async () => {
+    const made = await harness({ folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: signed() } })
+    await made.loader.start()
+    made.loader.fail('alpha', 'stalled')
+    made.loader.fail('nobody', 'stalled')
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+  })
+})
