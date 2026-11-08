@@ -152,4 +152,18 @@ describe('the log down with the gate on', () => {
     expect(await read(page, '.scratch.md')).toBe('not-granted')
     await banner(page, 'log: tampered')
   })
+
+  it.each([
+    ['its module throws', 'throw new Error(\'the log module threw\')\n', 'start-failed'],
+    ['it hangs at start', `export default { kind: 'hetu-plugin', spec: { start() { return new Promise(() => {}) } } }\nexport const log = { attach() {} }\n`, 'start-timeout'],
+  ])('is marked failed when %s, the gate still deciding', async (_name, module, reason) => {
+    const { dataDir, page } = await started({
+      install: { log: host('log', module) },
+      switches: { limits: { all: {}, plugins: { log: { readyMs: 1500 } } } },
+    })
+    await until(() => logged(dataDir, 'plugin.failed', { plugin: 'log', reason }))
+    expect(await read(page)).toBe('unavailable')
+    expect(await read(page, '.scratch.md')).toBe('not-granted')
+    await banner(page, 'log: failed')
+  })
 })

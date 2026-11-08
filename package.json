@@ -23,7 +23,7 @@
     "test": "npm test -w core -w daemon -w plugins/gate -w plugins/log -w plugins/search --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build:main": "node core/build/main.ts",
-    "test:e2e": "npm run build:main && npm run test:e2e -w core"
+    "test:e2e": "npm run build:main && npm run test:e2e -w hetu-core"
   },
   "devDependencies": {
     "electron": "45.2.3",

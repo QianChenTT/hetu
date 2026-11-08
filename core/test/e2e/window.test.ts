@@ -33,6 +33,29 @@ describe('a window\'s way in', () => {
     expect(await self(page)).toEqual({ kind: 'window', role: 'editor', n: 2 })
   })
 
+  it('answers the reload after the editor\'s renderer crashed, as the next load', async () => {
+    const app = await launch(await dataWith({}))
+    const page = await editorPage(app)
+    expect(await self(page)).toEqual({ kind: 'window', role: 'editor', n: 1 })
+    // Playwright gives up on a page whose renderer crashed, so the reloaded page is asked from main, in its main world
+    // where the bridge is
+    const answer = await app.evaluate(async ({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://editor/')!.webContents
+      const gone = new Promise(resolve => contents.once('render-process-gone', resolve))
+      contents.forcefullyCrashRenderer()
+      await gone
+      const loaded = new Promise(resolve => contents.once('did-finish-load', () => resolve(null)))
+      contents.reload()
+      await loaded
+      return contents.executeJavaScript(`new Promise(resolve => {
+        window.hetu.listen(message => { if (message.kind === 'reply' && message.id === 77) resolve(message.result) })
+        window.hetu.send({ v: 1, kind: 'call', id: 77, action: 'core.self', args: undefined })
+        setTimeout(() => resolve(null), 3000)
+      })`)
+    })
+    expect(answer).toEqual({ kind: 'window', role: 'editor', n: 2 })
+  })
+
   it('answers nothing to a window the core didn\'t make, though it has the same page and preload', async () => {
     const app = await launch(await dataWith({}))
     // The control: the window the core made answers through the same bridge
