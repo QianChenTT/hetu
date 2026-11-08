@@ -1,4 +1,4 @@
-import { newBudget, type RelayLimits, relayLimitsOf, spend, textCap } from '../api/rate.ts'
+import { messageCap, newBudget, type RelayLimits, relayLimitsOf, spend, weigh } from '../api/rate.ts'
 import { type Plugin, run } from './plugin.ts'
 import type { Transport } from './transport.ts'
 
@@ -13,40 +13,64 @@ export type WorkerPort = {
 // The worker's global as runInWorker uses it
 export type WorkerScope = { onmessage: ((event: { data: unknown, ports: readonly unknown[] }) => void) | null }
 
-// What the pacing keeps back from the text budget, as the Sender keeps back from the message rate
+// What the pacing keeps back from the relay's limits, as the Sender does from the carrier's rate
 const SHARE = 0.9
 
-// A worker's transport: JSON text both ways, since the relay in the page passes nothing else to main. Text past the cap
-// throws, so a reply fails on its own rather than get the plugin cut off. Text is held back to 90% of the budget the
-// relay counts, in order, so a burst of large messages waits rather than being dropped
-export function portTransport(port: WorkerPort, limits: WorkerLimits, clock: () => number = () => performance.now()): Transport {
-  const cap = textCap(name => limits[name as keyof WorkerLimits])
-  const perSecond = limits.textPerSecond * SHARE
+type Held = { text: string, weight: number }
+
+// A worker's transport, and its only pacer: JSON text both ways, since the relay in the page passes nothing else to
+// main. A message is weighed as the relay weighs it, and one the relay would cut the plugin off for throws instead, so a
+// reply fails on its own. Messages wait in one queue for 90% of both the message rate and the byte budget the relay
+// counts, so a backlog never leaves in a burst the relay would drop. A pong goes out at once, ahead of what waits, from
+// the 10% kept back, so a busy plugin never reads as unresponsive. Lower limits the page sends down apply from then on
+export function portTransport(port: WorkerPort, given: WorkerLimits, clock: () => number = () => performance.now()): Transport {
+  let limits = given
+  const capOf = () => messageCap(name => limits[name as keyof WorkerLimits])
   const budget = newBudget()
-  const held: string[] = []
+  const times: number[] = []
+  const held: Held[] = []
   let timer: ReturnType<typeof setTimeout> | null = null
+  const later = (ms: number) => {
+    timer = setTimeout(flush, Math.max(1, Math.ceil(ms)))
+  }
   const flush = () => {
     timer = null
     while (held.length > 0) {
-      const text = held[0]
-      if (!spend(budget, clock(), text.length, perSecond, cap)) {
-        timer = setTimeout(flush, Math.max(1, Math.ceil((text.length - budget.tokens) * 1000 / perSecond)))
-        return
-      }
+      const now = clock()
+      while (times.length > 0 && now - times[0] >= 1000) times.shift()
+      const most = Math.max(1, Math.floor(limits.messagesPerSecond * SHARE))
+      if (times.length >= most) return later(times[0] + 1000 - now)
+      const next = held[0]
+      const perSecond = limits.bytesPerSecond * SHARE
+      if (!spend(budget, now, next.weight, perSecond, capOf())) return later((next.weight - budget.tokens) * 1000 / perSecond)
       held.shift()
-      port.postMessage(text)
+      times.push(now)
+      port.postMessage(next.text)
     }
   }
   return {
+    paces: true,
     post(message) {
       const text = JSON.stringify(message)
-      if (typeof text !== 'string' || text.length > cap) throw new Error('too-large: the message is past what the relay takes')
-      held.push(text)
+      if (typeof text !== 'string') throw new Error('invalid: the message is not JSON')
+      const weighed = weigh(text, capOf())
+      if (!weighed.ok) throw new Error('too-large: the relay would refuse the message')
+      if ((message as { kind?: unknown }).kind === 'pong') {
+        port.postMessage(text)
+        return
+      }
+      held.push({ text, weight: weighed.weight })
       if (timer === null) flush()
     },
     listen(listener) {
       port.onmessage = ({ data }) => {
-        if (typeof data !== 'string') return
+        if (typeof data !== 'string') {
+          // The page's only message of its own: the plugin's limits, lowered
+          const sent = data as { v?: unknown, kind?: unknown, limits?: unknown } | null
+          const lowered = relayLimitsOf(sent?.limits)
+          if (sent?.v === 1 && sent.kind === 'limits' && lowered !== null) limits = lowered
+          return
+        }
         let message: unknown
         try {
           message = JSON.parse(data)

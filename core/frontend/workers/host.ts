@@ -1,6 +1,8 @@
 // The worker host page's logic, kept apart from the DOM so it runs in tests. The page hands it real workers and ports
 import type { FloorConstant } from '../../api/floor.ts'
-import { type Budget, countMessage, newBudget, newRate, type Rate, type RelayLimits, relayLimitsOf, spend, textCap } from '../../api/rate.ts'
+import {
+  type Budget, countMessage, messageCap, newBudget, newRate, type Rate, type RelayLimits, relayLimitsOf, spend, weigh,
+} from '../../api/rate.ts'
 
 export type WorkerLike = {
   postMessage(message: unknown, transfer: unknown[]): void
@@ -96,7 +98,7 @@ export class WorkerHost {
     const worker = this.options.spawn(`data:text/javascript;base64,${base64(script)}`, start.id)
     const limit = (name: FloorConstant) => start.limits[name as keyof Limits]
     const run: Running = {
-      id: start.id, incarnation: start.incarnation, worker, own, main, limits: start.limits, cap: textCap(limit),
+      id: start.id, incarnation: start.incarnation, worker, own, main, limits: start.limits, cap: messageCap(limit),
       rate: newRate(), budget: newBudget(), errors: 0, dropped: 0,
     }
     worker.addEventListener('error', event => {
@@ -126,7 +128,10 @@ export class WorkerHost {
     const limits = relayLimitsOf(given)
     if (run === undefined || limits === null) return
     run.limits = limits
-    run.cap = textCap(name => limits[name as keyof Limits])
+    run.cap = messageCap(name => limits[name as keyof Limits])
+    // The worker's SDK paces and caps the same way, so a lowering never gets a correct plugin cut off. The page's own
+    // message is the only one on that port that isn't text
+    run.own.postMessage({ v: 1, kind: 'limits', limits })
   }
 
   terminate(id: unknown, incarnation: unknown): void {
@@ -148,11 +153,13 @@ export class WorkerHost {
 
   private fromWorker(run: Running, data: unknown, ports: number): void {
     if (this.running.get(key(run.id, run.incarnation)) !== run) return
-    if (typeof data !== 'string' || data.length > run.cap || ports > 0) return this.cut(run, 'malformed')
+    if (typeof data !== 'string' || ports > 0) return this.cut(run, 'malformed')
+    const weighed = weigh(data, run.cap)
+    if (!weighed.ok) return this.cut(run, 'malformed')
     const now = this.now()
     const verdict = countMessage(run.rate, now, name => run.limits[name as keyof Limits])
     if (verdict === 'flood') return this.cut(run, 'flood')
-    if (verdict === 'drop' || !spend(run.budget, now, data.length, run.limits.textPerSecond, run.cap)) {
+    if (verdict === 'drop' || !spend(run.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) {
       run.dropped++
       return
     }

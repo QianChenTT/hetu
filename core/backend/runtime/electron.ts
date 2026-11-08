@@ -1,6 +1,6 @@
 import type { MessagePortMain } from 'electron'
 import type { FloorConstant } from '../../api/floor.ts'
-import { textCap } from '../../api/rate.ts'
+import { messageCap } from '../../api/rate.ts'
 import type { Port } from '../carrier/seams.ts'
 import type { Runtime, WorkerStart } from '../loader/seams.ts'
 import { type HostLoading, loadHost } from './hosts.ts'
@@ -61,7 +61,7 @@ export function electronRuntime(
   return {
     channel(id) {
       const { port1, port2 } = channel()
-      return { core: asPort(port1, () => textCap(name => limit(id, name))), plugin: port2 }
+      return { core: asPort(port1, () => messageCap(name => limit(id, name))), plugin: port2 }
     },
     startWorker(start) {
       workers.start(start)

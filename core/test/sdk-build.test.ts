@@ -55,7 +55,7 @@ export default definePlugin({ start() { (globalThis as { started?: boolean }).st
     const port = { onmessage: null as ((event: { data: unknown }) => void) | null, postMessage: (text: string) => posted.push(text) }
     const context: Record<string, unknown> = { onmessage: null, performance, setTimeout, clearTimeout, console, queueMicrotask, AbortController }
     vm.runInNewContext(output.text, context)
-    const limits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, textPerSecond: 1000, resultBytes: 100 }
+    const limits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, bytesPerSecond: 1000, resultBytes: 100 }
     ;(context.onmessage as (event: unknown) => void)({ data: { v: 1, kind: 'port', limits }, ports: [port] })
     port.onmessage?.({ data: JSON.stringify({ v: 1, kind: 'init', id: 'sample', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null }) })
     await vi.waitFor(() => expect(posted).toContain('{"v":1,"kind":"ready"}'))

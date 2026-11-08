@@ -53,8 +53,9 @@ class FakePort implements PortLike {
   }
 }
 
-const limits: Limits = { messagesPerSecond: 3, floodFactor: 2, floodMs: 2000, textPerSecond: 100, resultBytes: 50 }
+const limits: Limits = { messagesPerSecond: 3, floodFactor: 2, floodMs: 2000, bytesPerSecond: 100, resultBytes: 50 }
 const cap = limits.resultBytes + ENVELOPE_ROOM
+const text = (value: unknown) => JSON.stringify(value)
 
 function host() {
   const workers: FakeWorker[] = []
@@ -123,6 +124,10 @@ describe('the worker host page', () => {
     ['an object', { v: 1, kind: 'ready' }],
     ['a number', 5],
     ['text past the cap', 'x'.repeat(cap + 1)],
+    ['text that isn\'t JSON', 'ready'],
+    ['JSON nested past the carrier\'s depth', '['.repeat(65) + ']'.repeat(65)],
+    ['a key the carrier refuses', '{"__proto__":{"v":1}}'],
+    ['JSON that weighs one past the cap', JSON.stringify('x'.repeat(cap - 7))],
   ])('cuts a worker off at once for %s, ending it before it tells main', (_name, data) => {
     const { worker, own, main, reports } = running()
     own.gets(data)
@@ -143,8 +148,9 @@ describe('the worker host page', () => {
     const unread = running()
     unread.own.onmessageerror?.()
     expect(unread.reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' }])
+    // Measured at 8 and its bytes, so exactly the cap
     const fits = running()
-    fits.own.gets('x'.repeat(cap))
+    fits.own.gets(JSON.stringify('x'.repeat(cap - 8)))
     expect(fits.reports).toEqual([])
   })
 
@@ -161,11 +167,11 @@ describe('the worker host page', () => {
   it('drops a message over the rate and counts it, as the carrier does', () => {
     const { own, main, page, reports, at } = running()
     at(1000)
-    for (let i = 0; i < 4; i++) own.gets(`m${i}`)
-    expect(main.posted).toEqual(['m0', 'm1', 'm2'])
+    for (let i = 0; i < 4; i++) own.gets(text(`m${i}`))
+    expect(main.posted).toEqual([text('m0'), text('m1'), text('m2')])
     at(2000)
-    own.gets('m4')
-    expect(main.posted.at(-1)).toBe('m4')
+    own.gets(text('m4'))
+    expect(main.posted.at(-1)).toBe(text('m4'))
     page.flush()
     expect(reports).toEqual([{ kind: 'dropped', id: 'search', incarnation: 1, count: 1 }])
   })
@@ -176,36 +182,51 @@ describe('the worker host page', () => {
     page.relimit('search', 1, { ...limits, messagesPerSecond: 1, floodMs: 0 })
     page.relimit('search', 1, { ...limits, messagesPerSecond: 1 })
     page.relimit('search', 2, { ...limits, messagesPerSecond: 100 })
-    own.gets('m0')
-    own.gets('m1')
-    expect(main.posted).toEqual(['m0'])
+    own.gets(text('m0'))
+    own.gets(text('m1'))
+    expect(main.posted).toEqual([text('m0')])
+    // and sends them down to the worker, so its SDK paces and caps the same way
+    expect(own.posted).toEqual([{ v: 1, kind: 'limits', limits: { ...limits, messagesPerSecond: 1 } }])
   })
 
-  it('drops text over the budget, after one message of the cap went through at once', () => {
-    const { own, main, at } = running({ textPerSecond: 10, resultBytes: 1 })
+  it('drops a message past the budget, after one message of the cap went through at once', () => {
+    const { own, main, at } = running({ bytesPerSecond: 10, resultBytes: 1 })
     at(0)
-    own.gets('x'.repeat(1 + ENVELOPE_ROOM))
-    own.gets('y')
+    own.gets(JSON.stringify('x'.repeat(1 + ENVELOPE_ROOM - 8)))
+    // Weighs 9, the carrier's 8 for a value and 1 for its byte
+    own.gets(text('y'))
     expect(main.posted).toHaveLength(1)
-    at(100)
-    own.gets('z')
-    expect(main.posted.at(-1)).toBe('z')
+    at(1000)
+    own.gets(text('z'))
+    expect(main.posted.at(-1)).toBe(text('z'))
+  })
+
+  it('charges a message by what the carrier measures, so many small values cost more than their text', () => {
+    const { own, main, at } = running({ bytesPerSecond: 100, resultBytes: 1 })
+    at(0)
+    // 3300 empty objects weigh about 64,900, near the bucket's 65,537, in under 10,000 characters of text. A message
+    // of 2008 then fits what the text left but not what the weight left
+    const values = JSON.stringify(Array.from({ length: 3300 }, () => ({})))
+    expect(values.length).toBeLessThan(10_000)
+    own.gets(values)
+    own.gets(text('a'.repeat(2000)))
+    expect(main.posted).toEqual([values])
   })
 
   it('cuts a worker off at the flood cap, the carrier\'s rule: floodFactor times the rate across floodMs', () => {
     const { own, reports, worker, at } = running()
     at(0)
     // 3 a second times 2 across 2 s is 12
-    for (let i = 0; i < 12; i++) own.gets('m')
+    for (let i = 0; i < 12; i++) own.gets(text('m'))
     expect(worker.ended).toBe(false)
-    own.gets('m')
+    own.gets(text('m'))
     expect(worker.ended).toBe(true)
     expect(reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'flood' }])
   })
 
   it('refuses a start without whole positive limits and closes main\'s port', () => {
     const { page, workers } = host()
-    for (const bad of [{ ...limits, floodMs: 0 }, { ...limits, textPerSecond: 1.5 }, { messagesPerSecond: 3 }, null]) {
+    for (const bad of [{ ...limits, floodMs: 0 }, { ...limits, bytesPerSecond: 1.5 }, { messagesPerSecond: 3 }, null]) {
       const main = new FakePort()
       page.start({ ...start(), limits: bad }, main)
       expect(main.closed).toBe(true)

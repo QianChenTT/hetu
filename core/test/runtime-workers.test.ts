@@ -41,7 +41,7 @@ class FakeRenderer implements Renderer {
   }
 }
 
-const LIMITS = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, textPerSecond: 100, resultBytes: 1 }
+const LIMITS = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, bytesPerSecond: 100, resultBytes: 1 }
 
 function runtime(readyMs = 1000, endingMs = 1000) {
   const renderers: FakeRenderer[] = []

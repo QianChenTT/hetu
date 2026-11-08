@@ -3,6 +3,8 @@
 export type Transport = {
   post(message: unknown): void
   listen(listener: (message: unknown) => void): void
+  // The transport paces what it posts itself, as a worker's does, so the half posts to it unpaced
+  paces?: boolean
 }
 
 // What the pacing keeps back from the rate

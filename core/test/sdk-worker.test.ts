@@ -21,7 +21,7 @@ class FakePort {
   }
 }
 
-const limits: WorkerLimits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, textPerSecond: 1000, resultBytes: 100 }
+const limits: WorkerLimits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, bytesPerSecond: 1000, resultBytes: 100 }
 const cap = limits.resultBytes + ENVELOPE_ROOM
 
 describe('the SDK\'s worker transport', () => {
@@ -46,22 +46,25 @@ describe('the SDK\'s worker transport', () => {
     expect(heard).toEqual([])
   })
 
-  it('refuses a message whose text would pass the cap, which the relay would cut it off for, by throwing', () => {
+  it('refuses a message the relay would cut it off for, by throwing, so a reply fails instead', () => {
     const port = new FakePort()
     const transport = portTransport(port, limits)
-    expect(() => transport.post({ text: 'x'.repeat(cap) })).toThrow('too-large')
+    // Weighs the cap and one: 8 for the object, 1 for its key, 8 and the bytes for the string
+    expect(() => transport.post({ t: 'x'.repeat(cap - 16) })).toThrow('too-large')
+    expect(() => transport.post(JSON.parse('{"__proto__":1}'))).toThrow()
     expect(() => transport.post({ big: 1n })).toThrow()
     expect(port.posted).toEqual([])
+    transport.post({ t: 'x'.repeat(cap - 17) })
+    expect(port.posted).toHaveLength(1)
   })
 
-  it('holds text past 90% of the budget until the budget refills, in order', () => {
+  it('holds messages past 90% of the byte budget until it refills, in order', () => {
     vi.useFakeTimers()
     let now = 0
     const port = new FakePort()
-    // 1000 characters a second, 900 kept for the plugin, a bucket of the cap at the start
+    // 1000 a second, 900 kept for the plugin, a bucket of the cap at the start
     const transport = portTransport(port, limits, () => now)
-    const big = 'x'.repeat(cap - 20)
-    transport.post({ a: big })
+    transport.post({ a: 'x'.repeat(cap - 20) })
     transport.post({ b: 'y'.repeat(880) })
     transport.post({ c: 1 })
     expect(port.posted).toHaveLength(1)
@@ -71,6 +74,41 @@ describe('the SDK\'s worker transport', () => {
     now = 1100
     vi.advanceTimersByTime(600)
     expect(port.posted.map(text => Object.keys(JSON.parse(text as string))[0])).toEqual(['a', 'b', 'c'])
+  })
+
+  it('holds messages past 90% of the message rate in the same queue, so a backlog never leaves in a burst', () => {
+    vi.useFakeTimers()
+    let now = 0
+    const port = new FakePort()
+    const transport = portTransport(port, { ...limits, messagesPerSecond: 10, bytesPerSecond: 1_000_000 }, () => now)
+    for (let i = 0; i < 20; i++) transport.post({ n: i })
+    expect(port.posted).toHaveLength(9)
+    now = 1000
+    vi.advanceTimersByTime(1000)
+    expect(port.posted).toHaveLength(18)
+    now = 2000
+    vi.advanceTimersByTime(1000)
+    expect(port.posted.map(text => (JSON.parse(text as string) as { n: number }).n)).toEqual(Array.from({ length: 20 }, (_, i) => i))
+  })
+
+  it('answers a ping at once, ahead of what waits for the budget, so a busy plugin never reads as unresponsive', () => {
+    vi.useFakeTimers()
+    const port = new FakePort()
+    const transport = portTransport(port, limits, () => 0)
+    transport.post({ a: 'x'.repeat(cap - 20) })
+    transport.post({ b: 'y'.repeat(880) })
+    transport.post({ v: 1, kind: 'pong' })
+    expect(port.posted.map(text => Object.keys(JSON.parse(text as string))[0])).toEqual(['a', 'v'])
+  })
+
+  it('takes lower limits the page sends down, as the relay applies them', () => {
+    const port = new FakePort()
+    const transport = portTransport(port, limits)
+    transport.listen(() => {})
+    port.gets({ v: 1, kind: 'limits', limits: { ...limits, resultBytes: 1 } })
+    expect(() => transport.post({ t: 'x'.repeat(ENVELOPE_ROOM) })).toThrow('too-large')
+    port.gets({ v: 1, kind: 'limits', limits: { ...limits, resultBytes: 0 } })
+    expect(() => transport.post({ t: 'x'.repeat(ENVELOPE_ROOM - 20) })).not.toThrow()
   })
 })
 
@@ -98,7 +136,7 @@ describe('a plugin started in a worker', () => {
   it('stays waiting for a port message without whole positive limits', () => {
     const self = scope()
     runInWorker(definePlugin({ start: () => {} }), self)
-    self.onmessage?.({ data: { v: 1, kind: 'port', limits: { ...limits, textPerSecond: 0 } }, ports: [new FakePort()] })
+    self.onmessage?.({ data: { v: 1, kind: 'port', limits: { ...limits, bytesPerSecond: 0 } }, ports: [new FakePort()] })
     expect(self.onmessage).not.toBeNull()
   })
 })

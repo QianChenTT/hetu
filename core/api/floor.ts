@@ -6,7 +6,7 @@ const MiB = 1024 * 1024
 // per plugin and only the human may raise one, per plugin or for all. A higher value is always the wider one
 export const floorConstants = table({
   messagesPerSecond: 1000, // per port
-  textPerSecond: 4 * MiB, // per port, the characters a worker's messages may hold in a second
+  bytesPerSecond: 4 * MiB, // per port, what a worker's messages may weigh in a second, see weigh in rate.ts
   callsInFlight: 64, // per caller
   bytesInFlight: 32 * MiB, // per caller
   argumentBytes: MiB, // per call

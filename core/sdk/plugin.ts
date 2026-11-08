@@ -54,6 +54,20 @@ export function definePlugin(spec: PluginSpec): Plugin {
 
 type Phase = 'init' | 'starting' | 'ready' | 'failed' | 'stopping' | 'stopped'
 
+// A transport that paces itself, behind the Sender's shape. A post that throws goes to that message's onFail
+function direct(transport: Transport): Pick<Sender, 'send'> {
+  return {
+    send(message, onFail) {
+      try {
+        transport.post(message)
+      } catch (err) {
+        if (onFail === undefined) console.error('hetu: a message could not be sent', err)
+        else onFail(err)
+      }
+    },
+  }
+}
+
 // One half of a plugin on its transport: init, start, ready, the heartbeat and the stop, with the calls inside
 class Half {
   private readonly spec: PluginSpec
@@ -68,9 +82,11 @@ class Half {
 
   constructor(spec: PluginSpec, transport: Transport, options: RunOptions) {
     const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
-    const sender = new Sender(message => transport.post(message), limit('messagesPerSecond'))
+    // Every message the half sends goes through one pacing, lifecycle answers included: the Sender's, or the
+    // transport's own for a worker, whose relay counts bytes as well as messages. Two in a row would let a backlog out
+    // in a burst
+    const sender = transport.paces === true ? direct(transport) : new Sender(message => transport.post(message), limit('messagesPerSecond'))
     this.spec = spec
-    // Every message the half sends goes through the pacing, lifecycle answers included
     this.post = (message, onFail) => sender.send(message, onFail)
     this.calls = new Calls(sender, { callsInFlight: limit('callsInFlight'), callDeadlineMs: limit('callDeadlineMs') })
   }

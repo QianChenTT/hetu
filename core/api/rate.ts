@@ -1,4 +1,5 @@
 import type { FloorConstant } from './floor.ts'
+import { measurePlain } from './measure.ts'
 
 // One way in's messages against its rate and its flood cap, in fixed windows of a second and of floodMs. floodCap is
 // the cap the flood window started with
@@ -41,11 +42,30 @@ export function countMessage(rate: Rate, now: number, limit: (name: FloorConstan
 // Room for the envelope around the largest result
 export const ENVELOPE_ROOM = 64 * 1024
 
-// The longest text a worker may send in one message: its largest result and the envelope around it. A string's length
-// in UTF-16 units is never more than its UTF-8 bytes, so no message within the result cap is cut
-export const textCap = (limit: (name: FloorConstant) => number): number => limit('resultBytes') + ENVELOPE_ROOM
+// The most a worker's message may weigh: its largest result and the envelope around it. JSON text can run longer than
+// the value it holds, six characters for each control character, so a result within resultBytes whose JSON doesn't fit
+// fails in the SDK before it is sent
+export const messageCap = (limit: (name: FloorConstant) => number): number => limit('resultBytes') + ENVELOPE_ROOM
 
-// A bucket of characters, full at the start so one message of the cap goes through at once
+// What a message costs main to read: the larger of its text's length and what the carrier measures of the value, 8 a
+// value and slot and the bytes of each key and string. The measure bounds how many values main builds and the length
+// how much text it scans, so a message can't be cheap on one and costly on the other. Not JSON, not plain data, nested
+// past MAX_DEPTH or past the cap is refused, none of which the SDK sends. The text is parsed here, in the worker host
+// page, so the plugin's own process pays for a message main never reads
+export function weigh(text: string, cap: number): { ok: true, weight: number } | { ok: false } {
+  if (text.length > cap) return { ok: false }
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return { ok: false }
+  }
+  const measured = measurePlain(value, cap)
+  if (!measured.ok) return { ok: false }
+  return { ok: true, weight: Math.max(measured.bytes, text.length) }
+}
+
+// A bucket of weight, full at the start so one message of the cap goes through at once
 export type Budget = { tokens: number, at: number }
 
 export function newBudget(): Budget {
@@ -64,7 +84,7 @@ export function spend(budget: Budget, now: number, size: number, perSecond: numb
 
 // The limits the worker host page's relay applies to a worker's messages, which the page and the SDK in the worker both
 // get with the plugin's start
-export const RELAY_LIMITS = Object.freeze(['messagesPerSecond', 'floodFactor', 'floodMs', 'textPerSecond', 'resultBytes'] as const)
+export const RELAY_LIMITS = Object.freeze(['messagesPerSecond', 'floodFactor', 'floodMs', 'bytesPerSecond', 'resultBytes'] as const)
 export type RelayLimits = Record<typeof RELAY_LIMITS[number], number>
 
 // Each relay limit as a whole positive number, or null

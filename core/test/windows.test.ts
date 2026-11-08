@@ -95,7 +95,7 @@ describe('floor constants', () => {
   it("holds the starting values", () => {
     expect(floorConstants).toEqual({
       messagesPerSecond: 1000,
-      textPerSecond: 4 * MiB,
+      bytesPerSecond: 4 * MiB,
       callsInFlight: 64,
       bytesInFlight: 32 * MiB,
       argumentBytes: MiB,

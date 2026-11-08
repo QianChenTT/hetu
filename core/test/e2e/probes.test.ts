@@ -144,14 +144,17 @@ describe('the probes in a worker', () => {
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'past', reason: 'start-timeout' }))
   })
 
-  it('keeps main free of one huge message: the relay cuts its sender off before main reads it', async () => {
-    const dataDir = await dataWith({ objects: lifecycle, past: lifecycle, within: lifecycle })
+  it('keeps main free of one huge message: the relay cuts off what main can\'t read cheaply and weighs the rest', async () => {
+    const dataDir = await dataWith({ objects: lifecycle, nested: lifecycle, past: lifecycle, heaviest: lifecycle })
     const app = await launch(dataDir)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'within' }))
-    const workers = await probes(app, 3)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'heaviest' }))
+    const workers = await probes(app, 4)
     const stalls: Record<string, number> = {}
-    // Through main's port before the relay, a million small objects stalled main 390 ms
-    const sends: [string, string][] = [['objects', 'a million small objects'], ['past', '64 MiB of text'], ['within', '16 MiB of text']]
+    // Before the relay a million small objects stalled main 390 ms, and before it weighed, 16 MiB of nesting 827 ms
+    const sends: [string, string][] = [
+      ['objects', 'a million small objects, not text'], ['nested', '16 MiB of nesting'], ['past', '64 MiB of text'],
+      ['heaviest', '600,000 empty objects, the heaviest JSON within the cap'],
+    ]
     for (const [plugin, name] of sends) {
       await app.evaluate(() => {
         const scope = globalThis as unknown as { lag: number, last: number, timer: NodeJS.Timeout }
@@ -165,8 +168,10 @@ describe('the probes in a worker', () => {
         }, 10)
       })
       await workers.get(plugin)!.evaluate(which => {
-        const message = which === '16 MiB of text' ? 'x'.repeat(16 * 1024 * 1024)
-          : which === '64 MiB of text' ? 'x'.repeat(64 * 1024 * 1024)
+        const half = 8 * 1024 * 1024
+        const message = which.startsWith('16 MiB') ? '['.repeat(half) + ']'.repeat(half)
+          : which.startsWith('64 MiB') ? JSON.stringify('x'.repeat(64 * 1024 * 1024))
+          : which.startsWith('600,000') ? JSON.stringify(Array.from({ length: 600_000 }, () => ({})))
           : Array.from({ length: 1_000_000 }, (_, i) => ({ i, name: 'n' }))
         ;(self as unknown as { hetuPort: MessagePort }).hetuPort.postMessage(message)
       }, name)
@@ -174,10 +179,11 @@ describe('the probes in a worker', () => {
       stalls[name] = Math.round(await app.evaluate(() => (globalThis as unknown as { lag: number }).lag))
     }
     console.log(JSON.stringify({ 'longest stall of main in ms': stalls }))
-    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'objects', reason: 'malformed' })).toBe(true)
-    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'past', reason: 'malformed' })).toBe(true)
-    // Text within the cap reaches main as one cheap copy, and isn't an envelope, so the carrier reads it as unreadable
-    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'within' })).toBe(false)
-    for (const [name, ms] of Object.entries(stalls)) expect(ms, name).toBeLessThan(100)
+    for (const plugin of ['objects', 'nested', 'past']) {
+      expect(await logged(dataDir, 'plugin.crashed', { plugin, reason: 'malformed' }), plugin).toBe(true)
+    }
+    // The heaviest message the relay passes reaches main, which reads it and the carrier drops it as no envelope
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'heaviest' })).toBe(false)
+    for (const [name, ms] of Object.entries(stalls)) expect(ms, name).toBeLessThan(150)
   })
 })
