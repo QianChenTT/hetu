@@ -61,3 +61,21 @@ export function spend(budget: Budget, now: number, size: number, perSecond: numb
   budget.tokens -= size
   return true
 }
+
+// The limits the worker host page's relay applies to a worker's messages, which the page and the SDK in the worker both
+// get with the plugin's start
+export const RELAY_LIMITS = Object.freeze(['messagesPerSecond', 'floodFactor', 'floodMs', 'textPerSecond', 'resultBytes'] as const)
+export type RelayLimits = Record<typeof RELAY_LIMITS[number], number>
+
+// Each relay limit as a whole positive number, or null
+export function relayLimitsOf(value: unknown): RelayLimits | null {
+  if (typeof value !== 'object' || value === null) return null
+  const given = value as Record<string, unknown>
+  const out: Partial<RelayLimits> = {}
+  for (const name of RELAY_LIMITS) {
+    const limit = given[name]
+    if (!Number.isSafeInteger(limit) || (limit as number) <= 0) return null
+    out[name] = limit as number
+  }
+  return out as RelayLimits
+}

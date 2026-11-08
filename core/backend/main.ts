@@ -2,6 +2,7 @@ import path from 'node:path'
 import { app, BrowserWindow, dialog, MessageChannelMain, protocol, session, type Session } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
+import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
 import type { Loader } from './loader/loader.ts'
 import { beforeReady } from './runtime/before-ready.ts'
@@ -19,8 +20,6 @@ const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
 // How long the core waits for the worker host page before it starts plugins anyway
 const RENDERER_READY_MS = 10_000
-// The limits the page's relay applies before a worker's message reaches main
-const RELAY_LIMITS: readonly FloorConstant[] = ['messagesPerSecond', 'floodFactor', 'floodMs', 'textPerSecond', 'resultBytes']
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 

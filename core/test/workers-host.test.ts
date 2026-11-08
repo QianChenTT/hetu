@@ -107,7 +107,7 @@ describe('the worker host page', () => {
 
   it('hands the worker its end of a channel the page made, never main\'s port', () => {
     const { worker, theirs, main } = running()
-    expect(worker.posted).toEqual([{ message: { v: 1, kind: 'port' }, transfer: [theirs] }])
+    expect(worker.posted).toEqual([{ message: { v: 1, kind: 'port', limits }, transfer: [theirs] }])
     expect(worker.posted[0].transfer).not.toContain(main)
   })
 

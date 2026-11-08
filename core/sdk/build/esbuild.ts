@@ -24,12 +24,36 @@ export const refuseNodeImports: Plugin = {
   },
 }
 
+const WORKER = 'hetu-worker:'
+const sdkWorker = path.join(import.meta.dirname, '..', 'worker.ts')
+
+// A worker entry is the plugin's own module with runInWorker around it, so the bundle starts itself on the port the
+// worker host page hands it and the plugin's code only exports definePlugin
+const runsInWorker = (root: string): Plugin => ({
+  name: 'hetu-runs-in-worker',
+  setup(builder) {
+    builder.onResolve({ filter: /^hetu-worker:/ }, args => ({
+      path: path.resolve(root, args.path.slice(WORKER.length)),
+      namespace: 'hetu-worker',
+    }))
+    builder.onLoad({ filter: /.*/, namespace: 'hetu-worker' }, args => ({
+      contents: `import plugin from ${JSON.stringify(args.path)}\nimport { runInWorker } from ${JSON.stringify(sdkWorker)}\nrunInWorker(plugin)\n`,
+      resolveDir: root,
+      loader: 'ts',
+    }))
+  },
+})
+
 // One classic script per entry, each output path from its source, both relative to the plugin's folder. A worker
-// starts from a data: URL and a view from its own token path, so nothing is split or loaded later
-export function bundleOptions(root: string, entries: Record<string, string>): BuildOptions {
+// starts from a data: URL and a view from its own token path, so nothing is split or loaded later. Each output named in
+// workers starts itself in its worker
+export function bundleOptions(root: string, entries: Record<string, string>, workers: readonly string[] = []): BuildOptions {
   return {
     absWorkingDir: root,
-    entryPoints: Object.entries(entries).map(([output, source]) => ({ in: source, out: output.replace(/\.js$/, '') })),
+    entryPoints: Object.entries(entries).map(([output, source]) => ({
+      in: workers.includes(output) ? `${WORKER}${source}` : source,
+      out: output.replace(/\.js$/, ''),
+    })),
     outdir: root,
     bundle: true,
     format: 'iife',
@@ -39,15 +63,18 @@ export function bundleOptions(root: string, entries: Record<string, string>): Bu
     charset: 'utf8',
     metafile: true,
     logLevel: 'silent',
-    plugins: [refuseNodeImports],
+    plugins: [runsInWorker(root), refuseNodeImports],
   }
 }
 
 export type BuiltOutput = { path: string, text: string, bytes: number, inputs: string[] }
 
 // Builds each entry and checks each bundle with checkBundle. Throws with every problem found, writes nothing then
-export async function buildPlugin(root: string, options: { entries: Record<string, string>, write?: boolean }): Promise<BuiltOutput[]> {
-  const result = await build({ ...bundleOptions(root, options.entries), write: false })
+export async function buildPlugin(
+  root: string,
+  options: { entries: Record<string, string>, workers?: readonly string[], write?: boolean },
+): Promise<BuiltOutput[]> {
+  const result = await build({ ...bundleOptions(root, options.entries, options.workers), write: false })
   const outputs = (result.outputFiles ?? []).map(file => {
     const relative = path.relative(root, file.path).split(path.sep).join('/')
     const meta = Object.entries(result.metafile?.outputs ?? {}).find(([name]) => path.resolve(root, name) === file.path)?.[1]

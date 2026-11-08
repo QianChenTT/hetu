@@ -1,6 +1,6 @@
 // The worker host page's logic, kept apart from the DOM so it runs in tests. The page hands it real workers and ports
 import type { FloorConstant } from '../../api/floor.ts'
-import { type Budget, countMessage, newBudget, newRate, type Rate, spend, textCap } from '../../api/rate.ts'
+import { type Budget, countMessage, newBudget, newRate, type Rate, type RelayLimits, relayLimitsOf, spend, textCap } from '../../api/rate.ts'
 
 export type WorkerLike = {
   postMessage(message: unknown, transfer: unknown[]): void
@@ -17,8 +17,7 @@ export type PortLike = {
 }
 
 // The plugin's limits as the carrier applies them, sent with its start
-export type Limits = { messagesPerSecond: number, floodFactor: number, floodMs: number, textPerSecond: number, resultBytes: number }
-const LIMIT_NAMES = ['messagesPerSecond', 'floodFactor', 'floodMs', 'textPerSecond', 'resultBytes'] as const
+export type Limits = RelayLimits
 
 export type Report =
   | { kind: 'errors' | 'dropped', id: string, incarnation: number, count: number }
@@ -57,22 +56,10 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function limitsOf(value: unknown): Limits | null {
-  if (typeof value !== 'object' || value === null) return null
-  const given = value as Record<string, unknown>
-  const out: Partial<Limits> = {}
-  for (const name of LIMIT_NAMES) {
-    const limit = given[name]
-    if (!Number.isSafeInteger(limit) || (limit as number) <= 0) return null
-    out[name] = limit as number
-  }
-  return out as Limits
-}
-
 function startOf(value: unknown): { id: string, incarnation: number, code: Uint8Array, limits: Limits } | null {
   if (typeof value !== 'object' || value === null) return null
   const { id, incarnation, code, limits } = value as Record<string, unknown>
-  const checked = limitsOf(limits)
+  const checked = relayLimitsOf(limits)
   if (typeof id !== 'string' || !Number.isSafeInteger(incarnation) || (incarnation as number) <= 0) return null
   if (!(code instanceof Uint8Array) || checked === null) return null
   return { id, incarnation: incarnation as number, code, limits: checked }
@@ -129,7 +116,7 @@ export class WorkerHost {
       if (this.running.get(key(run.id, run.incarnation)) === run) own.postMessage(event.data)
     }
     this.running.set(key(start.id, start.incarnation), run)
-    worker.postMessage({ v: 1, kind: 'port' }, [theirs])
+    worker.postMessage({ v: 1, kind: 'port', limits: start.limits }, [theirs])
   }
 
   terminate(id: unknown, incarnation: unknown): void {

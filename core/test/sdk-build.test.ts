@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
 
@@ -40,6 +40,26 @@ describe('building a plugin', () => {
     const context: { ran?: number } = {}
     vm.runInNewContext(output.text, context)
     expect(context.ran).toBe(42)
+  })
+
+  it('starts each worker entry on the port its page hands it, so a plugin only exports definePlugin', async () => {
+    const sdk = path.join(import.meta.dirname, '..', 'sdk', 'index.ts').split(path.sep).join('/')
+    const dir = await folder({
+      'hetu-plugin.json': manifest(),
+      'src/worker.ts': `import { definePlugin } from '${sdk}'
+export default definePlugin({ start() { (globalThis as { started?: boolean }).started = true } })
+`,
+    })
+    const [output] = await buildPlugin(dir, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+    const posted: string[] = []
+    const port = { onmessage: null as ((event: { data: unknown }) => void) | null, postMessage: (text: string) => posted.push(text) }
+    const context: Record<string, unknown> = { onmessage: null, performance, setTimeout, clearTimeout, console, queueMicrotask, AbortController }
+    vm.runInNewContext(output.text, context)
+    const limits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, textPerSecond: 1000, resultBytes: 100 }
+    ;(context.onmessage as (event: unknown) => void)({ data: { v: 1, kind: 'port', limits }, ports: [port] })
+    port.onmessage?.({ data: JSON.stringify({ v: 1, kind: 'init', id: 'sample', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null }) })
+    await vi.waitFor(() => expect(posted).toContain('{"v":1,"kind":"ready"}'))
+    expect(context.started).toBe(true)
   })
 
   it('refuses a worker that imports a Node built-in, through a dependency too', async () => {
@@ -104,7 +124,7 @@ describe('checking a manifest', () => {
 
 describe('search as it ships', () => {
   it('builds into one script under the data: URL cap with no zod and no Node', async () => {
-    const outputs = await buildPlugin(search, { entries: { 'dist/worker.js': 'src/worker.ts' }, write: false })
+    const outputs = await buildPlugin(search, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
     expect(outputs).toHaveLength(1)
     expect(outputs[0].bytes).toBeLessThan(1.5 * 1024 * 1024)
     expect(outputs[0].inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])
