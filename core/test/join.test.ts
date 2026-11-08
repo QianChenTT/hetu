@@ -3,9 +3,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, AuditHandle } from '../api/slots.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
-import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
+import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
+import { createGate } from '../../plugins/gate/src/gate.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
@@ -33,6 +34,8 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 async function joined(options: {
   install?: Record<string, Listing>
   folder?: Record<string, Files>
+  // More for a folder plugin's approved entry, its grants and switches
+  entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
   wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>
@@ -47,7 +50,7 @@ async function joined(options: {
   for (const [id, files] of Object.entries(options.folder ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, files)
-    await store.writePlugin(id, await entryFor(root))
+    await store.writePlugin(id, await entryFor(root, options.entries?.[id]))
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   options.before?.(booted)
@@ -500,5 +503,66 @@ describe('a guard down through the joined core', () => {
     const reply = await parts.runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
     expect(luoshu.performed).toEqual([])
+  })
+})
+
+// The loader's StateView into the gate plugin as it ships, for a folder plugin's calls
+describe('the gate plugin on the joined core', () => {
+  const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
+  const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
+
+  async function gated(entry: Partial<Plugin> = {}) {
+    const luoshu = new FakeLuoshu()
+    luoshu.files.set('notes/a.md', 'a note')
+    const parts = await joined({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read, write] })) },
+      entries: { alpha: { granted: [read, write], ...entry } },
+      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu } } },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, luoshu }
+  }
+
+  it('decides a plugin\'s calls on the grants in its entry, and an item the human switches off answers switched-off', async () => {
+    const { loader, runtime } = await gated()
+    const alpha = runtime.half('alpha')
+    expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
+    expect(code((await alpha.ask('luoshu.read', { path: 'journal/a.md' }))!)).toBe('not-granted')
+    await loader.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
+    expect(code((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('switched-off')
+    expect((await alpha.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))?.ok).toBe(true)
+  })
+
+  it('keeps an item switched off in the entry off from the first StateView', async () => {
+    const { runtime } = await gated({ off: [read] })
+    expect(code((await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('switched-off')
+  })
+
+  it('fails the gate when it throws on a later StateView, refusing calls with power from then on', async () => {
+    const gate = createGate()
+    const thrown = { on: false }
+    const real = gate.stateChanged.bind(gate)
+    gate.stateChanged = view => {
+      if (thrown.on) throw new Error('a view it can\'t take')
+      real(view)
+    }
+    const luoshu = new FakeLuoshu()
+    luoshu.files.set('notes/a.md', 'a note')
+    const parts = await joined({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read] })) },
+      entries: { alpha: { granted: [read] } },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    expect((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
+    thrown.on = true
+    await parts.loader.apply({ kind: 'confirmOff', on: true })
+    expect(parts.loader.slot('gate')).toBe('failed')
+    expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
+    expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
   })
 })
