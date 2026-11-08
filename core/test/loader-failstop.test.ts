@@ -171,6 +171,65 @@ describe('a security control that fails while hetu runs', () => {
   })
 })
 
+// Checkpoint B
+describe('the restart marker, after the review', () => {
+  it('stops hetu on a failure of any control once the run before restarted, so two controls can\u2019t take turns', async () => {
+    const failures: Failure[] = []
+    const gate = allowAll()
+    const made = await harness({
+      install: install(),
+      behave: { gate: { exports: { gate } } },
+      loader: { onFailure: failure => { failures.push(failure) } },
+      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log'),
+    })
+    await made.loader.start()
+    gate.throws = true
+    await made.loader.apply({ kind: 'confirmOff', on: true })
+    await until(() => failures.length > 0)
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'gate', why: 'failed', reason: 'state-changed', again: true } }])
+  })
+
+  it('stops hetu instead of starting it again when the marker can\u2019t be written', async () => {
+    const failures: Failure[] = []
+    const made = await harness({ install: install(), behave: { gate: working() }, loader: { onFailure: failure => { failures.push(failure) } } })
+    await made.loader.start()
+    // A folder where the marker goes makes its write fail
+    await mkdir(path.join(made.dataDir, 'failed-once'), { recursive: true })
+    await writeFile(path.join(made.dataDir, 'failed-once', 'x'), '')
+    made.loader.controlFailed('log', 'log-failing')
+    await until(() => failures.length > 0)
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }])
+  })
+
+  it('makes shutdown wait for its write', async () => {
+    const { made } = await (async () => {
+      const made = await harness({ install: install(), behave: { gate: working() }, loader: { onFailure: () => {} } })
+      await made.loader.start()
+      return { made }
+    })()
+    made.loader.controlFailed('log', 'log-failing')
+    await made.loader.shutdown()
+    expect(await readFile(path.join(made.dataDir, 'failed-once'), 'utf8')).toBe('log')
+  })
+
+  it('is cleared by a clean Quit only once a write under way has landed', async () => {
+    const made = await harness({ install: install(), behave: { gate: working() }, loader: { onFailure: () => {} } })
+    await made.loader.start()
+    made.loader.controlFailed('log', 'log-failing')
+    await made.loader.cleanQuit()
+    expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+  })
+
+  it('ignores a failure told before the start finished, so the carrier can tell it again later', async () => {
+    const failures: Failure[] = []
+    const made = await harness({ install: install(), behave: { gate: working() }, loader: { onFailure: failure => { failures.push(failure) } } })
+    expect(made.loader.controlFailed('log', 'log-failing')).toBe(false)
+    await made.loader.start()
+    expect(made.loader.controlFailed('log', 'log-failing')).toBe(true)
+    expect(made.loader.controlFailed('log', 'log-failing')).toBe(false)
+  })
+})
+
 describe('the restart marker', () => {
   it('is cleared by a clean Quit', async () => {
     const made = await harness({ install: install(), behave: { gate: working() } })

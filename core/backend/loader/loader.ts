@@ -513,7 +513,7 @@ ${capabilityKey(change.capability)}`)
   // from the install while the list names it, or failed. An install list that can't be read counts as tampered, since
   // it ships inside hetu's own files. One the human switched off is no failure
   private controlFailure(): StoppedMode | null {
-    const again = (control: string) => this.failedBefore === control
+    const again = (_control: string) => this.failedBefore !== null
     if (this.listResult === 'invalid') return { control: 'install', why: 'tampered', reason: null, again: again('install') }
     for (const id of securityControls(Object.keys(this.install?.plugins ?? {}))) {
       const k = this.known.get(id)
@@ -535,24 +535,33 @@ ${capabilityKey(change.capability)}`)
   }
 
   // A security control or the core's log failed while hetu ran. The first time, the restart marker goes down and the
-  // runtime quits with an error to start hetu again. When the run before already restarted for the same control, hetu
-  // stops in the stopped mode instead. One failure is enough, the ones after it change nothing
-  controlFailed(control: string, reason: string): void {
-    if (this.closing || this.phase !== 'all' || this.failing) return
+  // runtime quits with an error to start hetu again. When the run before already restarted for a failure, of this
+  // control or another, hetu stops in the stopped mode instead, so two controls failing in turns can't restart it
+  // forever. A marker that can't be written stops it too, since nothing would then bound the restarts. One failure is
+  // enough, the ones after it change nothing. Answers whether it took the failure, so a failure told while hetu starts
+  // or stops can be told again
+  controlFailed(control: string, reason: string): boolean {
+    if (this.closing || this.phase !== 'all' || this.failing) return false
     this.failing = true
     this.note('core.failed', { control, reason })
-    if (this.failedBefore === control) {
-      const mode: StoppedMode = { control, why: 'failed', reason, again: true }
+    const stop = (again: boolean) => {
+      const mode: StoppedMode = { control, why: 'failed', reason, again }
       void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode }))
-      return
     }
-    // Shutdown waits for the write like any marker's, so a Quit that follows can't cut it off
-    const work = writeFailedOnce(this.dataDir, control).catch(() => {})
-    this.markerWork.add(work)
-    void work.finally(() => {
-      this.markerWork.delete(work)
-      this.tell({ action: 'relaunch', control, reason })
+    if (this.failedBefore !== null) {
+      stop(true)
+      return true
+    }
+    // Shutdown and a clean Quit wait for the write like any marker's, so neither can cut it off or clear it first
+    const work = writeFailedOnce(this.dataDir, control).then(() => true, () => false)
+    const tracked = work.then(() => {})
+    this.markerWork.add(tracked)
+    void work.then(written => {
+      this.markerWork.delete(tracked)
+      if (written) this.tell({ action: 'relaunch', control, reason })
+      else stop(false)
     })
+    return true
   }
 
   private tell(failure: Failure): void {
@@ -563,6 +572,7 @@ ${capabilityKey(change.capability)}`)
 
   // The human quit hetu: nothing failed, so the next failure restarts hetu again
   async cleanQuit(): Promise<void> {
+    while (this.markerWork.size > 0) await Promise.all(this.markerWork)
     await clearFailedOnce(this.dataDir).catch(() => {})
   }
 

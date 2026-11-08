@@ -1288,12 +1288,12 @@ export class Carrier {
     this.checkLog()
   }
 
-  // Tells the loader once that the log failed, as records queue and once a second, whatever the gate's state
+  // Tells the loader that the log failed, as records queue and once a second, whatever the gate's state, until the
+  // loader takes it
   private checkLog(): void {
     if (this.toldLog || this.muted() || !this.logFailing()) return
-    this.toldLog = true
     try {
-      this.options.logFailed?.()
+      if (this.options.logFailed?.() !== false) this.toldLog = true
     } catch {}
   }
 

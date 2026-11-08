@@ -319,6 +319,8 @@ describe('recording off and on', () => {
     }
     expect(await made.loader.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
     expect(recording).toBe(true)
+    // Only recording going off drains
+    expect(made.link.timeline).not.toContain('drain')
   })
 })
 

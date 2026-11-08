@@ -845,7 +845,7 @@ describe('a failing log', () => {
   // Step 14: a log that fails stops hetu. The carrier tells the loader once, the loader quits and starts hetu again
   it('tells the loader once that the log failed, with the gate on as with it off', async () => {
     const told: number[] = []
-    const { at, connect } = failing({ logFailed: () => { told.push(1) } })
+    const { at, connect } = failing({ logFailed: () => { told.push(1); return true } })
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(29_999)
@@ -857,9 +857,37 @@ describe('a failing log', () => {
     expect(told).toEqual([1])
   })
 
+  // Once a second too, so a log that failed while no call comes in is still told
+  it('tells the loader from its once a second look with no call coming in', async () => {
+    const told: number[] = []
+    let now = 0
+    const parts = harness({ clock: () => now, logFailed: () => { told.push(1); return true } })
+    parts.log.failing = true
+    const search = parts.connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    now = 30_000
+    await tick(1300)
+    expect(told).toEqual([1])
+  })
+
+  // The loader may not take it, while it starts or stops, so the carrier tells it again until it does
+  it('tells the loader again until it takes it', async () => {
+    let taken = false
+    const told: number[] = []
+    const { at, connect } = failing({ logFailed: () => { told.push(1); return taken } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(30_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    taken = true
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    await search.ask('storage.set', { key: 'd', value: 4 })
+    expect(told).toEqual([1, 1])
+  })
+
   it('tells nothing while the human turned recording off', async () => {
     const told: number[] = []
-    const { at, connect, loader } = failing({ logFailed: () => { told.push(1) } })
+    const { at, connect, loader } = failing({ logFailed: () => { told.push(1); return true } })
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     loader.nothing = true
