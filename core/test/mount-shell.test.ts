@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CoreStatus } from '../api/actions.ts'
+import { CoreLink } from '../frontend/mount/link.ts'
+import { settle } from './mount-fakes.ts'
 import { bannerLines, noticeText, Shell, type Notice } from '../frontend/mount/shell.ts'
 
 const calm: CoreStatus = {
@@ -66,7 +68,9 @@ describe('the shell', () => {
   function started(now = { at: 0 }) {
     const made = bridge()
     const drawn: { lines: string[], notices: Notice[] }[] = []
-    const shell = new Shell(made.bridge, (lines, notices) => drawn.push({ lines, notices }), () => now.at)
+    const link = new CoreLink(made.bridge)
+    link.start()
+    const shell = new Shell(link, (lines, notices) => drawn.push({ lines, notices }), () => now.at)
     shell.start()
     return { ...made, drawn, shell, now }
   }
@@ -77,6 +81,7 @@ describe('the shell', () => {
       ['events.subscribe', { topics: ['core.status', 'core.quitting'] }], ['core.status', undefined],
     ])
     hears({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: { ...calm, luoshuPicked: false } })
+    await settle()
     expect(drawn).toEqual([{ lines: ['pick a luoshu folder'], notices: [] }])
     hears({ v: 1, kind: 'event', topic: 'core.status', seq: 7 })
     expect(sent.slice(2)).toEqual([{ v: 1, kind: 'ack', seq: 7 }, expect.objectContaining({ kind: 'call', action: 'core.status' })])
@@ -92,17 +97,19 @@ describe('the shell', () => {
     expect(drawn).toEqual([])
   })
 
-  it('draws a notice for each request waiting', () => {
+  it('draws a notice for each request waiting', async () => {
     const { sent, drawn, hears } = started()
     hears({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: { ...calm, pending: [{ id: 'r1', kind: 'item.on', plugin: 'search' }] } })
+    await settle()
     expect(drawn[0].notices).toEqual([{ id: 'r1', text: 'The plugin "search" asks to use something for the first time' }])
   })
 
   // A plugin can time its call under a click, so the click that lands as the notice appears opens nothing
-  it('opens the trusted window from a notice only once the notice has been on screen for the input delay', () => {
+  it('opens the trusted window from a notice only once the notice has been on screen for the input delay', async () => {
     const { sent, hears, shell, now } = started()
     now.at = 5000
     hears({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: { ...calm, pending: [{ id: 'r1', kind: 'item.on', plugin: 'search' }] } })
+    await settle()
     now.at = 5999
     shell.open('r1')
     expect(sent.slice(2)).toEqual([])

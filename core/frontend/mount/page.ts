@@ -1,4 +1,5 @@
-import { type Bridge, type Notice, Shell } from './shell.ts'
+import { type Bridge, CoreLink } from './link.ts'
+import { type Notice, Shell } from './shell.ts'
 
 // The preload's bridge, there only in the window's top frame
 const bridge = (window as unknown as { hetu?: Bridge }).hetu
@@ -27,7 +28,9 @@ function draw(shell: Shell, lines: string[], notices: Notice[]): void {
 }
 
 if (bridge !== undefined) {
-  const shell: Shell = new Shell(bridge, (lines, notices) => draw(shell, lines, notices))
+  const link = new CoreLink(bridge)
+  link.start()
+  const shell: Shell = new Shell(link, (lines, notices) => draw(shell, lines, notices))
   document.getElementById('security')?.addEventListener('click', () => shell.open())
   shell.start()
 }
