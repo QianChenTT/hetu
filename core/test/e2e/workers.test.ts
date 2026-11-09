@@ -44,7 +44,8 @@ describe('sandboxed plugins as workers', () => {
       .map(window => window.webContents.getOSProcessId()))
     expect(new Set(pids).size).toBe(2)
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=one')?.webContents.forcefullyCrashRenderer()
+      const contents = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=one')!.webContents
+      process.kill(contents.getOSProcessId(), 'SIGKILL')
     })
     await until(() => logged(dataDir, 'renderer.gone', { plugins: 'one' }))
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -131,8 +132,11 @@ describe('sandboxed plugins as workers', () => {
     const dataDir = await dataWith({ hello: lifecycle() })
     const app = await launch(dataDir)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'hello' }))
+    // forcefullyCrashRenderer does nothing on Linux in Electron 45.2.3, so the renderer's process is ended as a crash
+    // would end it
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=hello')?.webContents.forcefullyCrashRenderer()
+      const contents = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=hello')!.webContents
+      process.kill(contents.getOSProcessId(), 'SIGKILL')
     })
     await until(() => logged(dataDir, 'renderer.gone', { plugins: 'hello' }))
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'hello', reason: 'closed' }))

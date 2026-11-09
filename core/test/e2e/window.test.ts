@@ -42,7 +42,9 @@ describe('a window\'s way in', () => {
     const answer = await app.evaluate(async ({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://editor/')!.webContents
       const gone = new Promise(resolve => contents.once('render-process-gone', resolve))
-      contents.forcefullyCrashRenderer()
+      // forcefullyCrashRenderer does nothing on Linux in Electron 45.2.3, so the renderer's process is ended as a crash
+      // would end it, which every system reports as gone
+      process.kill(contents.getOSProcessId(), 'SIGKILL')
       await gone
       const loaded = new Promise(resolve => contents.once('did-finish-load', () => resolve(null)))
       contents.reload()
