@@ -206,6 +206,11 @@ export class UiPort {
     if (this.views.owner(surface) === owner) this.options.send(owner, { topic: 'view.resized', instance: surface, node, sizes })
   }
 
+  // What a view's frame sent, to the frame's owner's worker
+  frameMessage(owner: string, instance: string, data: unknown): void {
+    if (this.views.owner(instance) === owner && this.viewers.has(owner)) this.options.send(owner, { topic: 'view.message', instance, data })
+  }
+
   // A view the human dragged onto one of the layout's zones, x and y where in the zone from 0 to 1
   viewDropped(instance: string, zone: string, x: number, y: number): void {
     if (this.current !== null && this.views.get(instance) !== null) this.options.send(this.current, { topic: 'layout.drop', instance, zone, x, y })

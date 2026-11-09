@@ -9,6 +9,7 @@ import { Layers } from './layers.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { drawMenu, type MenuData } from './menu.ts'
 import { type NoteNotice, Notes } from './notes.ts'
+import { Frames } from './frames.ts'
 import { filterNames, listNames } from './palette.ts'
 import { RawSource } from './raw.ts'
 import { Settings } from './settings.ts'
@@ -90,6 +91,7 @@ function start(bridge: Bridge): void {
   let notes: Notes | null = null
   let drawer: Drawer | null = null
   let layers: Layers | null = null
+  let frames: Frames | null = null
   const views = new EditorViews(element('editors'), {
     created: instance => drawer?.opened(instance),
     changed: (instance, changes, remote, hid) => {
@@ -126,7 +128,7 @@ function start(bridge: Bridge): void {
           layers?.changed()
           drawMenuSoon()
         },
-        post: () => 'unavailable',
+        post: (owner, instance, data) => frames?.post(owner, instance, data) ?? 'unavailable',
         open: path => openNote(path),
       },
     },
@@ -148,12 +150,17 @@ function start(bridge: Bridge): void {
     iconUrl: src => `hetu://views/icon/${owner}/${src}`,
     scrolled: () => listScrolled(owner, surface),
   })
+  const theFrames = new Frames(link, element('editors'), (owner, instance, data) => ui.frameMessage(owner, instance, data), instance => {
+    const held = ui.views.get(instance)
+    return held === null || held.down
+  })
+  frames = theFrames
   const theLayers = new Layers(
     { stage, base: element('base'), lifted: element('editors'), overlay: element('overlay'), empty: element('empty') },
     {
       ui,
       editors: views,
-      frames: null,
+      frames: theFrames,
       titles: {
         view: id => {
           const held = ui.views.get(id)

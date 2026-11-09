@@ -156,6 +156,16 @@ describe('views on the drawer port', () => {
     expect(posted).toEqual([['kanban', 'v1', { cards: 2 }]])
   })
 
+  it('hands what a frame sent to its own owner\'s worker only', async () => {
+    const { drawer } = started({ kanban: viewer, files: viewer })
+    const board = await connected(drawer, 'kanban')
+    const tree = await connected(drawer, 'files')
+    drawer.ui.frameMessage('kanban', 'v1', { moved: 'a' })
+    drawer.ui.frameMessage('files', 'v1', { stolen: true })
+    expect(board.events('view.message')).toEqual([{ v: 1, kind: 'event', topic: 'view.message', instance: 'v1', data: { moved: 'a' } }])
+    expect(tree.events('view.message')).toEqual([])
+  })
+
   it('drops everything a plugin drew and puts its views down when its port ends', async () => {
     const { drawer } = started({ kanban: viewer })
     await connected(drawer, 'kanban')

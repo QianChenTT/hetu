@@ -6,6 +6,7 @@
   "exports": {
     ".": "./index.ts",
     "./testing": "./testing/index.ts",
+    "./frame": "./frame.ts",
     "./esbuild": "./build/esbuild.ts",
     "./check-manifest": "./build/check-manifest.ts"
   },
