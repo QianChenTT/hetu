@@ -14,7 +14,8 @@ export type Role = keyof typeof ROLES
 // Without the persist: prefix a partition lives in memory, so nothing a page stores reaches the disk
 export const partition = (role: Role): string => `hetu-${role}`
 
-// The pages folder each host serves from. views and content have none until their pages exist
+// The pages folder each host serves from. views is served from what main holds of each running plugin, content has
+// none until its pages exist
 const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'mount', trusted: 'trusted', workers: 'workers' })
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
@@ -34,6 +35,15 @@ const CSP = [
   "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self'", "font-src 'self'", "base-uri 'none'",
   "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ')
+
+// The editor page frames plugins' views and shows their icons, both from the views host
+const EDITOR_CSP = [
+  "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' hetu://views", "font-src 'self'",
+  'frame-src hetu://views', "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+].join('; ')
+
+// What main serves the views host from, faked in the tests
+export type ViewsHost = { serve(url: string): { bytes: Uint8Array, type: string, csp: string } | null }
 
 // The worker host page starts workers only from data: URLs, which take a copy of this policy: no eval, no network,
 // WebAssembly allowed
@@ -59,11 +69,18 @@ export function allowed(role: Role, url: string): boolean {
 
 const answer = (status: number) => new Response(null, { status })
 
-// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type
-export async function serve(role: Role, request: { url: string, method: string }, root: string): Promise<Response> {
+// A role's protocol handler: its own hosts' pages from the app, each with the CSP and its type, and the views host from
+// the bytes main holds
+export async function serve(role: Role, request: { url: string, method: string }, root: string, views?: ViewsHost): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') return answer(405)
   const at = parsed(request.url)
   if (at === null || !allowed(role, request.url)) return answer(404)
+  if (at.hostname === 'views') {
+    const found = views?.serve(request.url) ?? null
+    if (found === null) return answer(404)
+    const headers = { 'content-type': found.type, 'content-security-policy': found.csp, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }
+    return new Response(request.method === 'HEAD' ? null : new Uint8Array(found.bytes), { status: 200, headers })
+  }
   const folder = PAGES[at.hostname]
   const match = SERVABLE.exec(at.pathname)
   if (folder === undefined || match === null) return answer(404)
@@ -77,7 +94,7 @@ export async function serve(role: Role, request: { url: string, method: string }
   }
   const headers = {
     'content-type': TYPES[match[1] ?? 'html'],
-    'content-security-policy': at.hostname === 'workers' ? WORKERS_CSP : CSP,
+    'content-security-policy': at.hostname === 'workers' ? WORKERS_CSP : at.hostname === 'editor' ? EDITOR_CSP : CSP,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   }
@@ -86,7 +103,7 @@ export async function serve(role: Role, request: { url: string, method: string }
 
 // Denies every permission and device, every download and every request but the role's own hosts. The default session
 // gets role null, so nothing loads in it
-export function lockDown(ses: Session, role: Role | null, root: string): void {
+export function lockDown(ses: Session, role: Role | null, root: string, views?: ViewsHost): void {
   ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)
   ses.setDevicePermissionHandler(() => false)
@@ -94,5 +111,5 @@ export function lockDown(ses: Session, role: Role | null, root: string): void {
   ses.setSpellCheckerEnabled(false)
   ses.on('will-download', event => event.preventDefault())
   ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: role === null || !allowed(role, details.url) }))
-  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root))
+  if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, role === 'editor' ? views : undefined))
 }

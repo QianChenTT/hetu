@@ -304,6 +304,12 @@ export class Carrier {
     this.lane.write(event, fields)
   }
 
+  // A floor record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
+  // frame of its that navigated
+  floorCoalesced(event: string, fields: Record<string, Field>): void {
+    if (!this.closed) this.coalesced.hit(event, fields)
+  }
+
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
   // hears it while its slot is on. The page counts a second's worth before it reports
   sample(sample: Sample): void {
