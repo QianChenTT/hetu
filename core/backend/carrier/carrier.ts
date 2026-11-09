@@ -892,7 +892,7 @@ export class Carrier {
   }
 
   // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
-  // anything about the note: read it, write it and the ui items it holds, from the gate with the plugin as the caller at
+  // anything about the note: read it, write it, list its name and the ui items it holds, from the gate with the plugin as the caller at
   // the canonical stage. A write whose item still asks at first use counts as none, since the bridge raises no prompt.
   // Everything with the gate off while a record can still land, policy-down while it starts or is down, as for any call
   private reach(args: unknown): Outcome {
@@ -903,7 +903,7 @@ export class Carrier {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
       const verbs = capabilityTypes.filter(type => type.startsWith('ui.'))
-      return { ok: true, result: { read: path !== undefined, write: path !== undefined, verbs } }
+      return { ok: true, result: { read: path !== undefined, write: path !== undefined, list: path !== undefined, verbs } }
     }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -911,13 +911,14 @@ export class Carrier {
     try {
       const held = gate.verbs(plugin, 'editor')
       const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-      if (path === undefined) return { ok: true, result: { read: false, write: false, verbs } }
+      if (path === undefined) return { ok: true, result: { read: false, write: false, list: false, verbs } }
       const read = gate.canRead(caller, path) === true
+      const list = gate.canList(caller, path) === true
       const decision = gate.decide(frozen({
         stage: 'canonical', caller, action: 'luoshu.write', capability: 'luoshu.write', scope: frozen({ paths: [path] }),
       }))
       const write = 'allow' in decision && decision.allow === true
-      return { ok: true, result: { read, write, verbs } }
+      return { ok: true, result: { read, write, list, verbs } }
     } catch {
       this.fault('gate', 'reach')
       return no('policy-down')

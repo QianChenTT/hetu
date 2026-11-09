@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
+import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
 import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
@@ -378,6 +378,7 @@ ${capabilityKey(change.capability)}`)
   // guard role
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
+    if (call.action === 'core.views') return this.views()
     const args = (call.args ?? {}) as Record<string, unknown>
     switch (call.action) {
       case 'security.request':
@@ -412,6 +413,23 @@ ${capabilityKey(change.capability)}`)
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  // Each plugin that declares views or a theme, whatever its state, so the views menu lists a view whose plugin is down.
+  // Not one whose bytes failed their check or whose manifest is refused, since its text can't be trusted
+  private views(): ActionResults['core.views'] {
+    const plugins: CoreViewsPlugin[] = []
+    for (const k of this.known.values()) {
+      const manifest = k.read.manifest
+      if (manifest === null || k.read.problem !== null || k.state === 'refused') continue
+      const views = manifest.views ?? {}
+      if (Object.keys(views).length === 0 && manifest.theme === undefined) continue
+      plugins.push({
+        plugin: k.id, name: manifest.name, running: k.state === 'ready', worker: manifest.entries.worker !== undefined,
+        views: { ...views }, theme: manifest.theme ?? null,
+      })
+    }
+    return { plugins }
   }
 
   private stoppedByHuman(k: Known): boolean {
@@ -1328,7 +1346,8 @@ ${capabilityKey(change.capability)}`)
       live.halves.set('worker', run)
       const code = k.read.files.find(file => file.path === worker)!.bytes
       const drawer = this.grantsOf(k.id).some(granted => granted.type.startsWith('ui.'))
-      this.runtime.startWorker({ id: k.id, incarnation: live.n, code, port: plugin, drawer })
+      const view = drawer ? { files: k.read.files, frames: { ...k.read.manifest?.entries.frames } } : {}
+      this.runtime.startWorker({ id: k.id, incarnation: live.n, code, port: plugin, drawer, ...view })
     }
 
     const deps = this.depsOf(k)
