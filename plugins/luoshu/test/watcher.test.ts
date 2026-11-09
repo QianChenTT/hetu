@@ -77,6 +77,18 @@ describe('the watcher', () => {
     expect(luoshu.heard).toEqual([['changed', 'a.md'], ['outside', 'a.md']])
   })
 
+  it('hears an outside save of the bytes hetu wrote last once an outside save came between', async () => {
+    const luoshu = await watching()
+    await write(luoshu, 'a.md', 'v2', sha('note a'))
+    await tick(400)
+    await writeFile(path.join(folder, 'a.md'), 'v1')
+    await until(() => luoshu.heard.length > 1)
+    await tick(400)
+    await writeFile(path.join(folder, 'a.md'), 'v2')
+    await until(() => luoshu.heard.length > 2)
+    expect(luoshu.heard).toEqual([['changed', 'a.md'], ['outside', 'a.md'], ['outside', 'a.md']])
+  })
+
   it('publishes nothing for .git, a temp file or hetu\'s own folders', async () => {
     const luoshu = await watching()
     await writeFile(path.join(folder, '.git', 'index'), 'x')

@@ -132,10 +132,10 @@ describe('a stored key\'s hash line', () => {
     return { store, file, bytes: await readFile(file) }
   }
 
-  it('sits under one JSON line naming the key', async () => {
+  it('sits under one JSON line naming the space and the key', async () => {
     const { bytes } = await stored()
     const [line, hash, end] = bytes.toString('utf8').split('\n')
-    expect(JSON.parse(line)).toEqual({ key: 'grants', value: { agent: 'a' } })
+    expect(JSON.parse(line)).toEqual({ space: 'search', key: 'grants', value: { agent: 'a' } })
     expect(hash).toMatch(/^[0-9a-f]{64}$/)
     expect(end).toBe('')
   })
@@ -149,6 +149,14 @@ describe('a stored key\'s hash line', () => {
   ])('answers tampered for %s', async (_name, damage) => {
     const { store, file, bytes } = await stored()
     await writeFile(file, damage(bytes.toString('utf8')))
+    expect(await ask(store, search, 'storage.get', { key: 'grants' })).toEqual({ refused: { code: 'tampered' } })
+  })
+
+  it('answers tampered for the same key’s file copied from another plugin’s space, whose hash still checks', async () => {
+    const store = opened()
+    await ask(store, plugin('git'), 'storage.set', { key: 'grants', value: { agent: 'git' } })
+    await ask(store, search, 'storage.set', { key: 'grants', value: { agent: 'a' } })
+    await writeFile(keyFile('storage', 'search', 'grants'), await readFile(keyFile('storage', 'git', 'grants')))
     expect(await ask(store, search, 'storage.get', { key: 'grants' })).toEqual({ refused: { code: 'tampered' } })
   })
 
@@ -186,7 +194,7 @@ describe('the cache', () => {
     await ask(store, search, 'cache.set', { key: 'index', value: [1] })
     const file = keyFile('cache', 'search', 'index')
     expect((await readFile(file, 'utf8')).split('\n').filter(line => line !== '')).toHaveLength(1)
-    await writeFile(file, '{"key":"index","value":[2]}\n')
+    await writeFile(file, '{"space":"search","key":"index","value":[2]}\n')
     expect(await ask(store, search, 'cache.get', { key: 'index' })).toEqual([2])
   })
 
@@ -200,7 +208,8 @@ describe('the cache', () => {
 })
 
 describe('the quota', () => {
-  const small = { storage: { bytes: 400, keys: 3 }, cache: { bytes: 300, keys: 2 } }
+  // Two lines of 100 characters fit in 500 bytes with their space, key and hash lines, a third doesn't
+  const small = { storage: { bytes: 500, keys: 3 }, cache: { bytes: 300, keys: 2 } }
 
   it('is core/api\'s unless a test passes its own', () => {
     expect(createStorage().quotas).toEqual(quotas)

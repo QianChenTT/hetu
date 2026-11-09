@@ -73,8 +73,8 @@ type Kind = 'storage' | 'cache'
 type Held = { value: unknown, size: number }
 
 // What a key takes in the storage plugin's files: its JSON line, with a 64-character hash line under it in storage
-function sizeOf(kind: Kind, key: string, value: unknown): number {
-  return new TextEncoder().encode(`${JSON.stringify({ key, value })}\n`).length + (kind === 'storage' ? 65 : 0)
+function sizeOf(kind: Kind, space: string, key: string, value: unknown): number {
+  return new TextEncoder().encode(`${JSON.stringify({ space, key, value })}\n`).length + (kind === 'storage' ? 65 : 0)
 }
 
 // storage.* and cache.* in memory, as the storage plugin keeps them: a space per caller and kind named by spaceOf,
@@ -95,7 +95,8 @@ export class MemoryStorage implements Provider {
   async perform(call: Call): Promise<unknown> {
     await after(this.latencyMs)
     const [kind, verb] = call.action.split('.') as [Kind, string]
-    const space = this.space(kind, spaceOf(call.caller)!)
+    const name = spaceOf(call.caller)!
+    const space = this.space(kind, name)
     const { key, value } = call.args as { key: string, value?: unknown }
     if (verb === 'get') return space.has(key) ? JSON.parse(JSON.stringify(space.get(key)!.value)) as unknown : null
     if (verb === 'delete') {
@@ -103,7 +104,7 @@ export class MemoryStorage implements Provider {
       return null
     }
     if (value === undefined) throw { code: 'invalid' } satisfies ProviderRefusal
-    const size = sizeOf(kind, key, value)
+    const size = sizeOf(kind, name, key, value)
     let bytes = size
     let keys = 1
     for (const [other, held] of space) {

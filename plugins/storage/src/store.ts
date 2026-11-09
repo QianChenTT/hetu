@@ -76,7 +76,7 @@ export function createStorage(options: { quotas?: Quotas } = {}): Storage {
     if (bytes > quota.bytes || keys > quota.keys) throw refused('failed', 'quota')
   }
 
-  async function get(kind: Kind, file: string, key: string): Promise<unknown> {
+  async function get(kind: Kind, file: string, space: string, key: string): Promise<unknown> {
     let bytes: Buffer
     try {
       bytes = await retried(() => readFile(file), file, 'read')
@@ -84,9 +84,9 @@ export function createStorage(options: { quotas?: Quotas } = {}): Storage {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw err
     }
-    if (kind === 'cache') return entryOf(bytes, key) ?? null
+    if (kind === 'cache') return entryOf(bytes, space, key) ?? null
     const checked = checkHash(bytes)
-    const entry = 'body' in checked ? entryOf(checked.body, key) : undefined
+    const entry = 'body' in checked ? entryOf(checked.body, space, key) : undefined
     if (entry === undefined) throw refused('tampered')
     return entry
   }
@@ -126,12 +126,12 @@ export function createStorage(options: { quotas?: Quotas } = {}): Storage {
       const file = path.join(dir, name)
       return inOrder(`${kind}/${space}`, async () => {
         await sweep(dir)
-        if (verb === 'get') return get(kind, file, key)
+        if (verb === 'get') return get(kind, file, space, key)
         if (verb === 'delete') {
           await retried(() => rm(file, { force: true }))
           return null
         }
-        const line = Buffer.from(`${JSON.stringify({ key, value })}\n`)
+        const line = Buffer.from(`${JSON.stringify({ space, key, value })}\n`)
         const bytes = kind === 'storage' ? withHash(line) : line
         await withinQuota(dir, name, bytes.length, quotas[kind])
         await mkdir(dir, { recursive: true })
@@ -151,8 +151,10 @@ async function names(dir: string): Promise<string[]> {
   }
 }
 
-// The value a key's line holds, or undefined for bytes that aren't one JSON object of exactly the key and a value
-function entryOf(bytes: Buffer, key: string): unknown {
+// The value a key's line holds, or undefined for bytes that aren't one JSON object of exactly the space, the key and a
+// value, naming this space and key. The hash line catches an edit that doesn't recompute it, and naming both catches a
+// file copied from another key or space. A local program that recomputes it is out of scope (threat 43)
+function entryOf(bytes: Buffer, space: string, key: string): unknown {
   let entry: unknown
   try {
     entry = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes))
@@ -161,7 +163,7 @@ function entryOf(bytes: Buffer, key: string): unknown {
   }
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return undefined
   const fields = Object.keys(entry)
-  if (fields.length !== 2 || !fields.includes('key') || !fields.includes('value')) return undefined
-  const { key: named, value } = entry as { key: unknown, value: unknown }
-  return named === key ? value : undefined
+  if (fields.length !== 3 || !['space', 'key', 'value'].every(name => fields.includes(name))) return undefined
+  const { space: inSpace, key: named, value } = entry as { space: unknown, key: unknown, value: unknown }
+  return inSpace === space && named === key ? value : undefined
 }

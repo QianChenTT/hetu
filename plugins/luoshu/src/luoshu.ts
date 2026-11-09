@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { watch, type FSWatcher } from 'node:fs'
-import { mkdir, open, readdir, readFile, realpath, rename, rm } from 'node:fs/promises'
+import { createReadStream, watch, type FSWatcher } from 'node:fs'
+import { mkdir, open, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
+import { floorConstants } from 'hetu-core/api/floor.ts'
 import type { Call, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
@@ -21,6 +22,9 @@ export type LuoshuOptions = {
   pageSize?: number
   // How long a path stays quiet before the watcher looks at it, as editors save a file in several writes
   settleMs?: number
+  // The largest note a read answers, the floor's resultBytes but in tests. A larger one is refused from its size, before
+  // main reads it
+  readCap?: number
 }
 
 // A write's temp file sits beside the note, a dot file so Obsidian, ** grants and the listing pass it by
@@ -28,8 +32,21 @@ const TEMP = '.hetu-tmp'
 const isTemp = (name: string) => name.startsWith('.') && name.endsWith(TEMP)
 
 const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
-const refused = (code: ProviderRefusal['code']): ProviderRefusal => ({ code })
-const within = (folder: string, target: string) => target === folder || target.startsWith(folder.endsWith(path.sep) ? folder : folder + path.sep)
+const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
+// Windows and macOS compare names without case, so hetu's own folders are found in any spelling there
+const fold = process.platform === 'win32' || process.platform === 'darwin' ? (name: string) => name.toLowerCase() : (name: string) => name
+const within = (folder: string, target: string) => {
+  const [inside, outer] = [fold(target), fold(folder)]
+  return inside === outer || inside.startsWith(outer.endsWith(path.sep) ? outer : outer + path.sep)
+}
+
+// The hash of a file's bytes read a piece at a time, so a large file never sits whole in main
+function hashFile(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    createReadStream(file).on('data', piece => hash.update(piece)).on('error', reject).on('end', () => resolve(hash.digest('hex')))
+  })
+}
 
 // luoshu.read, luoshu.write and luoshu.list. prepare turns the path the caller wrote into the canonical one with the
 // canonicaliser and holds the lock on its key until perform or release, so no other hetu write to that name runs in
@@ -38,6 +55,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const pageSize = options.pageSize ?? LIST_PAGE
   const publish = options.publish ?? (() => {})
   const settleMs = options.settleMs ?? 150
+  const readCap = options.readCap ?? floorConstants.resultBytes
   let watcher: FSWatcher | null = null
   const settling = new Map<string, ReturnType<typeof setTimeout>>()
   let opening: (Opening & { folder: string }) | null = null
@@ -45,6 +63,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const tails = new Map<string, Promise<void>>()
   const holding = new Map<string, () => void>()
   const resolved = new Map<string, Canonical>()
+  // The folder each call was prepared under, so a call prepared before luoshu.set never acts on the folder after it
+  const preparedUnder = new Map<string, Opening>()
   // The hash of the bytes hetu itself last wrote to each key, so an event for its own write isn't taken for an outside one
   const own = new Map<string, string>()
 
@@ -65,6 +85,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   function unlock(callId: string): void {
     resolved.delete(callId)
+    preparedUnder.delete(callId)
     const free = holding.get(callId)
     holding.delete(callId)
     free?.()
@@ -73,6 +94,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   async function read(target: Canonical): Promise<unknown> {
     let bytes: Buffer
     try {
+      const size = (await stat(target.absolute)).size
+      if (size > readCap) throw refused('failed', 'too-large')
       bytes = await retried(() => readFile(target.absolute), target.absolute, 'read')
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
@@ -84,7 +107,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   async function current(file: string): Promise<string | null> {
     try {
-      return version(await retried(() => readFile(file), file, 'read'))
+      return await retried(() => hashFile(file), file, 'read')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw err
@@ -122,7 +145,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // Every file under start in name order, past .git, temp files, links, junctions and hetu's own folders. readdir's
   // entries name a link or junction as a link and never as a folder, so the walk can't follow one even without the check
   async function list(root: string, start: string, after: string | undefined, canList: (path: string) => boolean): Promise<unknown> {
-    const skip = [opening!.dataDir, opening!.installDir]
+    // Resolved as the walk is, so a link or another spelling of a folder still matches
+    const skip = await Promise.all([opening!.dataDir, opening!.installDir].map(folder => realpath(folder).catch(() => folder)))
     const found: string[] = []
     async function walk(dir: string): Promise<void> {
       let entries
@@ -163,6 +187,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
       if (opening === null) return refused('unavailable')
       const { folder, dataDir, installDir } = opening
+      preparedUnder.set(call.callId, opening)
       const args = (call.args ?? {}) as { path?: unknown, folder?: unknown, baseVersion?: unknown }
       if (call.action === 'luoshu.list') {
         if (args.folder === undefined) return { scope: {} }
@@ -183,8 +208,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
     async perform(call: Call, prepared: Prepared): Promise<unknown> {
       const target = resolved.get(call.callId)
+      const under = preparedUnder.get(call.callId)
       try {
-        if (opening === null) throw refused('unavailable')
+        // A folder picked since prepare, or none now, ends the call: its path belongs to the folder before
+        if (opening === null || under !== opening) throw refused('unavailable')
         if (call.action === 'luoshu.list') {
           // The carrier's canList is what keeps a name from a caller that may not list it, so no listing runs without it
           if (call.canList === undefined) throw refused('failed')
@@ -219,6 +246,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       return
     }
     if (made !== null && own.get(target.key) === made) return
+    // The note no longer holds hetu's last write, so a later save of those same bytes is someone else's too
+    own.delete(target.key)
     publish('outside', target.relative)
   }
 
