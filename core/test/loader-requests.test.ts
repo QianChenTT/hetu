@@ -637,14 +637,14 @@ describe('the request to approve a plugin', () => {
     await made.loader.start()
     const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
 
   it('says when it asks for nothing', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
     await made.loader.start()
     const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
 })
 

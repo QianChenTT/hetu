@@ -1,3 +1,4 @@
+import { createCapabilities } from '../../plugins/capabilities/src/capabilities.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -182,7 +183,10 @@ export class FakeRuntime implements Runtime {
 
   // A security control's module and the luoshu's give their role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
-    const exports: HostExports = id === 'gate' ? { gate: allowAll() } : id === 'watchdog' ? { watchdog: { sample() {} } } : id === 'luoshu' ? { luoshu: { open() {} } } : {}
+    const roles: Record<string, HostExports> = {
+      gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, capabilities: { capabilities: createCapabilities() },
+    }
+    const exports: HostExports = roles[id] ?? {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 

@@ -1,0 +1,16 @@
+{
+  "name": "hetu-plugin-capabilities",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.ts",
+    "check": "node ../../core/sdk/build/check-manifest.ts . --install",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hetu/sdk": "*",
+    "hetu-core": "*"
+  }
+}

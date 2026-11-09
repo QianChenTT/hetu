@@ -71,6 +71,26 @@ export type Gate = {
   stateChanged(view: StateView): void
 }
 
+// The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
+export const classNames = frozen(['Contained', 'Reader', 'Writer', 'Network', 'Powerful'] as const)
+
+// What the trusted window shows under the core's words is made from: what the plugin asks for, what it reaches through
+// plugin.call followed in turn, and every plugin that can reach it with what each holds. Which of those read is policy
+export type ScreenSubject = {
+  readonly granted: readonly Capability[]
+  readonly reachable: readonly Capability[]
+  readonly callers: readonly { readonly id: string, readonly granted: readonly Capability[] }[]
+}
+
+// The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
+// it at an approval, a first-party copy, an update and a widened grant. A throw counts as the slot down, which leaves a
+// class null, counted as 4
+export type Capabilities = {
+  classify(granted: readonly Capability[], reachable: readonly Capability[]): number
+  firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[]
+  screen(subject: ScreenSubject): string[]
+}
+
 // The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
 export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
 

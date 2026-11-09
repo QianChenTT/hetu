@@ -4,7 +4,7 @@ import { floorConstantNames, floorConstants } from '../api/floor.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
-  id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, firstParty: false, on: true, items: [],
+  id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, firstParty: false, on: true, items: [], class: 1,
   ...over,
 })
 
@@ -30,11 +30,18 @@ describe('what the trusted window draws', () => {
     expect(drawn.behind).toBe(1)
   })
 
-  it('names a plugin by its id with where it runs, its state and why', () => {
-    const drawn = screen(calm({ plugins: [plugin({ id: 'gate', from: 'install', place: 'host', security: true }), plugin({ state: 'crashed', reason: 'flood' })] }))
+  it('names a plugin by its id with where it runs, its state and why, and a plugin-folder plugin’s class', () => {
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'gate', from: 'install', place: 'host', security: true, class: null }),
+        plugin({ state: 'crashed', reason: 'flood' }),
+        plugin({ id: 'tool', class: null }),
+      ],
+    }))
     expect(drawn.plugins.map(row => row.line)).toEqual([
       'gate · ships with hetu · host · ready · security',
-      'search · plugin folder · sandboxed · crashed (flood)',
+      'search · plugin folder · sandboxed · crashed (flood) · class 1',
+      'tool · plugin folder · sandboxed · ready · class unknown, counted as 4',
     ])
   })
 

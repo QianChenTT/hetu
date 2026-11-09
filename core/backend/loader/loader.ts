@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -62,7 +62,7 @@ export type Failure =
 
 // The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
 // with #77
-const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', watchdog: 'watchdog', luoshu: 'luoshu' })
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu' })
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -143,6 +143,17 @@ const refused = (reason: string): Status => ({ kind: 'refused', reason })
 // The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
 // off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
 // off unless it is exactly an item that was on. An item no longer granted goes with its switch
+// The items of a new copy that ask at first use, less those the human already confirmed in the copy before: granted
+// there and no longer asking
+function carriedFirstUse(old: Plugin | null, asking: readonly Capability[]): Capability[] {
+  if (old === null) return [...asking]
+  const before = new Set(old.granted.map(capabilityKey))
+  const stillAsking = new Set((old.firstUse ?? []).map(capabilityKey))
+  return asking.filter(item => !before.has(capabilityKey(item)) || stillAsking.has(capabilityKey(item)))
+}
+
+const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
+
 function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
   const off = old?.off ?? []
   if (off.length === 0) return []
@@ -421,6 +432,7 @@ ${capabilityKey(change.capability)}`)
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
+        class: entry?.class ?? null,
       }
     })
     const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => {
@@ -453,14 +465,90 @@ ${capabilityKey(change.capability)}`)
       const manifest = this.known.get(change.plugin)?.read.manifest
       if (manifest === undefined || manifest === null) return []
       const asks = manifest.capabilities ?? []
-      return [`Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`))]
+      return [
+        `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
+        ...this.screen(change.plugin, asks),
+      ]
     }
     if (change.kind === 'plugin.update') {
       const to = this.staged.get(change.plugin)?.read.manifest?.version
-      const from = this.known.get(change.plugin)?.entry?.version
-      return to === undefined || from === undefined ? [] : [`From ${from} to ${to}`]
+      const entry = this.known.get(change.plugin)?.entry
+      return to === undefined || entry === undefined || entry === null ? [] : [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted)]
+    }
+    if (change.kind === 'grant.widen') {
+      const granted = this.known.get(change.plugin)?.entry?.granted ?? []
+      return this.screen(change.plugin, [...granted, change.capability])
     }
     return []
+  }
+
+  // ---- classes
+
+  // The capabilities slot's role while the slot is on and its plugin ready, null otherwise
+  private capabilities(): Capabilities | null {
+    return this.slot('capabilities') === 'on' ? this.role('capabilities', 'capabilities') : null
+  }
+
+  // What a plugin holds: a plugin-folder plugin's entry, an install plugin's manifest
+  private grantsOf(id: string): readonly Capability[] {
+    const k = this.known.get(id)
+    if (k?.from === 'install') return k.read.manifest?.capabilities ?? []
+    return this.state.plugins[id]?.granted ?? []
+  }
+
+  // The plugins granted reaches through plugin.call, followed in turn, never counting the plugin itself
+  private reachedFrom(id: string, granted: readonly Capability[]): string[] {
+    const seen = new Set<string>([id])
+    const reached: string[] = []
+    const queue = [...targetsOf(granted)]
+    while (queue.length > 0) {
+      const target = queue.shift()!
+      if (seen.has(target)) continue
+      seen.add(target)
+      reached.push(target)
+      queue.push(...targetsOf(this.grantsOf(target)))
+    }
+    return reached
+  }
+
+  private reachable(id: string, granted: readonly Capability[]): Capability[] {
+    return this.reachedFrom(id, granted).flatMap(target => [...this.grantsOf(target)])
+  }
+
+  // Every other plugin that can reach id through plugin.call, with what it holds
+  private callersOf(id: string): { id: string, granted: readonly Capability[] }[] {
+    const ids = new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id)])
+    return [...ids].sort().filter(other => other !== id && this.reachedFrom(other, this.grantsOf(other)).includes(id))
+      .map(other => ({ id: other, granted: this.grantsOf(other) }))
+  }
+
+  // A plugin's class and the items that ask at first use, from the slot. With the slot down the class is null, which
+  // counts as 4, and every item asks
+  private classed(id: string, granted: readonly Capability[]): { class: number | null, firstUse: Capability[] } {
+    const slot = this.capabilities()
+    if (slot !== null) {
+      try {
+        const reachable = this.reachable(id, granted)
+        const n = slot.classify(granted, reachable)
+        const asking = slot.firstUse(granted, reachable)
+        if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
+      } catch {}
+      this.note('fault', { plugin: 'capabilities', step: 'classify' })
+    }
+    return { class: null, firstUse: [...granted] }
+  }
+
+  // The slot's lines under the core's words, or with the slot down what that means
+  private screen(id: string, granted: readonly Capability[]): string[] {
+    const slot = this.capabilities()
+    if (slot !== null) {
+      try {
+        const lines = slot.screen({ granted, reachable: this.reachable(id, granted), callers: this.callersOf(id) })
+        if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
+      } catch {}
+      this.note('fault', { plugin: 'capabilities', step: 'screen' })
+    }
+    return ['The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use']
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -743,15 +831,19 @@ ${capabilityKey(change.capability)}`)
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await clear(folders.cache(this.dataDir, id)).catch(() => {})
     const granted = read.manifest!.capabilities ?? []
-    const off = carriedOff(this.state.plugins[id] ?? null, granted)
+    const before = this.state.plugins[id] ?? null
+    const off = carriedOff(before, granted)
+    const classed = this.classed(id, granted)
+    const firstUse = carriedFirstUse(before, classed.firstUse)
     const entry: Plugin = {
       version: listed.version,
       contentHash: listed.hash,
       signer: FIRST_PARTY_SIGNER,
       granted,
-      class: null,
+      class: classed.class,
       enabled,
       ...(off.length > 0 ? { off } : {}),
+      ...(firstUse.length > 0 ? { firstUse } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -1506,7 +1598,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return
     const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
-    const next: Plugin = { ...entry, granted }
+    // The class follows, and a new item asks at first use when the slot says so or can't say
+    const classed = this.classed(id, granted)
+    const asking = (entry.firstUse ?? []).filter(item => capabilityKey(item) !== key)
+    if (add && classed.firstUse.some(item => capabilityKey(item) === key)) asking.push(capability)
+    const next: Plugin = { ...entry, granted, class: classed.class }
+    delete next.firstUse
+    if (asking.length > 0) next.firstUse = asking
     if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
@@ -1689,8 +1787,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       throw new Error(`nothing to approve for ${id}`)
     }
     const manifest = k.read.manifest!
+    const granted = manifest.capabilities ?? []
+    const classed = this.classed(id, granted)
     const entry: Plugin = {
-      version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true,
+      version: manifest.version, contentHash: k.read.hash!, signer: null, granted, class: classed.class, enabled: true,
+      ...(classed.firstUse.length > 0 ? { firstUse: classed.firstUse } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -1782,6 +1883,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
+    // Only a class 0 update loads on its own (Han), and only while the slot can say so, with no grant asked for that the
+    // entry doesn't hold. Its record lands first as any update's does
+    const holds = new Set(k.entry.granted.map(capabilityKey))
+    const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
+    if (k.entry.class === 0 && asksNothingNew && this.capabilities() !== null && this.classed(id, k.entry.granted).class === 0) {
+      await this.applyStaged(id)
+      return { outcome: 'applied' }
+    }
     // A newer update replaces the staged one, so the request the human may have seen for the older one goes
     this.requests.withdraw(change => change.kind === 'plugin.update' && change.plugin === id)
     this.requests.raise({ kind: 'plugin.update', plugin: id }, null, MAX_PENDING)
@@ -1808,7 +1917,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
     const relative = path.relative(folders.staging(this.dataDir), staged.dir)
     if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
-    const entry: Plugin = { ...old, version: to, contentHash: read.hash! }
+    const entry: Plugin = { ...old, version: to, contentHash: read.hash!, class: this.classed(id, old.granted).class }
     await this.store.writePlugin(id, entry)
     this.state.plugins[id] = entry
     this.entryChecks.set(id, 'ok')
