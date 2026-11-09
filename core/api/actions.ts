@@ -224,7 +224,8 @@ export type SecurityList = {
 }
 
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
-// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the requests
+// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the in-page
+// plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
   slots: Record<typeof slotIds[number], SlotState>
@@ -235,6 +236,8 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
+  // The in-page install plugins that are ready, which the editor window applies: hidden-marks
+  page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null
 }

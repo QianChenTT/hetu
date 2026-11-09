@@ -65,7 +65,7 @@ function runtime(endingMs = 1000) {
 
 const start = (id = 'search', incarnation = 1) => {
   const port = new FakePort()
-  return { start: { id, incarnation, code: Buffer.from(`// ${id}`), port: port as unknown as MessagePortMain }, port }
+  return { start: { id, incarnation, code: Buffer.from(`// ${id}`), port: port as unknown as MessagePortMain, drawer: false }, port }
 }
 
 const starts = (renderer: FakeRenderer) => renderer.posted.filter(post => post.channel === 'hetu:start')

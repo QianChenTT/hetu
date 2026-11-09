@@ -13,6 +13,7 @@ const calm: CoreStatus = {
   recordNothing: false,
   logWrites: true,
   luoshuPicked: true,
+  page: [],
   pending: [],
   stopped: null,
 }
@@ -32,6 +33,7 @@ describe('the banner', () => {
       recordNothing: true,
       logWrites: false,
       luoshuPicked: false,
+      page: [],
       pending: [],
       stopped: null,
     })).toEqual([

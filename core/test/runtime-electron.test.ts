@@ -98,7 +98,7 @@ describe('the Electron runtime', () => {
 
   it('starts and ends workers through the hidden renderer and loads a host half from its verified bytes', async () => {
     const { runtime, plugin } = channel()
-    const start = { id: 'search', incarnation: 1, code: Buffer.from('// search'), port: plugin }
+    const start = { id: 'search', incarnation: 1, code: Buffer.from('// search'), port: plugin, drawer: false }
     runtime.startWorker(start)
     runtime.terminate('search', 1)
     expect(seen).toEqual([['start', start], ['terminate', 'search', 1]])

@@ -5,6 +5,7 @@ import path from 'node:path'
 import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST, installList } from '../api/install.ts'
+import { installManifest } from '../api/manifest.ts'
 import { buildMain } from '../build/main.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
@@ -36,7 +37,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'hidden-marks', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -83,6 +84,19 @@ describe('the main bundle', () => {
     expect([...imports].sort()).toEqual(['node:crypto', 'node:fs/promises', 'node:path'])
     const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
     expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
+  })
+
+  // The page compiles hidden marks in itself. The install's copy is what its switch and its hash cover
+  it('writes hidden-marks into the install as an in-page plugin: an install manifest with a page entry and the module bundled, with the hash of its files', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'hidden-marks')
+    expect(list.plugins['hidden-marks']).toEqual({ path: 'plugins/hidden-marks', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/page.js', 'hetu-plugin.json'])
+    const manifest = installManifest.parse(JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')))
+    expect(manifest.entries).toEqual({ page: 'dist/page.js' })
+    expect(await readFile(path.join(root, 'dist', 'page.js'), 'utf8')).toContain('hiddenMarks')
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {

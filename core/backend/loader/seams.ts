@@ -51,7 +51,8 @@ export type HostExports = { gate?: Gate, guard?: Guard, provider?: Provider, wat
 // A host half's end of its in-process way. Messages the carrier sends before listen are kept for it
 export type HostLink = { post(message: unknown): void, listen(listener: (message: unknown) => void): void }
 
-export type WorkerStart = { id: string, incarnation: number, code: Buffer, port: unknown }
+// drawer says the plugin holds a ui item, so the runtime gives its worker a port to each editor page as well
+export type WorkerStart = { id: string, incarnation: number, code: Buffer, port: unknown, drawer: boolean }
 export type HostStart = { id: string, incarnation: number, root: string, files: readonly PluginFile[], entry: string, link: HostLink }
 
 // What the loader needs from the runtime, the only part that touches Electron, faked in the loader's tests

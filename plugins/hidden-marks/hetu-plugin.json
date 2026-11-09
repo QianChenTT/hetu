@@ -1,0 +1,7 @@
+{
+  "id": "hidden-marks",
+  "name": "Hidden marks",
+  "version": "0.1.0",
+  "api": "^1",
+  "entries": { "page": "dist/page.js" }
+}
