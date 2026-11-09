@@ -71,6 +71,13 @@ export type Gate = {
   stateChanged(view: StateView): void
 }
 
+// The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
+export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
+
+// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
+// the luoshu failed
+export type LuoshuRole = { open(opening: Opening): void }
+
 // A host guard answers from its own state and makes no calls
 export type Guard = { check(call: GuardCall): 'allow' | 'deny' }
 

@@ -3,15 +3,9 @@ import { watch, type FSWatcher } from 'node:fs'
 import { mkdir, open, readdir, readFile, realpath, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
-import type { Call, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
+import type { Call, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
-
-// The notes folder and hetu's own folders, which a luoshu picked around them holds. folder null is none picked
-export type Opening = { folder: string | null, dataDir: string, installDir: string }
-
-// The loader's way to tell the luoshu its folder, when the plugin is ready and each time luoshu.set applies
-export type LuoshuRole = { open(opening: Opening): void }
 
 export type Luoshu = {
   provider: Provider
