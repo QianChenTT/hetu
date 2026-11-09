@@ -436,6 +436,10 @@ ${capabilityKey(change.capability)}`)
         devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
         allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
       },
+      limits: {
+        all: { ...switches.limits.all },
+        plugins: Object.fromEntries(Object.entries(switches.limits.plugins).map(([id, set]) => [id, { ...set }])),
+      },
       requests,
       stopped: this.stoppedMode,
     }

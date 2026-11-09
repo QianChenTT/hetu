@@ -4,6 +4,7 @@
 import type { HeldRequest, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
+import { floorConstantNames, floorConstants, type FloorConstant } from '../../api/floor.ts'
 import { capabilityText } from '../../api/trusted.ts'
 
 export type Bridge = {
@@ -14,13 +15,21 @@ export type Bridge = {
 export type PluginAction = 'approve' | 'switch-on' | 'switch-off' | 'stop' | 'restart' | 'reset' | 'restore' | 'remove'
 export type Choice = 'switch-off' | 'recover' | 'quit'
 
+// A line and the change its button asks for, none for a line with no button
+export type Switch = { line: string, change: Change | null }
+
+export type Limit = { constant: FloorConstant, floor: number, all: number | null, plugins: { plugin: string, value: number }[] }
+
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
   // The oldest request waiting, and how many wait behind it
   request: HeldRequest | null
   behind: number
-  plugins: { id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[] }[]
-  switches: string[]
+  plugins: {
+    id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[], switches: Switch[]
+  }[]
+  switches: Switch[]
+  limits: Limit[]
 }
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
@@ -80,21 +89,68 @@ function itemsOf(plugin: ListedPlugin): Screen['plugins'][number]['items'] {
   })
 }
 
-export function screen(list: SecurityList): Screen {
+const state = (on: boolean) => (on ? 'on' : 'off')
+
+// The switches for all of hetu, each with the change its button asks for, then the per-plugin ones that are on. Unsigned
+// builds get a button with plugin provenance, which names them
+function switchesOf(list: SecurityList): Switch[] {
   const { switches } = list
-  const lines: string[] = []
-  if (switches.devMode.length > 0) lines.push(`dev mode: ${switches.devMode.join(', ')}`)
-  if (switches.execAnyCommand.length > 0) lines.push(`any command: ${switches.execAnyCommand.join(', ')}`)
-  if (switches.skipVerification) lines.push('verification skipped')
-  if (switches.allowUnsigned.length > 0) lines.push(`unsigned builds trusted: ${switches.allowUnsigned.length}`)
-  if (switches.confirmOff) lines.push('Confirm off for this window')
-  if (switches.recordNothing) lines.push('recording off')
+  const rows: Switch[] = [
+    { line: `Confirm off for this window: ${state(switches.confirmOff)}`, change: { kind: 'confirmOff', on: !switches.confirmOff } },
+    { line: `Verification skipped: ${state(switches.skipVerification)}`, change: { kind: 'skipVerification', on: !switches.skipVerification } },
+    { line: `Record nothing: ${state(switches.recordNothing)}`, change: { kind: 'recordNothing', on: !switches.recordNothing } },
+  ]
+  if (switches.devMode.length > 0) rows.push({ line: `dev mode: ${switches.devMode.join(', ')}`, change: null })
+  if (switches.execAnyCommand.length > 0) rows.push({ line: `any command: ${switches.execAnyCommand.join(', ')}`, change: null })
+  if (switches.allowUnsigned.length > 0) rows.push({ line: `unsigned builds trusted: ${switches.allowUnsigned.length}`, change: null })
+  return rows
+}
+
+// Dev mode for a plugin-folder plugin, which it loads unhashed, and any command for one holding exec
+function pluginSwitches(plugin: ListedPlugin, list: SecurityList): Switch[] {
+  const rows: Switch[] = []
+  if (plugin.from === 'folder') {
+    const on = list.switches.devMode.includes(plugin.id)
+    rows.push({ line: `dev mode: ${state(on)}`, change: { kind: 'devMode', plugin: plugin.id, on: !on } })
+  }
+  if (plugin.items.some(item => item.capability.type === 'exec')) {
+    const on = list.switches.execAnyCommand.includes(plugin.id)
+    rows.push({ line: `any command: ${state(on)}`, change: { kind: 'exec.anyCommand', plugin: plugin.id, on: !on } })
+  }
+  return rows
+}
+
+function limitsOf(list: SecurityList): Limit[] {
+  return floorConstantNames.map(constant => ({
+    constant,
+    floor: floorConstants[constant],
+    all: list.limits.all[constant] ?? null,
+    plugins: Object.entries(list.limits.plugins)
+      .filter(([, set]) => set[constant] !== undefined)
+      .map(([plugin, set]) => ({ plugin, value: set[constant]! }))
+      .sort((a, b) => (a.plugin < b.plugin ? -1 : 1)),
+  }))
+}
+
+// What the human typed for a limit as its change, or null for anything but a whole number from 1 up. The core checks it
+// again, a time past the longest timer included
+export function limitChange(constant: FloorConstant, typed: string, plugin: string | null): Change | null {
+  const text = typed.trim()
+  if (!/^[1-9][0-9]{0,15}$/.test(text)) return null
+  const value = Number(text)
+  return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
+}
+
+export function screen(list: SecurityList): Screen {
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
     request: list.requests[0] ?? null,
     behind: Math.max(0, list.requests.length - 1),
-    plugins: list.plugins.map(plugin => ({ id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin) })),
-    switches: lines,
+    plugins: list.plugins.map(plugin => ({
+      id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
+    })),
+    switches: switchesOf(list),
+    limits: limitsOf(list),
   }
 }
 
@@ -164,6 +220,12 @@ export class TrustedPage {
 
   relaunch(): void {
     this.call('core.relaunch')
+  }
+
+  // A note of the page's own, such as a value that isn't a number, drawn until the next answer
+  say(note: string): void {
+    this.note = note
+    this.refresh()
   }
 
   quit(): void {

@@ -496,7 +496,19 @@ describe('the core actions the loader serves', () => {
     expect(list.switches).toEqual({
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
     })
+    expect(list.limits).toEqual({ all: {}, plugins: {} })
     expect(list.stopped).toBe(null)
+  })
+
+  it('lists the limits the human set, for all and for each plugin, as copies the window can’t change', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
+    await made.loader.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'alpha' })
+    const list = await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+    expect(list.limits).toEqual({ all: { readyMs: 20000 }, plugins: { alpha: { callsInFlight: 8 } } })
+    list.limits.all.readyMs = 1
+    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
   })
 
   it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {
