@@ -46,6 +46,7 @@ function drawBanner(shell: Shell, lines: string[], notices: Notice[]): void {
 function refusalText(code: string, reason?: string): string {
   if (reason === 'too-large') return 'This note is past the size hetu takes, so it can\'t be saved or kept as a draft'
   if (code === 'unavailable') return 'No notes folder is picked, so nothing can be saved'
+  if (code === 'throttled') return 'hetu is busy, so not every note is listed yet. Open this again in a moment'
   return `hetu refused: ${code}${reason === undefined ? '' : ` (${reason})`}`
 }
 
@@ -163,6 +164,8 @@ function start(bridge: Bridge): void {
   let names: string[] = []
   let matches: string[] = []
   let picked = 0
+  // Each opening's listing, so pages of an older one still coming are dropped
+  let listing = 0
 
   function drawPalette(): void {
     matches = filterNames(names, element<HTMLInputElement>('palette-input').value)
@@ -181,19 +184,33 @@ function start(bridge: Bridge): void {
   }
 
   async function openPalette(): Promise<void> {
-    const listed = await listNames(link)
-    names = listed.names
+    const run = ++listing
+    names = []
     picked = 0
     const note = element('palette-note')
-    note.textContent = listed.refused !== undefined
-      ? refusalText(listed.refused)
-      : listed.cut ? 'Only the first 20,000 names are listed' : ''
-    note.hidden = note.textContent === ''
+    note.textContent = 'Listing notes'
+    note.hidden = false
     const input = element<HTMLInputElement>('palette-input')
     input.value = ''
     element('palette').hidden = false
     drawPalette()
     input.focus()
+    // Names show as each page comes, so a large luoshu is searchable while the rest are listed
+    const listed = await listNames(link, {
+      onPage: page => {
+        if (run !== listing) return
+        names.push(...page)
+        note.textContent = `Listing notes, ${names.length} so far`
+        drawPalette()
+      },
+    })
+    if (run !== listing) return
+    names = listed.names
+    note.textContent = listed.refused !== undefined
+      ? refusalText(listed.refused)
+      : listed.cut ? 'Only the first 20,000 names are listed' : ''
+    note.hidden = note.textContent === ''
+    drawPalette()
   }
 
   function closePalette(): void {
