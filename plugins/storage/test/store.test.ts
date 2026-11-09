@@ -255,6 +255,13 @@ describe('calls on one space', () => {
     expect(await ask(store, search, 'storage.get', { key: 'k' })).toBe(9)
   })
 
+  it('counts only key files, so a file of another name in the space takes nothing from the quota', async () => {
+    await mkdir(spaceDir('storage', 'search'), { recursive: true })
+    await writeFile(path.join(spaceDir('storage', 'search'), 'notes.txt'), 'x'.repeat(1000))
+    const store = opened({ quotas: { storage: { bytes: 400, keys: 3 }, cache: { bytes: 400, keys: 3 } } })
+    expect(await ask(store, search, 'storage.set', { key: 'a', value: 1 })).toBeNull()
+  })
+
   it('remove the temp files a crash left the first time the space is touched and never count them', async () => {
     await mkdir(spaceDir('storage', 'search'), { recursive: true })
     await writeFile(path.join(spaceDir('storage', 'search'), 'key-a.5f0e.tmp'), 'x'.repeat(1000))

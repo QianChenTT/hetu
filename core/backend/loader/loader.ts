@@ -143,13 +143,16 @@ const refused = (reason: string): Status => ({ kind: 'refused', reason })
 // The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
 // off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
 // off unless it is exactly an item that was on. An item no longer granted goes with its switch
-// The items of a new copy that ask at first use, less those the human already confirmed in the copy before: granted
-// there and no longer asking
-function carriedFirstUse(old: Plugin | null, asking: readonly Capability[]): Capability[] {
-  if (old === null) return [...asking]
-  const before = new Set(old.granted.map(capabilityKey))
+// The items of a new copy that ask at first use, less those the human already confirmed in the copy before: items
+// that asked under the old grants and no longer do. An item that never asked isn't confirmed, so one the new grants
+// make ask, such as network once reading joins it, asks. With the slot down for the old grants nothing counts as
+// confirmed
+function carriedFirstUse(old: Plugin | null, asking: readonly Capability[], askedBefore: readonly Capability[] | null): Capability[] {
+  if (old === null || askedBefore === null) return [...asking]
+  const asked = new Set(askedBefore.map(capabilityKey))
   const stillAsking = new Set((old.firstUse ?? []).map(capabilityKey))
-  return asking.filter(item => !before.has(capabilityKey(item)) || stillAsking.has(capabilityKey(item)))
+  const confirmed = new Set(old.granted.map(capabilityKey).filter(key => asked.has(key) && !stillAsking.has(key)))
+  return asking.filter(item => !confirmed.has(capabilityKey(item)))
 }
 
 const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
@@ -512,30 +515,35 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // The plugins granted reaches through plugin.call, followed in turn, never counting the plugin itself
-  private reachedFrom(id: string, granted: readonly Capability[]): string[] {
-    const seen = new Set<string>([id])
-    const reached: string[] = []
-    const queue = [...targetsOf(granted)]
-    while (queue.length > 0) {
-      const target = queue.shift()!
-      if (seen.has(target)) continue
-      seen.add(target)
-      reached.push(target)
-      queue.push(...targetsOf(this.grantsOf(target)))
+  // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
+  // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
+  // can pass notes out through it. granted is id's own, which may be a change not applied yet
+  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
+    const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
+    const held = (other: string) => (other === id ? granted : this.grantsOf(other))
+    const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
+    for (const from of ids) {
+      for (const to of targetsOf(held(from))) {
+        if (to === from) continue
+        if (!links.has(to)) links.set(to, new Set())
+        links.get(from)!.add(to)
+        links.get(to)!.add(from)
+      }
     }
-    return reached
+    const seen = new Set<string>([id])
+    const queue = [...links.get(id)!]
+    while (queue.length > 0) {
+      const other = queue.shift()!
+      if (seen.has(other)) continue
+      seen.add(other)
+      queue.push(...links.get(other)!)
+    }
+    seen.delete(id)
+    return [...seen].sort().map(other => ({ id: other, granted: held(other) }))
   }
 
   private reachable(id: string, granted: readonly Capability[]): Capability[] {
-    return this.reachedFrom(id, granted).flatMap(target => [...this.grantsOf(target)])
-  }
-
-  // Every other plugin that can reach id through plugin.call, with what it holds
-  private callersOf(id: string): { id: string, granted: readonly Capability[] }[] {
-    const ids = new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id)])
-    return [...ids].sort().filter(other => other !== id && this.reachedFrom(other, this.grantsOf(other)).includes(id))
-      .map(other => ({ id: other, granted: this.grantsOf(other) }))
+    return this.connected(id, granted).flatMap(other => [...other.granted])
   }
 
   // A plugin's class and the items that ask at first use, from the slot. With the slot down the class is null, which
@@ -554,12 +562,25 @@ ${capabilityKey(change.capability)}`)
     return { class: null, firstUse: [...granted] }
   }
 
+  // What asks at first use under granted as the slot says, null when it can't say
+  private askingFor(id: string, granted: readonly Capability[]): Capability[] | null {
+    const slot = this.capabilities()
+    if (slot === null) return null
+    try {
+      const asking = slot.firstUse(granted, this.reachable(id, granted))
+      return Array.isArray(asking) ? asking : null
+    } catch {
+      return null
+    }
+  }
+
   // The slot's lines under the core's words, or with the slot down what that means
   private screen(id: string, granted: readonly Capability[]): string[] {
     const slot = this.capabilities()
     if (slot !== null) {
       try {
-        const lines = slot.screen({ granted, reachable: this.reachable(id, granted), callers: this.callersOf(id) })
+        const connected = this.connected(id, granted)
+        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected })
         if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
       } catch {}
       this.note('fault', { plugin: 'capabilities', step: 'screen' })
@@ -850,7 +871,7 @@ ${capabilityKey(change.capability)}`)
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
     const classed = this.classed(id, granted)
-    const firstUse = carriedFirstUse(before, classed.firstUse)
+    const firstUse = carriedFirstUse(before, classed.firstUse, before === null ? null : this.askingFor(id, before.granted))
     const entry: Plugin = {
       version: listed.version,
       contentHash: listed.hash,

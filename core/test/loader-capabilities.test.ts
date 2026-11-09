@@ -78,7 +78,7 @@ describe('a network plugin’s approval', () => {
     })
     await made.loader.start()
     const request = await approved(made, 'sync')
-    expect(request.notes).toContain('Plugins that read and can reach it: notes')
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: notes')
   })
 })
 
@@ -130,6 +130,26 @@ describe('a first-party copy', () => {
   })
 })
 
+describe('the plugins connected through plugin.call', () => {
+  it('count both ways, so a reader and a network plugin sharing a callee are class 4, the callee too', async () => {
+    const bridge = { type: 'plugin.call', targets: ['bridge'] } as Capability
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, bridge]), bridge: worker('bridge', [{ type: 'storage' }]) },
+      entries: {
+        reader: root => entryFor(root, { granted: [read, bridge], class: 1 }),
+        bridge: root => entryFor(root, { granted: [{ type: 'storage' }], class: 0 }),
+      },
+    })
+    await made.loader.start()
+    const request = await approved(made, 'sender')
+    expect((await made.store.load()).state.plugins.sender.class).toBe(4)
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: reader')
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.panel' } })
+    expect((await made.store.load()).state.plugins.bridge.class).toBe(4)
+  })
+})
+
 describe('a widened or narrowed grant', () => {
   it('adds an item that asks at first use, takes it off when the grant goes, and keeps the class in step', async () => {
     const made = await harness({ install: withCapabilities(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) } })
@@ -166,5 +186,96 @@ describe('the capabilities slot', () => {
     await made.loader.start()
     await until(() => stateOf(made.loader, 'capabilities') === 'failed')
     expect(reasonOf(made.loader, 'capabilities')).toBe('no-role')
+  })
+})
+
+describe('what the class rests on', () => {
+  it('reads the class again before a class 0 update loads on its own, so one now connected to more waits for the Confirm', async () => {
+    const call: Capability = { type: 'plugin.call', targets: ['runner'] }
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { calc: worker('calc'), runner: worker('runner') },
+      entries: {
+        calc: root => entryFor(root, { granted: [call], class: 0 }),
+        runner: root => entryFor(root, { granted: [exec], class: 4 }),
+      },
+    })
+    await made.loader.start()
+    const dir = path.join(made.dataDir, 'staging', 'calc-next')
+    await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: [call] })))
+    expect(await made.loader.update('calc', dir)).toMatchObject({ outcome: 'confirm' })
+  })
+
+  it('reads the class again when an update applies', async () => {
+    const call: Capability = { type: 'plugin.call', targets: ['runner'] }
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { calc: worker('calc'), runner: worker('runner') },
+      entries: {
+        calc: root => entryFor(root, { granted: [call], class: 1 }),
+        runner: root => entryFor(root, { granted: [exec], class: 4 }),
+      },
+    })
+    await made.loader.start()
+    const dir = path.join(made.dataDir, 'staging', 'calc-next')
+    await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: [call] })))
+    await made.loader.update('calc', dir)
+    await made.loader.apply({ kind: 'plugin.update', plugin: 'calc' })
+    expect((await made.store.load()).state.plugins.calc.class).toBe(4)
+  })
+
+  it.each([
+    ['a class past 4', { classify: () => 7, firstUse: () => [], screen: () => [] }],
+    ['a class that isn’t whole', { classify: () => 1.5, firstUse: () => [], screen: () => [] }],
+    ['a throw', { classify: () => { throw new Error('broken') }, firstUse: () => [], screen: () => [] }],
+    ['first use that isn’t a list', { classify: () => 1, firstUse: () => 'all', screen: () => [] }],
+  ])('takes the slot as down for %s: a null class and every item at first use', async (_name, capabilities) => {
+    const made = await harness({
+      install: withCapabilities(),
+      behave: { capabilities: { exports: { capabilities: capabilities as never } } },
+      folder: { reader: worker('reader', [read]) },
+    })
+    await made.loader.start()
+    await approved(made, 'reader')
+    const entry = (await made.store.load()).state.plugins.reader
+    expect(entry.class).toBeNull()
+    expect(entry.firstUse).toEqual([read])
+  })
+})
+
+describe('a new copy of a first-party plugin', () => {
+  const bundled = (files: Files) => ({ files, firstParty: true })
+
+  async function copied(base: string | undefined, capabilities: Capability[], version: string) {
+    const made = await harness({ ...(base === undefined ? {} : { base }), install: { ...withCapabilities(), git: bundled(filesFor(workerManifest('git', { version, capabilities }))) } })
+    await made.loader.start()
+    return made
+  }
+
+  it('asks again for an item that never asked before, once the new grants make it close a pair', async () => {
+    const first = await copied(undefined, [fetchOne], '1.0.0')
+    expect((await first.store.load()).state.plugins.git.firstUse).toBeUndefined()
+    await first.loader.shutdown()
+    const second = await copied(first.base, [fetchOne, read], '1.1.0')
+    const entry = (await second.store.load()).state.plugins.git
+    expect(entry.class).toBe(4)
+    expect(entry.firstUse).toEqual([fetchOne])
+  })
+
+  it('keeps an item asking that asked before and that the human never confirmed', async () => {
+    const first = await copied(undefined, [read, fetchOne], '1.0.0')
+    expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
+    await first.loader.shutdown()
+    const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
+    expect((await second.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
+  })
+
+  it('keeps an item the human confirmed from asking again', async () => {
+    const first = await copied(undefined, [read, fetchOne], '1.0.0')
+    expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
+    await first.loader.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
+    await first.loader.shutdown()
+    const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
+    expect((await second.store.load()).state.plugins.git.firstUse).toBeUndefined()
   })
 })

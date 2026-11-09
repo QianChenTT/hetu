@@ -30,10 +30,14 @@ describe('the class of one grant', () => {
     ['net.fetch to every host', fetchAll, 4],
     ['luoshu.write on every note', writeAll, 4],
     ['luoshu.write on every folder’s notes', { type: 'luoshu.write', paths: ['**/*.md'] }, 4],
+    ['luoshu.write on every note spelled without **', { type: 'luoshu.write', paths: ['*', '*/**'] }, 4],
+    ['luoshu.write on a wildcard top folder', { type: 'luoshu.write', paths: ['*/journal/**'] }, 4],
+    ['luoshu.write on two named folders', { type: 'luoshu.write', paths: ['notes/**', '04 - Daily/**'] }, 2],
+    ['luoshu.write on one named note', { type: 'luoshu.write', paths: ['inbox.md'] }, 2],
     ['exec', { type: 'exec', commands: [['git', 'status']], env: [] }, 4],
     ['guard.hook', { type: 'guard.hook' }, 4],
     ['log.read', { type: 'log.read' }, 4],
-  ] as [string, Capability, number][])('counts %s as class %i', (_name, granted, expected) => {
+  ] as [string, Capability, number][])('counts %s at the class the table gives', (_name, granted, expected) => {
     expect(caps.classify([granted], [])).toBe(expected)
   })
 
@@ -59,20 +63,25 @@ describe('a plugin\'s class', () => {
     ['history read', [{ type: 'history', access: 'read', paths: ['**'] }, fetchOne], []],
     ['reading here and network reached', [read, call], [fetchOne]],
     ['network here and reading reached', [fetchOne, call], [list]],
+    ['a write, whose version check tests a guess at a note', [write, fetchOne], []],
   ] as [string, Capability[], Capability[]][])('is 4 for %s with network, which can send notes out', (_name, granted, reachable) => {
     expect(caps.classify(granted, reachable)).toBe(4)
   })
 
-  it('stays 3 for network beside a write or a commit, which read nothing', () => {
-    expect(caps.classify([write, fetchOne], [])).toBe(3)
+  it('stays 3 for network beside a commit, which reads nothing', () => {
     expect(caps.classify([{ type: 'history', access: 'commit', paths: ['**'] }, fetchOne], [])).toBe(3)
+  })
+
+  it('counts a type it doesn’t know as 4, so nothing new is ever class 0 by default', () => {
+    expect(caps.classify([{ type: 'net.listen' } as unknown as Capability], [])).toBe(4)
+    expect(caps.firstUse([{ type: 'net.listen' } as unknown as Capability], [])).toEqual([{ type: 'net.listen' }])
   })
 })
 
 describe('the items that ask at first use', () => {
   it('are none for a plugin below class 4', () => {
     expect(caps.firstUse([read, write, { type: 'storage' }], [])).toEqual([])
-    expect(caps.firstUse([write, fetchOne], [])).toEqual([])
+    expect(caps.firstUse([{ type: 'history', access: 'commit', paths: ['**'] }, fetchOne], [])).toEqual([])
   })
 
   it('are the items whose own class is 4', () => {
@@ -94,7 +103,7 @@ describe('the screen under the core\'s words', () => {
   it('names the class and what the plugin reaches through plugin.call', () => {
     expect(caps.screen({ granted: [call], reachable: [write], callers: [] })).toEqual([
       'Class 2, Writer',
-      'Through plugin.call it reaches: luoshu.write on "04 - Daily/**"',
+      'Through plugin.call it is connected to: luoshu.write on "04 - Daily/**"',
     ])
   })
 
@@ -102,7 +111,7 @@ describe('the screen under the core\'s words', () => {
     const callers = [{ id: 'notes-ai', granted: [read] }, { id: 'calc', granted: [{ type: 'storage' } as Capability] }, { id: 'search', granted: [list] }]
     expect(caps.screen({ granted: [fetchOne], reachable: [], callers })).toEqual([
       'Class 3, Network',
-      'Plugins that read and can reach it: notes-ai, search',
+      'Plugins that read and are connected to it through plugin.call: notes-ai, search',
     ])
     expect(caps.screen({ granted: [write], reachable: [], callers })).toEqual(['Class 2, Writer'])
   })
