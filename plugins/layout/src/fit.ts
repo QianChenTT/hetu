@@ -1,9 +1,9 @@
 import type { LayoutView } from '@hetu/sdk'
 
 // Folding in hetu's own layout. Sizes are CSS, so Chromium resolves them as the window changes. When the minimums don't
-// fit, the lowest-ranked side column folds to a rail first, greedily, so the human can predict what goes: an optimal
-// packing could fold a view the human uses a lot to fit two small ones. A folded side unfolds only a margin past the
-// width it needs, so a window near the edge doesn't flicker
+// fit, sides open greedily in rank order and the rest fold to rails, so the lowest-ranked goes first and the human can
+// predict what goes: an optimal packing could fold a view the human uses a lot to fit two small ones. A side folded
+// before opens only a margin past the width it needs, so a window near the edge doesn't flicker
 
 export type Side = 'left' | 'right'
 
@@ -29,13 +29,11 @@ export function fit(input: { width: number, sides: readonly { side: Side, min: n
   const { width, sides } = input
   const need = (open: readonly { side: Side, min: number }[]) =>
     MAIN_MIN + open.reduce((sum, each) => sum + each.min, 0) + RAIL * (sides.length - open.length)
-  const byRank = [...sides].sort((a, b) => a.rank - b.rank)
-  const open = byRank.filter(each => !input.folded.has(each.side))
-  for (const each of byRank.filter(side => input.folded.has(side.side))) {
-    if (need([...open, each]) + UNFOLD_MARGIN <= width) open.push(each)
+  const open: { side: Side, min: number }[] = []
+  for (const each of [...sides].sort((a, b) => a.rank - b.rank)) {
+    const margin = input.folded.has(each.side) ? UNFOLD_MARGIN : 0
+    if (need([...open, each]) + margin <= width) open.push(each)
   }
-  open.sort((a, b) => a.rank - b.rank)
-  while (open.length > 0 && need(open) > width) open.pop()
   return new Set(sides.filter(each => !open.includes(each)).map(each => each.side))
 }
 

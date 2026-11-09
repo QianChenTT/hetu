@@ -1,6 +1,7 @@
 // The views menu in the core layer, drawn by the drawer in fixed styles no theme reaches: the layout and the theme the
 // human picks, every declared view with its plugin's name, running or not, starred as a favorite and shown or hidden,
-// and the keys two plugins bind with the owner the human picked. Everything is text
+// and the keys two plugins bind with the owner the human picked. Everything is text. No plugin code runs in this page,
+// so every event here is the human's
 
 export type MenuData = {
   layouts: { id: string, name: string }[]
@@ -40,9 +41,7 @@ function choice(label: string, options: { id: string, name: string }[], none: st
     made.selected = option.id === (picked ?? '')
     select.append(made)
   }
-  select.addEventListener('change', event => {
-    if (event.isTrusted) pick(select.value === '' ? null : select.value)
-  })
+  select.addEventListener('change', () => pick(select.value === '' ? null : select.value))
   row.append(text, select)
   return row
 }
@@ -51,9 +50,7 @@ function action(text: string, act: () => void): HTMLButtonElement {
   const made = document.createElement('button')
   made.type = 'button'
   made.textContent = text
-  made.addEventListener('click', event => {
-    if (event.isTrusted) act()
-  })
+  made.addEventListener('click', act)
   return made
 }
 

@@ -128,7 +128,8 @@ function start(bridge: Bridge): void {
           layers?.changed()
           drawMenuSoon()
         },
-        post: (owner, instance, data) => frames?.post(owner, instance, data) ?? 'unavailable',
+        // A post that lands answers null, so a missing Frames has to be told apart from it
+        post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         open: path => openNote(path),
       },
     },

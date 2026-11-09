@@ -279,7 +279,8 @@ export class TreeView {
       default:
         element = document.createElement('div')
     }
-    element.classList.add('hetu-node', `hetu-${node.kind}`)
+    // A title or editor placeholder is the layout's box, apart from the element the drawer lays over it
+    element.classList.add('hetu-node', node.kind === 'title' || node.kind === 'editor' ? `hetu-${node.kind}-place` : `hetu-${node.kind}`)
     return element
   }
 

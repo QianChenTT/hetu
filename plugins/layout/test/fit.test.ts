@@ -27,6 +27,11 @@ describe('folding side columns when the window is too narrow', () => {
     expect(fit({ width: needed + UNFOLD_MARGIN, sides, folded: new Set(['right']) })).toEqual(new Set())
   })
 
+  it('opens a side the human now ranks first though it was folded, and folds the other', () => {
+    const ranked = [{ side: 'left' as const, min: 160, rank: 1 }, { side: 'right' as const, min: 160, rank: 0 }]
+    expect(fit({ width: 600, sides: ranked, folded: new Set(['right']) })).toEqual(new Set(['left']))
+  })
+
   it('counts a folded side as its rail', () => {
     expect(fit({ width: MAIN_MIN + 240 + RAIL, sides, folded: new Set() })).toEqual(new Set(['right']))
     expect(fit({ width: MAIN_MIN + 240 + RAIL - 1, sides, folded: new Set() })).toEqual(new Set(['left', 'right']))
