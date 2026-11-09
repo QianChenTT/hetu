@@ -105,6 +105,9 @@ const coreTable = {
   'core.restart': { from: 'windows', args: target },
   'core.quit': { from: 'windows', args: nothing },
   'core.relaunch': { from: 'trusted', args: nothing },
+  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.set,
+  // which waits for the Confirm
+  'core.pickFolder': { from: 'trusted', args: nothing },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -208,6 +211,8 @@ export type SecurityList = {
   }
   // The values the human set, for all plugins and for each one. A constant not named runs at the floor's value
   limits: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> }
+  // The notes folder, null for none picked
+  luoshu: string | null
   requests: HeldRequest[]
   stopped: StoppedMode | null
 }
@@ -244,5 +249,6 @@ export type ActionResults = {
   'luoshu.read': { text: string, version: string }
   'luoshu.write': { version: string }
   'luoshu.list': { paths: string[], next: string | null }
+  'core.pickFolder': string | null
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown

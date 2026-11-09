@@ -12,6 +12,7 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   plugins: [],
   switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
   limits: { all: {}, plugins: {} },
+  luoshu: null,
   requests: [],
   stopped: null,
   ...over,
@@ -83,6 +84,11 @@ describe('what the trusted window draws', () => {
       { line: 'any command: git', change: null },
       { line: 'unsigned builds trusted: 1', change: null },
     ])
+  })
+
+  it('names the notes folder, or says none is picked', () => {
+    expect(screen(calm()).luoshu).toBe('Notes folder: none picked')
+    expect(screen(calm({ luoshu: '/Users/someone/notes' })).luoshu).toBe('Notes folder: /Users/someone/notes')
   })
 
   it('gives a folder plugin its dev mode switch and a plugin holding exec its any command switch', () => {
@@ -226,6 +232,17 @@ describe('the trusted page', () => {
     expect(sent.at(-1)).toMatchObject({ action: 'security.list' })
     hears(replyTo(sent.at(-1)!, calm()))
     expect(drawn.at(-1)?.note).toBe('Type a whole number from 1 up')
+  })
+
+  it('picks a folder through main’s dialog and asks for it as luoshu.set, and asks nothing when the dialog was cancelled', () => {
+    const { sent, page, hears } = started()
+    page.pickFolder()
+    expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
+    hears(replyTo(sent.at(-1)!, null))
+    expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
+    page.pickFolder()
+    hears(replyTo(sent.at(-1)!, '/Users/someone/notes'))
+    expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.set', folder: '/Users/someone/notes' } } })
   })
 
   it('asks for a limit as a request, which waits for the Confirm', () => {

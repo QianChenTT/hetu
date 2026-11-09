@@ -25,6 +25,7 @@ describe('the core actions', () => {
       'core.restart': 'windows',
       'core.quit': 'windows',
       'core.relaunch': 'trusted',
+      'core.pickFolder': 'trusted',
       'watchdog.stop': 'watchdog',
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',

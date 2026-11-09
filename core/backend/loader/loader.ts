@@ -440,6 +440,7 @@ ${capabilityKey(change.capability)}`)
         all: { ...switches.limits.all },
         plugins: Object.fromEntries(Object.entries(switches.limits.plugins).map(([id, set]) => [id, { ...set }])),
       },
+      luoshu: this.state.luoshu?.folder ?? null,
       requests,
       stopped: this.stoppedMode,
     }

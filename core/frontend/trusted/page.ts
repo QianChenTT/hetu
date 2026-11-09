@@ -129,6 +129,14 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     switches.append(element('p', 'hetu recommends keeping every security plugin on'))
     parts.push(switches)
 
+    const luoshu = element('section')
+    luoshu.className = 'luoshu'
+    luoshu.append(element('h2', 'Notes'))
+    const folderLine = element('p', shown.luoshu)
+    folderLine.append(button('Pick a folder', () => page.pickFolder()))
+    luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
+    parts.push(luoshu)
+
     const limits = element('section')
     limits.className = 'limits'
     limits.append(element('h2', 'Limits'))

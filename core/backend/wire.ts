@@ -27,8 +27,8 @@ export type WireOptions = {
   confirmDelayMs?: number
 }
 
-// The core actions the runtime serves, since only it opens windows and ends the process
-const runtimeActions = new Set(['security.open', 'core.quit', 'core.relaunch'])
+// The core actions the runtime serves, since only it opens windows and dialogs and ends the process
+const runtimeActions = new Set(['security.open', 'core.quit', 'core.relaunch', 'core.pickFolder'])
 
 // The loader needs its link before the carrier exists, since the carrier needs the loader. Each call goes to the
 // carrier once wireCore attached it. One made before that throws
