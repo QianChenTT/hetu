@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1030,10 +1030,14 @@ describe('rotation', () => {
     expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
   })
 
+  // 64 lines of about 200 KB make a file of 13 MB, past where a size cap would usually start a new one, with few
+  // enough fsyncs that a slow disk keeps the test short
   it('keeps a busy session in one segment however large it grows', async () => {
     const log = await opened()
-    await fill(log, 200)
+    const wide = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${i}`, 'x'.repeat(4096)]))
+    for (let n = 1; n <= 64; n++) await log.append('test.line', { n, ...wide })
     expect(await segments()).toEqual(['events-1.jsonl'])
+    expect((await stat(segmentFile(1))).size).toBeGreaterThan(13_000_000)
   })
 })
 
