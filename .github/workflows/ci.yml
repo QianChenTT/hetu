@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025]
+        os: [ubuntu-24.04, windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     env:
       # The daemon commits with the machine's git identity and a fresh runner has none
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      # No dependency has an install script today, skipping until there is any
+      # Install scripts are skipped. Electron's fetches its binary, which only the end-to-end job needs
       - name: install packages
         run: npm ci --ignore-scripts
       - name: typecheck
@@ -51,6 +51,33 @@ jobs:
           Write-Output "short name: $short"
       - name: run tests
         run: npm test
+
+  # The built app on all three systems, driven by Playwright. Linux has no display, so there it runs under xvfb-run
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: install packages
+        run: npm ci --ignore-scripts
+      # The one install script run: Electron's, which fetches its binary and checks it against the checksums its package
+      # ships, the package itself pinned by the lock file
+      - name: fetch Electron
+        run: node node_modules/electron/install.js
+      - name: build and drive the app
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
+      - name: build and drive the app under xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
 
   # SCA: dev dependencies and medium or lower advisories only warn, high and critical in
   # production dependencies fail

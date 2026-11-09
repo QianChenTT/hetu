@@ -51,8 +51,9 @@ export type HostStart = { id: string, incarnation: number, root: string, files: 
 
 // What the loader needs from the runtime, the only part that touches Electron, faked in the loader's tests
 export type Runtime = {
-  // Both ends of a new channel: core for the carrier and plugin for the half's code. MessageChannelMain in Electron
-  channel(): { core: Port, plugin: unknown }
+  // Both ends of a new channel for plugin id: core for the carrier and plugin for the half's code. MessageChannelMain in
+  // Electron, whose core end reads only text within the plugin's cap
+  channel(id: string): { core: Port, plugin: unknown }
   // Starts a worker from the verified bytes. The worker host page gets { id, incarnation, code } and the port. A throw
   // means it couldn't start
   startWorker(start: WorkerStart): void

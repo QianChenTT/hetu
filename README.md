@@ -41,6 +41,15 @@ npm run seed
 npm run dev
 ```
 
-The editor runs at http://localhost:5174 and the daemon at http://127.0.0.1:4747. `npm run seed:fresh` replaces the playground and its history. `npm test` runs the daemon tests, `npm run typecheck` checks both workspaces
+The editor runs at http://localhost:5174 and the daemon at http://127.0.0.1:4747. `npm run seed:fresh` replaces the playground and its history. `npm test` runs every workspace's tests and `npm run typecheck` checks them
+
+The new core starts as an Electron app:
+
+```
+npm run build:main
+npx electron .
+```
+
+A run from the source keeps its data in its own `hetu-dev` folder, or in `HETU_DATA_DIR` when that is set. `npm run test:e2e` builds the app and drives it with Playwright
 
 Claude Code sessions opened in this folder connect to the daemon through `.mcp.json` once the folder is trusted and the server approved

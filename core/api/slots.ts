@@ -92,7 +92,11 @@ export type PluginState = typeof pluginStates[number]
 
 // What the watchdog hears from the carrier: messages over a port's rate dropped since the last sample, at most once a
 // second per port. The runtime's samples come with the Electron runtime
-export type Sample = { readonly kind: 'dropped', readonly caller: Caller, readonly count: number }
+// What the watchdog hears about a plugin: messages dropped over its rate, by the carrier or the relay in the worker host
+// page, errors its worker threw, at most once a second, and the relay cutting its worker off
+export type Sample =
+  | { readonly kind: 'dropped' | 'errors', readonly caller: Caller, readonly count: number }
+  | { readonly kind: 'cutoff', readonly caller: Caller, readonly reason: 'malformed' | 'flood' }
 export type Watchdog = { sample(sample: Sample): void }
 
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a

@@ -12,12 +12,13 @@ import {
 } from '../../api/ids.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import {
-  pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Scope,
+  pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Sample, type Scope,
   type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus, type Paths } from './bus.ts'
-import { countMessage, Limits, newRate, type Rate } from './limits.ts'
+import { countMessage, newRate, type Rate } from '../../api/rate.ts'
+import { Limits } from './limits.ts'
 import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
@@ -262,6 +263,19 @@ export class Carrier {
   // A floor record from the core: boot, the loader and the carrier itself
   floor(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
+  }
+
+  // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
+  // hears it while its slot is on. The page counts a second's worth before it reports
+  sample(sample: Sample): void {
+    if (this.closed || this.slot('watchdog') !== 'on') return
+    const watchdog = this.holder(() => this.options.watchdog())
+    if (watchdog === null) return
+    try {
+      watchdog.sample(frozen(sample))
+    } catch {
+      this.fault('watchdog', 'sample')
+    }
   }
 
   // The floor lane's backlog, for a log that came back
@@ -790,7 +804,11 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'watchdog.limit') {
-      this.limits.lower(field(args, 'plugin') as string, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
+      const plugin = field(args, 'plugin') as string
+      this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
+      try {
+        this.options.limited?.(plugin)
+      } catch {}
       return this.finish(pending, { ok: true, result: null })
     }
     return this.serve(pending, this.options.core, args)

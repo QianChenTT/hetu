@@ -44,7 +44,7 @@ export type Loader = {
   recordNothing(): boolean
   // A way in closed under its plugin or was closed for a flood. The loader moves dependents to waiting before this
   // returns and the carrier then answers the calls the plugin held
-  crashed(caller: Caller, reason: 'closed' | 'flood'): void
+  crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
   // Lifecycle messages a plugin sends, which the carrier only passes on
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
 }
@@ -92,4 +92,6 @@ export type CarrierOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   // How long the floor lane waits before it tries a failed append again
   floorRetryMs?: number
+  // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page
+  limited?: (plugin: string) => void
 }

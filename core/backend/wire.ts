@@ -16,6 +16,8 @@ export type WireOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
+  // watchdog.limit lowered one of this plugin's constants, for the runtime to pass on
+  limited?: (plugin: string) => void
 }
 
 // The loader needs its link before the carrier exists, since the carrier needs the loader. Each call goes to the
@@ -95,6 +97,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),
+    ...(options.limited !== undefined ? { limited: options.limited } : {}),
   }))
   link.carrier = carrier
   return { loader, carrier }
