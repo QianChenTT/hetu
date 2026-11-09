@@ -30,7 +30,7 @@ describe('hetu as an Electron app', () => {
     expect(all.find(record => record.event === 'plugin.started' && record.plugin === 'luoshu')).toBeDefined()
     expect(all.some(record => record.event === 'plugin.waiting' && record.plugin === 'search')).toBe(false)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
-      gate: 'on', capabilities: 'absent', watchdog: 'absent',
+      gate: 'on', capabilities: 'on', watchdog: 'absent',
     })
     expect(await exists(path.join(dataDir, 'electron'))).toBe(true)
   })
