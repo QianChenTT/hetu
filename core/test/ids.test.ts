@@ -124,12 +124,16 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetu'])(
+  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)
     },
   )
+
+  it.each(['hetu', 'hetu-security', 'hetu-x'])('reserves %j, since titles and owner strips show a plugin by its id', id => {
+    expect(isReservedId(id)).toBe(true)
+  })
 
   it('reserves no name from Object', () => {
     for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) expect(isReservedId(id)).toBe(false)

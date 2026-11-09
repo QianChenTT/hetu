@@ -51,7 +51,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
   })
   const link = new CoreLink(core.bridge)
   link.start()
-  const value: SettingsValue = { layout: null, theme: null, favorites: [], keys: {}, ...settings }
+  const value: SettingsValue = { layout: null, plain: false, theme: null, favorites: [], keys: {}, ...settings }
   const drawn: string[] = []
   const opened: string[] = []
   const posted: unknown[] = []
@@ -137,6 +137,18 @@ describe('views on the drawer port', () => {
     expect(await board.call('view.draw', { instance: 'v1', ops: [{ op: 'tree', root: text('a', 'late') }] })).toMatchObject({ ok: true })
   })
 
+  it('refuses a draw whose operations would look at more nodes than the second has left, before it applies', async () => {
+    const { drawer } = started({ kanban: viewer }, {}, () => 0)
+    const board = await connected(drawer, 'kanban')
+    const big = { kind: 'box', id: 'root', children: Array.from({ length: 9_999 }, (_, i) => text(`t${i}`, 'x')) }
+    expect(await board.call('view.draw', { instance: 'v1', ops: [{ op: 'tree', root: big }] })).toMatchObject({ ok: true })
+    // Each operation may walk the whole tree, so 100 on a tree of 10,000 may look at a million nodes
+    const ops = Array.from({ length: 100 }, (_, i) => ({ op: 'text', id: `t${9_998 - i}`, text: 'y' }))
+    expect(await board.call('view.draw', { instance: 'v1', ops })).toMatchObject({ ok: false, refusal: { code: 'throttled' } })
+    expect(drawer.ui.surfaces.tree('kanban', 'v1')).toEqual(big)
+    expect(await board.call('view.draw', { instance: 'v1', ops: ops.slice(0, 1) })).toMatchObject({ ok: true })
+  })
+
   it('opens and closes more instances, and drops a closed one\'s tree', async () => {
     const { drawer } = started({ kanban: viewer })
     const board = await connected(drawer, 'kanban')
@@ -203,6 +215,32 @@ describe('the layout on the drawer port', () => {
     drawer.ui.settingsChanged()
     expect(drawer.ui.layout()).toBe('other')
     expect(await other.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: true })
+  })
+
+  it('counts the picked layout as drawing only once it sent a skeleton, so the plain layout shows until then', async () => {
+    const { drawer } = started({ layout: layouter })
+    const own = await connected(drawer, 'layout')
+    expect(drawer.ui.layout()).toBe('layout')
+    expect(drawer.ui.drawing()).toBe(null)
+    await own.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })
+    expect(drawer.ui.drawing()).toBe('layout')
+  })
+
+  it('draws the plain layout when the human picked it, whatever layouts are connected', async () => {
+    const { drawer, value } = started({ layout: layouter })
+    await connected(drawer, 'layout')
+    value.plain = true
+    drawer.ui.settingsChanged()
+    expect(drawer.ui.layout()).toBe(null)
+    expect(drawer.ui.drawing()).toBe(null)
+  })
+
+  it('tells the layout when an owner opens another instance, so it can place it', async () => {
+    const { drawer } = started({ layout: layouter, kanban: viewer })
+    const own = await connected(drawer, 'layout')
+    const board = await connected(drawer, 'kanban')
+    await board.call('view.open', { view: 'board' })
+    expect(own.events('layout.open')).toEqual([{ v: 1, kind: 'event', topic: 'layout.open', instance: 'v2' }])
   })
 
   it('refuses a skeleton from a plugin without ui.layout and a view placing slots', async () => {

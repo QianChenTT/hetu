@@ -22,7 +22,17 @@ describe('the window\'s settings', () => {
   it('starts with no layout or theme picked, no favorites and no key owners', async () => {
     const { settings } = made()
     await settings.load()
-    expect(settings.value).toEqual({ layout: null, theme: null, favorites: [], keys: {} })
+    expect(settings.value).toEqual({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+  })
+
+  it("takes the drawer's plain layout as a pick of its own, apart from hetu's layout", async () => {
+    const { settings, space } = made()
+    await settings.load()
+    await settings.pickLayout(null)
+    expect(settings.value).toMatchObject({ layout: null, plain: true })
+    await settings.pickLayout('layout')
+    expect(settings.value).toMatchObject({ layout: 'layout', plain: false })
+    expect(space.get('settings')).toMatchObject({ layout: 'layout', plain: false })
   })
 
   it('keeps each change under settings in the window\'s storage and reads it back', async () => {
@@ -34,7 +44,7 @@ describe('the window\'s settings', () => {
     await settings.favorite('kanban/board', true)
     await settings.favorite('tree/files', false)
     await settings.ownKey('Mod-k', 'kanban')
-    expect(space.get('settings')).toEqual({ layout: 'layout', theme: 'dusk', favorites: ['kanban/board'], keys: { 'Mod-k': 'kanban' } })
+    expect(space.get('settings')).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: { 'Mod-k': 'kanban' } })
     await settings.ownKey('Mod-k', null)
     expect(settings.value.keys).toEqual({})
     // A page loaded again reads what the last one kept. The fake bridge has one listener, so the old link is done
@@ -42,14 +52,14 @@ describe('the window\'s settings', () => {
     link.start()
     const again = new Settings(link)
     await again.load()
-    expect(again.value).toEqual({ layout: 'layout', theme: 'dusk', favorites: ['kanban/board'], keys: {} })
+    expect(again.value).toEqual({ layout: 'layout', plain: false, theme: 'dusk', favorites: ['kanban/board'], keys: {} })
   })
 
   it('reads a stored value of the wrong shape as the defaults', async () => {
     for (const stored of [{ layout: 7 }, 'x', { layout: null, theme: null, favorites: ['a b'], keys: {} }, { layout: 'Bad Id', theme: null, favorites: [], keys: {} }]) {
       const { settings } = made(stored)
       await settings.load()
-      expect(settings.value, JSON.stringify(stored)).toEqual({ layout: null, theme: null, favorites: [], keys: {} })
+      expect(settings.value, JSON.stringify(stored)).toEqual({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
     }
   })
 

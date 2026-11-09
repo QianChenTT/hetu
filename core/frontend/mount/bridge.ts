@@ -55,7 +55,7 @@ const none: Reach = Object.freeze({ read: false, write: false, list: false, verb
 export const NODES_PER_SECOND = 200_000
 
 const noHooks: UiHooks = { drawn() {}, changed() {}, post: () => 'unavailable', open: async () => {} }
-const noSettings = (): SettingsValue => ({ layout: null, theme: null, favorites: [], keys: {} })
+const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
 
 type Connection = {
   readonly plugin: string
@@ -310,8 +310,14 @@ export class Drawer {
       const item = uiNeeds[call.verb as UiCall['verb']]
       if (!(await this.reachOf(plugin)).verbs.includes(item)) throw new Refusal('not-granted')
       if (!this.live(conn)) throw new Refusal('stopped')
-      // A draw is refused once the second's nodes are spent, before it applies, and charged for what it looked at after
-      if (call.verb === 'view.draw' || call.verb === 'layout.draw') this.spend(conn, 0, 0)
+      // A draw is refused before it applies once the second's nodes are spent or its operations could spend the rest:
+      // each may walk the whole tree. It is charged for what it looked at after
+      if (call.verb === 'view.draw' || call.verb === 'layout.draw') {
+        this.spend(conn, 0, 0)
+        const surface = call.verb === 'layout.draw' ? 'layout' : call.args.instance
+        const others = call.args.ops.filter(each => each.op !== 'tree').length
+        if (conn.spent.nodes + others * this.ui.surfaces.size(plugin, surface) > NODES_PER_SECOND) throw new Refusal('throttled')
+      }
       return this.ui.answer(plugin, call as UiCall, nodes => {
         conn.spent.nodes += nodes
       })
