@@ -5,6 +5,9 @@ import { floorConstants } from './floor.ts'
 import { localName } from './ids.ts'
 import { plain, plainData } from './plain.ts'
 import { pathProblem } from './scope.ts'
+import {
+  MAX_CHILDREN_OF_SPLIT, MAX_FRAME_MESSAGE, MAX_NODE_TEXT, MAX_NODES, MAX_OPS, MAX_OPTIONS, MAX_PAYLOAD, MAX_TREE_DEPTH,
+} from './ui-limits.ts'
 import { VERSION } from './version.ts'
 
 // What plugins draw in the editor window: themes as token values, trees of the drawer's building blocks and the ui
@@ -171,17 +174,9 @@ export function styleProblem(style: Record<string, unknown>): string | null {
 
 // ---- the tree
 
-export const MAX_NODES = 10_000
-export const MAX_TREE_DEPTH = 32
-export const MAX_NODE_TEXT = 4000
-export const MAX_OPS = 100
-// Trees one plugin keeps in the drawer: its view instances and, for the layout, its skeleton
-export const MAX_SURFACES = 20
-export const MAX_PAYLOAD = 4096
-export const MAX_CHILDREN_OF_SPLIT = 8
-export const MAX_OPTIONS = 200
-// A frame's message either way, as plain data
-export const MAX_FRAME_MESSAGE = 64 * 1024
+export {
+  MAX_CHILDREN_OF_SPLIT, MAX_FRAME_MESSAGE, MAX_NODE_TEXT, MAX_NODES, MAX_OPS, MAX_OPTIONS, MAX_PAYLOAD, MAX_SURFACES, MAX_TREE_DEPTH,
+} from './ui-limits.ts'
 
 export type Style = Record<string, string>
 export type PayloadType = 'note' | 'text'
