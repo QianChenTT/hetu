@@ -208,6 +208,7 @@ export type UiNode = Common & (
   | { kind: 'checkbox', checked: boolean, label?: string, disabled?: boolean }
   | { kind: 'select', value: string, options: { value: string, text: string }[], disabled?: boolean }
   | { kind: 'list', rowHeight: number, rows: UiNode[] }
+  // Sizes in pixels, one a child. The child sized 0 takes the space the others leave, else the last does
   | { kind: 'split', direction: 'row' | 'column', children?: UiNode[], sizes?: number[], min?: number[], resizable?: boolean }
   | { kind: 'popover', anchor: string, side: 'below' | 'above' | 'left' | 'right', children?: UiNode[] }
   // The layout's alone: a view instance or every item in rank order, an editor instance or the current one, and the
@@ -254,11 +255,17 @@ const common = {
   zone: localName.optional(),
 }
 
-// Sizes and minimums, one a child, held to the children it splits
-function splitShape(value: { children?: unknown[] | undefined, sizes?: number[] | undefined, min?: number[] | undefined }): boolean {
-  if (value.children === undefined) return value.sizes === undefined && value.min === undefined
-  const count = value.children.length
+type SplitLike = { children?: unknown[] | undefined, sizes?: number[] | undefined, min?: number[] | undefined }
+
+// Sizes and minimums, one a child, held to the children it splits: 2 to 8. A split in a whole tree always has them
+function splitShape(value: SplitLike): boolean {
+  const count = value.children?.length ?? 0
   return count >= 2 && count <= MAX_CHILDREN_OF_SPLIT && (value.sizes?.length ?? count) === count && (value.min?.length ?? count) === count
+}
+
+// As sent, where a props operation carries a split without its children, which the tree it lands in is checked for
+function sentSplitShape(value: SplitLike): boolean {
+  return value.children === undefined || splitShape(value)
 }
 
 export const node: z.ZodType<UiNode> = z.lazy(() => {
@@ -289,7 +296,7 @@ export const node: z.ZodType<UiNode> = z.lazy(() => {
       sizes: z.array(z.int().min(0).max(16_384)).optional(),
       min: z.array(z.int().min(0).max(16_384)).optional(),
       resizable: z.boolean().optional(),
-    }).refine(splitShape, 'sizes and minimums one a child, 2 to 8 children'),
+    }).refine(sentSplitShape, 'sizes and minimums one a child, 2 to 8 children'),
     z.strictObject({ ...common, kind: z.literal('popover'), anchor: nodeId, side: z.enum(['below', 'above', 'left', 'right']), children }),
     z.strictObject({ ...common, kind: z.literal('slot'), instance: viewInstance.optional(), items: z.literal(true).optional() })
       .refine(value => (value.instance === undefined) !== (value.items === undefined), 'one instance or every item'),

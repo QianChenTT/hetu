@@ -24,8 +24,9 @@ class Refusal {
 }
 
 export class FakeDrawer {
-  // The client the plugin's ctx.editor and ctx.ui use, which the fake core hands to the plugin it runs
-  readonly editor = new Editor()
+  // The client the plugin's ctx.editor and ctx.ui use, which the fake core hands to each run of the plugin anew, so a
+  // stopped run's handlers hear nothing
+  editor = new Editor()
   // Notes the plugin opened with editor.open
   readonly opened: string[] = []
   readonly marks = new Map<string, Mark[]>()
@@ -36,6 +37,14 @@ export class FakeDrawer {
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
+
+  // A client for the next run of the plugin
+  fresh(): Editor {
+    this.editor = new Editor()
+    this.trees.clear()
+    this.instancesOf.clear()
+    return this.editor
+  }
 
   // The fake core connects it once the plugin runs, with what its manifest declares
   connect(granted: readonly Capability[], views: Record<string, ViewSpec>): void {

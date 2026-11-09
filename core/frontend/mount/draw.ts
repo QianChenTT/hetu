@@ -204,10 +204,11 @@ export class TreeView {
     element.style.setProperty('display', 'flex')
     element.style.setProperty('flex-direction', node.direction)
     const placed: HTMLElement[] = []
+    const filler = fillerOf(node.sizes, children.length)
     children.forEach((child, at) => {
       const size = node.sizes?.[at]
       const last = at === children.length - 1
-      child.style.setProperty('flex', last || size === undefined ? '1 1 0' : `0 0 ${size}px`)
+      child.style.setProperty('flex', at === filler || size === undefined ? '1 1 0' : `0 0 ${size}px`)
       child.style.setProperty(node.direction === 'row' ? 'min-width' : 'min-height', `${node.min?.[at] ?? 0}px`)
       placed.push(child)
       if (!last && node.resizable === true) {
@@ -343,6 +344,12 @@ export class TreeView {
   accepts(id: string): readonly PayloadType[] {
     return this.held.get(id)?.node.accepts ?? []
   }
+}
+
+// The child of a split that takes the space the others leave: the one sized 0, else the last
+export function fillerOf(sizes: readonly number[] | undefined, count: number): number {
+  const zero = sizes?.indexOf(0) ?? -1
+  return zero === -1 ? count - 1 : zero
 }
 
 // The node's style with the states it is in, the properties set last time cleared first

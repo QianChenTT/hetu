@@ -124,6 +124,15 @@ describe('applying operations', () => {
     expect('tree' in got && got.tree).toEqual(box('root', [box('side', [text('a', 'one')], { style: { color: 'red' } }), text('b', 'two')]))
   })
 
+  it('changes a split\'s sizes through props, its children kept, and refuses sizes that miss a child', () => {
+    const split: UiNode = { kind: 'split', id: 'cols', direction: 'row', children: [box('l'), box('r')], sizes: [100, 0] }
+    const sized = { kind: 'split', id: 'cols', direction: 'row', sizes: [300, 0] } as UiNode
+    expect(op.safeParse({ op: 'props', node: sized }).success).toBe(true)
+    const got = run(split, [{ op: 'props', node: sized }])
+    expect('tree' in got && got.tree).toEqual({ ...split, sizes: [300, 0] })
+    expect(run(split, [{ op: 'props', node: { ...sized, sizes: [300] } as UiNode }])).toHaveProperty('problem')
+  })
+
   it('changes a text', () => {
     const got = run(start, [{ op: 'text', id: 'b', text: 'TWO' }])
     expect('tree' in got && got.tree).toEqual(box('root', [box('side', [text('a', 'one')]), text('b', 'TWO')]))

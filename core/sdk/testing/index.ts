@@ -332,7 +332,7 @@ export class FakeCore {
       topics: this.manifest.provides?.topics ?? [],
     })
     const ready = this.loader.waitFor(caller, 'ready', this.readyMs)
-    run(plugin, transportOf(this.carrier, caller), this.drawer === null ? {} : { editor: this.drawer.editor })
+    run(plugin, transportOf(this.carrier, caller), this.drawer === null ? {} : { editor: this.drawer.fresh() })
     this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
     this.carrier.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,

@@ -2,7 +2,7 @@ import type { CoreViewsPlugin } from '../../api/actions.ts'
 import type { Payload } from '../../api/ui.ts'
 import { Drawer, type PortLike } from './bridge.ts'
 import { accepts, DragGesture, fraction, splitSizes, zoneAt } from './drag.ts'
-import { type DrawHooks, taggedOf } from './draw.ts'
+import { type DrawHooks, fillerOf, taggedOf } from './draw.ts'
 import { EditorViews } from './editor.ts'
 import { coreKeyOf, keyName } from './keys.ts'
 import { Layers } from './layers.ts'
@@ -287,7 +287,8 @@ function start(bridge: Bridge): void {
     track(start, event => {
       const delta = across ? event.clientX - start.clientX : event.clientY - start.clientY
       sizes = splitSizes(from, spec.min, index, Math.round(delta)).map(size => Math.round(size))
-      children.forEach((child, at) => child.style.setProperty('flex', at === children.length - 1 ? '1 1 0' : `0 0 ${sizes[at]}px`))
+      const filler = fillerOf(spec.sizes, children.length)
+      children.forEach((child, at) => child.style.setProperty('flex', at === filler ? '1 1 0' : `0 0 ${sizes[at]}px`))
       theLayers.schedule()
     }, (_event, how) => {
       if (how !== 'cancel') ui.resized(owner, surface, node, sizes)

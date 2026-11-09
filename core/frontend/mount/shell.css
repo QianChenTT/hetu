@@ -77,6 +77,26 @@ body {
 /* The stage plugins draw in. Nothing in it reaches above it: the base layer is a stacking context of its own below the
    lifted layer, which holds the editors, titles and frames over their placeholders, and the overlay layer above both.
    Theme variables are set on the base and lifted layers only */
+/* Every token's value with no theme picked, which a theme's own values set on the same layers replace */
+#base,
+#editors {
+  --hetu-color-bg: #ffffff;
+  --hetu-color-fg: #1f1f1f;
+  --hetu-color-muted: #6b6b6b;
+  --hetu-color-accent: #1a5fb4;
+  --hetu-color-border: #dddddd;
+  --hetu-color-surface: #f6f6f6;
+  --hetu-color-editor-bg: #ffffff;
+  --hetu-color-editor-fg: #1f1f1f;
+  --hetu-color-selection: #d7e4f7;
+  --hetu-font-ui: system-ui, sans-serif;
+  --hetu-font-editor: system-ui, sans-serif;
+  --hetu-font-mono: ui-monospace, monospace;
+  --hetu-font-size: 13px;
+  --hetu-space: 8px;
+  --hetu-radius: 4px;
+}
+
 #stage {
   flex: 1;
   min-height: 0;
