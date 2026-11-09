@@ -6,7 +6,7 @@ import { EventLog } from '../lib/event-log.ts'
 import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions, CoreLog, FloorLog, Landing } from '../backend/carrier/seams.ts'
-import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -24,6 +24,16 @@ function plugins(over: Partial<CarrierOptions> = {}) {
 async function written(carrier: Carrier, log: FakeLog) {
   await carrier.flush()
   return log.events('audit.call').map(record => record.fields)
+}
+
+// Answers each call as it reaches the plugin, waited for since a busy machine can take longer than any pause
+function answering(side: Side) {
+  const answered = new Set<unknown>()
+  return async (result: unknown) => {
+    const call = await side.waitFor(message => message.kind === 'call' && !answered.has(message.callId))
+    answered.add(call.callId)
+    side.answer(call.callId, result)
+  }
 }
 
 describe('audit records', () => {
@@ -139,18 +149,16 @@ describe('audit records', () => {
     const search = connect(worker('search'))
     const git = connect(worker('git'))
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
+    const answerSearch = answering(search)
+    const answerGit = answering(git)
     for (let i = 0; i < 3; i++) {
       const id = panel.call('search.query')
-      await tick(5)
-      const calls = search.inbox.filter(message => message.kind === 'call')
-      search.answer(calls.at(-1)!.callId, i)
+      await answerSearch(i)
       await panel.reply(id)
     }
     for (let i = 0; i < 2; i++) {
       const id = search.call('git.log')
-      await tick(5)
-      const calls = git.inbox.filter(message => message.kind === 'call')
-      git.answer(calls.at(-1)!.callId, i)
+      await answerGit(i)
       await search.reply(id)
     }
     expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
