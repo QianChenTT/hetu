@@ -121,7 +121,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   // Every file under start in name order, past .git, temp files, links, junctions and hetu's own folders. readdir's
   // entries name a link or junction as a link and never as a folder, so the walk can't follow one even without the check
-  async function list(root: string, start: string, after: string | undefined): Promise<unknown> {
+  async function list(root: string, start: string, after: string | undefined, canList: (path: string) => boolean): Promise<unknown> {
     const skip = [opening!.dataDir, opening!.installDir]
     const found: string[] = []
     async function walk(dir: string): Promise<void> {
@@ -146,9 +146,17 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
     await walk(start)
     found.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-    const rest = after === undefined ? found : found.filter(name => name > after)
-    const paths = rest.slice(0, pageSize)
-    return { paths, next: rest.length > pageSize ? paths.at(-1)! : null }
+    // Only names the caller may list, so the page and next say nothing of the others. One more than a page tells
+    // whether another page follows
+    const kept: string[] = []
+    for (const name of found) {
+      if (after !== undefined && name <= after) continue
+      if (!canList(name)) continue
+      kept.push(name)
+      if (kept.length > pageSize) break
+    }
+    const paths = kept.slice(0, pageSize)
+    return { paths, next: kept.length > pageSize ? paths.at(-1)! : null }
   }
 
   const provider: Provider = {
@@ -178,8 +186,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       try {
         if (opening === null) throw refused('unavailable')
         if (call.action === 'luoshu.list') {
+          // The carrier's canList is what keeps a name from a caller that may not list it, so no listing runs without it
+          if (call.canList === undefined) throw refused('failed')
           const root = await realpath(opening.folder)
-          return await list(root, target?.absolute ?? root, (call.args as { after?: string }).after)
+          return await list(root, target?.absolute ?? root, (call.args as { after?: string }).after, call.canList)
         }
         if (target === undefined) throw refused('failed')
         if (call.action === 'luoshu.read') return await read(target)

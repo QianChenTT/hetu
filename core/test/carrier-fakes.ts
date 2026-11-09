@@ -169,7 +169,8 @@ export class FakeLuoshu implements Provider {
     await this.hold.perform
     if (this.perform_ !== null) return this.perform_(call, prepared)
     // Every name, unfiltered, as the luoshu lists them
-    if (call.action === 'luoshu.list') return { paths: [...this.files.keys()].sort(), next: null }
+    // Every name the carrier's canList lets through, as the luoshu lists them
+    if (call.action === 'luoshu.list') return { paths: [...this.files.keys()].sort().filter(name => call.canList?.(name) === true), next: null }
     const path = prepared.scope.paths![0]
     if (call.action === 'luoshu.write') {
       this.files.set(path, (call.args as { text: string }).text)

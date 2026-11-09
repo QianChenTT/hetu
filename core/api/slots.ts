@@ -17,6 +17,9 @@ export type Call = {
   readonly action: string
   readonly args: unknown
   readonly deadline: number
+  // For a listing only: whether the caller may see a name, as the gate answers. The provider pages over the names it
+  // allows, so no name the caller can't list reaches it, not even as where the next page starts
+  readonly canList?: (path: string) => boolean
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
