@@ -23,7 +23,7 @@ const manifest = (over: object = {}) => ({
   id: 'reader',
   name: 'Reader',
   version: '1.0.0',
-  api: '^1',
+  api: '^2',
   entries: { worker: 'dist/worker.js' },
   provides: { actions: { read: {}, list: {} } },
   capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }],

@@ -20,9 +20,10 @@ function scopes<T extends z.ZodType>(item: T) {
   return z.array(item).max(MAX_SCOPES_PER_TYPE)
 }
 
-// The fixed list. A new type needs a new core API version and a plugin can't invent one
+// The fixed list. A new type needs a new core API version and a plugin can't invent one. Version 2 put ui.view, a view
+// of either kind, and ui.layout, the right to be picked as the layout, in place of ui.panel and ui.statusBar
 export const capabilityTypes = frozen([
-  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
+  'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
   'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
 ] as const)
 
@@ -34,7 +35,7 @@ export const capability = z.discriminatedUnion('type', [
   // luoshu.list reaches the names alone, so a file tree shows notes it can't read. luoshu.read lists what it reads too
   z.strictObject({ type: z.literal(['luoshu.read', 'luoshu.write', 'luoshu.list']), paths: scopes(scope) }),
   z.strictObject({ type: z.literal('net.fetch'), hosts: scopes(text) }),
-  z.strictObject({ type: z.literal(['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys']) }),
+  z.strictObject({ type: z.literal(['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys']) }),
   z.strictObject({ type: z.literal('events.subscribe'), topics: scopes(qualifiedName) }),
   z.strictObject({ type: z.literal('storage') }),
   // Paths too, so history reaches no note the plugin can't name

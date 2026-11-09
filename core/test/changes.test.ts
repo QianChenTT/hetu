@@ -18,7 +18,7 @@ const everyKind = [
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
   { kind: 'grant.narrow', plugin: 'search', capability: { type: 'luoshu.read', paths: ['notes/**'] } },
-  { kind: 'item.on', plugin: 'search', capability: { type: 'ui.panel' } },
+  { kind: 'item.on', plugin: 'search', capability: { type: 'ui.view' } },
   { kind: 'item.off', plugin: 'git', capability: { type: 'exec', commands: [['git', 'status']], env: [] } },
   { kind: 'luoshu.set', folder: '/Users/han/notes' },
   { kind: 'devMode', plugin: 'search', on: true },
@@ -87,7 +87,7 @@ describe('what each kind holds', () => {
   // Grants change only for folder plugins, an install plugin's grants are its manifest
   it.each(['grant.widen', 'grant.narrow', 'item.on', 'item.off'])('refuses an install-only type in %s', kind => {
     expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'guard.hook' } }).success).toBe(false)
-    expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'ui.panel' } }).success).toBe(true)
+    expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'ui.view' } }).success).toBe(true)
   })
 
   it('takes a luoshu folder as text with no control characters', () => {
@@ -160,7 +160,7 @@ describe('keys that reach Object', () => {
     ['__proto__ beside the fields', '{"kind":"plugin.on","plugin":"search","__proto__":{"kind":"confirmOff"}}'],
     ['__proto__ in the capability', '{"kind":"grant.widen","plugin":"search","capability":{"type":"storage","__proto__":{}}}'],
     ['constructor beside the fields', '{"kind":"confirmOff","on":true,"constructor":1}'],
-    ['constructor in the capability', '{"kind":"item.on","plugin":"search","capability":{"type":"ui.panel","constructor":1}}'],
+    ['constructor in the capability', '{"kind":"item.on","plugin":"search","capability":{"type":"ui.view","constructor":1}}'],
     ['prototype beside the fields', '{"kind":"luoshu.set","folder":"/x","prototype":1}'],
     ['prototype in the capability', '{"kind":"item.off","plugin":"s","capability":{"type":"log.read","prototype":{}}}'],
   ])('refuses %s', (_name, text) => {

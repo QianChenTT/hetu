@@ -93,7 +93,7 @@ describe('where a plugin\'s code came from', () => {
 
   it('refuses an api range outside this core with api, and its dependents wait on that', async () => {
     const made = await harness({
-      folder: { outline: filesFor(workerManifest('outline', { api: '^2' })), tagger: filesFor(workerManifest('tagger', { requires: ['outline'] })) },
+      folder: { outline: filesFor(workerManifest('outline', { api: '^1' })), tagger: filesFor(workerManifest('tagger', { requires: ['outline'] })) },
       entries: { outline: signed(), tagger: signed() },
     })
     await made.loader.start()

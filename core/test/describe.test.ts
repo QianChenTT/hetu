@@ -16,7 +16,7 @@ const everyKind = [
   { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
   { kind: 'grant.narrow', plugin: 'search', capability: { type: 'luoshu.read', paths: ['notes/**'] } },
-  { kind: 'item.on', plugin: 'search', capability: { type: 'ui.panel' } },
+  { kind: 'item.on', plugin: 'search', capability: { type: 'ui.view' } },
   { kind: 'item.off', plugin: 'git', capability: { type: 'exec', commands: [['git', 'status']], env: [] } },
   { kind: 'luoshu.set', folder: '/Users/han/notes' },
   { kind: 'devMode', plugin: 'search', on: true },

@@ -82,7 +82,7 @@ describe('a staged update', () => {
 
   it('is refused for a manifest that fails its checks, an api range outside this core included', async () => {
     const made = await running()
-    expect(await made.loader.update('alpha', await stage(made.dataDir, worker('alpha', { api: '^2' })))).toEqual({ outcome: 'refused', reason: 'api' })
+    expect(await made.loader.update('alpha', await stage(made.dataDir, worker('alpha', { api: '^1' })))).toEqual({ outcome: 'refused', reason: 'api' })
     expect(await made.loader.update('alpha', await stage(made.dataDir, filesFor(workerManifest('alpha', { entries: { host: 'host.js' } }))))).toEqual({ outcome: 'refused', reason: 'install-only' })
     expect(await made.loader.update('nobody', await stage(made.dataDir, worker('nobody')))).toEqual({ outcome: 'refused', reason: 'missing' })
   })

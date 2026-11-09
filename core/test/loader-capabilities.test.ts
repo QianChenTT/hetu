@@ -145,7 +145,7 @@ describe('the plugins connected through plugin.call', () => {
     const request = await approved(made, 'sender')
     expect((await made.store.load()).state.plugins.sender.class).toBe(4)
     expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: reader')
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.panel' } })
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.view' } })
     expect((await made.store.load()).state.plugins.bridge.class).toBe(4)
   })
 })

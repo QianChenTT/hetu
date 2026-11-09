@@ -803,7 +803,7 @@ describe('editor.reach', () => {
     const { way, loader } = made()
     loader.slots.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
-      .toEqual({ read: true, write: true, verbs: ['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys'] })
+      .toEqual({ read: true, write: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['starting', 'failed', 'absent'] as const) {
       loader.slots.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')

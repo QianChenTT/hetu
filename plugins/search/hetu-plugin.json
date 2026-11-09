@@ -2,7 +2,7 @@
   "id": "search",
   "name": "Search",
   "version": "0.1.0",
-  "api": "^1",
+  "api": "^2",
   "entries": { "worker": "dist/worker.js" },
   "requires": ["luoshu"],
   "provides": { "actions": { "query": {} }, "topics": ["indexed"] },
