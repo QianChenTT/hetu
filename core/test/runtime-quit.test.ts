@@ -5,7 +5,7 @@ const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 // The joined core's quit seams, writing down each call and when it settled
-function parts(over: { shutdown?: () => Promise<void>, flushFloor?: () => Promise<void>, close?: () => void, release?: () => Promise<void> } = {}) {
+function parts(over: { shutdown?: () => Promise<void>, flush?: () => Promise<void>, close?: () => void, release?: () => Promise<void> } = {}) {
   const calls: string[] = []
   let flushes = 0
   return {
@@ -19,11 +19,11 @@ function parts(over: { shutdown?: () => Promise<void>, flushFloor?: () => Promis
         },
       },
       carrier: {
-        flushFloor: async () => {
+        flush: async () => {
           const n = ++flushes
-          calls.push(`flushFloor ${n}`)
-          await (over.flushFloor ?? (async () => {}))()
-          calls.push(`flushFloor ${n} done`)
+          calls.push(`flush ${n}`)
+          await (over.flush ?? (async () => {}))()
+          calls.push(`flush ${n} done`)
         },
         close: () => {
           calls.push('close')
@@ -43,21 +43,21 @@ const deadlines = { shutdown: 50, flush: 50, release: 50 }
 
 describe('quit', () => {
   it('runs shutdown, a flush, close, a flush and release, each waiting for the one before', async () => {
-    const { calls, parts: quit } = parts({ shutdown: () => later(10), flushFloor: () => later(5) })
+    const { calls, parts: quit } = parts({ shutdown: () => later(10), flush: () => later(5) })
     const missed = await quitInOrder(quit, deadlines)
     expect(calls).toEqual([
-      'shutdown', 'shutdown done', 'flushFloor 1', 'flushFloor 1 done', 'close', 'flushFloor 2', 'flushFloor 2 done',
+      'shutdown', 'shutdown done', 'flush 1', 'flush 1 done', 'close', 'flush 2', 'flush 2 done',
       'release', 'release done',
     ])
     expect(missed).toEqual([])
   })
 
   it('goes on past a step that never settles once its deadline passes and says which', async () => {
-    const { calls, parts: quit } = parts({ shutdown: never, flushFloor: never })
+    const { calls, parts: quit } = parts({ shutdown: never, flush: never })
     const started = Date.now()
     const missed = await quitInOrder(quit, deadlines)
-    expect(calls).toEqual(['shutdown', 'flushFloor 1', 'close', 'flushFloor 2', 'release', 'release done'])
-    expect(missed).toEqual(['shutdown: no answer in 50 ms', 'flushFloor: no answer in 50 ms', 'flushFloor: no answer in 50 ms'])
+    expect(calls).toEqual(['shutdown', 'flush 1', 'close', 'flush 2', 'release', 'release done'])
+    expect(missed).toEqual(['shutdown: no answer in 50 ms', 'flush: no answer in 50 ms', 'flush: no answer in 50 ms'])
     expect(Date.now() - started).toBeLessThan(1000)
   })
 

@@ -42,7 +42,7 @@ describe('dependencies and turning down', () => {
       { plugin: 'mapper', reason: 'cycle' }, { plugin: 'tagger', reason: 'cycle' },
     ]))
     expect(stateOf(made.loader, 'outline')).toBe('ready')
-    expect(made.runtime.order()).toEqual(['log', 'gate', 'outline'])
+    expect(made.runtime.order()).toEqual(['gate', 'outline'])
   })
 
   it('waits for a requirement to be ready before its dependent starts', async () => {
@@ -57,7 +57,7 @@ describe('dependencies and turning down', () => {
     expect(made.runtime.order()).not.toContain('tagger')
     made.runtime.half('mapper').ready()
     await starting
-    expect(made.runtime.order()).toEqual(['log', 'gate', 'mapper', 'tagger'])
+    expect(made.runtime.order()).toEqual(['gate', 'mapper', 'tagger'])
     expect(made.runtime.half('tagger').got('init')[0].deps).toEqual({ mapper: 'ready' })
   })
 })
@@ -375,7 +375,7 @@ describe('the heartbeat', () => {
 })
 
 describe('shutdown', () => {
-  it('tells the carrier first, then stops sandboxed plugins in reverse graph order and host plugins in reverse with the log last', async () => {
+  it('tells the carrier first, then stops sandboxed plugins in reverse graph order and host plugins in reverse with the gate last', async () => {
     const made = await harness({
       install: { ...coreInstall(), storage: host('storage'), luoshu: host('luoshu') },
       folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },
@@ -386,7 +386,7 @@ describe('shutdown', () => {
     const lines = made.link.timeline.slice(made.link.timeline.indexOf('stopping'))
     expect(lines[0]).toBe('stopping')
     expect(lines[1]).toBe('record core.stopping')
-    expect(lines.filter(line => line.startsWith('stop '))).toEqual(['stop beta', 'stop alpha', 'stop luoshu', 'stop storage', 'stop gate', 'stop log'])
+    expect(lines.filter(line => line.startsWith('stop '))).toEqual(['stop beta', 'stop alpha', 'stop luoshu', 'stop storage', 'stop gate'])
     for (const row of made.loader.list()) expect(row).toMatchObject({ state: 'stopped', reason: 'shutdown' })
     // A guard or a slot stopped for shutdown reads failed to the loader's own seam, which the carrier answers stopped
     expect(made.loader.slot('gate')).toBe('failed')

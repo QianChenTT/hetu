@@ -3,7 +3,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { FloorConstant } from '../api/floor.ts'
 import { scopeMatches } from '../api/scope.ts'
-import type { Access, Call, Decision, Gate, Guard, GuardCall, Prepared, Provider, Sample, SlotState } from '../api/slots.ts'
+import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, SlotState } from '../api/slots.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions, HumanLimits, Loader, PluginInfo } from '../backend/carrier/seams.ts'
@@ -18,7 +18,7 @@ export type Message = Record<string, unknown>
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
 export class FakeLoader implements Loader {
-  slots: Record<string, SlotState> = { gate: 'on', log: 'on', watchdog: 'on', capabilities: 'on' }
+  slots: Record<string, SlotState> = { gate: 'on', watchdog: 'on', capabilities: 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
   // Writable here, so a test can set the human's limits
@@ -26,7 +26,6 @@ export class FakeLoader implements Loader {
   nothing = false
   crashes: { caller: Caller, reason: string }[] = []
   lifecycle: { caller: Caller, kind: string }[] = []
-  fails: { id: string, reason: string }[] = []
 
   slot(id: string): SlotState {
     return this.slots[id] ?? 'absent'
@@ -54,10 +53,6 @@ export class FakeLoader implements Loader {
 
   heard(caller: Caller, kind: string): void {
     this.lifecycle.push({ caller, kind })
-  }
-
-  fail(id: string, reason: 'stalled'): void {
-    this.fails.push({ id, reason })
   }
 
   // A sandboxed plugin answering from its worker
@@ -195,10 +190,14 @@ export class FakeStorage implements Provider {
 
 export class FakeLog {
   readonly records: { event: string, fields: Record<string, unknown> }[] = []
+  // Each named batch appendMany wrote, the audit writer's, by its id and size
+  readonly batches: { id: string | undefined, size: number }[] = []
   failing = false
   healthy = true
   // Refuses these events while staying healthy, as EventLog does with a field it refuses
   refuses = new Set<string>()
+  segments: LogSegment[] = [{ segment: 1, lines: 2, first: 1, last: 2, start: 'zero', breaks: [] }]
+  verification: LogVerification = { ok: true }
 
   async append(event: string, fields: Record<string, unknown> = {}): Promise<void> {
     if (this.failing) {
@@ -208,6 +207,26 @@ export class FakeLog {
     this.healthy = true
     if (this.refuses.has(event)) throw new Error('field name is not allowed')
     this.records.push({ event, fields })
+  }
+
+  // One batch lands whole or not at all, as EventLog's does
+  async appendMany(batch: readonly { event: string, fields?: Record<string, unknown> }[], options: { id?: string } = {}): Promise<void> {
+    if (this.failing) {
+      this.healthy = false
+      throw new Error('disk full')
+    }
+    this.healthy = true
+    if (batch.some(({ event }) => this.refuses.has(event))) throw new Error('field name is not allowed')
+    if (options.id !== undefined) this.batches.push({ id: options.id, size: batch.length })
+    for (const { event, fields } of batch) this.records.push({ event, fields: fields ?? {} })
+  }
+
+  async history(): Promise<LogSegment[]> {
+    return this.segments
+  }
+
+  async verify(): Promise<LogVerification> {
+    return this.verification
   }
 
   events(name: string) {
@@ -315,6 +334,8 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     log,
     asks: { raise: (ask, access) => { asks.push({ ask, access }); return `req-${asks.length}` } },
     debug: entry => { debug.push(entry) },
+    // Audit records land only on flush, so a test decides when the writer takes them
+    auditEveryMs: 3_600_000,
     ...over,
   })
   const ports: MessagePort[] = []

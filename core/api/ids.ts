@@ -32,8 +32,8 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy slots the carrier asks, each held by the install plugin of the same id
-export const slotIds = frozen(['gate', 'capabilities', 'log', 'watchdog'] as const)
+// The policy slots the carrier asks, each held by the install plugin of the same id. The log is the core's own
+export const slotIds = frozen(['gate', 'capabilities', 'watchdog'] as const)
 
 // The plugin that serves each provider namespace
 export const providers = table({
@@ -43,12 +43,11 @@ export const providers = table({
   exec: 'exec',
   storage: 'storage',
   cache: 'storage',
-  log: 'log',
   net: 'net',
 } as const)
 
-// Served by the carrier, the loader and the runtime, never by a plugin
-export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin'] as const)
+// Served by the carrier, the loader and the runtime, never by a plugin. log.* reads the event log the core writes
+export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log'] as const)
 
 // The actions a guard may hook
 export const guardableActions = frozen(['luoshu.write'] as const)
@@ -60,7 +59,7 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
 
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
-  'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
+  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
   'editor-core', 'hidden-marks',
 ] as const)
 

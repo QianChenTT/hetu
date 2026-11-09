@@ -36,20 +36,19 @@ export default definePlugin({
 
 const read = [{ type: 'luoshu.read' as const, paths: ['**'] }]
 
-// The install holds the luoshu, and the gate and the log switched off, which lets calls through until they are built
+// The install holds the luoshu and the gate switched off, which lets calls through until the gate is built
 async function prepared(): Promise<{ dataDir: string, installDir: string }> {
   const installDir = await temp()
   await writeInstall(installDir, {
     luoshu: { files: filesFor(hostManifest('luoshu'), { 'host.js': host }) },
     gate: { files: filesFor(hostManifest('gate')) },
-    log: { files: filesFor(hostManifest('log')) },
   })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': hello })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), off: ['gate', 'log'] })
+  await store.writeSwitches({ ...defaultSwitches(), off: ['gate'] })
   const root = path.join(dataDir, 'plugins', 'hello')
   await writeFolder(root, filesFor(workerManifest('hello', { requires: ['luoshu'], capabilities: read }), { 'worker.js': built.text }))
   await store.writePlugin('hello', await entryFor(root, { granted: read }))

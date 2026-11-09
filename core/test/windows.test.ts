@@ -40,13 +40,12 @@ describe('window grants', () => {
     expect(capabilities.safeParse([...windowGrants[role]]).success).toBe(true)
   })
 
-  it('gives the editor the luoshu, history, luoshu events, the log, the ui verbs and its own storage', () => {
+  it('gives the editor the luoshu, history, luoshu events, the ui verbs and its own storage', () => {
     expect(windowGrants.editor).toEqual([
       { type: 'luoshu.read', paths: ['**'] },
       { type: 'luoshu.write', paths: ['**'] },
       { type: 'history', access: 'read', paths: ['**'] },
       { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
-      { type: 'log.read' },
       { type: 'ui.panel' },
       { type: 'ui.decoration' },
       { type: 'ui.command' },
@@ -111,7 +110,7 @@ describe('floor constants', () => {
       topicsPerHalf: 64,
       filterMsPerSecond: 100,
       auditQueue: 10000,
-      auditStallMs: 30000,
+      logFailMs: 30000,
       floorBacklog: 1000,
       floodFactor: 10,
       floodMs: 5000,

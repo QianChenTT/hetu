@@ -169,9 +169,8 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
-  // The log by default takes its handle and writes nothing, as a log with no role fails at start
   private of(id: string): Behaviour {
-    const exports: HostExports = id === 'log' ? { log: { attach() {} } } : {}
+    const exports: HostExports = {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
@@ -305,9 +304,8 @@ export async function entryFor(root: string, extra: Partial<Plugin> = {}): Promi
 export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
   ({ version: '1.0.0', contentHash: hash, signer: FIRST_PARTY_SIGNER, granted: [], class: null, enabled: true, ...extra })
 
-// The install the host tier needs to come up: the log and the gate, both with host halves
+// The install the host tier needs to come up: the gate, with a host half. The log is the core's own
 export const coreInstall = (): Record<string, Listing> => ({
-  log: { files: filesFor(hostManifest('log')) },
   gate: { files: filesFor(hostManifest('gate')) },
 })
 
