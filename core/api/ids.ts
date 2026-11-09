@@ -92,6 +92,7 @@ const reserved = new Set<string>([
 // Ids a plugin-folder plugin can't take, apart from the first-party copies
 export const reservedIds = frozen([...reserved].sort())
 
+// Titles and owner strips in the editor window show a plugin by its id, so no plugin is called hetu
 export function isReservedId(value: string): boolean {
-  return reserved.has(value)
+  return reserved.has(value) || value === 'hetu' || value.startsWith('hetu-')
 }

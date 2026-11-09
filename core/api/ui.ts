@@ -423,7 +423,7 @@ function treeProblem(root: UiNode, layout: boolean): { problem: string | null, v
 // The surface after the operations, or why they are refused, in which case the surface keeps what it had. visited
 // counts the nodes looked at, which the drawer charges against the plugin's second. layout says the owner is the
 // layout, which alone places slots, editors, titles and zones
-export function applyOps(tree: UiNode | null, ops: readonly Op[], options: { layout: boolean }): { tree: UiNode, visited: number } | { problem: string } {
+export function applyOps(tree: UiNode | null, ops: readonly Op[], options: { layout: boolean }): { tree: UiNode, visited: number, nodes: number } | { problem: string } {
   let root = tree
   let visited = 0
   for (const each of ops) {
@@ -440,7 +440,7 @@ export function applyOps(tree: UiNode | null, ops: readonly Op[], options: { lay
   if (root === null) return { problem: 'no tree' }
   const checked = treeProblem(root, options.layout)
   if (checked.problem !== null) return { problem: checked.problem }
-  return { tree: root, visited: visited + checked.visited }
+  return { tree: root, visited: visited + checked.visited, nodes: checked.visited }
 }
 
 // ---- the ui verbs on a plugin's port to the drawer

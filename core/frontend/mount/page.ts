@@ -4,7 +4,7 @@ import { Drawer, type PortLike } from './bridge.ts'
 import { accepts, DragGesture, fraction, splitSizes, zoneAt } from './drag.ts'
 import { type DrawHooks, fillerOf, taggedOf } from './draw.ts'
 import { EditorViews } from './editor.ts'
-import { coreKeyOf, keyName } from './keys.ts'
+import { CORE_KEY_NAMES, type CoreKey, coreKeyOf, keyName } from './keys.ts'
 import { Layers } from './layers.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { drawMenu, type MenuData } from './menu.ts'
@@ -15,7 +15,7 @@ import { RawSource } from './raw.ts'
 import { Settings } from './settings.ts'
 import { type Notice, Shell } from './shell.ts'
 import { themeStyle } from './theme.ts'
-import { SKELETON } from './ui-port.ts'
+import { OWN_LAYOUT, SKELETON } from './ui-port.ts'
 
 // The editor window's page, the drawer: the banner, the notes in CodeMirror, the quick-open palette, the raw view, the
 // views menu, the layout's skeleton with the views in it and each plugin's port. Everything here is drawn as text,
@@ -130,7 +130,8 @@ function start(bridge: Bridge): void {
         },
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
-        open: path => openNote(path),
+        // A plugin's open adds the note without taking the human's focus or the current note from them
+        open: path => openNote(path, false),
       },
     },
   })
@@ -165,7 +166,8 @@ function start(bridge: Bridge): void {
       titles: {
         view: id => {
           const held = ui.views.get(id)
-          return held === null ? null : { text: `${ui.views.name(held.owner)} · ${held.runtimeTitle ?? held.spec.title}`, down: held.down }
+          // The plugin by its id, which the core checks and no plugin can make read as hetu
+          return held === null ? null : { text: `${held.owner} · ${held.runtimeTitle ?? held.spec.title}`, down: held.down }
         },
         note: id => {
           const note = theNotes.opened.get(id)
@@ -349,8 +351,9 @@ function start(bridge: Bridge): void {
     const name = (id: string) => declared.find(plugin => plugin.plugin === id)?.name ?? id
     const shown = theLayers.shownViews()
     return {
-      layouts: ui.layoutChoices().map(id => ({ id, name: name(id) })),
-      layout: settings.value.layout,
+      layouts: ui.layoutChoices().map(id => ({ id, name: `${name(id)} (${id})` })),
+      // Plain is the empty choice. No pick at all is hetu's own
+      layout: settings.value.plain ? null : settings.value.layout ?? OWN_LAYOUT,
       themes: declared.filter(plugin => plugin.theme !== null).map(plugin => ({ id: plugin.plugin, name: plugin.name })),
       theme: settings.value.theme,
       themeFallback,
@@ -358,12 +361,12 @@ function start(bridge: Bridge): void {
         const key = `${plugin.plugin}/${view}`
         const first = ui.views.all().find(held => held.owner === plugin.plugin && held.view === view && held.first) ?? null
         return {
-          key, name: plugin.name, title: spec.title, running: first !== null && !first.down, favorite: settings.value.favorites.includes(key),
+          key, name: `${plugin.name} (${plugin.plugin})`, title: spec.title, running: first !== null && !first.down, favorite: settings.value.favorites.includes(key),
           instance: first?.instance ?? null, shown: first !== null && shown.has(first.instance),
         }
       })),
       conflicts: theDrawer.conflicts().map(conflict => ({
-        key: conflict.key, plugins: conflict.plugins.map(id => ({ id, name: name(id) })), owner: settings.value.keys[conflict.key] ?? null,
+        key: conflict.key, plugins: conflict.plugins.map(id => ({ id, name: `${name(id)} (${id})` })), owner: settings.value.keys[conflict.key] ?? null,
       })),
     }
   }
@@ -459,12 +462,20 @@ function start(bridge: Bridge): void {
     element('note-actions').replaceChildren(...actions)
   }
 
-  async function openNote(path: string): Promise<void> {
-    closePalette()
+  // focus false opens the note beside the others for the layout to place, leaving the current one current
+  async function openNote(path: string, focus = true): Promise<void> {
+    if (focus) closePalette()
     try {
       const id = await theNotes.open(path)
+      if (!focus) {
+        // With no note current nothing the human types can go astray, so it becomes current, still without focus
+        if (views.shown() === null) views.show(id, false)
+        else theLayers.schedule()
+        return
+      }
       views.show(id)
     } catch (err) {
+      if (!focus) return
       const code = (err as { code?: string }).code ?? 'failed'
       element('title').textContent = `${path} could not be opened: ${code}`
       return
@@ -627,6 +638,13 @@ function start(bridge: Bridge): void {
 
   // ---- the core keys, taken before CodeMirror, any view or any binding
 
+  function coreKey(core: CoreKey): void {
+    if (core === 'raw') toggleRaw()
+    else if (core === 'open') void openPalette()
+    else if (core === 'save') void save()
+    else void quit()
+  }
+
   window.addEventListener('keydown', event => {
     if (event.key === 'Escape' && rawOpen) {
       event.preventDefault()
@@ -643,10 +661,7 @@ function start(bridge: Bridge): void {
     event.preventDefault()
     event.stopPropagation()
     if (event.repeat) return
-    if (core === 'raw') toggleRaw()
-    else if (core === 'open') void openPalette()
-    else if (core === 'save') void save()
-    else void quit()
+    coreKey(core)
   }, true)
 
   // A key outside the editors and the core layer: the focused view's own bindings, then the global ones. In an editor
@@ -670,7 +685,13 @@ function start(bridge: Bridge): void {
 
   window.addEventListener('message', event => {
     if (event.source !== window || event.origin !== location.origin) return
-    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown } | null
+    const data = event.data as { hetu?: unknown, plugin?: unknown, incarnation?: unknown, key?: unknown } | null
+    // A core key main took before any frame could, since a frame with focus would hear it first
+    if (data?.hetu === 'key' && typeof data.key === 'string' && (CORE_KEY_NAMES as readonly string[]).includes(data.key)) {
+      if (data.key === 'raw' && rawOpen) toggleRaw()
+      else coreKey(data.key as CoreKey)
+      return
+    }
     if (typeof data?.plugin !== 'string' || typeof data.incarnation !== 'number') return
     const port = event.ports[0]
     if (data.hetu === 'drawer' && port !== undefined) theDrawer.connect(data.plugin, data.incarnation, port as unknown as PortLike)
@@ -679,6 +700,15 @@ function start(bridge: Bridge): void {
 
   link.on('core.status', () => void readViews())
   link.on('core.security', () => void readViews())
+
+  // A frame that took focus on its own is closed and the note gets it back
+  theFrames.onTheft = () => views.focus()
+  window.addEventListener('blur', () => theFrames.checkFocus())
+
+  // A press anywhere but on a frame's shield puts every frame back behind its shield
+  window.addEventListener('pointerdown', event => {
+    if (!(event.target instanceof Element) || event.target.closest('.hetu-frame-shield') === null) theFrames.deactivate()
+  }, true)
 
   shell.start()
   theNotes.start()

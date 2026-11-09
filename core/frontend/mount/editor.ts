@@ -227,11 +227,11 @@ export class EditorViews implements Editors {
     if (this.shownId === id) this.shownId = null
   }
 
-  // Makes the note current, has it laid out and focuses it
-  show(id: string): void {
+  // Makes the note current, has it laid out and focuses it unless told not to
+  show(id: string, focus = true): void {
     this.shownId = this.open.has(id) ? id : null
     this.onCurrent?.()
-    this.open.get(id)?.view.focus()
+    if (focus) this.open.get(id)?.view.focus()
   }
 
   // Told when the current note changes, so the layers place it before it takes focus

@@ -6,7 +6,8 @@ import type { CoreLink } from './link.ts'
 // the favorite views and which plugin owns a key two plugins bind. Picking a layout or a theme is a normal setting
 // with no Confirm, since neither gains any reach. Favorites are the drawer's, so they survive a change of layout
 
-export type SettingsValue = { layout: string | null, theme: string | null, favorites: string[], keys: Record<string, string> }
+// layout is the layout the human picked, null for hetu's own. plain says the human picked the drawer's plain layout
+export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keys: Record<string, string> }
 
 const KEY = 'settings'
 export const MAX_FAVORITES = 64
@@ -14,6 +15,7 @@ export const MAX_KEY_OWNERS = 64
 
 const shape = z.strictObject({
   layout: pluginId.nullable(),
+  plain: z.boolean(),
   theme: pluginId.nullable(),
   favorites: z.array(z.string().max(130).refine(value => {
     const [owner, view, ...rest] = value.split('/')
@@ -22,7 +24,7 @@ const shape = z.strictObject({
   keys: z.record(z.string().max(40), pluginId).refine(keys => Object.keys(keys).length <= MAX_KEY_OWNERS),
 })
 
-const defaults = (): SettingsValue => ({ layout: null, theme: null, favorites: [], keys: {} })
+const defaults = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
 
 export class Settings {
   private readonly link: CoreLink
@@ -49,8 +51,9 @@ export class Settings {
     await this.set({ ...this.held, favorites: on ? [...rest, view] : rest })
   }
 
+  // A layout plugin by id, or null for the drawer's plain layout
   async pickLayout(id: string | null): Promise<void> {
-    await this.set({ ...this.held, layout: id })
+    await this.set({ ...this.held, layout: id, plain: id === null })
   }
 
   async pickTheme(id: string | null): Promise<void> {

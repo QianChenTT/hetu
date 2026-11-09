@@ -108,10 +108,10 @@ const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-conten
 describe("hetu's layout", () => {
   it("draws the editor and a plugin's view, titled under the plugin's name", async () => {
     const { editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('hetu') } } } })
-    await until(async () => (await editor.locator('#base .hetu-button').count()) === 1)
-    expect(await editor.locator('#base .hetu-button').innerText()).toBe('Press hetu')
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').count()) === 1)
+    expect(await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').innerText()).toBe('Press hetu')
     // A view titled hetu shows under its plugin's name, in the drawer's own element above the layout
-    await until(async () => (await editor.locator('#editors .hetu-title', { hasText: 'Boards · Hetu' }).count()) === 1)
+    await until(async () => (await editor.locator('#editors .hetu-title', { hasText: 'board · Hetu' }).count()) === 1)
     await open(editor, 'a.md')
     await until(async () => (await shown(editor).innerText()) === 'alpha')
     await until(async () => (await editor.locator('#editors .hetu-title', { hasText: 'a.md' }).count()) === 1)
@@ -120,10 +120,10 @@ describe("hetu's layout", () => {
   it('moves a view dragged onto another column and keeps it there after a restart', async () => {
     const { app, editor, dataDir } = await started({ notes: { 'a.md': 'alpha' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
     await open(editor, 'a.md')
-    await until(async () => (await editor.locator('#base .hetu-button').count()) === 1)
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').count()) === 1)
     const title = editor.locator('#editors .hetu-title', { hasText: 'board · Cards' })
     const from = (await title.boundingBox())!
-    const button = (await editor.locator('#base .hetu-button').boundingBox())!
+    const button = (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').boundingBox())!
     const editorBox = (await shown(editor).boundingBox())!
     // The view starts in a side column, left of the editor
     expect(button.x).toBeLessThan(editorBox.x)
@@ -135,12 +135,12 @@ describe("hetu's layout", () => {
     await editor.mouse.up()
     // Dropped on main, the view shows there in place of the note, and the side it left is gone
     await until(async () => (await editor.locator('.editor:not([hidden])').count()) === 0)
-    expect(await editor.locator('#base .hetu-button').isVisible()).toBe(true)
+    expect(await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').isVisible()).toBe(true)
     expect(await editor.locator('#base .hetu-divider').count()).toBe(0)
     await app.close()
     // Started again with no note open, main still shows the view rather than the empty editor
     const again = await running(dataDir, ['board'])
-    await until(async () => (await again.editor.locator('#base .hetu-button').count()) === 1)
+    await until(async () => (await again.editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').count()) === 1)
     expect(await again.editor.locator('#empty').isVisible()).toBe(false)
     expect(await again.editor.locator('#base .hetu-divider').count()).toBe(0)
   })
@@ -162,17 +162,17 @@ describe("hetu's layout", () => {
 
   it('folds the side whose views rank lowest in a narrow window, and a favorite keeps its side open', async () => {
     const { app, editor } = await started({ plugins: { board: { granted: viewer, manifest: { views: { ...view('alpha'), ...view('beta') } } } } })
-    await until(async () => (await editor.locator('#base .hetu-button').count()) === 2)
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').count()) === 2)
     await app.evaluate(({ BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows().find(each => each.webContents.getURL() === 'hetu://editor/')
       window?.setContentSize(600, 700)
     })
     // alpha ranks above beta by name, so beta's side folds to a rail and its view goes
-    await until(async () => (await editor.locator('#base .hetu-button').allInnerTexts()).join() === 'Press alpha')
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').allInnerTexts()).join() === 'Press alpha')
     await editor.locator('#views').click()
     await editor.locator('#menu li[data-view="board/beta"] .menu-star').click()
     await editor.locator('#menu-close').click()
-    await until(async () => (await editor.locator('#base .hetu-button').allInnerTexts()).join() === 'Press beta')
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').allInnerTexts()).join() === 'Press beta')
   })
 })
 
@@ -194,9 +194,9 @@ describe('input by owner', () => {
         ],
       })
     })
-    await until(async () => (await editor.locator('#base .hetu-input').count()) === 1)
-    await editor.locator('#base .hetu-button').click()
-    await editor.locator('#base .hetu-input').click()
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-input').count()) === 1)
+    await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button').click()
+    await editor.locator('#editors .hetu-surface:not([hidden]) .hetu-input').click()
     await editor.keyboard.type('pin 4242')
     const board = await pluginWorker(app, 'board')
     await until(async () => (await heard(board)).some(event => event.topic === 'view.event' && (event as { value?: string }).value === 'pin 4242'))

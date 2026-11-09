@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('hetu', {
 ipcRenderer.on('hetu:drawer', (event, named: { plugin?: unknown, incarnation?: unknown }) => {
   window.postMessage({ hetu: 'drawer', plugin: named.plugin, incarnation: named.incarnation }, location.origin, event.ports)
 })
+// A core key main took from the window's input before it reached any frame
+ipcRenderer.on('hetu:key', (_event, key: unknown) => {
+  window.postMessage({ hetu: 'key', key }, location.origin)
+})
 ipcRenderer.on('hetu:drawer-end', (_event, named: { plugin?: unknown, incarnation?: unknown }) => {
   window.postMessage({ hetu: 'drawer-end', plugin: named.plugin, incarnation: named.incarnation }, location.origin)
 })

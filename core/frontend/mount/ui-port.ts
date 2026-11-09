@@ -67,6 +67,12 @@ export class UiPort {
     return this.current
   }
 
+  // The layout whose skeleton draws the window: the picked one once it sent a skeleton. Until then, and when it can't,
+  // the drawer draws its plain layout, so a layout that hangs or whose skeleton is refused never leaves a blank window
+  drawing(): string | null {
+    return this.current !== null && this.surfaces.tree(this.current, SKELETON) !== null ? this.current : null
+  }
+
   // The connected plugins the human can pick as the layout
   layoutChoices(): string[] {
     return [...this.layouts].sort()
@@ -101,8 +107,9 @@ export class UiPort {
 
   // The human picked another layout, or none
   settingsChanged(): void {
-    const wanted = this.options.settings().layout ?? OWN_LAYOUT
-    const next = this.layouts.has(wanted) ? wanted : null
+    const settings = this.options.settings()
+    const wanted = settings.layout ?? OWN_LAYOUT
+    const next = !settings.plain && this.layouts.has(wanted) ? wanted : null
     if (next === this.current) return
     this.current = next
     this.lastState = ''
@@ -125,6 +132,8 @@ export class UiPort {
         const opened = this.views.open(owner, call.args.view)
         if (!opened.startsWith('v')) throw new UiRefusal(opened as RefusalCode)
         this.options.hooks.changed()
+        // An owner asking for a view is the layout's to place
+        this.openView(opened)
         return { instance: opened }
       }
       case 'view.close': {
