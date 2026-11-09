@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, type FakeCoreOptions, type FakeMode } from '../sdk/testing/index.ts'
+import type { Capability } from '../api/capabilities.ts'
 import { quotas } from '../api/storage.ts'
 import type { Call } from '../api/slots.ts'
 import { MemoryStorage } from '../sdk/testing/providers.ts'
@@ -223,5 +224,14 @@ describe('the fake core\'s storage', () => {
   it('refuses a content caller, which has no space', async () => {
     const content = { kind: 'content', plugin: 'reader', token: 'a'.repeat(32) } as const
     expect(await ask(new MemoryStorage(), 'storage.get', { key: 'k' }, content)).toEqual({ refused: { code: 'not-granted' } })
+  })
+})
+
+describe('the fake core\'s gate', () => {
+  it('matches a list grant\'s paths, as the gate plugin does', async () => {
+    const { holds } = await import('../sdk/testing/gate.ts')
+    const granted: Capability[] = [{ type: 'luoshu.list', paths: ['notes/**'] }]
+    expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['notes/a.md'] } })).toBe(true)
+    expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['secret/b.md'] } })).toBe(false)
   })
 })

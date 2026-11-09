@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { delivery, token, type Caller } from '../api/envelope.ts'
-import { MAX_FILTER_PATHS } from '../api/actions.ts'
+import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
 import { MAX_TIMER_MS } from '../api/floor.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, FakeGuard, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
@@ -653,6 +653,68 @@ describe('filterReadable', () => {
     expect(code(reply)).toBe('throttled')
     // The budget is 100 ms. Unbounded the message held main for one to three seconds
     expect(performance.now() - started).toBeLessThan(1000)
+  })
+})
+
+describe('a listing', () => {
+  function listing(over: Partial<CarrierOptions> = {}) {
+    const parts = harness(over)
+    for (const path of ['notes/a.md', 'projects/plan.md', 'secret/b.md', '.scratch.md']) parts.luoshu.files.set(path, 'x')
+    parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.list', paths: ['projects/**'] }]
+    return { ...parts, search: parts.connect(worker('search')) }
+  }
+
+  it('keeps the names the caller may list or read and the provider’s next, asking the gate no decide', async () => {
+    const { search, gate, luoshu } = listing()
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
+    luoshu.perform_ = () => ({ paths: ['notes/a.md', 'secret/b.md'], next: 'secret/b.md' })
+    expect((await search.ask('luoshu.list', { folder: 'notes', after: 'notes/0.md' })).result).toEqual({ paths: ['notes/a.md'], next: 'secret/b.md' })
+    expect(gate.asked).toEqual([])
+    expect(gate.lists.map(asked => asked.path)).toEqual(['.scratch.md', 'notes/a.md', 'projects/plan.md', 'secret/b.md', 'notes/a.md', 'secret/b.md'])
+  })
+
+  it('keeps every name with the gate off by the human and answers policy-down while the gate is down', async () => {
+    const { search, loader } = listing()
+    loader.slots.gate = 'off'
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['.scratch.md', 'notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
+    loader.slots.gate = 'failed'
+    expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+  })
+
+  it('records a canList that throws and answers policy-down rather than a page it couldn’t check', async () => {
+    const { search, gate, carrier, log } = listing()
+    gate.listable = () => { throw new Error('broken') }
+    expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
+  })
+
+  it.each([
+    ['no object', null],
+    ['names that aren’t text', { paths: [1], next: null }],
+    ['a next that isn’t text', { paths: ['notes/a.md'], next: 3 }],
+    ['more names than a page', { paths: Array.from({ length: LIST_PAGE + 1 }, (_, i) => `notes/${i}.md`), next: null }],
+  ])('answers failed for a listing of %s', async (_name, page) => {
+    const { search, luoshu } = listing()
+    luoshu.perform_ = () => page
+    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
+  })
+
+  it('answers throttled without listing once the caller spent its second of the gate’s time', async () => {
+    const clock = { now: 1000 }
+    const { search, gate, luoshu } = listing({ clock: () => clock.now })
+    luoshu.perform_ = () => ({ paths: Array.from({ length: 150 }, (_, i) => `notes/${i}.md`), next: null })
+    gate.listable = () => {
+      clock.now += 1
+      return true
+    }
+    expect((await search.ask('luoshu.list', {})).result).toMatchObject({ next: null })
+    const listed = luoshu.performed.length
+    expect(code(await search.ask('luoshu.list', {}))).toBe('throttled')
+    expect(luoshu.performed).toHaveLength(listed)
+    clock.now += 1000
+    expect((await search.ask('luoshu.list', {})).ok).toBe(true)
   })
 })
 

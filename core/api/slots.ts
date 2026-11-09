@@ -64,6 +64,8 @@ export type StateView = {
 export type Gate = {
   decide(access: Access): Decision
   canRead(caller: Caller, path: string): boolean
+  // Whether the caller may see the path's name: an on item of luoshu.list or luoshu.read covering it
+  canList(caller: Caller, path: string): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
   stateChanged(view: StateView): void

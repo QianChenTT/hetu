@@ -53,14 +53,19 @@ export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog'
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
-// leases, which the provider keys by the caller the carrier names. scope names the argument the raw scope comes from. A
-// write stays one audit record and reads are coalesced
+// leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
+// scope comes from. A write stays one audit record and reads are coalesced. filter list keeps only the result's paths
+// the gate's canList allows
 export type ProviderAction = {
   readonly capability: CapabilityType | null
   readonly args: z.ZodType
   readonly scope: 'path' | 'paths' | null
   readonly write: boolean
+  readonly filter?: 'list'
 }
+
+// The most names one luoshu.list call looks at, so no listing costs the gate and main more than this
+export const LIST_PAGE = 1000
 
 // Frozen one level down with no prototype. A deep freeze would reach into the schemas, which keep caches
 function lookup<T extends object>(entries: Record<string, T>): Readonly<Record<string, T>> {
@@ -128,6 +133,11 @@ const keyed = z.strictObject({ key: localName, value: z.unknown() })
 
 const providerTable = {
   'luoshu.read': { capability: 'luoshu.read', args: z.strictObject({ path }), scope: 'path', write: false },
+  // The file paths under folder, the whole luoshu when it is left out, in name order after the one named, a page at a
+  // time. A caller sees the names it may list or read and never a version, which would say what a note holds
+  'luoshu.list': {
+    capability: null, args: z.strictObject({ folder: path.optional(), after: path.optional() }), scope: null, write: false, filter: 'list',
+  },
   // baseVersion is the hash of the bytes the writer read, left out for a note that doesn't exist yet
   'luoshu.write': {
     capability: 'luoshu.write',
@@ -233,5 +243,6 @@ export type ActionResults = {
   'events.publish': null
   'luoshu.read': { text: string, version: string }
   'luoshu.write': { version: string }
+  'luoshu.list': { paths: string[], next: string | null }
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown

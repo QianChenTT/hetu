@@ -248,6 +248,7 @@ export function allowAll(): Gate & { views: number[], seen: StateView[], throws:
     throws: false,
     decide: () => ({ allow: true as const, view: gate.views.at(-1) ?? 0 }),
     canRead: () => true,
+    canList: () => true,
     verbs: () => [],
     stateChanged(view: StateView) {
       if (gate.throws) throw new Error('bad view')
