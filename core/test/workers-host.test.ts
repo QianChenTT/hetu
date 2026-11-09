@@ -355,6 +355,31 @@ describe("the worker host page's relay to the drawer", () => {
     expect(worker.posted[2].message).toEqual({ v: 1, kind: 'drawer' })
   })
 
+  it("drops a message past the drawer port's byte budget, on its own counter", () => {
+    const { mine, drawer, at } = drawn({ bytesPerSecond: 10, resultBytes: 1 })
+    at(0)
+    mine.gets(JSON.stringify('x'.repeat(1 + ENVELOPE_ROOM - 8)))
+    mine.gets(text('y'))
+    expect(drawer.posted).toHaveLength(1)
+    at(1000)
+    mine.gets(text('z'))
+    expect(drawer.posted.at(-1)).toBe(text('z'))
+  })
+
+  it("ends the relay when the editor page's port closes, and the worker runs on", () => {
+    const { drawer, mine, worker } = drawn()
+    drawer.onclose?.()
+    expect(mine.closed).toBe(true)
+    expect(worker.ended).toBe(false)
+  })
+
+  it("cuts the worker off for a message on the drawer port it couldn't read", () => {
+    const { mine, worker, reports } = drawn()
+    mine.onmessageerror?.()
+    expect(worker.ended).toBe(true)
+    expect(reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' }])
+  })
+
   it('closes the drawer port when the worker ends', () => {
     const { page, drawer } = drawn()
     page.terminate('search', 1)
