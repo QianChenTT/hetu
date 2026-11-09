@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { RefusalCode } from '../../api/envelope.ts'
-import type { Call, Prepared, Provider } from '../../api/slots.ts'
+import type { Call, Prepared, Provider, ProviderRefusal } from '../../api/slots.ts'
+import { quotas, spaceOf } from '../../api/storage.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
@@ -69,49 +70,63 @@ export class MemoryLuoshu implements Provider {
 }
 
 type Kind = 'storage' | 'cache'
+type Held = { value: unknown, size: number }
 
-// storage.* and cache.* in memory, one space per caller and kind, keyed by the caller the carrier names. get answers
-// the value or null, set and delete answer null
+// What a key takes in the storage plugin's files: its JSON line, with a 64-character hash line under it in storage
+function sizeOf(kind: Kind, key: string, value: unknown): number {
+  return new TextEncoder().encode(`${JSON.stringify({ key, value })}\n`).length + (kind === 'storage' ? 65 : 0)
+}
+
+// storage.* and cache.* in memory, as the storage plugin keeps them: a space per caller and kind named by spaceOf,
+// values through JSON, undefined refused and core/api's quotas held. get answers the value or null, set and delete
+// answer null
 export class MemoryStorage implements Provider {
-  private readonly spaces: Record<Kind, Map<string, Map<string, unknown>>> = { storage: new Map(), cache: new Map() }
+  private readonly spaces: Record<Kind, Map<string, Map<string, Held>>> = { storage: new Map(), cache: new Map() }
   private readonly latencyMs: number
 
   constructor(latencyMs = 0) {
     this.latencyMs = latencyMs
   }
 
-  async prepare(): Promise<Prepared> {
-    return { scope: {} }
+  async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
+    return spaceOf(call.caller) === null ? { code: 'not-granted' } : { scope: {} }
   }
 
   async perform(call: Call): Promise<unknown> {
     await after(this.latencyMs)
     const [kind, verb] = call.action.split('.') as [Kind, string]
-    const space = this.space(kind, ownerOf(call))
+    const space = this.space(kind, spaceOf(call.caller)!)
     const { key, value } = call.args as { key: string, value?: unknown }
-    if (verb === 'get') return space.has(key) ? space.get(key) : null
-    if (verb === 'set') space.set(key, structuredClone(value))
-    else space.delete(key)
+    if (verb === 'get') return space.has(key) ? JSON.parse(JSON.stringify(space.get(key)!.value)) as unknown : null
+    if (verb === 'delete') {
+      space.delete(key)
+      return null
+    }
+    if (value === undefined) throw { code: 'invalid' } satisfies ProviderRefusal
+    const size = sizeOf(kind, key, value)
+    let bytes = size
+    let keys = 1
+    for (const [other, held] of space) {
+      if (other === key) continue
+      bytes += held.size
+      keys += 1
+    }
+    if (bytes > quotas[kind].bytes || keys > quotas[kind].keys) throw { code: 'failed', reason: 'quota' } satisfies ProviderRefusal
+    space.set(key, { value: JSON.parse(JSON.stringify(value)) as unknown, size })
     return null
   }
 
-  // What one caller stored under key, undefined for nothing
-  read(kind: Kind, owner: string, key: string): unknown {
-    return this.spaces[kind].get(owner)?.get(key)
+  // What one space holds under key, undefined for nothing
+  read(kind: Kind, space: string, key: string): unknown {
+    return this.spaces[kind].get(space)?.get(key)?.value
   }
 
-  private space(kind: Kind, owner: string): Map<string, unknown> {
-    let space = this.spaces[kind].get(owner)
+  private space(kind: Kind, name: string): Map<string, Held> {
+    let space = this.spaces[kind].get(name)
     if (space === undefined) {
       space = new Map()
-      this.spaces[kind].set(owner, space)
+      this.spaces[kind].set(name, space)
     }
     return space
   }
-}
-
-function ownerOf(call: Call): string {
-  const { caller } = call
-  if (caller.kind === 'plugin') return caller.id
-  return caller.kind === 'window' ? `window:${caller.role}` : `content:${caller.plugin}`
 }
