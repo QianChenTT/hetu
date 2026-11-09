@@ -14,7 +14,7 @@ import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
-import { appMenu, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
@@ -223,6 +223,13 @@ async function start(): Promise<void> {
       contents.on('render-process-gone', unloaded)
       contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
+      // The core keys reach the page whatever has focus, a frame included
+      contents.on('before-input-event', (event, input) => {
+        const core = coreKeyOfInput(input, process.platform === 'darwin')
+        if (core === null) return
+        event.preventDefault()
+        if (!input.isAutoRepeat) contents.send('hetu:key', core)
+      })
       // Closing the last window quits hetu, so it goes the way Quit goes and the page keeps its drafts first
       window.on('close', event => {
         if (quitting !== null || [...seen].some(other => other !== window && !other.isDestroyed())) return

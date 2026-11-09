@@ -162,13 +162,40 @@ body {
   font: 14px system-ui, sans-serif;
 }
 
-.hetu-frame {
+/* In the lifted layer: views, frames and a frame's shield, then titles, then editors, so nothing a layout places over
+   an editor's box, its titles included, covers the note */
+.hetu-surface,
+.hetu-items,
+.hetu-down,
+.hetu-frame,
+.hetu-frame-shield {
   z-index: 1;
+  contain: paint;
+}
+
+.hetu-frame {
   border: 0;
 }
 
+.hetu-frame-shield {
+  cursor: pointer;
+  background: transparent;
+}
+
+#editors > .hetu-surface {
+  color: var(--hetu-color-fg, #1f1f1f);
+  font-family: var(--hetu-font-ui, system-ui, sans-serif);
+  font-size: var(--hetu-font-size, 13px);
+}
+
+.hetu-items {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .editor {
-  z-index: 2;
+  z-index: 3;
 }
 
 .editor .cm-editor {
@@ -188,7 +215,7 @@ body {
 
 /* What the drawer draws for plugins, in fixed styles no plugin or theme reaches */
 .hetu-title {
-  z-index: 3;
+  z-index: 2;
   display: flex;
   align-items: center;
   padding: 0 6px;
@@ -207,28 +234,39 @@ body {
   font: 12px system-ui, sans-serif;
 }
 
+/* A popover takes no style of the plugin's: its body does. The strip sits on top of the body at a z-index no plugin
+   node reaches, so no style moves, sizes or covers it */
 .hetu-popover {
   isolation: isolate;
   contain: paint;
+  box-sizing: border-box;
   max-width: 60vw;
   max-height: 60vh;
-  display: flex;
-  flex-direction: column;
+  overflow: hidden;
+  padding-top: 18px;
   background: var(--hetu-color-surface, #ffffff);
   border: 1px solid #999999;
   box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
 }
 
 .hetu-strip {
-  flex: none;
-  padding: 1px 6px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  height: 18px;
+  padding: 0 6px;
   background: #333333;
   color: #ffffff;
-  font: 11px system-ui, sans-serif;
+  font: 11px/18px system-ui, sans-serif;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .hetu-popover-body {
+  contain: paint;
+  max-height: calc(60vh - 18px);
   overflow: auto;
 }
 

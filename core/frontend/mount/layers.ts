@@ -4,10 +4,11 @@ import type { Rect } from './drag.ts'
 import { SKELETON, type UiPort } from './ui-port.ts'
 
 // The editor window's layers below the core layer. The base layer holds the layout's skeleton, or the drawer's plain
-// layout while no layout draws, with the tree views mounted in the slots the layout placed. The lifted layer above it
-// holds the editors, the titles and the frames, each laid over its placeholder and clipped to it, so no node of the
-// layout's covers them whatever its CSS does. The overlay layer above that holds popovers under the strip naming their
-// owner. Theme variables reach the base and lifted layers only
+// layout until a layout has drawn one. The lifted layer above it holds every view, the editors, the titles and the
+// frames, each laid over its placeholder and clipped to it, so no node of the layout's covers them or hears what
+// happens in them, whatever its CSS does. The overlay layer above that holds popovers under the strip naming their
+// owner. Theme variables reach the base and lifted layers only. Each owner's redraws are held to a budget of writes
+// to the page a second, past which the rest wait for the next second, so a busy view can't take the page from typing
 
 export type EditorsLike = {
   // The instance the human works in, null with none open
@@ -30,6 +31,9 @@ export type TitleSource = {
 
 export type LayersParts = { stage: HTMLElement, base: HTMLElement, lifted: HTMLElement, overlay: HTMLElement, empty: HTMLElement }
 
+// Writes to the page one owner's redraws may make in a second
+export const DRAW_WRITES_PER_SECOND = 20_000
+
 type Hooks = {
   // Draw hooks for the tree of one owner's surface
   drawHooks(owner: string, surface: string): DrawHooks
@@ -51,6 +55,10 @@ export class Layers {
   private skeleton: TreeView | null = null
   private readonly views = new Map<string, TreeView>()
   private readonly lifted = new Map<string, HTMLElement>()
+  private readonly downs = new Map<string, HTMLElement>()
+  private readonly itemBoxes = new Map<string, HTMLElement>()
+  private readonly spent = new Map<string, { start: number, writes: number }>()
+  private readonly waiting = new Set<string>()
   private readonly plain: HTMLElement
   private queued = false
 
@@ -71,22 +79,41 @@ export class Layers {
   // The tree view drawing a surface, made on first use
   treeOf(owner: string, surface: string): TreeView {
     if (surface === SKELETON) {
-      if (this.skeleton === null || this.skeleton.owner !== owner) this.skeleton = new TreeView(owner, SKELETON, this.ui.views.name(owner), this.hooks.drawHooks(owner, SKELETON))
+      if (this.skeleton === null || this.skeleton.owner !== owner) this.skeleton = new TreeView(owner, SKELETON, owner, this.hooks.drawHooks(owner, SKELETON))
       return this.skeleton
     }
     let tree = this.views.get(surface)
     if (tree === undefined || tree.owner !== owner) {
-      tree = new TreeView(owner, surface, this.ui.views.name(owner), this.hooks.drawHooks(owner, surface))
+      // A popover's strip names the plugin by its id, which the core checks, never a name the plugin picked
+      tree = new TreeView(owner, surface, owner, this.hooks.drawHooks(owner, surface))
       this.views.set(surface, tree)
     }
     return tree
   }
 
-  // A surface changed: draw it again, then place everything
+  // A surface changed: draw it again within the owner's budget, then place everything in the next frame
   drawn(owner: string, surface: string): void {
     if (surface === SKELETON && this.ui.layout() !== owner) return
-    this.treeOf(owner, surface).render(this.ui.surfaces.tree(owner, surface))
-    this.place()
+    const now = performance.now()
+    let spent = this.spent.get(owner)
+    if (spent === undefined || now - spent.start >= 1000) {
+      spent = { start: now, writes: 0 }
+      this.spent.set(owner, spent)
+    }
+    const key = `${owner} ${surface}`
+    if (spent.writes >= DRAW_WRITES_PER_SECOND) {
+      // Drawn once the second is over, with whatever the tree is by then
+      if (!this.waiting.has(key)) {
+        this.waiting.add(key)
+        setTimeout(() => {
+          this.waiting.delete(key)
+          this.drawn(owner, surface)
+        }, Math.max(1, 1000 - (now - spent.start)))
+      }
+      return
+    }
+    spent.writes += this.treeOf(owner, surface).render(this.ui.surfaces.tree(owner, surface))
+    this.schedule()
   }
 
   // The layout drawing the window changed, or views came or went
@@ -95,7 +122,14 @@ export class Layers {
     if (layout === null) this.skeleton = null
     else this.treeOf(layout, SKELETON).render(this.ui.surfaces.tree(layout, SKELETON))
     for (const [instance, tree] of this.views) {
-      if (this.ui.views.owner(instance) !== tree.owner) this.views.delete(instance)
+      if (this.ui.views.owner(instance) === tree.owner) continue
+      tree.root.remove()
+      this.views.delete(instance)
+    }
+    for (const [instance, note] of this.downs) {
+      if (this.ui.views.get(instance)?.down === true) continue
+      note.remove()
+      this.downs.delete(instance)
     }
     this.place()
   }
@@ -119,7 +153,7 @@ export class Layers {
   // Everything laid out again: what the base layer holds, each view in its slot, each lifted element over its box
   place(): void {
     const { base, stage } = this.parts
-    const skeleton = this.ui.layout() !== null ? this.skeleton : null
+    const skeleton = this.ui.drawing() !== null ? this.skeleton : null
     const top = skeleton === null ? this.plain : skeleton.root
     if (base.firstElementChild !== top || base.childElementCount !== 1) base.replaceChildren(top)
     const stageBox = stage.getBoundingClientRect()
@@ -131,36 +165,62 @@ export class Layers {
       ? [{ node: { kind: 'editor', id: 'plain', instance: 'current' } as UiNode, element: this.plain }]
       : [...skeleton.placeholders.values()]
 
-    // Views into their slots, frames over them
+    // Views over their slots in the lifted layer, frames among them. Items share a box of the drawer's over theirs
     const shown = new Map<string, Rect>()
     const framed = new Set<string>()
-    const mounted = new Set<HTMLElement>()
+    const laid = new Set<HTMLElement>()
     const items = this.ui.views.all().filter(held => held.spec.kind === 'item' && !held.down)
       .sort((a, b) => this.rankOf(a.owner, a.view) - this.rankOf(b.owner, b.view))
     for (const { node, element } of placeholders) {
       if (node.kind !== 'slot') continue
-      const instances = node.items === true ? items.map(held => held.instance) : [node.instance as string]
-      const roots: HTMLElement[] = []
-      for (const instance of instances) {
-        const held = this.ui.views.get(instance)
-        if (held === null || shown.has(instance)) continue
-        if (held.down) {
-          roots.push(this.downNote(instance, held.owner))
-          continue
+      const at = box(element)
+      if (node.items === true) {
+        const holder = this.itemBox(node.id)
+        const roots: HTMLElement[] = []
+        for (const held of items) {
+          if (shown.has(held.instance)) continue
+          shown.set(held.instance, at)
+          if (held.spec.frame !== undefined) {
+            framed.add(held.instance)
+            this.frames?.place(held.owner, held.instance, held.spec.frame, at)
+            continue
+          }
+          const root = this.viewRoot(held.owner, held.instance)
+          lay(root, null)
+          root.hidden = false
+          root.removeAttribute('style')
+          roots.push(root)
         }
-        shown.set(instance, box(element))
-        if (held.spec.frame !== undefined) {
-          framed.add(instance)
-          this.frames?.place(held.owner, instance, held.spec.frame, box(element))
-          continue
-        }
-        const tree = this.treeOf(held.owner, instance)
-        if (tree.root.childElementCount === 0) tree.render(this.ui.surfaces.tree(held.owner, instance))
-        roots.push(tree.root)
+        syncChildren(holder, roots)
+        lay(holder, at)
+        laid.add(holder)
+        continue
       }
-      syncChildren(element, roots)
-      for (const root of roots) mounted.add(root)
+      const instance = node.instance as string
+      const held = this.ui.views.get(instance)
+      if (held === null || shown.has(instance)) continue
+      if (held.down) {
+        const note = this.downNote(instance, held.owner)
+        lay(note, at)
+        laid.add(note)
+        continue
+      }
+      shown.set(instance, at)
+      if (held.spec.frame !== undefined) {
+        framed.add(instance)
+        this.frames?.place(held.owner, instance, held.spec.frame, at)
+        continue
+      }
+      const root = this.viewRoot(held.owner, instance)
+      if (root.parentElement !== this.parts.lifted) this.parts.lifted.append(root)
+      lay(root, at)
+      laid.add(root)
     }
+    // What isn't placed this time is hidden where it is, never moved, so a view keeps its focus and scroll
+    for (const element of [...this.views.values()].map(tree => tree.root).filter(root => root.parentElement === this.parts.lifted)) {
+      if (!laid.has(element)) lay(element, null)
+    }
+    for (const element of [...this.downs.values(), ...this.itemBoxes.values()]) if (!laid.has(element)) lay(element, null)
     for (const held of this.ui.views.all()) this.ui.views.shown(held.instance, held.down ? null : sizeOf(shown.get(held.instance)))
     this.frames?.forget(framed)
 
@@ -208,11 +268,33 @@ export class Layers {
 
   favorites: readonly string[] = []
 
+  // A view's tree, drawn on first use
+  private viewRoot(owner: string, instance: string): HTMLElement {
+    const tree = this.treeOf(owner, instance)
+    if (tree.root.childElementCount === 0) tree.render(this.ui.surfaces.tree(owner, instance))
+    return tree.root
+  }
+
+  private itemBox(id: string): HTMLElement {
+    let holder = this.itemBoxes.get(id)
+    if (holder === undefined) {
+      holder = document.createElement('div')
+      holder.className = 'hetu-items'
+      this.parts.lifted.append(holder)
+      this.itemBoxes.set(id, holder)
+    }
+    return holder
+  }
+
   private downNote(instance: string, owner: string): HTMLElement {
-    const note = document.createElement('div')
-    note.className = 'hetu-down'
-    note.textContent = `${this.ui.views.name(owner)} isn't running`
-    note.dataset.instance = instance
+    let note = this.downs.get(instance)
+    if (note === undefined) {
+      note = document.createElement('div')
+      note.className = 'hetu-down'
+      note.textContent = `${owner} isn't running`
+      this.parts.lifted.append(note)
+      this.downs.set(instance, note)
+    }
     return note
   }
 
@@ -262,7 +344,7 @@ export class Layers {
 
   // The zones the layout marked, with their boxes, in the order drawn
   zones(): { zone: string, rect: Rect, element: HTMLElement }[] {
-    if (this.skeleton === null || this.ui.layout() === null) return []
+    if (this.skeleton === null || this.ui.drawing() === null) return []
     const stageBox = this.parts.stage.getBoundingClientRect()
     return [...this.skeleton.zones].map(([zone, element]) => {
       const at = element.getBoundingClientRect()
