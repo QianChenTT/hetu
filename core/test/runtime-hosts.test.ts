@@ -53,11 +53,12 @@ describe('loading a host half', () => {
   it('hands on the roles the module exports and nothing else', async () => {
     const provider = { prepare: async () => ({ scope: {} }), perform: async () => ({}) }
     const gate = { decide: () => ({ allow: true }) }
+    const luoshu = { open: () => {} }
     const roles = await loadHost(start(), {
       freeze: () => {},
-      importer: async () => ({ default: plugin, provider, gate, other: {}, watchdog: 5 }),
+      importer: async () => ({ default: plugin, provider, gate, luoshu, other: {}, watchdog: 5 }),
     })
-    expect(roles).toEqual({ provider, gate })
+    expect(roles).toEqual({ provider, gate, luoshu })
   })
 
   it('refuses an entry the files don\'t hold, a module whose default isn\'t a plugin and a module that throws', async () => {

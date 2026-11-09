@@ -39,9 +39,11 @@ describe('sandboxed plugins as workers', () => {
     const dataDir = await dataWith({ one: lifecycle(), two: lifecycle() })
     const app = await launch(dataDir)
     await until(async () => await logged(dataDir, 'plugin.started', { plugin: 'one' }) && await logged(dataDir, 'plugin.started', { plugin: 'two' }))
+    // The first-party plugins' renderer runs beside them, search's among them
     const pids = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
-      .filter(window => window.webContents.getURL().startsWith('hetu://workers/'))
+      .filter(window => ['hetu://workers/?for=one', 'hetu://workers/?for=two'].includes(window.webContents.getURL()))
       .map(window => window.webContents.getOSProcessId()))
+    expect(pids).toHaveLength(2)
     expect(new Set(pids).size).toBe(2)
     await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === 'hetu://workers/?for=one')!.webContents
