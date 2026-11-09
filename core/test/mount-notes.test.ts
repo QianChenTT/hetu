@@ -139,7 +139,7 @@ describe('saving', () => {
     views.type(instance, 'mine')
     notes.changed(instance)
     expect(await notes.save(instance)).toBe('stale')
-    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'mine', at: 1000 })
+    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'mine', at: 1000, edits: [] })
     expect(told).toContainEqual({ kind: 'stale', instance, path: 'a.md' })
   })
 
@@ -217,7 +217,7 @@ describe('drafts', () => {
     expect(space.has(keyOf('a.md'))).toBe(false)
     clock.at = 2200
     await vi.advanceTimersByTimeAsync(400)
-    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'one two', at: 2200 })
+    expect(space.get(keyOf('a.md'))).toEqual({ path: 'a.md', base: 'v-note a', text: 'one two', at: 2200, edits: [] })
   })
 
   it('keeps every dirty note when the core says it is quitting', async () => {
@@ -326,6 +326,43 @@ describe('a save from outside', () => {
     core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.outside'] })
     await flush()
     expect(views.replaced).toEqual([{ instance: a, text: 'a changed while the window was behind', remote: true }])
+  })
+
+  it('refuses to reload over a dirty buffer whose draft could not be kept, so the only copy stays', async () => {
+    const { notes, views, core, told, saveOutside } = started()
+    core.answers['storage.set'] = () => ({ ok: false, refusal: { code: 'unavailable' } })
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine, unsaved')
+    notes.changed(instance)
+    saveOutside('a.md', 'theirs')
+    await notes.reload(instance)
+    expect(views.replaced).toEqual([])
+    expect(views.texts.get(instance)).toBe('mine, unsaved')
+    expect(notes.opened.get(instance)).toMatchObject({ dirty: true, version: 'v-note a' })
+    expect(told).toContainEqual({ kind: 'refused', instance, path: 'a.md', code: 'unavailable' })
+  })
+
+  it('keeps the plugins whose edits a draft holds and names them on the save after Restore', async () => {
+    const { notes, views, core, space, saveOutside } = started()
+    const instance = await notes.open('a.md')
+    notes.edited(instance, 'spy')
+    views.type(instance, 'pay mallory')
+    notes.changed(instance)
+    saveOutside('a.md', 'theirs')
+    await notes.reload(instance)
+    expect(space.get(keyOf('a.md'))).toMatchObject({ text: 'pay mallory', edits: ['spy'] })
+    notes.restore(instance)
+    await notes.save(instance)
+    expect(core.calls('luoshu.write').at(-1)?.onBehalf).toBe('spy')
+  })
+
+  it('names the plugins of a draft offered when the note opens again, as after the page reloaded', async () => {
+    const { notes, space, core } = started()
+    space.set(keyOf('a.md'), { path: 'a.md', base: 'v-note a', text: 'pay mallory', at: 5, edits: ['spy'] })
+    const instance = await notes.open('a.md')
+    notes.restore(instance)
+    await notes.save(instance)
+    expect(core.calls('luoshu.write').at(-1)?.onBehalf).toBe('spy')
   })
 
   it('keeps a dirty buffer as a draft before reloading over it', async () => {
