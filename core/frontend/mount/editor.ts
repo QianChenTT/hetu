@@ -207,9 +207,10 @@ export class EditorViews implements Editors {
     if (this.shownId !== null) this.open.get(this.shownId)?.view.focus()
   }
 
-  // The instance whose editor has focus, else none
+  // The instance whose editor holds the page's focus, else none. The window itself needn't have the OS's focus
   focused(): string | null {
-    for (const [id, open] of this.open) if (open.view.hasFocus) return id
+    const active = document.activeElement
+    for (const [id, open] of this.open) if (active !== null && open.view.contentDOM.contains(active)) return id
     return null
   }
 
