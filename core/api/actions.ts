@@ -109,8 +109,8 @@ const coreTable = {
   // which waits for the Confirm
   'core.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
-  // it holds. The drawer asks before it serves a plugin anything about an open note
-  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path }) },
+  // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
+  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },

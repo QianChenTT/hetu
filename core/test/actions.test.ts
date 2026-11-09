@@ -87,7 +87,8 @@ describe('the core actions', () => {
     ['editor.reach', { plugin: 'search', path: 'notes/a.md' }, true],
     ['editor.reach', { plugin: 'search', path: 'notes/../a.md' }, false],
     ['editor.reach', { plugin: 'Search', path: 'a.md' }, false],
-    ['editor.reach', { plugin: 'search' }, false],
+    ['editor.reach', { plugin: 'search' }, true],
+    ['editor.reach', {}, false],
     ['editor.reach', { plugin: 'search', path: 'a.md', write: true }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
