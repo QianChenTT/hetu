@@ -1202,7 +1202,12 @@ ${capabilityKey(change.capability)}`)
       v: VERSION, kind: 'init', id: k.id, incarnation: live.n, api: API_VERSION, deps, lastStop: k.lastStop,
       previousVersion: k.previousVersion,
     }
-    for (const run of live.halves.values()) this.link.send(run.caller, init)
+    // An install host half runs in main with Node, so the data folder is no secret from it: storage keeps its spaces
+    // there and later host plugins their working folders. A worker never hears it
+    for (const [half, run] of live.halves) {
+      const own = half === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
+      this.link.send(run.caller, own)
+    }
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
   }

@@ -8,7 +8,7 @@ import { Loader } from '../backend/loader/loader.ts'
 import { readInstalled, writeInstalled } from '../backend/loader/folders.ts'
 import type { Landing } from '../backend/loader/seams.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, until, workerManifest,
   type Listing,
 } from './loader-fakes.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, releaseAfter, releaseAll } from './hold.ts'
@@ -88,6 +88,19 @@ describe('the start order', () => {
       v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 1, deps: { git: 'unavailable', luoshu: 'ready' },
       lastStop: null, previousVersion: null,
     }])
+  })
+
+  it('hands the data folder to an install plugin\'s host half and never to a worker', async () => {
+    const { loader, runtime, dataDir } = await harness({
+      install: { ...coreInstall(), storage: { files: filesFor(manifest('storage', { entries: { host: 'host.js', worker: 'worker.js' } })) } },
+      folder: { outline: filesFor(workerManifest('outline')) },
+      entries: { outline: signed() },
+    })
+    await loader.start()
+    expect(runtime.half('storage', 1, 'host').got('init')[0].dataDir).toBe(dataDir)
+    expect(runtime.half('gate', 1, 'host').got('init')[0].dataDir).toBe(dataDir)
+    expect(runtime.half('storage', 1, 'worker').got('init')[0]).not.toHaveProperty('dataDir')
+    expect(runtime.half('outline').got('init')[0]).not.toHaveProperty('dataDir')
   })
 
   it('gives the worker host page the bytes it hashed, not what the file holds later', async () => {
