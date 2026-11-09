@@ -81,6 +81,8 @@ describe('a call on the bridge', () => {
     ['a negative version', call('editor.edit', { instance: 'n1', version: -1, changes: [1] })],
     ['a binding naming no command', call('editor.bind', { bindings: [{ key: 'Mod-k' }] })],
     ['a binding on no key', call('editor.bind', { bindings: [{ key: 'Mod-', command: 'kill' }] })],
+    ['a binding on a bare letter', call('editor.bind', { bindings: [{ key: 'k', command: 'kill' }] })],
+    ['a binding with Shift alone', call('editor.bind', { bindings: [{ key: 'Shift-k', command: 'kill' }] })],
     ['65 bindings', call('editor.bind', { bindings: Array.from({ length: MAX_BINDINGS + 1 }, () => ({ key: 'Mod-k', command: 'kill' })) })],
     ['a key stream switch that is no boolean', call('editor.keys', { on: 'yes' })],
   ])('answers null for %s', (_name, text) => {

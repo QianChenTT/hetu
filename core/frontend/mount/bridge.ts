@@ -1,6 +1,7 @@
 import { ChangeSet } from '@codemirror/state'
 import {
-  type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, parseBridgeCall, refused, reply, verbNeeds,
+  type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS, parseBridgeCall,
+  READ_CHARS_PER_SECOND, refused, reply, verbNeeds,
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { normalKey } from './keys.ts'
@@ -36,6 +37,11 @@ export type PortLike = {
 
 // The keys the drawer takes for itself before CodeMirror or any binding: the raw view, quick open, save and Quit
 export const CORE_KEYS: readonly string[] = Object.freeze(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
+// No binding takes these: the core keys, the raw view's key where / needs Shift, and the editor's own copy, cut, paste,
+// undo, redo and select all
+export const RESERVED_KEYS: readonly string[] = Object.freeze([
+  ...CORE_KEYS, 'Mod-Shift-/', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a',
+])
 
 type Reach = { read: boolean, write: boolean, verbs: readonly string[] }
 const none: Reach = Object.freeze({ read: false, write: false, verbs: Object.freeze([]) })
@@ -48,6 +54,10 @@ type Connection = {
   keys: boolean
   // The instances it holds marks on
   readonly marked: Set<string>
+  // How many marks each of its sets holds, by instance
+  readonly sets: Map<string, Map<string, number>>
+  // What it had the drawer do in the second that started at start
+  spent: { start: number, marks: number, chars: number }
 }
 
 class Refusal {
@@ -65,13 +75,20 @@ export class Drawer {
   private readonly connections = new Map<string, Connection>()
   private reaches = new Map<string, Promise<Reach>>()
   private readonly mac: boolean
+  private readonly clock: () => number
 
   // mac says Mod is Cmd, as the page names keys
-  constructor(link: CoreLink, instances: () => Iterable<Instance>, edited: (instance: string, plugin: string) => void, mac = false) {
+  constructor(
+    link: CoreLink,
+    instances: () => Iterable<Instance>,
+    edited: (instance: string, plugin: string) => void,
+    options: { mac?: boolean, clock?: (() => number) | undefined } = {},
+  ) {
     this.link = link
     this.instances = instances
     this.edited = edited
-    this.mac = mac
+    this.mac = options.mac ?? false
+    this.clock = options.clock ?? (() => performance.now())
   }
 
   // core.status comes on the shell's subscription
@@ -88,7 +105,9 @@ export class Drawer {
       return
     }
     if (held !== undefined) this.drop(held)
-    const conn: Connection = { plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set() }
+    const conn: Connection = {
+      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(), spent: { start: this.clock(), marks: 0, chars: 0 },
+    }
     this.connections.set(plugin, conn)
     port.onmessage = event => {
       if (typeof event.data === 'string' && this.connections.get(plugin) === conn) void this.serve(conn, event.data)
@@ -123,17 +142,22 @@ export class Drawer {
     }
   }
 
-  // A key in the editor, named as keys.ts names it, after the core keys. The first plugin bound to it hears its command
-  // and true says the key was taken. Otherwise each plugin holding the key stream that reads the note hears the key
+  // A key in the editor, named as keys.ts names it, after the core keys. The first plugin bound to it hears its command,
+  // with the note's instance only when it reads the note, and true says the key was taken. Otherwise each plugin holding
+  // the key stream that reads the note hears the key
   key(instance: string | null, key: string): boolean {
-    if (CORE_KEYS.includes(key)) return false
+    if (RESERVED_KEYS.includes(key)) return false
+    const open = instance === null ? undefined : this.find(instance)
     for (const conn of this.connections.values()) {
       const command = conn.bindings.get(key)
       if (command === undefined) continue
-      conn.port.postMessage(JSON.stringify(event({ topic: 'editor.command', command, instance })))
+      const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
+      void told.then(reach => {
+        const named = reach.read && open !== undefined ? open.id : null
+        if (this.live(conn)) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.command', command, instance: named })))
+      })
       return true
     }
-    const open = instance === null ? undefined : this.find(instance)
     if (open === undefined) return false
     for (const conn of this.connections.values()) {
       if (!conn.keys) continue
@@ -163,6 +187,7 @@ export class Drawer {
       if (!this.live(conn) || (reach.read && reach.verbs.includes('ui.decoration'))) continue
       instance?.clearMarks(conn.plugin)
       conn.marked.delete(id)
+      conn.sets.delete(id)
     }
   }
 
@@ -171,6 +196,7 @@ export class Drawer {
     conn.port.close()
     for (const id of conn.marked) this.find(id)?.clearMarks(conn.plugin)
     conn.marked.clear()
+    conn.sets.clear()
     conn.bindings = new Map()
     conn.keys = false
   }
@@ -239,14 +265,25 @@ export class Drawer {
       }
       case 'editor.read': {
         const instance = await this.reached(plugin, call.args.instance, needs.write)
-        return { text: instance.text(), version: instance.versions.version, selection: instance.selection() }
+        const text = instance.text()
+        this.spend(conn, 0, text.length)
+        return { text, version: instance.versions.version, selection: instance.selection() }
       }
       case 'editor.decorate': {
         const instance = await this.reached(plugin, call.args.instance, needs.write)
-        const mapped = instance.versions.mapMarks(call.args.marks, call.args.version)
+        const { set, marks } = call.args
+        // The plugin's sets on this note with this one replaced, held to the caps across sets
+        const sets = new Map(conn.sets.get(instance.id) ?? [])
+        sets.delete(set)
+        if (marks.length > 0) sets.set(set, marks.length)
+        const total = [...sets.values()].reduce((sum, count) => sum + count, 0)
+        if (sets.size > MAX_MARK_SETS || total > MAX_MARKS) throw new Refusal('invalid')
+        const mapped = instance.versions.mapMarks(marks, call.args.version)
         if (mapped === null) throw new Refusal('stale')
         if (!this.live(conn)) throw new Refusal('stopped')
-        instance.setMarks(plugin, call.args.set, mapped)
+        this.spend(conn, marks.length, 0)
+        instance.setMarks(plugin, set, mapped)
+        conn.sets.set(instance.id, sets)
         conn.marked.add(instance.id)
         return { version: instance.versions.version }
       }
@@ -265,13 +302,25 @@ export class Drawer {
         this.edited(instance.id, plugin)
         return { version: instance.versions.version }
       }
-      case 'editor.bind':
-        conn.bindings = new Map(call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command]))
+      case 'editor.bind': {
+        const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
+        if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')
+        conn.bindings = new Map(bindings)
         return null
+      }
       case 'editor.keys':
         conn.keys = call.args.on
         return null
     }
+  }
+
+  // Charges the plugin's second for marks drawn and text read, throttled past either budget. A new second starts afresh
+  private spend(conn: Connection, marks: number, chars: number): void {
+    const now = this.clock()
+    if (now - conn.spent.start >= 1000) conn.spent = { start: now, marks: 0, chars: 0 }
+    if (conn.spent.marks + marks > MARKS_PER_SECOND || conn.spent.chars + chars > READ_CHARS_PER_SECOND) throw new Refusal('throttled')
+    conn.spent.marks += marks
+    conn.spent.chars += chars
   }
 
   // The open instance, once the plugin reads its note and, for an edit, writes it

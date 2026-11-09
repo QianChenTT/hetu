@@ -77,7 +77,7 @@ function start(bridge: Bridge): void {
     drawTitle()
   })
   notes = theNotes
-  const theDrawer = new Drawer(link, () => views.instances(), (instance, plugin) => theNotes.edited(instance, plugin), mac)
+  const theDrawer = new Drawer(link, () => views.instances(), (instance, plugin) => theNotes.edited(instance, plugin), { mac })
   drawer = theDrawer
   const raw = new RawSource(link, theNotes, id => views.text(id))
   shell.onStatus = status => views.hiddenMarks(status.page.includes('hidden-marks'))

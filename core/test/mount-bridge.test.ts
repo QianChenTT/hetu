@@ -1,7 +1,8 @@
 import { ChangeSet, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
-import { CORE_KEYS, Drawer, type Instance, type PortLike } from '../frontend/mount/bridge.ts'
+import { CORE_KEYS, Drawer, type Instance, type PortLike, RESERVED_KEYS } from '../frontend/mount/bridge.ts'
+import { MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS, READ_CHARS_PER_SECOND } from '../api/editor.ts'
 import { CoreLink } from '../frontend/mount/link.ts'
 import { Versions } from '../frontend/mount/versions.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
@@ -68,7 +69,7 @@ function port() {
 }
 
 // The gate's answers for each plugin, which editor.reach gives back
-function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hello world')]) {
+function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hello world')], clock?: () => number) {
   const core = fakeCore({
     'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
     'editor.reach': args => {
@@ -88,7 +89,7 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
   const link = new CoreLink(core.bridge)
   link.start()
   const edited: { instance: string, plugin: string }[] = []
-  const drawer = new Drawer(link, () => notes.map(made => made.instance), (instance, plugin) => edited.push({ instance, plugin }))
+  const drawer = new Drawer(link, () => notes.map(made => made.instance), (instance, plugin) => edited.push({ instance, plugin }), { clock })
   drawer.start()
   return { core, drawer, notes, edited }
 }
@@ -248,28 +249,147 @@ describe("the bridge's drawer end", () => {
     expect(alpha.sent.filter(message => message.kind === 'reply')).toHaveLength(1)
   })
 
-  it('calls the owner of a binding with its command, never on a core key', async () => {
-    const { drawer } = started({ alpha: { verbs: ['ui.command'] }, beta: { verbs: ['ui.command'] } })
+  it('calls the owner of a binding with its command, naming the note only when the plugin reads it', async () => {
+    const notes = [note('n1', 'a.md', 'a'), note('n2', 'secret.md', 's')]
+    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.command'] }, beta: { verbs: ['ui.command'] } }, notes)
     const alpha = port()
     const beta = port()
     drawer.connect('alpha', 1, alpha.port)
     drawer.connect('beta', 1, beta.port)
-    await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }, { key: 'Mod-/', command: 'hide' }] })
+    expect(await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })).toMatchObject({ ok: true })
     expect(drawer.key('n1', 'Mod-k')).toBe(true)
-    expect(drawer.key('n1', 'Mod-/')).toBe(false)
+    expect(drawer.key('n2', 'Mod-k')).toBe(true)
     expect(drawer.key('n1', 'Mod-j')).toBe(false)
-    expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1' }])
+    await settle()
+    const commands = alpha.events().filter(event => event.topic === 'editor.command')
+    expect(commands).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1' },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+    ])
     expect(beta.events()).toEqual([])
     expect(CORE_KEYS).toEqual(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
+  })
+
+  it.each(['k', '4', 'Shift-k', 'Enter'])('refuses a binding on %s, a key with no modifier, so typing in a note never reaches one', async key => {
+    const { drawer } = started({ alpha: { verbs: ['ui.command'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.bind', { bindings: [{ key, command: 'grab' }] })).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
+  })
+
+  it.each(['Mod-/', 'Mod-Shift-/', 'Ctrl-/', 'Mod-p', 'Mod-s', 'Mod-q', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a'])(
+    'refuses a binding on %s, a core key or one the editor keeps for itself, and never fires one',
+    async key => {
+      const { drawer } = started({ alpha: { verbs: ['ui.command'] } })
+      const alpha = port()
+      drawer.connect('alpha', 1, alpha.port)
+      expect(await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'ok' }, { key, command: 'grab' }] }))
+        .toMatchObject({ ok: false, refusal: { code: 'invalid' } })
+      expect(drawer.key('n1', key)).toBe(false)
+      expect(RESERVED_KEYS).toContain(key === 'Ctrl-/' ? 'Mod-/' : key)
+    },
+  )
+
+  it('takes back marks from a plugin that keeps ui.decoration but loses read of the note', async () => {
+    const made = note('n1', 'a.md', 'hello')
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'], verbs: ['ui.decoration'] } }
+    const { drawer, core } = started(reach, [made])
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [{ kind: 'hide', from: 0, to: 1 }] })
+    reach.alpha = { read: [], verbs: ['ui.decoration'] }
+    core.event('core.security')
+    await settle()
+    await settle()
+    expect(made.marks.has('alpha')).toBe(false)
+  })
+
+  it('asks the core again after core.status as after core.security', async () => {
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'] } }
+    const { drawer, core } = started(reach)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
+    reach.alpha = { read: [] }
+    core.event('core.status')
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
+  it('sends keys only to a plugin that turned its key stream on', async () => {
+    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keys'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    drawer.key('n1', 'a')
+    await settle()
+    expect(alpha.events().filter(event => event.topic === 'editor.key')).toEqual([])
+  })
+
+  it('sends nothing to a plugin once it ended', async () => {
+    const made = note('n1', 'a.md', 'abc')
+    const { drawer } = started({ alpha: reader }, [made])
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await settle()
+    const before = alpha.sent.length
+    drawer.end('alpha', 1)
+    drawer.changed(made.instance, made.type(0, 'x'))
+    drawer.opened(made.instance)
+    await settle()
+    expect(alpha.sent.length).toBe(before)
+  })
+
+  it(`holds a plugin to ${MAX_MARK_SETS} sets and ${MAX_MARKS} marks on one note, across its sets, and counts each plugin apart`, async () => {
+    const { drawer } = started({ alpha: reader, beta: reader })
+    const alpha = port()
+    const beta = port()
+    drawer.connect('alpha', 1, alpha.port)
+    drawer.connect('beta', 1, beta.port)
+    const one = [{ kind: 'hide', from: 0, to: 1 }]
+    for (let i = 0; i < MAX_MARK_SETS; i++) {
+      expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: `s${i}`, marks: one })).toMatchObject({ ok: true })
+    }
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 'more', marks: one })).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
+    const many = Array.from({ length: MAX_MARKS - MAX_MARK_SETS + 2 }, () => ({ kind: 'hide', from: 0, to: 1 }))
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's0', marks: many })).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's0', marks: many.slice(2) })).toMatchObject({ ok: true })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's1', marks: [] })).toMatchObject({ ok: true })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 'more', marks: one })).toMatchObject({ ok: true })
+    expect(await beta.call('editor.decorate', { instance: 'n1', version: 0, set: 'b', marks: one })).toMatchObject({ ok: true })
+  })
+
+  it(`throttles a plugin past ${MARKS_PER_SECOND} marks a second and lets it on in the next second`, async () => {
+    const time = { now: 0 }
+    const { drawer } = started({ alpha: reader }, undefined, () => time.now)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    const full = Array.from({ length: MAX_MARKS }, () => ({ kind: 'hide', from: 0, to: 1 }))
+    for (let i = 0; i < MARKS_PER_SECOND / MAX_MARKS; i++) {
+      expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: full })).toMatchObject({ ok: true })
+    }
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] })).toMatchObject({ ok: true })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: full })).toMatchObject({ ok: false, refusal: { code: 'throttled' } })
+    time.now = 1000
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: full })).toMatchObject({ ok: true })
+  })
+
+  it('throttles reads past their budget of text a second', async () => {
+    const time = { now: 0 }
+    const big = note('n1', 'a.md', 'x'.repeat(READ_CHARS_PER_SECOND / 4))
+    const { drawer } = started({ alpha: reader }, [big], () => time.now)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    for (let i = 0; i < 4; i++) expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'throttled' } })
+    time.now = 1000
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
   })
 
   it("matches a binding however the plugin spelled the key, as the page names keys", async () => {
     const { drawer } = started({ alpha: { verbs: ['ui.command'] } })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
-    await alpha.call('editor.bind', { bindings: [{ key: 'Shift-Ctrl-K', command: 'kill' }, { key: 'Ctrl-/', command: 'hide' }] })
+    expect(await alpha.call('editor.bind', { bindings: [{ key: 'Shift-Ctrl-K', command: 'kill' }] })).toMatchObject({ ok: true })
     expect(drawer.key('n1', 'Mod-Shift-k')).toBe(true)
-    expect(drawer.key('n1', 'Mod-/')).toBe(false)
   })
 
   it('streams keys only for instances whose notes the plugin reads', async () => {
