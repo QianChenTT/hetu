@@ -34,7 +34,7 @@ describe('a mark', () => {
 
   it('knows a fixed list of styles and no class or CSS of its own', () => {
     expect(markStyles).toEqual(['strong', 'em', 'strike', 'highlight', 'code', 'link', 'muted', 'error', 'warning', 'info'])
-    expect(lineStyles).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock'])
+    expect(lineStyles).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock', 'rule'])
     expect(mark.safeParse({ kind: 'mark', from: 0, to: 4, style: 'red' }).success).toBe(false)
     expect(mark.safeParse({ kind: 'mark', from: 0, to: 4, style: 'strong', class: 'x' }).success).toBe(false)
     expect(mark.safeParse({ kind: 'line', from: 0, style: 'strong' }).success).toBe(false)

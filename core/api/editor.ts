@@ -30,7 +30,7 @@ export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
 
 // The looks a mark may ask for, drawn with the drawer's own classes. A plugin sends no class and no CSS
 export const markStyles = frozen(['strong', 'em', 'strike', 'highlight', 'code', 'link', 'muted', 'error', 'warning', 'info'] as const)
-export const lineStyles = frozen(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock'] as const)
+export const lineStyles = frozen(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock', 'rule'] as const)
 
 export const MAX_MARKS = 5000
 export const MAX_WIDGET_TEXT = 200
