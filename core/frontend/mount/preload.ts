@@ -8,3 +8,12 @@ contextBridge.exposeInMainWorld('hetu', {
     ipcRenderer.on('hetu:window', (_event, message: unknown) => listener(message))
   },
 })
+
+// A plugin worker's port to the drawer and its end, from main only, named with the plugin and its incarnation. A port
+// can't cross the context bridge, so it reaches the page by window.postMessage, as in the worker host page
+ipcRenderer.on('hetu:drawer', (event, named: { plugin?: unknown, incarnation?: unknown }) => {
+  window.postMessage({ hetu: 'drawer', plugin: named.plugin, incarnation: named.incarnation }, location.origin, event.ports)
+})
+ipcRenderer.on('hetu:drawer-end', (_event, named: { plugin?: unknown, incarnation?: unknown }) => {
+  window.postMessage({ hetu: 'drawer-end', plugin: named.plugin, incarnation: named.incarnation }, location.origin)
+})

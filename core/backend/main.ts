@@ -1,11 +1,12 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, Menu, MessageChannelMain, protocol, screen, session, type Session } from 'electron'
+import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, type Session, type WebContents } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
 import type { Failure, Loader } from './loader/loader.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
+import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
@@ -110,7 +111,19 @@ async function start(): Promise<void> {
       sample: sample => carrier?.sample(sample),
     }))
     workers = renderer
-    const runtime = electronRuntime(() => new MessageChannelMain(), renderer, limit, { freeze: freezeIntrinsics, importer: url => import(url) })
+    // A port between each worker holding a ui item and the editor page's drawer, made again for each page load
+    const drawers = new DrawerPorts<WebContents>({
+      channel: () => new MessageChannelMain(),
+      toWorker: (id, incarnation, port) => renderer.drawer(id, incarnation, port as MessagePortMain),
+      toPage: (page, plugin, incarnation, port) => {
+        if (page.isDestroyed()) (port as MessagePortMain).close()
+        else page.postMessage('hetu:drawer', { plugin, incarnation }, [port as MessagePortMain])
+      },
+      endInPage: (page, plugin, incarnation) => {
+        if (!page.isDestroyed()) page.postMessage('hetu:drawer-end', { plugin, incarnation })
+      },
+    })
+    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers), limit, { freeze: freezeIntrinsics, importer: url => import(url) })
 
     // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
     // main, so a Confirm counts only once it armed
@@ -173,10 +186,16 @@ async function start(): Promise<void> {
     loaderOf = wired.loader
     parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }
 
-    // Each editor window comes with its way into the carrier, made before its page loads
+    // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
+    // load's preload listens
     const editorWindow = () => {
       const window = openEditor(BrowserWindow, sessions.editor, app.isPackaged, placement(), mountPreload)
-      new WindowWay(window.webContents as unknown as WindowContents, 'editor', wired.carrier)
+      const contents = window.webContents
+      new WindowWay(contents as unknown as WindowContents, 'editor', wired.carrier)
+      contents.on('did-navigate', () => drawers.unloaded(contents))
+      contents.on('render-process-gone', () => drawers.unloaded(contents))
+      contents.on('destroyed', () => drawers.unloaded(contents))
+      contents.on('dom-ready', () => drawers.loaded(contents))
       return window
     }
     const placement = () => quietPlacement({

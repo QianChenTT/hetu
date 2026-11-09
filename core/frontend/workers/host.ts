@@ -36,6 +36,10 @@ export type HostOptions = {
   now?: () => number
 }
 
+// The worker's way to the editor page's drawer: the page's own end of the worker's channel and the drawer's port, with
+// its own counters, so the editor stream never starves the worker's calls
+type Drawer = { own: PortLike, outer: PortLike, rate: Rate, budget: Budget }
+
 type Running = {
   id: string
   incarnation: number
@@ -48,6 +52,7 @@ type Running = {
   budget: Budget
   errors: number
   dropped: number
+  drawer: Drawer | null
 }
 
 const key = (id: string, incarnation: number) => `${id}\u0000${incarnation}`
@@ -99,7 +104,7 @@ export class WorkerHost {
     const limit = (name: FloorConstant) => start.limits[name as keyof Limits]
     const run: Running = {
       id: start.id, incarnation: start.incarnation, worker, own, main, limits: start.limits, cap: messageCap(limit),
-      rate: newRate(), budget: newBudget(), errors: 0, dropped: 0,
+      rate: newRate(), budget: newBudget(), errors: 0, dropped: 0, drawer: null,
     }
     worker.addEventListener('error', event => {
       run.errors++
@@ -119,6 +124,29 @@ export class WorkerHost {
     }
     this.running.set(key(start.id, start.incarnation), run)
     worker.postMessage({ v: 1, kind: 'port', limits: start.limits }, [theirs])
+  }
+
+  // A port to the editor page's drawer for a running worker, from main, one per editor page load. The worker gets its end
+  // of a new channel and its text is held to the same rules as its calls, counted on their own. A new port replaces the
+  // last, whose page is gone. One for a worker not running is closed
+  drawer(id: unknown, incarnation: unknown, outer: PortLike | undefined): void {
+    if (outer === undefined) return
+    const run = typeof id === 'string' && typeof incarnation === 'number' ? this.running.get(key(id, incarnation)) : undefined
+    if (run === undefined) return outer.close()
+    this.endDrawer(run)
+    const { port1: own, port2: theirs } = this.options.channel()
+    const drawer: Drawer = { own, outer, rate: newRate(), budget: newBudget() }
+    run.drawer = drawer
+    own.onmessage = event => this.toDrawer(run, drawer, event.data, event.ports.length)
+    own.onmessageerror = () => this.cut(run, 'malformed')
+    outer.onmessage = event => {
+      if (run.drawer === drawer && this.running.get(key(run.id, run.incarnation)) === run) own.postMessage(event.data)
+    }
+    // The editor page went away: its port is done, the worker runs on
+    outer.onclose = () => {
+      if (run.drawer === drawer) this.endDrawer(run)
+    }
+    run.worker.postMessage({ v: 1, kind: 'drawer' }, [theirs])
   }
 
   // The watchdog lowered one of the plugin's limits, which the relay applies from the next message on
@@ -166,6 +194,34 @@ export class WorkerHost {
     run.main.postMessage(data)
   }
 
+  // The same checks as a message to main, on the drawer's own counters
+  private toDrawer(run: Running, drawer: Drawer, data: unknown, ports: number): void {
+    if (this.running.get(key(run.id, run.incarnation)) !== run || run.drawer !== drawer) return
+    if (typeof data !== 'string' || ports > 0) return this.cut(run, 'malformed')
+    const weighed = weigh(data, run.cap)
+    if (!weighed.ok) return this.cut(run, 'malformed')
+    const now = this.now()
+    const verdict = countMessage(drawer.rate, now, name => run.limits[name as keyof Limits])
+    if (verdict === 'flood') return this.cut(run, 'flood')
+    if (verdict === 'drop' || !spend(drawer.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) {
+      run.dropped++
+      return
+    }
+    drawer.outer.postMessage(data)
+  }
+
+  private endDrawer(run: Running): void {
+    const drawer = run.drawer
+    if (drawer === null) return
+    run.drawer = null
+    drawer.own.onmessage = null
+    drawer.own.onmessageerror = null
+    drawer.outer.onmessage = null
+    drawer.outer.onclose = null
+    drawer.own.close()
+    drawer.outer.close()
+  }
+
   private cut(run: Running, reason: 'malformed' | 'flood'): void {
     if (this.running.get(key(run.id, run.incarnation)) !== run) return
     this.end(run)
@@ -174,6 +230,7 @@ export class WorkerHost {
 
   private end(run: Running): void {
     this.running.delete(key(run.id, run.incarnation))
+    this.endDrawer(run)
     run.worker.terminate()
     run.own.onmessage = null
     run.own.onmessageerror = null

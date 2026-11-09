@@ -273,3 +273,53 @@ describe('a renderer per community plugin', () => {
     expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, true])
   })
 })
+
+describe("a worker's port to the drawer", () => {
+  it('goes to the renderer running the worker, with the worker named', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    renderers[0].says({ kind: 'ready' })
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    expect(renderers[0].posted.at(-1)).toEqual({ channel: 'hetu:drawer', message: { id: 'search', incarnation: 1 }, ports: [port] })
+  })
+
+  it('waits behind a start still queued and goes right after it', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    expect(renderers[0].posted).toEqual([])
+    renderers[0].says({ kind: 'ready' })
+    expect(renderers[0].posted.map(post => post.channel)).toEqual(['hetu:start', 'hetu:drawer'])
+  })
+
+  it('is closed for a worker not running and with a queued start dropped', () => {
+    const { workers } = runtime()
+    const stray = new FakePort()
+    workers.drawer('search', 1, stray as unknown as MessagePortMain)
+    expect(stray.closed).toBe(true)
+    workers.start(start('git').start)
+    const waiting = new FakePort()
+    workers.drawer('git', 1, waiting as unknown as MessagePortMain)
+    workers.terminate('git', 1)
+    expect(waiting.closed).toBe(true)
+  })
+
+  it("reaches the worker's group among the renderers, and is closed when there is none", () => {
+    const made: ReturnType<typeof runtime>[] = []
+    const groups = new WorkerRenderers(() => {
+      const one = runtime()
+      made.push(one)
+      return one.workers
+    })
+    groups.start(start('alpha').start)
+    made[0].renderers[0].says({ kind: 'ready' })
+    const port = new FakePort()
+    groups.drawer('alpha', 1, port as unknown as MessagePortMain)
+    expect(made[0].renderers[0].posted.at(-1)?.channel).toBe('hetu:drawer')
+    const none = new FakePort()
+    groups.drawer('beta', 1, none as unknown as MessagePortMain)
+    expect(none.closed).toBe(true)
+  })
+})
