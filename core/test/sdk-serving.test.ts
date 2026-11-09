@@ -23,9 +23,9 @@ async function serving(handler: (call: IncomingCall, args: unknown, ctx: PluginC
   const parts = harness()
   parts.loader.sandboxed('search', { query: {}, other: {} })
   parts.loader.sandboxed('tester')
-  parts.gate.grants.search = [{ type: 'vault.read', paths: ['**'] }]
+  parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
   parts.gate.grants.tester = [{ type: 'plugin.call', targets: ['search'] }, ...testerGrants]
-  parts.vault.files.set('notes/a.md', 'hello')
+  parts.luoshu.files.set('notes/a.md', 'hello')
   run(definePlugin({ start: ctx => { ctx.provide('query', (call, args) => handler(call, args, ctx)) } }), sdkTransport(parts.carrier, worker('search')))
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
@@ -106,10 +106,10 @@ describe('a plugin serving its actions through the SDK', () => {
     let seen: IncomingCall | null = null
     const parts = await serving(async call => {
       seen = call
-      return await call.ctx.vault.read({ path: 'notes/a.md' })
+      return await call.ctx.luoshu.read({ path: 'notes/a.md' })
     })
     expect(await parts.tester.ask('search.query', {})).toMatchObject({ ok: true, result: { text: 'hello' } })
-    const prepared = parts.vault.prepared.at(-1)!
+    const prepared = parts.luoshu.prepared.at(-1)!
     expect(prepared.parent).toBe(seen!.callId)
     expect(prepared.deadline).toBeLessThanOrEqual(seen!.deadline)
   })
@@ -117,7 +117,7 @@ describe('a plugin serving its actions through the SDK', () => {
   it('filters paths to those the caller may read too', async () => {
     const { tester } = await serving(
       (call, _args, ctx) => ctx.filterReadable(call, ['public/a.md', 'private/b.md']),
-      [{ type: 'vault.read', paths: ['public/**'] }],
+      [{ type: 'luoshu.read', paths: ['public/**'] }],
     )
     expect(await tester.ask('search.query', {})).toMatchObject({ ok: true, result: ['public/a.md'] })
   })

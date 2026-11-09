@@ -43,13 +43,13 @@ describe('plugin ids', () => {
 })
 
 describe('names', () => {
-  it.each(['vault.read', 'core.openTrusted', 'file-explorer.open', 'search.indexed', 'my_plugin.do2'])('takes %j as an action or topic', value => {
+  it.each(['luoshu.read', 'core.openTrusted', 'file-explorer.open', 'search.indexed', 'my_plugin.do2'])('takes %j as an action or topic', value => {
     expect(qualifiedName.safeParse(value).success).toBe(true)
   })
 
   it.each([
-    'read', 'vault.read.x', 'vault..read', '.read', 'vault.', 'Vault.read', 'vault.Read', 'vault.1read', 'vault.re-ad', 'vault.*',
-    `${'a'.repeat(MAX_ID_LENGTH + 1)}.read`, `vault.${'a'.repeat(MAX_NAME_LENGTH + 1)}`,
+    'read', 'luoshu.read.x', 'luoshu..read', '.read', 'luoshu.', 'Luoshu.read', 'luoshu.Read', 'luoshu.1read', 'luoshu.re-ad', 'luoshu.*',
+    `${'a'.repeat(MAX_ID_LENGTH + 1)}.read`, `luoshu.${'a'.repeat(MAX_NAME_LENGTH + 1)}`,
   ])('refuses %j', value => {
     expect(qualifiedName.safeParse(value).success).toBe(false)
   })
@@ -74,7 +74,7 @@ describe('slots, providers and guards', () => {
 
   it("names the provider of every namespace", () => {
     expect(providers).toEqual({
-      vault: 'vault', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', log: 'log', net: 'net',
+      luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', log: 'log', net: 'net',
     })
   })
 
@@ -82,14 +82,14 @@ describe('slots, providers and guards', () => {
     expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin'])
   })
 
-  it('lets guards hook vault.write and expects none until leases ships', () => {
-    expect(guardableActions).toEqual(['vault.write'])
-    expect(guards).toEqual({ 'vault.write': [] })
+  it('lets guards hook luoshu.write and expects none until leases ships', () => {
+    expect(guardableActions).toEqual(['luoshu.write'])
+    expect(guards).toEqual({ 'luoshu.write': [] })
   })
 
   it('lists the install plugins, host-level and in-page', () => {
     expect(installIds).toEqual([
-      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'vault', 'leases', 'history', 'exec', 'http', 'net',
+      'log', 'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
       'editor-core', 'hidden-marks',
     ])
   })
@@ -104,7 +104,7 @@ describe('reserved ids', () => {
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog',
     'gate', 'capabilities', 'log',
-    'vault', 'leases', 'history', 'exec', 'net', 'http', 'editor-core', 'hidden-marks',
+    'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'editor-core', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify',
   ]
 
@@ -144,8 +144,8 @@ describe('the tables', () => {
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
     expect(() => (installIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()
-    expect(() => { (providers as Record<string, string>).vault = 'mine' }).toThrow()
-    expect(() => { (guards['vault.write'] as string[]).push('mine') }).toThrow()
+    expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()
+    expect(() => { (guards['luoshu.write'] as string[]).push('mine') }).toThrow()
     expect(isReservedId('mine')).toBe(false)
   })
 
@@ -160,14 +160,14 @@ describe('the tables', () => {
 
   it('find nothing a slip added to Object.prototype', () => {
     const shared = Object.prototype as Record<string, unknown>
-    shared.search = 'vault'
-    shared['vault.read'] = ['mcp']
+    shared.search = 'luoshu'
+    shared['luoshu.read'] = ['mcp']
     try {
       expect((providers as Record<string, unknown>).search).toBeUndefined()
-      expect((guards as Record<string, unknown>)['vault.read']).toBeUndefined()
+      expect((guards as Record<string, unknown>)['luoshu.read']).toBeUndefined()
     } finally {
       delete shared.search
-      delete shared['vault.read']
+      delete shared['luoshu.read']
     }
   })
 })

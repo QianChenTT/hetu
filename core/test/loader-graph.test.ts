@@ -9,7 +9,7 @@ const verdict = (nodes: Node[], id: string) => plan(nodes).verdicts.get(id)
 
 describe('the requires graph', () => {
   it('starts a plugin whose requirements can all start', () => {
-    expect(verdict([node('vault'), node('search', ['vault'])], 'search')).toEqual({ kind: 'start' })
+    expect(verdict([node('luoshu'), node('search', ['luoshu'])], 'search')).toEqual({ kind: 'start' })
   })
 
   it('refuses every plugin in a cycle with cycle, and only those', () => {
@@ -36,15 +36,15 @@ describe('the requires graph', () => {
 
   it.each([
     ['absent', [] as Node[], 'absent'],
-    ['new', [node('vault', [], { kind: 'found' })], 'new'],
-    ['off', [node('vault', [], { kind: 'off' })], 'off'],
-    ['refused', [node('vault', [], { kind: 'refused', reason: 'tampered' })], 'refused'],
-    ['outside the API range', [node('vault', [], { kind: 'refused', reason: 'api' })], 'api'],
-    ['crashed', [node('vault', [], { kind: 'held', state: 'crashed', reason: 'closed' })], 'crashed'],
-    ['failed', [node('vault', [], { kind: 'held', state: 'failed', reason: 'start-timeout' })], 'failed'],
-    ['stopped', [node('vault', [], { kind: 'held', state: 'stopped', reason: 'watchdog' })], 'stopped'],
+    ['new', [node('luoshu', [], { kind: 'found' })], 'new'],
+    ['off', [node('luoshu', [], { kind: 'off' })], 'off'],
+    ['refused', [node('luoshu', [], { kind: 'refused', reason: 'tampered' })], 'refused'],
+    ['outside the API range', [node('luoshu', [], { kind: 'refused', reason: 'api' })], 'api'],
+    ['crashed', [node('luoshu', [], { kind: 'held', state: 'crashed', reason: 'closed' })], 'crashed'],
+    ['failed', [node('luoshu', [], { kind: 'held', state: 'failed', reason: 'start-timeout' })], 'failed'],
+    ['stopped', [node('luoshu', [], { kind: 'held', state: 'stopped', reason: 'watchdog' })], 'stopped'],
   ])('leaves a dependent waiting with dependency:<id>:<why> when its requirement is %s', (_name, others, why) => {
-    expect(verdict([...others, node('search', ['vault'])], 'search')).toEqual({ kind: 'waiting', reason: `dependency:vault:${why}` })
+    expect(verdict([...others, node('search', ['luoshu'])], 'search')).toEqual({ kind: 'waiting', reason: `dependency:luoshu:${why}` })
   })
 
   it('names only the direct dependency, never one further down', () => {
@@ -64,8 +64,8 @@ describe('the requires graph', () => {
   })
 
   it('orders every plugin after what it requires, the lowest rank first among the rest', () => {
-    const nodes = [node('search', ['vault'], ok, 1000), node('vault', ['storage'], ok, 5), node('storage', [], ok, 4), node('log', [], ok, 0), node('git', [], ok, 1000)]
-    expect(plan(nodes).order).toEqual(['log', 'storage', 'vault', 'git', 'search'])
+    const nodes = [node('search', ['luoshu'], ok, 1000), node('luoshu', ['storage'], ok, 5), node('storage', [], ok, 4), node('log', [], ok, 0), node('git', [], ok, 1000)]
+    expect(plan(nodes).order).toEqual(['log', 'storage', 'luoshu', 'git', 'search'])
   })
 
   it('puts plugins in a cycle and behind one last, so every other plugin keeps its place', () => {
@@ -89,7 +89,7 @@ describe('the boot order', () => {
   })
 
   it('starts the providers before leases, the guard', () => {
-    for (const provider of ['storage', 'vault', 'history', 'exec']) {
+    for (const provider of ['storage', 'luoshu', 'history', 'exec']) {
       expect(bootOrder.indexOf(provider as never)).toBeLessThan(bootOrder.indexOf('leases'))
     }
   })

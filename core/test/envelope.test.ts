@@ -6,7 +6,7 @@ import { floorConstants } from '../api/floor.ts'
 import { MAX_DEPTH, plainProblem } from '../api/plain.ts'
 
 const MiB = 1024 * 1024
-const call = (over: object = {}) => ({ v: 1, kind: 'call', id: 7, action: 'vault.read', args: { path: 'notes/a.md' }, ...over })
+const call = (over: object = {}) => ({ v: 1, kind: 'call', id: 7, action: 'luoshu.read', args: { path: 'notes/a.md' }, ...over })
 // JSON.parse keeps __proto__ as an own key, which is how such a key arrives from a file or a port
 const raw = (text: string) => JSON.parse(text)
 const nest = (levels: number, inner: unknown = 1): unknown => {
@@ -72,21 +72,21 @@ describe('a request', () => {
 
   const refused: [string, unknown][] = [
     ['another version', call({ v: 2 })],
-    ['no version', { kind: 'call', id: 7, action: 'vault.read', args: {} }],
+    ['no version', { kind: 'call', id: 7, action: 'luoshu.read', args: {} }],
     ['another kind', call({ kind: 'reply' })],
     ['a negative id', call({ id: -1 })],
     ['an id that is not whole', call({ id: 1.5 })],
     ['an id past the safe integers', call({ id: 2 ** 53 })],
     ['an id as text', call({ id: '7' })],
     ['an action with no namespace', call({ action: 'read' })],
-    ['an action with two dots', call({ action: 'vault.read.x' })],
-    ['an uppercase namespace', call({ action: 'Vault.read' })],
-    ['a name starting with a capital', call({ action: 'vault.Read' })],
-    ['a name starting with a digit', call({ action: 'vault.1read' })],
-    ['an empty name', call({ action: 'vault.' })],
+    ['an action with two dots', call({ action: 'luoshu.read.x' })],
+    ['an uppercase namespace', call({ action: 'Luoshu.read' })],
+    ['a name starting with a capital', call({ action: 'luoshu.Read' })],
+    ['a name starting with a digit', call({ action: 'luoshu.1read' })],
+    ['an empty name', call({ action: 'luoshu.' })],
     ['an empty namespace', call({ action: '.read' })],
     ['a namespace over 64 characters', call({ action: `${'a'.repeat(65)}.read` })],
-    ['a name over 64 characters', call({ action: `vault.${'a'.repeat(65)}` })],
+    ['a name over 64 characters', call({ action: `luoshu.${'a'.repeat(65)}` })],
     ['an empty parent', call({ parent: '' })],
     ['a parent with a space', call({ parent: 'a b' })],
     ['a parent over 64 characters', call({ parent: 'a'.repeat(65) })],
@@ -99,7 +99,7 @@ describe('a request', () => {
     // Floor rule 1, a message never names the sender
     ['a caller in the message', call({ caller: { kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 } })],
     ['an unknown field', call({ chain: [] })],
-    ['__proto__ beside the fields', raw('{"v":1,"kind":"call","id":7,"action":"vault.read","args":{},"__proto__":{"admin":true}}')],
+    ['__proto__ beside the fields', raw('{"v":1,"kind":"call","id":7,"action":"luoshu.read","args":{},"__proto__":{"admin":true}}')],
     ['constructor beside the fields', call({ constructor: 1 })],
   ]
 
@@ -227,12 +227,12 @@ describe('a reply', () => {
 
   it('takes a result and a refusal', () => {
     expect(reply.safeParse({ ...head, ok: true, result: { text: 'hello' } }).success).toBe(true)
-    expect(reply.safeParse({ ...head, ok: false, refusal: { code: 'not-granted', action: 'vault.read' } }).success).toBe(true)
+    expect(reply.safeParse({ ...head, ok: false, refusal: { code: 'not-granted', action: 'luoshu.read' } }).success).toBe(true)
   })
 
   it.each([
-    ['a result beside a refusal', { ...head, ok: true, result: 1, refusal: { code: 'failed', action: 'vault.read' } }],
-    ['a refusal marked ok', { ...head, ok: true, refusal: { code: 'failed', action: 'vault.read' } }],
+    ['a result beside a refusal', { ...head, ok: true, result: 1, refusal: { code: 'failed', action: 'luoshu.read' } }],
+    ['a refusal marked ok', { ...head, ok: true, refusal: { code: 'failed', action: 'luoshu.read' } }],
     ['a result marked not ok', { ...head, ok: false, result: 1 }],
     ['ok as text', { ...head, ok: 'true', result: 1 }],
     ['no call id', { v: 1, kind: 'reply', id: 7, ok: true, result: 1 }],
@@ -242,7 +242,7 @@ describe('a reply', () => {
     ['constructor in the result', { ...head, ok: true, result: [{ constructor: 1 }] }],
     ['prototype in the result', { ...head, ok: true, result: { prototype: 1 } }],
     // A callee's refusal never carries another principal's id, path or lease (A-05)
-    ['a refusal outside the refusal schema', { ...head, ok: false, refusal: { code: 'guard-refused', action: 'vault.write', holder: 'mcp' } }],
+    ['a refusal outside the refusal schema', { ...head, ok: false, refusal: { code: 'guard-refused', action: 'luoshu.write', holder: 'mcp' } }],
   ])('refuses %s', (_name, message) => {
     expect(reply.safeParse(message).success).toBe(false)
   })
@@ -256,28 +256,28 @@ describe('a reply', () => {
 
 describe('a refusal', () => {
   it.each(refusalCodes)('takes the code %s', code => {
-    expect(refusal.safeParse({ code, action: 'vault.read' }).success).toBe(true)
+    expect(refusal.safeParse({ code, action: 'luoshu.read' }).success).toBe(true)
   })
 
   it.each(reasonCodes)('takes the reason %s', reason => {
-    expect(refusal.safeParse({ code: 'not-granted', action: 'vault.read', reason }).success).toBe(true)
+    expect(refusal.safeParse({ code: 'not-granted', action: 'luoshu.read', reason }).success).toBe(true)
   })
 
   it('takes the request id behind needs-confirm', () => {
-    expect(refusal.safeParse({ code: 'needs-confirm', action: 'vault.write', request: 'req-1' }).success).toBe(true)
+    expect(refusal.safeParse({ code: 'needs-confirm', action: 'luoshu.write', request: 'req-1' }).success).toBe(true)
   })
 
   it.each([
-    ['an unknown code', { code: 'forbidden', action: 'vault.read' }],
-    ['a reason that is not a fixed code', { code: 'not-granted', action: 'vault.read', reason: 'held by mcp' }],
+    ['an unknown code', { code: 'forbidden', action: 'luoshu.read' }],
+    ['a reason that is not a fixed code', { code: 'not-granted', action: 'luoshu.read', reason: 'held by mcp' }],
     // Never another principal's id, path or lease
-    ['another plugin named beside it', { code: 'guard-refused', action: 'vault.write', holder: 'mcp' }],
-    ['a path beside it', { code: 'not-found', action: 'vault.read', path: 'secret/a.md' }],
+    ['another plugin named beside it', { code: 'guard-refused', action: 'luoshu.write', holder: 'mcp' }],
+    ['a path beside it', { code: 'not-found', action: 'luoshu.read', path: 'secret/a.md' }],
     ['an action past its cap', { code: 'invalid', action: 'a'.repeat(200) }],
-    ['a request id with a space', { code: 'needs-confirm', action: 'vault.write', request: 'a b' }],
-    ['__proto__', raw('{"code":"invalid","action":"vault.read","__proto__":{"reason":"declined"}}')],
-    ['constructor', { code: 'invalid', action: 'vault.read', constructor: 1 }],
-    ['prototype', { code: 'invalid', action: 'vault.read', prototype: 1 }],
+    ['a request id with a space', { code: 'needs-confirm', action: 'luoshu.write', request: 'a b' }],
+    ['__proto__', raw('{"code":"invalid","action":"luoshu.read","__proto__":{"reason":"declined"}}')],
+    ['constructor', { code: 'invalid', action: 'luoshu.read', constructor: 1 }],
+    ['prototype', { code: 'invalid', action: 'luoshu.read', prototype: 1 }],
   ])('refuses %s', (_name, value) => {
     expect(refusal.safeParse(value).success).toBe(false)
   })
@@ -313,7 +313,7 @@ describe('a caller', () => {
 })
 
 describe('what the bus pushes and hears', () => {
-  const pushed = (over: object = {}) => ({ v: 1, kind: 'event', seq: 1, topic: 'vault.changed', path: 'notes/a.md', ...over })
+  const pushed = (over: object = {}) => ({ v: 1, kind: 'event', seq: 1, topic: 'luoshu.changed', path: 'notes/a.md', ...over })
 
   it('has the two signals', () => {
     expect(busSignals).toEqual(['events.dropped', 'events.ended'])
@@ -329,12 +329,12 @@ describe('what the bus pushes and hears', () => {
   })
 
   it.each([
-    ['no seq', { v: 1, kind: 'event', topic: 'vault.changed' }],
+    ['no seq', { v: 1, kind: 'event', topic: 'luoshu.changed' }],
     ['seq 0', pushed({ seq: 0 })],
     ['a seq that is not whole', pushed({ seq: 1.5 })],
     ['content beside the path', pushed({ text: 'the whole note' })],
     ['a signal\'s topic', pushed({ topic: 'events.dropped' })],
-    ['a topic outside the grammar', pushed({ topic: 'vault' })],
+    ['a topic outside the grammar', pushed({ topic: 'luoshu' })],
     ['an empty path', pushed({ path: '' })],
     ['a path with a dot segment', pushed({ path: 'notes/../a.md' })],
     ['a path with a backslash', pushed({ path: 'notes\\a.md' })],
@@ -346,14 +346,14 @@ describe('what the bus pushes and hears', () => {
 
   it('shapes a signal with the subscriber\'s own topics and no seq, which no event schema takes', () => {
     for (const topic of busSignals) {
-      const message = { v: 1, kind: 'event', topic, topics: ['vault.changed', 'vault.outside'] }
+      const message = { v: 1, kind: 'event', topic, topics: ['luoshu.changed', 'luoshu.outside'] }
       expect(signal.safeParse(message).success).toBe(true)
       expect(event.safeParse(message).success).toBe(false)
     }
     expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.dropped', topics: [] }).success).toBe(false)
-    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['vault.changed'], seq: 1 }).success).toBe(false)
-    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.other', topics: ['vault.changed'] }).success).toBe(false)
-    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.ended', topics: ['vault.changed'], path: 'a.md' }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed'], seq: 1 }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.other', topics: ['luoshu.changed'] }).success).toBe(false)
+    expect(signal.safeParse({ v: 1, kind: 'event', topic: 'events.ended', topics: ['luoshu.changed'], path: 'a.md' }).success).toBe(false)
   })
 
   it('shapes an ack by a seq and nothing else', () => {
@@ -361,7 +361,7 @@ describe('what the bus pushes and hears', () => {
     expect(ack.safeParse({ v: 1, kind: 'ack', seq: 7 }).success).toBe(true)
     for (const seq of [-1, 1.5, '1', 2 ** 53, null]) expect(ack.safeParse({ v: 1, kind: 'ack', seq }).success).toBe(false)
     expect(ack.safeParse({ v: 1, kind: 'ack' }).success).toBe(false)
-    expect(ack.safeParse({ v: 1, kind: 'ack', seq: 1, topic: 'vault.changed' }).success).toBe(false)
+    expect(ack.safeParse({ v: 1, kind: 'ack', seq: 1, topic: 'luoshu.changed' }).success).toBe(false)
     expect(ack.safeParse({ v: 2, kind: 'ack', seq: 1 }).success).toBe(false)
   })
 })

@@ -40,12 +40,12 @@ describe('window grants', () => {
     expect(capabilities.safeParse([...windowGrants[role]]).success).toBe(true)
   })
 
-  it('gives the editor the vault, history, vault events, the log, the ui verbs and its own storage', () => {
+  it('gives the editor the luoshu, history, luoshu events, the log, the ui verbs and its own storage', () => {
     expect(windowGrants.editor).toEqual([
-      { type: 'vault.read', paths: ['**'] },
-      { type: 'vault.write', paths: ['**'] },
+      { type: 'luoshu.read', paths: ['**'] },
+      { type: 'luoshu.write', paths: ['**'] },
       { type: 'history', access: 'read', paths: ['**'] },
-      { type: 'events.subscribe', topics: ['vault.changed', 'vault.outside'] },
+      { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
       { type: 'log.read' },
       { type: 'ui.panel' },
       { type: 'ui.decoration' },
@@ -74,7 +74,7 @@ describe('window grants', () => {
   it('stops the editor at dot files and dot folders', () => {
     const scopes = (type: string) => windowGrants.editor.flatMap(granted => granted.type === type && 'paths' in granted ? granted.paths : [])
     const reaches = (type: string, path: string) => scopes(type).some(grant => scopeMatches(grant, path, { foldCase: false }))
-    for (const type of ['vault.read', 'vault.write', 'history']) {
+    for (const type of ['luoshu.read', 'luoshu.write', 'history']) {
       expect(reaches(type, 'notes/a.md')).toBe(true)
       for (const path of ['.scratch.md', 'notes/.todo.md', '.trash/a.md', 'notes/.trash/a.md', '.obsidian/app.json']) {
         expect(reaches(type, path)).toBe(false)

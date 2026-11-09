@@ -50,7 +50,7 @@ describe('where a plugin\'s code came from', () => {
   it.each([
     ['a host entry', { entries: { host: 'host.js' } }],
     ['a page entry', { entries: { worker: 'worker.js', page: 'page.js' } }],
-    ['guards', { entries: { worker: 'worker.js' }, capabilities: [{ type: 'guard.hook' }], guards: ['vault.write'] }],
+    ['guards', { entries: { worker: 'worker.js' }, capabilities: [{ type: 'guard.hook' }], guards: ['luoshu.write'] }],
     ['Node built-ins', { entries: { worker: 'worker.js' }, node: ['fs'] }],
     ['an install-only type', { entries: { worker: 'worker.js' }, capabilities: [{ type: 'guard.hook' }] }],
   ])('refuses %s from the plugin folder with install-only, however the entry reads', async (_name, extra) => {
@@ -103,7 +103,7 @@ describe('where a plugin\'s code came from', () => {
 })
 
 describe('reserved ids in the plugin folder', () => {
-  it.each(['gate', 'vault', 'leases', 'editor-core', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
+  it.each(['gate', 'luoshu', 'leases', 'editor-core', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
     const made = await harness({ folder: { [id]: filesFor(workerManifest(id)) }, entries: { [id]: signed() } })
     await made.loader.start()
     expect(made.loader.list()).toContainEqual({ id, from: 'folder', place: 'sandboxed', state: 'refused', reason: 'reserved-id', incarnation: 0 })
@@ -204,9 +204,9 @@ describe('the signer pairing', () => {
 describe('the human\'s switches on folder plugins', () => {
   it('dev mode loads changed bytes with a null signer for the plugins it names, and nothing more', async () => {
     const made = await harness({
-      folder: { outline: outline(), tagger: filesFor(workerManifest('tagger')), vault: filesFor(workerManifest('vault')) },
-      entries: { outline: signed({ signer: null }), tagger: signed(), vault: signed() },
-      switches: { devMode: ['outline', 'tagger', 'vault'] },
+      folder: { outline: outline(), tagger: filesFor(workerManifest('tagger')), luoshu: filesFor(workerManifest('luoshu')) },
+      entries: { outline: signed({ signer: null }), tagger: signed(), luoshu: signed() },
+      switches: { devMode: ['outline', 'tagger', 'luoshu'] },
     })
     await writeFile(path.join(made.dataDir, 'plugins', 'outline', 'worker.js'), 'work in progress()')
     await writeFile(path.join(made.dataDir, 'plugins', 'tagger', 'worker.js'), 'also changed()')
@@ -215,7 +215,7 @@ describe('the human\'s switches on folder plugins', () => {
     expect(made.link.events('plugin.checked')).toContainEqual({ plugin: 'outline', from: 'folder', result: 'dev' })
     expect(made.runtime.started.find(start => start.id === 'outline')?.code).toBe('work in progress()')
     // A reserved id stays refused in dev mode
-    expect(made.loader.list()).toContainEqual(expect.objectContaining({ id: 'vault', from: 'folder', reason: 'reserved-id' }))
+    expect(made.loader.list()).toContainEqual(expect.objectContaining({ id: 'luoshu', from: 'folder', reason: 'reserved-id' }))
     expect(stateOf(made.loader, 'tagger')).toBe('ready')
   })
 
