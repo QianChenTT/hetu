@@ -524,20 +524,20 @@ export type LayoutState = {
   slots: Record<string, { width: number, height: number }>
 }
 
-export type NodeEventType = 'click' | 'input' | 'change' | 'submit'
+// What the human did to a node. drop carries the payload the human dragged onto it
+export type NodeEventType = 'click' | 'input' | 'change' | 'submit' | 'drop'
 
 export type UiEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'view.opened', instance: string, view: string }
   | { topic: 'view.closed', instance: string }
   | { topic: 'view.shown', instance: string, width: number, height: number }
   | { topic: 'view.hidden', instance: string }
-  | { topic: 'view.event', instance: string, node: string, type: NodeEventType, value?: string | boolean }
-  | { topic: 'view.drop', instance: string, node: string, payload: Payload }
+  | { topic: 'view.event', instance: string, node: string, type: NodeEventType, value?: string | boolean, payload?: Payload }
   | { topic: 'view.message', instance: string, data: unknown }
   | { topic: 'view.command', instance: string, command: string }
   | { topic: 'view.resized', instance: string, node: string, sizes: number[] }
   | { topic: 'layout.state', state: LayoutState }
-  | { topic: 'layout.event', node: string, type: NodeEventType, value?: string | boolean }
+  | { topic: 'layout.event', node: string, type: NodeEventType, value?: string | boolean, payload?: Payload }
   | { topic: 'layout.drop', instance: string, zone: string, x: number, y: number }
   | { topic: 'layout.resized', node: string, sizes: number[] }
   | { topic: 'layout.open', instance: string }
