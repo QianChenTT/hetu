@@ -1122,6 +1122,28 @@ describe('history', () => {
     expect((await log.history()).map(s => [s.segment, s.start, s.breaks])).toEqual([[1, 'zero', [3]], [2, 'zero', []]])
   })
 
+  // A closed segment takes no more lines, so reading it needn't hold the appends behind it
+  it('reads closed segments while an append is still writing, and the open one after it', async () => {
+    const log = await rotations(2, 1)
+    const proto = await fileHandleProto()
+    const realSync = proto.sync
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: unknown) {
+      await held
+      await realSync.call(this)
+    })
+    const read = vi.spyOn(proto, 'read')
+    const appended = log.append('test.line', { n: 4 })
+    const history = log.history()
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    release()
+    await appended
+    expect((await history).map(s => [s.segment, s.lines, s.start])).toEqual([[1, 2, 'zero'], [2, 1, 'continues'], [3, 1, 'continues']])
+  })
+
   it('reads a folder in a segment\'s place as a break', async () => {
     await mkdir(segmentFile(1), { recursive: true })
     expect(await new EventLog(dir).history()).toEqual([{ segment: 1, lines: 0, first: null, last: null, start: null, breaks: [1] }])
@@ -1186,5 +1208,140 @@ describe('a segment of any size', () => {
     await put(1, joined([...lines, long, next]))
     expect(await new EventLog(dir).open()).toEqual({ lastSeq: 3, broken: { segment: 1, brokenSeq: 4 }, unlinked: null })
     expect((await new EventLog(dir).history())[0]).toEqual({ segment: 1, lines: 5, first: 1, last: 5, start: 'zero', breaks: [4] })
+  })
+})
+
+describe('reading while appending', () => {
+  // Every read of the file waits until let go, so a test can hold a read part way
+  async function holdReads() {
+    const proto = await fileHandleProto()
+    const realRead = proto.read
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const read = vi.spyOn(proto, 'read').mockImplementation(async function (this: unknown, ...args: unknown[]) {
+      await held
+      return realRead.apply(this, args)
+    })
+    return { read, release }
+  }
+
+  it.each([
+    ['verify', (log: EventLog) => log.verify()],
+    ['history', (log: EventLog) => log.history()],
+  ])('reads the open segment for %s outside the append queue, so an append waits for no read', async (_name, reading) => {
+    const log = await opened()
+    await fill(log, 3)
+    const { read, release } = await holdReads()
+    const result = reading(log)
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    await log.append('test.line', { n: 4 })
+    release()
+    await result
+    expect((await recordsOf(1)).map(record => record.n)).toEqual([1, 2, 3, 4])
+  })
+
+  it('reads up to where the log was when the read began, past which an append goes on', async () => {
+    const log = await opened()
+    await fill(log, 3)
+    const { read, release } = await holdReads()
+    const verified = log.verify()
+    const listed = log.history()
+    await vi.waitFor(() => expect(read).toHaveBeenCalled())
+    await log.append('test.line', { n: 4 })
+    release()
+    expect(await verified).toEqual({ ok: true })
+    expect(await listed).toEqual([{ segment: 1, lines: 3, first: 1, last: 3, start: 'zero', breaks: [] }])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('shares one read among the callers who ask while it runs', async () => {
+    const log = await opened()
+    await fill(log, 3)
+    const proto = await fileHandleProto()
+    const read = vi.spyOn(proto, 'read')
+    await log.verify()
+    const once = read.mock.calls.length
+    read.mockClear()
+    const [a, b, c] = await Promise.all([log.verify(), log.verify(), log.verify()])
+    expect([a, b, c]).toEqual([{ ok: true }, { ok: true }, { ok: true }])
+    expect(read.mock.calls.length).toBe(once)
+    read.mockClear()
+    await log.history()
+    const historyOnce = read.mock.calls.length
+    read.mockClear()
+    await Promise.all([log.history(), log.history()])
+    expect(read.mock.calls.length).toBe(historyOnce)
+  })
+})
+
+describe('a batch', () => {
+  it('writes each record of a batch as its line, in order, chained, with one fsync for the batch', async () => {
+    const log = await opened()
+    await log.append('test.line', { n: 0 })
+    const sync = vi.spyOn(await fileHandleProto(), 'sync')
+    await log.appendMany([{ event: 'audit.call', fields: { n: 1 } }, { event: 'audit.call', fields: { n: 2 } }, { event: 'audit.read', fields: { n: 3 } }])
+    expect(sync).toHaveBeenCalledTimes(1)
+    const records = await recordsOf(1)
+    expect(records.map(record => [record.seq, record.event, record.n])).toEqual([[1, 'test.line', 0], [2, 'audit.call', 1], [3, 'audit.call', 2], [4, 'audit.read', 3]])
+    expect(await linesOf(1)).toEqual(chainOf(records))
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('writes nothing for an empty batch', async () => {
+    const log = await opened()
+    await log.appendMany([])
+    expect(await segments()).toEqual([])
+  })
+
+  it('refuses the whole batch for one record it wouldn\'t take, writing none of it', async () => {
+    const log = await opened()
+    await expect(log.appendMany([{ event: 'audit.call', fields: { n: 1 } }, { event: 'Bad Event', fields: {} }])).rejects.toThrow()
+    expect(await segments()).toEqual([])
+    await log.append('test.line')
+    expect((await recordsOf(1)).map(record => record.seq)).toEqual([1])
+  })
+
+  it('puts a whole batch in the new segment when the idle gap has passed', async () => {
+    const step = clockAt('2026-11-05T10:00:00.000Z')
+    const log = await opened({ idleGapMs: 1000 })
+    await log.append('test.line', { n: 1 })
+    step(1000)
+    await log.appendMany([{ event: 'test.line', fields: { n: 2 } }, { event: 'test.line', fields: { n: 3 } }])
+    expect(await segments()).toEqual(['events-1.jsonl', 'events-2.jsonl'])
+    expect((await recordsOf(2)).map(record => record.seq)).toEqual([2, 3])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  const batch = [{ event: 'audit.call', fields: { n: 1 } }, { event: 'audit.call', fields: { n: 2 } }]
+
+  // The log takes lines that landed before their write threw as its own, so the same batch coming again isn't written
+  // again
+  it('writes a batch once when its fsync threw after its lines landed and the same batch comes again', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    const proto = await fileHandleProto()
+    const realSync = proto.sync
+    let fail = true
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: unknown) {
+      await realSync.call(this)
+      if (fail) {
+        fail = false
+        throw Object.assign(new Error('EIO'), { code: 'EIO' })
+      }
+    })
+    await expect(log.appendMany(batch, { id: 'b1' })).rejects.toThrow('EIO')
+    await log.appendMany(batch, { id: 'b1' })
+    await log.append('test.line', { n: 3 })
+    expect((await recordsOf(1)).map(r => r.n)).toEqual([1, 2, 3])
+    expect(await log.verify()).toEqual({ ok: true })
+  })
+
+  it('writes a batch that never landed when the same batch comes again', async () => {
+    const log = await opened({ retryAfterMs: 0 })
+    vi.spyOn(await fileHandleProto(), 'writeFile').mockRejectedValueOnce(Object.assign(new Error('full'), { code: 'ENOSPC' }))
+    await expect(log.appendMany(batch, { id: 'b1' })).rejects.toThrow('full')
+    await log.appendMany(batch, { id: 'b1' })
+    expect((await recordsOf(1)).map(r => r.n)).toEqual([1, 2])
   })
 })

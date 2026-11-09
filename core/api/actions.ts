@@ -3,9 +3,10 @@ import type { CapabilityType } from './capabilities.ts'
 import { change } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
 import { floorConstantNames } from './floor.ts'
-import { coreNamespaces, localName, pluginId, qualifiedName } from './ids.ts'
+import { coreNamespaces, localName, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
+import type { SlotState } from './slots.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
@@ -77,6 +78,8 @@ const coreTable = {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
   },
+  // What a window's banner shows, read again whenever core.status is sent
+  'core.status': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal named
   'security.confirm': { from: 'trusted', args: z.strictObject({ requestId: token }) },
@@ -139,10 +142,25 @@ export const providerActions = lookup<ProviderAction>(providerTable)
 type ArgsOf<T extends Record<string, { readonly args: z.ZodType }>> = { [A in keyof T]: z.input<T[A]['args']> }
 export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & ArgsOf<typeof providerTable>
 
+// What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
+// switches that weaken a check, whether the event log takes appends and whether a luoshu folder is picked. Pending
+// requests join with the trusted window
+export type CoreStatus = {
+  slots: Record<typeof slotIds[number], SlotState>
+  crashed: string[]
+  devMode: string[]
+  allowUnsigned: number
+  skipVerification: boolean
+  recordNothing: boolean
+  logWrites: boolean
+  luoshuPicked: boolean
+}
+
 // What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
 export type ActionResults = {
   'core.self': Caller
+  'core.status': CoreStatus
   'core.filterReadable': string[]
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null

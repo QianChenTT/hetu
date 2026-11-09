@@ -127,6 +127,9 @@ class FakeLoader implements Loader {
     for (const listener of [...this.listeners]) listener(caller, kind)
   }
 
+  // The fake core's log slot reads off and never stalls
+  fail(): void {}
+
   // Resolves true once caller sends kind, false after ms
   waitFor(caller: Caller, kind: string, ms: number): Promise<boolean> {
     return new Promise(resolve => {

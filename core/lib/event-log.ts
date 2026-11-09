@@ -1,6 +1,7 @@
 import { createHash, type Hash } from 'node:crypto'
 import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type { LogSegment as Segment, LogVerification as Verification } from '../api/slots.ts'
 import { retried, syncDir, writable } from './disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
@@ -23,24 +24,17 @@ const hex64 = /^[0-9a-f]{64}$/
 const IDLE_GAP_MS = 2 * 60 * 60 * 1000
 
 export type Field = string | number | boolean | null
-export type Verification = { ok: true } | { ok: false, seq: number }
+// One record of a batch, its fields checked
+type Entry = { event: string, fields: Record<string, Field> }
+// history and verify answer with core/api's types, which the log plugin hands on
+export type { Segment, Verification }
 // What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
 // a new segment because the newest one didn't check out. unlinked is a newest segment that checks out but doesn't follow
 // the file before it, which was cut, edited or deleted after the rotation
 export type Opened = { lastSeq: number, broken: { segment: number, brokenSeq: number } | null, unlinked: number | null }
 
-// One file as history reads it. start says how its first line begins: zeros begin a chain, continues follows the last
-// line of the file before, unlinked follows neither. null when there is no good first line to tell. breaks are the line
-// numbers in the file, from 1, that don't check out: a break at line n means line n or the one before it changed, or
-// lines between them were taken out. The lines after a break still check against each other
-export type Segment = {
-  segment: number
-  lines: number
-  first: number | null
-  last: number | null
-  start: 'zero' | 'continues' | 'unlinked' | null
-  breaks: number[]
-}
+// A break at line n of a segment means line n or the one before it changed, or lines between them were taken out. The
+// lines after a break still check against each other
 
 // first is the seq the segment began with and prev is the hash of its last line or zeros before the first line. start
 // is the prev its first line carries and at the time of its last line, which decides when to rotate
@@ -79,19 +73,24 @@ type Line = Buffer | { hash: string }
 // Hands each line of a file to take, a chunk at a time, so no file is too large to read. Bytes after the last newline
 // are a write that never finished and come last as null. A line past MAX_LINE comes as its hash when long is 'hash',
 // counted in pieces. With 'stop' it comes as null as soon as it passes MAX_LINE and the read ends, for a reader that
-// stops at the first line that doesn't check out. take returns false to stop reading
-async function eachLine(file: string, long: 'hash' | 'stop', take: (line: Line | null) => boolean): Promise<void> {
+// stops at the first line that doesn't check out. take returns false to stop reading. limit is how many bytes from the
+// start are read, for a reader that stops where the file was when it began
+async function eachLine(file: string, long: 'hash' | 'stop', take: (line: Line | null) => boolean, limit = Infinity): Promise<void> {
   const handle = await retried(() => open(file, 'r'), file, 'read')
   try {
     const chunk = Buffer.allocUnsafe(CHUNK)
+    let position = 0
     // The start of the line the chunk before ended in, copied since the chunk is read into again
     let held: Buffer[] = []
     let size = 0
     // Set once the line passed MAX_LINE, its hash then counted piece by piece
     let hashing: Hash | null = null
     for (;;) {
-      const { bytesRead } = await handle.read(chunk, 0, CHUNK, null)
+      const wanted = Math.min(CHUNK, limit - position)
+      if (wanted <= 0) break
+      const { bytesRead } = await handle.read(chunk, 0, wanted, null)
       if (bytesRead === 0) break
+      position += bytesRead
       const bytes = chunk.subarray(0, bytesRead)
       let at = 0
       for (;;) {
@@ -151,8 +150,8 @@ function lineSeq(line: Buffer, prev: string | null, last: number | null): { seq:
 
 // Takes lines from the top until one fails, comparing raw bytes. Appends go on from the last good line, so nothing
 // after a failure is taken as the tip and nothing after it is read. start is the prev the first line must carry, null
-// for any hash
-async function walk(file: string, start: string | null): Promise<Walk> {
+// for any hash. limit as for eachLine
+async function walk(file: string, start: string | null, limit = Infinity): Promise<Walk> {
   const walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, broken: false }
   await eachLine(file, 'stop', line => {
     // A write that never finished or a line too long to be hetu's
@@ -168,13 +167,13 @@ async function walk(file: string, start: string | null): Promise<Walk> {
     walked.at = read.at
     walked.tip = sha256(line)
     return true
-  })
+  }, limit)
   return walked
 }
 
 // Reads a whole file for history, going on past a line that doesn't check out. end is the hash of the last whole line,
-// whatever it holds, for the link to the file after
-async function scan(file: string): Promise<Omit<Segment, 'segment' | 'start'> & { start: string | null, end: string | null }> {
+// whatever it holds, for the link to the file after. limit as for eachLine
+async function scan(file: string, limit = Infinity): Promise<Omit<Segment, 'segment' | 'start'> & { start: string | null, end: string | null }> {
   const scanned = { lines: 0, first: null as number | null, last: null as number | null, start: null as string | null, end: null as string | null, breaks: [] as number[] }
   let last: number | null = null
   await eachLine(file, 'hash', line => {
@@ -193,8 +192,19 @@ async function scan(file: string): Promise<Omit<Segment, 'segment' | 'start'> & 
     last = read?.seq ?? null
     scanned.end = hashOf(line)
     return true
-  })
+  }, limit)
   return scanned
+}
+
+// A file's size, 0 for one that isn't there. Anything but a file gets no limit, so reading it fails as it would have
+async function sizeOf(file: string): Promise<number> {
+  try {
+    const found = await stat(file)
+    return found.isFile() ? found.size : Infinity
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0
+    throw err
+  }
 }
 
 // Append only, one line per event, each carrying the hash of the line before. The hash catches edits by a tool that
@@ -209,6 +219,13 @@ export class EventLog {
   // The tip of a line being written, kept when its write throws, since the line may still have landed. Looking again
   // then takes it as this process's own line, not as a change made while hetu ran
   private pending: Tip | null = null
+  // The id of the batch pending holds, and of the last batch whose write threw and whose lines the log then found had
+  // landed. The same batch coming again under that id is already written
+  private pendingId: string | null = null
+  private landed: string | null = null
+  // The read of each kind running now, which a caller asking meanwhile shares
+  private verifying: Promise<Verification> | null = null
+  private listing: Promise<Segment[]> | null = null
   private ok = false
   private tried = false
   private quietUntil = 0
@@ -291,6 +308,7 @@ export class EventLog {
         segment: newest, first: found.first ?? 1, seq: found.last ?? 0, prev: found.tip, start: found.start ?? ZERO, at: found.at,
       }
       const at = (other: Tip | null) => other !== null && tip.segment === other.segment && tip.seq === other.seq && tip.prev === other.prev
+      if (at(this.pending) && !at(before)) this.landed = this.pendingId
       if (at(before) || at(this.pending)) return { tip, opened: { lastSeq: tip.seq, broken: null, unlinked: null } }
       if (before === null) {
         // At the first open the newest segment is checked against the file before it once. A healthy rotation is the
@@ -298,7 +316,7 @@ export class EventLog {
         if (tip.start === ZERO || await this.follows(numbers.at(-2), tip)) {
           return { tip, opened: { lastSeq: tip.seq, broken: null, unlinked: null } }
         }
-        const next = await this.write(tip, 'log.unlinked', { segment: newest })
+        const next = await this.write(tip, [{ event: 'log.unlinked', fields: { segment: newest } }])
         return { tip: next, opened: { lastSeq: tip.seq, broken: null, unlinked: newest } }
       }
     }
@@ -312,7 +330,7 @@ export class EventLog {
     const seq = Math.max(last ?? 0, before?.seq ?? 0)
     const broken = { segment, brokenSeq: edited ? before.seq : (last ?? 0) + 1 }
     const start = { segment: segment + 1, first: seq + 1, seq, prev: ZERO, start: ZERO, at: null }
-    const tip = await this.write(start, 'log.chain-broken', broken)
+    const tip = await this.write(start, [{ event: 'log.chain-broken', fields: broken }])
     return { tip, opened: { lastSeq: seq, broken, unlinked: null } }
   }
 
@@ -348,48 +366,71 @@ export class EventLog {
     return Date.parse(at) - Date.parse(tip.at) >= this.idleGapMs
   }
 
-  // Gives back the tip after the line is on disk, so a failed write leaves the old one as it was
-  private async write(tip: Tip, event: string, fields: Record<string, Field>): Promise<Tip> {
-    const seq = tip.seq + 1
+  // Gives back the tip after the batch's lines are on disk, so a failed write leaves the old one as it was. One write and
+  // one fsync for the whole batch, every line chained to the one before it and all of them in one segment
+  private async write(tip: Tip, batch: readonly Entry[]): Promise<Tip> {
+    const firstSeq = tip.seq + 1
     const at = new Date().toISOString()
-    const line = JSON.stringify({ seq, prev: tip.prev, at, event, ...fields })
-    // The line is the same in either file, a rotation only moves where it goes
+    let seq = tip.seq
+    let prev = tip.prev
+    const lines: string[] = []
+    for (const { event, fields } of batch) {
+      seq++
+      const line = JSON.stringify({ seq, prev, at, event, ...fields })
+      lines.push(line)
+      prev = sha256(line)
+    }
+    // The lines are the same in either file, a rotation only moves where they go
     const into = this.rotates(tip, at)
-      ? { segment: tip.segment + 1, first: seq, seq: tip.seq, prev: tip.prev, start: tip.prev, at: tip.at }
+      ? { segment: tip.segment + 1, first: firstSeq, seq: tip.seq, prev: tip.prev, start: tip.prev, at: tip.at }
       : tip
     // Nothing is written before the file opens, so a lock there is safe to wait out
     const file = this.file(into.segment)
-    const next = { ...into, seq, prev: sha256(line), at }
+    const next = { ...into, seq, prev, at }
     this.pending = next
     await writable(file)
     const handle = await retried(() => open(file, 'a'), file)
     try {
-      await handle.writeFile(`${line}\n`)
+      await handle.writeFile(lines.map(line => `${line}\n`).join(''))
       await handle.sync()
     } catch (err) {
       // A new segment whose first line never landed is removed, or each failed retry on a full disk leaves another
       // empty segment behind and the next open blames the wrong one
-      const empty = seq === into.first && (await handle.stat().catch(() => null))?.size === 0
+      const empty = firstSeq === into.first && (await handle.stat().catch(() => null))?.size === 0
       await handle.close().catch(() => {})
       if (empty) await rm(file, { force: true }).catch(() => {})
       throw err
     }
     await handle.close()
     // The segment's first line made the file, which is only on disk once its folder is
-    if (seq === into.first) await syncDir(this.dir)
+    if (firstSeq === into.first) await syncDir(this.dir)
     this.pending = null
     return next
   }
 
   async append(event: string, fields: Record<string, Field> = {}): Promise<void> {
-    const checked = checkFields(event, fields)
+    await this.appendMany([{ event, fields }])
+  }
+
+  // A batch of records with one fsync, as the log plugin writes the audit records it takes. Each is checked first, so
+  // one the log wouldn't take refuses the whole batch and none of it is written. id names the batch for a writer that
+  // tries it again after a failure: a write can throw after its lines landed, which the log finds when it looks at the
+  // file again and takes as its own, so the same batch under the same id then resolves without writing it twice
+  async appendMany(batch: readonly { event: string, fields?: Record<string, Field> }[], options: { id?: string } = {}): Promise<void> {
+    const checked = batch.map(({ event, fields }) => ({ event, fields: checkFields(event, fields === undefined ? {} : fields) }))
+    if (checked.length === 0) return
     await this.serial(async () => {
       // After a failed open or write the file is looked at again, so a lock that has passed doesn't keep the log off.
       // A half written line then reads as a break. Until retryAfterMs has passed appends are refused at once
       if (!this.ok && this.tried && performance.now() >= this.quietUntil) await this.reopen()
       if (!this.ok || this.tip === null) throw new Error('event log is not healthy')
+      if (options.id !== undefined && options.id === this.landed) {
+        this.landed = null
+        return
+      }
+      this.pendingId = options.id ?? null
       try {
-        this.tip = await this.write(this.tip, event, checked)
+        this.tip = await this.write(this.tip, checked)
       } catch (err) {
         // A half written line may be on disk, so nothing more is added until the file has been looked at again
         this.ok = false
@@ -400,56 +441,93 @@ export class EventLog {
   }
 
   // The current segment only. The last line written in this process is checked too, since no later line covers it
-  // and a cut tail or an edited last line would otherwise pass
+  // and a cut tail or an edited last line would otherwise pass. The tip and the file's size are taken in the append
+  // queue, so they wait for appends called before the read. The lines up to that size never change, so they are read
+  // outside it and no append waits for a read. One read runs at a time, shared by the callers who ask while it runs, so
+  // many callers cost main one read
   verify(): Promise<Verification> {
-    return this.serial(async () => {
+    this.verifying ??= this.verifyOnce().finally(() => {
+      this.verifying = null
+    })
+    return this.verifying
+  }
+
+  private async verifyOnce(): Promise<Verification> {
+    const { tip, size } = await this.serial(async () => {
       const tip = this.tip
       if (tip === null) throw new Error('event log is not open')
-      let walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, broken: false }
-      try {
-        walked = await walk(this.file(tip.segment), tip.start)
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
-      }
-      const last = walked.last ?? tip.first - 1
-      if (walked.broken) return { ok: false, seq: last + 1 }
-      if (last !== tip.seq) return { ok: false, seq: Math.min(last, tip.seq) + 1 }
-      if (walked.tip !== tip.prev) return { ok: false, seq: tip.seq }
-      return { ok: true }
+      return { tip, size: await sizeOf(this.file(tip.segment)) }
     })
+    let walked: Walk = { lines: 0, first: null, last: null, tip: ZERO, start: null, at: null, broken: false }
+    try {
+      walked = await walk(this.file(tip.segment), tip.start, size)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+    const last = walked.last ?? tip.first - 1
+    if (walked.broken) return { ok: false, seq: last + 1 }
+    if (last !== tip.seq) return { ok: false, seq: Math.min(last, tip.seq) + 1 }
+    if (walked.tip !== tip.prev) return { ok: false, seq: tip.seq }
+    return { ok: true }
   }
 
   // Every segment in order, each read through. Checking a file as it is read costs little next to parsing it, so history
   // is checked where it is used and not by a separate pass. A chain runs from a zero start through the files that
-  // continue it and a break ends it. Reads wait for appends called before them, so no line is read half written
+  // continue it and a break ends it. The segments below the one appends go to take no more lines, so they are read
+  // outside the append queue. The rest are read as far as each file went when the read began, which is taken in the
+  // queue so it waits for appends called before the read, and read outside it, so no append waits for a read and no
+  // line is read half written. One read runs at a time, shared as verify's is
   history(): Promise<Segment[]> {
-    return this.serial(async () => {
-      let numbers: number[]
-      try {
-        numbers = await this.numbers()
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-        throw err
-      }
-      const segments: Segment[] = []
-      let before: { last: number | null, end: string | null } | null = null
-      for (const segment of numbers) {
-        let found: Awaited<ReturnType<typeof scan>>
-        try {
-          found = await scan(this.file(segment))
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'EISDIR') throw err
-          segments.push({ segment, lines: 0, first: null, last: null, start: null, breaks: [1] })
-          before = null
-          continue
-        }
-        const { start, end, ...scanned } = found
-        const follows = before !== null && before.end === start && (before.last === null || scanned.first === null || scanned.first === before.last + 1)
-        const kind = start === null ? null : start === ZERO ? 'zero' : follows ? 'continues' : 'unlinked'
-        segments.push({ segment, ...scanned, start: kind })
-        before = { last: scanned.last, end }
-      }
-      return segments
+    this.listing ??= this.historyOnce().finally(() => {
+      this.listing = null
     })
+    return this.listing
+  }
+
+  private async historyOnce(): Promise<Segment[]> {
+    const below = this.tip?.segment ?? 0
+    const closed = await this.segments(await this.chosen(number => number < below), { segments: [], before: null })
+    const open = await this.serial(async () => {
+      const sizes = new Map<number, number>()
+      for (const number of await this.chosen(number => number >= below)) sizes.set(number, await sizeOf(this.file(number)))
+      return sizes
+    })
+    return (await this.segments([...open.keys()], closed, open)).segments
+  }
+
+  // The segment numbers chosen, none for a log with no folder yet
+  private async chosen(choose: (number: number) => boolean): Promise<number[]> {
+    try {
+      return (await this.numbers()).filter(choose)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw err
+    }
+  }
+
+  // The segments given, each read through or as far as limits says, going on from what was read so far
+  private async segments(numbers: readonly number[], from: Read, limits?: ReadonlyMap<number, number>): Promise<Read> {
+    const segments = [...from.segments]
+    let before = from.before
+    for (const segment of numbers) {
+      let found: Awaited<ReturnType<typeof scan>>
+      try {
+        found = await scan(this.file(segment), limits?.get(segment))
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EISDIR') throw err
+        segments.push({ segment, lines: 0, first: null, last: null, start: null, breaks: [1] })
+        before = null
+        continue
+      }
+      const { start, end, ...scanned } = found
+      const follows = before !== null && before.end === start && (before.last === null || scanned.first === null || scanned.first === before.last + 1)
+      const kind = start === null ? null : start === ZERO ? 'zero' : follows ? 'continues' : 'unlinked'
+      segments.push({ segment, ...scanned, start: kind })
+      before = { last: scanned.last, end }
+    }
+    return { segments, before }
   }
 }
+
+// What history has read so far, and how the last segment it read ended
+type Read = { segments: Segment[], before: { last: number | null, end: string | null } | null }

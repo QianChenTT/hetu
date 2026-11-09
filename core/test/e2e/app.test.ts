@@ -27,7 +27,7 @@ describe('hetu as an Electron app', () => {
     expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'search', version: '0.1.0' })
     expect(all.find(record => record.event === 'plugin.waiting')).toMatchObject({ plugin: 'search', reason: 'dependency:luoshu:absent' })
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
-      gate: 'absent', log: 'absent', capabilities: 'absent', watchdog: 'absent',
+      gate: 'on', log: 'on', capabilities: 'absent', watchdog: 'absent',
     })
     expect(await exists(path.join(dataDir, 'electron'))).toBe(true)
   })
@@ -42,9 +42,15 @@ describe('hetu as an Electron app', () => {
     await app.close()
     expect(await done).toBe(0)
     expect(await exists(path.join(dataDir, 'hetu.lock'))).toBe(false)
-    const all = await events(dataDir)
-    expect(all.indexOf('core.stopping')).toBeGreaterThan(all.indexOf('core.ready'))
-    expect(all.at(-1)).toBe('core.stopping')
+    const all = await records(dataDir)
+    const stopping = all.findIndex(record => record.event === 'core.stopping')
+    expect(stopping).toBeGreaterThan(all.findIndex(record => record.event === 'core.ready'))
+    // Only the host tier's stops follow core.stopping, with the audit records the log's last drain writes, and the log
+    // stops last of all
+    const after = ['plugin.stopped', 'slot.state', 'audit.call']
+    expect(all.slice(stopping + 1).map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
+    expect(all.filter(record => record.event === 'plugin.stopped').at(-1)).toMatchObject({ plugin: 'log', reason: 'shutdown' })
+    expect(all.at(-1)).toMatchObject({ event: 'plugin.stopped', plugin: 'log' })
   })
 
   it('quits once the last window closes', async () => {

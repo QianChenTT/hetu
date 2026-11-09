@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
-import type { Session, WebContents } from 'electron'
+import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { guardContents, webPreferences } from '../backend/runtime/windows.ts'
+import { guardContents, openEditor, quietPlacement, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer and the window open handler
 class FakeContents extends EventEmitter {
@@ -61,5 +61,43 @@ describe('the window guards', () => {
         safeDialogs: true, devTools: !packaged,
       })
     }
+  })
+})
+
+describe('quiet windows for runs from the source', () => {
+  const displays = [
+    { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1040 } },
+    { id: 2, workArea: { x: 1920, y: 0, width: 2560, height: 1400 } },
+  ]
+
+  it('opens without focus on a display other than the one under the cursor when HETU_QUIET_WINDOWS is 1', () => {
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '1' }, displays, cursorDisplay: 1 })).toEqual({ quiet: true, at: { x: 1960, y: 40 } })
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '1' }, displays, cursorDisplay: 2 })).toEqual({ quiet: true, at: { x: 40, y: 40 } })
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '1' }, displays: displays.slice(0, 1), cursorDisplay: 1 })).toEqual({ quiet: true })
+  })
+
+  it('opens as usual otherwise, and always in a packaged build', () => {
+    expect(quietPlacement({ packaged: false, env: {}, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
+    expect(quietPlacement({ packaged: true, env: { HETU_QUIET_WINDOWS: '1' }, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
+  })
+
+  it('shows a quiet editor without focus, where it was placed', () => {
+    const made: { options: Record<string, unknown>, shown: string[], window: EventEmitter }[] = []
+    class FakeWindow extends EventEmitter {
+      shown: string[] = []
+      webContents = {}
+      constructor(options: Record<string, unknown>) {
+        super()
+        made.push({ options, shown: this.shown, window: this })
+      }
+      show() { this.shown.push('show') }
+      showInactive() { this.shown.push('showInactive') }
+      loadURL() { return Promise.resolve() }
+    }
+    const session = {} as Session
+    openEditor(FakeWindow as unknown as typeof BrowserWindow, session, false, { quiet: true, at: { x: 1960, y: 40 } })
+    openEditor(FakeWindow as unknown as typeof BrowserWindow, session, false)
+    for (const { window } of made) window.emit('ready-to-show')
+    expect(made.map(({ options, shown }) => [options.x, options.y, shown])).toEqual([[1960, 40, ['showInactive']], [undefined, undefined, ['show']]])
   })
 })

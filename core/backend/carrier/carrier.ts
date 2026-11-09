@@ -209,6 +209,9 @@ export class Carrier {
   private closed = false
   // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
   private shutting = false
+  // The once a second look, and the log's health it last saw
+  private readonly looking: ReturnType<typeof setInterval>
+  private logHealthy: boolean | undefined
 
   constructor(options: CarrierOptions) {
     this.options = options
@@ -219,10 +222,17 @@ export class Carrier {
       bound: () => this.limits.of(null, 'floorBacklog'),
       muted: () => this.muted(),
       retryMs: options.floorRetryMs ?? 5000,
+      // Windows read core.status again, which says whether the log takes appends
+      noticed: () => {
+        if (!this.closed && !this.shutting) this.bus.emit('core.status')
+      },
     })
     this.coalesced = new Coalesced(this.lane)
-    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'))
+    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
+    this.logHealthy = options.log?.healthy
+    this.looking = setInterval(() => this.look(), 1000)
+    this.looking.unref?.()
     this.bus = new Bus({
       state: () => this.busState(),
       canRead: (caller, path) => this.readable(caller, path),
@@ -263,6 +273,15 @@ export class Carrier {
   // A floor record from the core: boot, the loader and the carrier itself
   floor(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
+  }
+
+  // The log plugin acknowledged records it never wrote, which is its choice to make and leaves a count: records is how
+  // many, summed over a second, and count how many acks
+  skipped(records: number): void {
+    this.coalesced.hit('audit.skipped', { records }, {
+      by: {},
+      join: (held, next) => ({ records: Number(held?.records ?? 0) + Number(next.records) }),
+    })
   }
 
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
@@ -394,6 +413,7 @@ export class Carrier {
 
   close(): void {
     this.closed = true
+    clearInterval(this.looking)
     for (const way of [...this.ways.values()]) this.end(way.caller)
     this.coalesced.close()
     // Records the log plugin never acknowledged are lost with the run and counted
@@ -737,6 +757,7 @@ export class Carrier {
     if (gate === 'starting') return 'starting'
     if (gate !== 'off') return this.down('policy-down')
     if (this.muted()) return 'pass'
+    if (this.stalled()) return this.down('policy-down')
     const log = this.slot('log')
     if (log === 'on' || log === 'off') return 'pass'
     return log === 'starting' ? 'starting' : this.down('policy-down')
@@ -1210,6 +1231,7 @@ export class Carrier {
   // last and reads failed then, so records keep queueing and close counts what is left
   private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
     if (this.muted()) return
+    this.stalled()
     const log = this.slot('log')
     if (log !== 'on' && log !== 'starting' && !this.shutting) {
       const held = this.queue.clear()
@@ -1217,6 +1239,32 @@ export class Carrier {
       return
     }
     if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
+  }
+
+  // Once a second, so a stalled log is marked failed while hetu is idle and windows hear when the log's health changed
+  // through an audit write, which the floor lane doesn't see
+  private look(): void {
+    if (this.closed || this.shutting) return
+    this.stalled()
+    const healthy = this.options.log?.healthy
+    if (healthy === this.logHealthy) return
+    this.logHealthy = healthy
+    this.bus.emit('core.status')
+  }
+
+  // A log plugin whose oldest record waited unacknowledged for auditStallMs has stalled, and the loader marks it failed
+  // as it would a crash, so with the gate off a call with power is refused rather than passing with only a count of
+  // what was dropped. Timed from when the record was queued, so a long call doesn't read as stalled. Never while the log
+  // starts, which readyMs bounds, or once shutdown began, when the log stops last. true even when the loader couldn't
+  // mark it, so the gate off still refuses
+  private stalled(): boolean {
+    if (this.shutting || this.closed || this.slot('log') !== 'on') return false
+    const oldest = this.queue.oldest()
+    if (oldest === null || this.clock() - oldest < this.limits.of('log', 'auditStallMs')) return false
+    try {
+      this.options.loader.fail('log', 'stalled')
+    } catch {}
+    return true
   }
 
   private callOf(pending: Pending, args: unknown): Call {

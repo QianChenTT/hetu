@@ -36,10 +36,11 @@ export function env(extra: Record<string, string>): Record<string, string> {
   return { ...Object.fromEntries(own), ...extra }
 }
 
-// The built app from the source, as `electron .` starts it, on its own data folder. extra holds more environment, an
+// The built app from the source, as `electron .` starts it, on its own data folder, its windows quiet so they take no
+// focus from the person at the machine. extra holds more environment, an
 // install folder of the test's own among it
 export async function launch(dataDir: string, extra: Record<string, string> = {}): Promise<ElectronApplication> {
-  const app = await electron.launch({ args: [repo], env: env({ HETU_DATA_DIR: dataDir, ...extra }) })
+  const app = await electron.launch({ args: [repo], env: env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: '1', ...extra }) })
   running.push(app)
   return app
 }

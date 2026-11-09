@@ -84,6 +84,9 @@ const plugin = z.strictObject({
   granted: folderCapabilities, // entries are for folder plugins only, which never hold an install-only type
   class: z.int().min(0).max(4).nullable(), // null until classified, which counts as 4
   enabled: z.boolean(), // the human's switch, which no check changes
+  // Items of granted the human switched off, each as granted holds it. Left out of an entry written before the switches
+  // came, which then has none off. One granted doesn't hold switches nothing off
+  off: folderCapabilities.optional(),
 })
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against

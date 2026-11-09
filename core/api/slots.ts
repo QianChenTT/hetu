@@ -1,4 +1,4 @@
-import type { CapabilityType } from './capabilities.ts'
+import type { Capability, CapabilityType } from './capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from './envelope.ts'
 import { frozen } from './plain.ts'
 
@@ -47,9 +47,19 @@ export type Decision =
   | { allow: false, code: 'not-granted' | 'switched-off', view: number }
   | { ask: string, view: number }
 
-// What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. The grants it
-// carries come with the gate plugin
-export type StateView = { readonly n: number }
+// One capability a plugin holds, as the gate judges it: off once the human switched it off, firstUse while its first
+// use still asks for a Confirm
+export type GrantedItem = { readonly capability: Capability, readonly off: boolean, readonly firstUse: boolean }
+
+// What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
+// each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest, and leaves
+// out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
+// volume ignores case
+export type StateView = {
+  readonly n: number
+  readonly foldCase: boolean
+  readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
+}
 
 export type Gate = {
   decide(access: Access): Decision
@@ -115,3 +125,33 @@ export type AuditRecord = {
   gate: SlotState
   count: number
 }
+
+// One log file as history reads it through. start says how its first line begins: zeros begin a chain, continues
+// follows the last line of the file before, unlinked follows neither, null when there is no good first line to tell.
+// breaks are the line numbers in the file, from 1, that don't check out
+export type LogSegment = {
+  segment: number
+  lines: number
+  first: number | null
+  last: number | null
+  start: 'zero' | 'continues' | 'unlinked' | null
+  breaks: number[]
+}
+// Whether the open log file's chain checks out, and where it first doesn't
+export type LogVerification = { ok: true } | { ok: false, seq: number }
+
+// What the log plugin holds, lent for one incarnation. next takes the records not yet taken, oldest first. append
+// writes records next handed out, the core's own copy of each, as one batch with one fsync, so the log plugin chooses
+// which records to write and never what they say. A record not handed out, or written already, refuses the whole
+// batch. ack lets go of every record taken up to seq, written or not. Every method throws once the incarnation is over
+export type AuditHandle = {
+  next(max: number): AuditRecord[]
+  append(batch: readonly AuditRecord[]): Promise<void>
+  ack(seq: number): void
+  history(): Promise<LogSegment[]>
+  verify(): Promise<LogVerification>
+}
+
+// The log slot's role. attach takes the handle once, after the import and before the half counts as ready. A throw
+// marks the half failed
+export type LogRole = { attach(handle: AuditHandle): void }

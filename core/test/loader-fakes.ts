@@ -6,7 +6,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
-import type { Gate } from '../api/slots.ts'
+import type { Gate, StateView } from '../api/slots.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
@@ -169,8 +169,10 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
+  // The log by default takes its handle and writes nothing, as a log with no role fails at start
   private of(id: string): Behaviour {
-    return { ready: true, stopped: true, pong: true, throws: false, exports: {}, ...this.behave[id] }
+    const exports: HostExports = id === 'log' ? { log: { attach() {} } } : {}
+    return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
   half(id: string, incarnation = 1, half: 'worker' | 'host' = 'worker'): Half {
@@ -228,16 +230,18 @@ export class FakeRuntime implements Runtime {
 }
 
 // A gate that allows everything and remembers each StateView it was given
-export function allowAll(): Gate & { views: number[], throws: boolean } {
+export function allowAll(): Gate & { views: number[], seen: StateView[], throws: boolean } {
   const gate = {
     views: [] as number[],
+    seen: [] as StateView[],
     throws: false,
     decide: () => ({ allow: true as const, view: gate.views.at(-1) ?? 0 }),
     canRead: () => true,
     verbs: () => [],
-    stateChanged(view: { n: number }) {
+    stateChanged(view: StateView) {
       if (gate.throws) throw new Error('bad view')
       gate.views.push(view.n)
+      gate.seen.push(view)
     },
   }
   return gate

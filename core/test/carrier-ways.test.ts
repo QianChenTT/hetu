@@ -335,7 +335,7 @@ describe('the carrier\'s imports', () => {
   it('imports nothing from boot, so the state store and the log arrive only through its seams', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
-    expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'limits.ts', 'records.ts', 'seams.ts'])
+    expect(files.sort()).toEqual(['audit.ts', 'bus.ts', 'carrier.ts', 'limits.ts', 'records.ts', 'seams.ts'])
     for (const name of files) {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])

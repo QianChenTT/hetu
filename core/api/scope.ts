@@ -141,6 +141,20 @@ export function scopeMatches(scope: string, path: string, options: { foldCase: b
   return segmentsMatch(scope.split('/'), segments, options.foldCase)
 }
 
+// Whether a path lies inside any of the scopes, each scope's grammar checked once here and not on every match, so a
+// gate can compile its grants once per StateView. A scope outside the grammar is left out and matches nothing.
+// Answers as scopeMatches does against each scope in turn
+export function compileScopes(scopes: readonly string[], options: { foldCase: boolean }): (path: string) => boolean {
+  const compiled = scopes.filter(scope => scopeProblem(scope) === null).map(scope => scope.split('/'))
+  const { foldCase } = options
+  return path => {
+    if (compiled.length === 0 || pathProblem(path) !== null) return false
+    const segments = path.split('/')
+    if (segments.some(isGitName)) return false
+    return compiled.some(patterns => segmentsMatch(patterns, segments, foldCase))
+  }
+}
+
 // A scope as grants hold one, refused at write and at load when outside the grammar
 export const scope = z.string().superRefine((value, ctx) => {
   const problem = scopeProblem(value)

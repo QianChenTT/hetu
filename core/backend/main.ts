@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, MessageChannelMain, protocol, session, type Session } from 'electron'
+import { app, BrowserWindow, dialog, MessageChannelMain, protocol, screen, session, type Session } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
@@ -10,7 +10,8 @@ import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { quitInOrder, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
-import { guardContents, openEditor } from './runtime/windows.ts'
+import { WindowWay, type WindowContents } from './runtime/window-way.ts'
+import { guardContents, openEditor, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
@@ -19,6 +20,7 @@ import { wireCore } from './wire.ts'
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
+const mountPreload = path.join(here, 'mount-preload.js')
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -103,11 +105,23 @@ async function start(): Promise<void> {
     parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }
 
     let editor: BrowserWindow | null = null
+    // Each editor window comes with its way into the carrier, made before its page loads
+    const editorWindow = () => {
+      const window = openEditor(BrowserWindow, sessions.editor, app.isPackaged, placement(), mountPreload)
+      new WindowWay(window.webContents as unknown as WindowContents, 'editor', wired.carrier)
+      return window
+    }
+    const placement = () => quietPlacement({
+      packaged: app.isPackaged,
+      env: process.env,
+      displays: screen.getAllDisplays(),
+      cursorDisplay: screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id,
+    })
     // A second hetu on the same data folder quits before ready and this one comes to the front
     app.on('second-instance', () => {
       if (quitting !== null) return
       if (editor === null || editor.isDestroyed()) {
-        editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
+        editor = show(editorWindow())
         return
       }
       if (editor.isMinimized()) editor.restore()
@@ -115,7 +129,7 @@ async function start(): Promise<void> {
     })
 
     await wired.loader.start()
-    if (quitting === null) editor = show(openEditor(BrowserWindow, sessions.editor, app.isPackaged))
+    if (quitting === null) editor = show(editorWindow())
   } catch (err) {
     tell(err)
     code = 1

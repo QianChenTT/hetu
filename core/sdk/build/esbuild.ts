@@ -128,6 +128,31 @@ export function checkBundle(code: string): string[] {
   return problems
 }
 
+// The ways a host half's bundle reaches Node's built-ins or Electron past its imports: process.getBuiltinModule, a
+// module's createRequire, process.mainModule's require and process's native bindings. A lint for the plain forms, which
+// a computed name gets past, so what a host half reaches is bounded by its review as install code, not by this check
+const pastImports = new Set(['getBuiltinModule', 'createRequire', 'mainModule', 'dlopen', '_linkedBinding'])
+
+export function checkHostReach(code: string): string[] {
+  const problems: string[] = []
+  const tree = parse(code, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+  simple(tree, {
+    MemberExpression(found) {
+      const node = found as unknown as Node
+      const { object, property } = node as unknown as { object: Node, property: Node }
+      const name = node.computed === true
+        ? (property.type === 'Literal' && typeof property.value === 'string' ? property.value : null)
+        : (property.type === 'Identifier' ? property.name as string : null)
+      if (name === null) return
+      const onProcess = object.type === 'Identifier' && object.name === 'process'
+      if (pastImports.has(name) || (name === 'binding' && onProcess)) {
+        problems.push(`${node.loc!.start.line}:${node.loc!.start.column + 1} ${name}`)
+      }
+    },
+  })
+  return problems
+}
+
 // The Node built-ins a host half imports that its manifest's node list doesn't name, from its own code or its
 // dependencies'. node names built-ins with or without node:
 export async function checkHostImports(entry: string, node: readonly string[]): Promise<string[]> {
@@ -141,4 +166,41 @@ export async function checkHostImports(entry: string, node: readonly string[]): 
     }
   }
   return [...problems].sort()
+}
+
+// A host half as one ES module for Node. The runtime imports it from a data: URL, which can't import by a relative path,
+// so everything is bundled but Node's built-ins, and each of those must be in the manifest's node list. Anything else
+// left to load at run time is refused, an Electron import among them, and so are the plain ways past an import that
+// checkHostReach finds. The node list bounds a host half's imports, its review bounds the rest
+export async function buildHost(root: string, entry: string, node: readonly string[]): Promise<{ text: string, imports: string[] }> {
+  const result = await build({
+    absWorkingDir: root,
+    entryPoints: [path.join(root, entry)],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node24.22',
+    // The npm package would bundle as the path to Electron's binary, so an import of it is refused below instead
+    external: ['electron'],
+    legalComments: 'none',
+    charset: 'utf8',
+    write: false,
+    metafile: true,
+    logLevel: 'silent',
+  })
+  const allowed = new Set(node.map(name => name.replace(/^node:/, '').split('/')[0]))
+  const imports = new Set<string>()
+  const problems = new Set<string>()
+  for (const output of Object.values(result.metafile.outputs)) {
+    for (const item of output.imports) {
+      if (!item.external) continue
+      imports.add(item.path)
+      if (!isBuiltin(item.path)) problems.add(`${item.path} would load at run time`)
+      else if (!allowed.has(item.path.replace(/^node:/, '').split('/')[0])) problems.add(`${item.path} isn't in the manifest's node list`)
+    }
+  }
+  const text = result.outputFiles[0].text
+  for (const problem of checkHostReach(text)) problems.add(`${problem}, past the node list`)
+  if (problems.size > 0) throw new Error(`the host half can't ship as built:\n${[...problems].sort().join('\n')}`)
+  return { text, imports: [...imports].sort() }
 }

@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { CoreStatus } from '../../api/actions.ts'
 import { change as changeSchema, type Change } from '../../api/changes.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
@@ -13,7 +14,8 @@ import {
 import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
-import type { PluginState, SlotState } from '../../api/slots.ts'
+import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import type { AuditHandle, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -40,6 +42,11 @@ export type LoaderOptions = {
   // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
   // trusted window
   raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
+  // Lends the install's log plugin its audit handle for one incarnation, with the revoke that ends it. The join builds
+  // it from the carrier's audit queue and boot's EventLog
+  audit?: () => { handle: AuditHandle, revoke(): void }
+  // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
+  logWrites?: () => boolean
 }
 
 // What an update staged beside the old version came to
@@ -67,6 +74,8 @@ type Live = {
   readonly n: number
   readonly halves: Map<HalfName, Run>
   exports: HostExports | null
+  // Ends the audit handle lent to the log for this incarnation
+  revoke: (() => void) | null
   imported: boolean
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
@@ -117,6 +126,21 @@ const FOLDER_RANK = 1000
 const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const isOne = (list: readonly string[], value: string) => list.includes(value)
 const refused = (reason: string): Status => ({ kind: 'refused', reason })
+
+// The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
+// off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
+// off unless it is exactly an item that was on. An item no longer granted goes with its switch
+function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
+  const off = old?.off ?? []
+  if (off.length === 0) return []
+  const offKeys = new Set(off.map(capabilityKey))
+  const offTypes = new Set<string>(off.map(item => item.type))
+  const onKeys = new Set((old?.granted ?? []).map(capabilityKey).filter(key => !offKeys.has(key)))
+  return granted.filter(item => {
+    const key = capabilityKey(item)
+    return offKeys.has(key) || (offTypes.has(item.type) && !onKeys.has(key))
+  })
+}
 const ok: Status = { kind: 'ok' }
 const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
@@ -170,6 +194,8 @@ export class Loader implements Seam {
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly raise: LoaderOptions['raise']
+  private readonly audit: LoaderOptions['audit']
+  private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
   private readonly known = new Map<string, Known>()
@@ -207,6 +233,8 @@ export class Loader implements Seam {
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.raise = options.raise
+    this.audit = options.audit
+    this.logWrites = options.logWrites ?? (() => true)
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -271,6 +299,14 @@ export class Loader implements Seam {
     this.die(found.k, reason)
   }
 
+  // The carrier found the install plugin holding a slot failing at its job. Marked failed as a crash would be, so a host
+  // half stays failed until Restart hetu. Nothing for a plugin that isn't the install's or isn't running
+  fail(id: string, reason: 'stalled'): void {
+    const k = this.known.get(id)
+    if (k === undefined || k.from !== 'install' || k.live === null) return
+    this.die(k, reason)
+  }
+
   heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
     const found = this.runOf(caller)
     if (found === null) return
@@ -294,9 +330,11 @@ export class Loader implements Seam {
 
   // ---- what else the core asks of the loader
 
-  // watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier has checked that the caller
-  // holds the watchdog slot and that the target is a sandboxed plugin holding no slot or guard role
+  // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
+  // has checked that the caller is a window, or holds the watchdog slot and names a sandboxed plugin holding no slot or
+  // guard role
   readonly serve: Served = async call => {
+    if (call.action === 'core.status') return this.banner()
     const target = (call.args as { plugin?: unknown } | null)?.plugin
     if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
     const k = typeof target === 'string' ? this.known.get(target) : undefined
@@ -304,6 +342,22 @@ export class Loader implements Seam {
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  // What a window's banner shows, from the loader's own states and the state it runs with
+  private banner(): CoreStatus {
+    const down = new Set(['crashed', 'failed', 'unresponsive'])
+    const { switches } = this.state
+    return {
+      slots: Object.fromEntries(slotIds.map(id => [id, this.slot(id)])) as CoreStatus['slots'],
+      crashed: this.list().filter(row => down.has(row.state)).map(row => row.id),
+      devMode: [...switches.devMode],
+      allowUnsigned: switches.allowUnsigned.length,
+      skipVerification: switches.skipVerification,
+      recordNothing: switches.recordNothing,
+      logWrites: this.logWrites(),
+      luoshuPicked: this.state.luoshu !== null,
+    }
   }
 
   // A host half's role interface, only while its plugin is ready. The carrier's gate, guards, providers and watchdog
@@ -488,13 +542,16 @@ export class Loader implements Seam {
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await clear(folders.cache(this.dataDir, id)).catch(() => {})
+    const granted = read.manifest!.capabilities ?? []
+    const off = carriedOff(this.state.plugins[id] ?? null, granted)
     const entry: Plugin = {
       version: listed.version,
       contentHash: listed.hash,
       signer: FIRST_PARTY_SIGNER,
-      granted: read.manifest!.capabilities ?? [],
+      granted,
       class: null,
       enabled,
+      ...(off.length > 0 ? { off } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -855,7 +912,7 @@ export class Loader implements Seam {
     this.minted.set(k.id, n)
     k.incarnations = n
     const live: Live = {
-      n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
+      n, halves: new Map(), exports: null, revoke: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
       with: [], over: false, deps: '', marked: false,
     }
     k.live = live
@@ -923,6 +980,7 @@ export class Loader implements Seam {
         if (live.over) return
         live.exports = exports ?? {}
         live.imported = true
+        if (!this.lend(k, live)) return
         this.readied(k, live)
       }, () => {
         if (!live.over) this.die(k, 'start-failed')
@@ -949,6 +1007,27 @@ export class Loader implements Seam {
     for (const run of live.halves.values()) this.link.send(run.caller, init)
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
+  }
+
+  // The install's log gets its audit handle once its module is imported and before it can count as ready, as the gate
+  // gets its first StateView. A throw from attach marks it failed, and retire revokes what was lent
+  private lend(k: Known, live: Live): boolean {
+    const role = live.exports?.log
+    if (k.id !== 'log' || k.from !== 'install' || this.audit === undefined) return true
+    // With no role nothing could take the handle and drain the records, so the slot can't read on
+    if (role === undefined) {
+      this.die(k, 'start-failed')
+      return false
+    }
+    try {
+      const lent = this.audit()
+      live.revoke = lent.revoke
+      role.attach(lent.handle)
+      return true
+    } catch {
+      this.die(k, 'start-failed')
+      return false
+    }
   }
 
   private readied(k: Known, live: Live): void {
@@ -1063,6 +1142,10 @@ export class Loader implements Seam {
   }
 
   private retire(k: Known, live: Live): void {
+    try {
+      live.revoke?.()
+    } catch {}
+    live.revoke = null
     if (live.beat !== null) clearInterval(live.beat.timer)
     live.beat = null
     live.over = true
@@ -1170,6 +1253,9 @@ export class Loader implements Seam {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
         return this.bump()
+      case 'item.on':
+      case 'item.off':
+        return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
       default:
         throw new Error(`${change.kind} comes with a later step`)
     }
@@ -1192,11 +1278,51 @@ export class Loader implements Seam {
     this.refresh()
   }
 
+  // One item a folder plugin was granted switched on or off. An install plugin's grants are its manifest, so it has
+  // no entry to hold a switch
+  private async switchItem(id: string, capability: Capability, on: boolean): Promise<void> {
+    const k = this.known.get(id)
+    const entry = k?.from === 'folder' ? k.entry : null
+    if (k === undefined || entry === null) throw new Error(`no plugin entry for ${id}`)
+    const key = capabilityKey(capability)
+    const item = entry.granted.find(granted => capabilityKey(granted) === key)
+    if (item === undefined) throw new Error(`${id} wasn't granted that item`)
+    const others = (entry.off ?? []).filter(off => capabilityKey(off) !== key)
+    const next: Plugin = { ...entry, off: on ? others : [...others, item] }
+    await this.store.writePlugin(id, next)
+    this.putEntry(id, next)
+    this.bump()
+  }
+
+  // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
+  // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
+  // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
+  // switched off is off. No item asks at its first use until the Confirm flow and the classes come, since with nothing to
+  // raise the prompt an ask could only refuse
+  private stateView(): StateView {
+    const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
+    const items = (granted: readonly Capability[], switchedOff: readonly Capability[]) => {
+      const off = new Set(switchedOff.map(capabilityKey))
+      return granted.map(capability => ({ capability: structuredClone(capability), off: off.has(capabilityKey(capability)), firstUse: false }))
+    }
+    // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
+    // no grant
+    for (const [id, entry] of Object.entries(this.state.plugins)) {
+      if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
+      plugins[id] = items(entry.granted, entry.off ?? [])
+    }
+    for (const k of this.known.values()) {
+      const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
+      if (granted.length > 0) plugins[k.id] = items(granted, [])
+    }
+    return frozen({ n: this.n, foldCase: false, plugins })
+  }
+
   private pushTo(gate: Known): boolean {
     const target = gate.live?.exports?.gate
     if (target === undefined) return true
     try {
-      target.stateChanged(frozen({ n: this.n }))
+      target.stateChanged(this.stateView())
       return true
     } catch {
       this.die(gate, 'state-changed')
