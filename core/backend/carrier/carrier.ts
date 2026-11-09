@@ -11,6 +11,7 @@ import {
   type GuardableAction,
 } from '../../api/ids.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
+import { spaceOf } from '../../api/storage.ts'
 import {
   pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Sample, type Scope,
   type SlotState,
@@ -1100,6 +1101,7 @@ export class Carrier {
     try {
       result = await provider.perform(call, prepared)
     } catch (err) {
+      if (id === 'storage' && refusalIn(err)?.code === 'tampered') this.tampered(pending, args)
       return this.thrown(pending, id, 'perform', err)
     }
     this.result(pending, id, result)
@@ -1213,6 +1215,15 @@ export class Carrier {
 
   // A thrown refusal keeps its code. Anything else is failed, with its text for debug only. plugin is the provider whose
   // step threw, null for a part the core serves
+  // A stored key failed its hash line. The plugin decides what to do with it. A plugin can trigger this, so it is one
+  // record per space each second, naming the first key and then the last with the count
+  private tampered(pending: Pending, args: unknown): void {
+    const space = spaceOf(pending.caller)
+    const key = field(args, 'key')
+    if (space === null || typeof key !== 'string') return
+    this.coalesced.hit('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
+  }
+
   private thrown(pending: Pending, plugin: string | null, step: 'prepare' | 'perform', err: unknown): void {
     if (pending.done) return
     const refused = refusalIn(err)
