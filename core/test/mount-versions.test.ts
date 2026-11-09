@@ -155,3 +155,32 @@ describe('the human typing', () => {
     expect(versions.mapMarks([strong(1, 3)], 0)).toEqual([strong(2, 4)])
   })
 })
+
+describe('the edges of mapping', () => {
+  it('answers stale for an edit inside text the human replaced whole since', () => {
+    const note = typing('hello world')
+    // touchesRange answers 'cover' when the human's change holds the range with text to spare on both sides
+    const edit = ChangeSet.of({ from: 6, to: 9, insert: 'WOR' }, 11)
+    note.remove(3, 11)
+    expect(note.versions.rebase(edit, 0)).toBe('stale')
+  })
+
+  it('keeps a point widget before text typed at its place', () => {
+    const note = typing('hello')
+    const widget: Mark = { kind: 'widget', from: 5, to: 5, text: '•' }
+    note.insert(5, '!')
+    expect(note.versions.mapMarks([widget], 0)).toEqual([widget])
+  })
+
+  it('keeps a mark from growing over text typed at its end', () => {
+    const note = typing('hello')
+    note.insert(5, '!')
+    expect(note.versions.mapMarks([strong(0, 5)], 0)).toEqual([strong(0, 5)])
+  })
+
+  it('drops a line style whose line was deleted, rather than moving it to the line before', () => {
+    const note = typing('a\nb\nc')
+    note.remove(1, 3)
+    expect(note.versions.mapMarks([{ kind: 'line', from: 2, style: 'h1' }], 0)).toEqual([])
+  })
+})
