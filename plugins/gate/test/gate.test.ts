@@ -150,6 +150,25 @@ describe('reading on another\'s behalf', () => {
     expect(asking.canRead(alpha, 'notes/a.md')).toBe(false)
   })
 
+  it('lets a caller see a name through a list or read item switched on and confirmed, and read through a list item never', () => {
+    const tree: Capability = { type: 'luoshu.list', paths: ['projects/**'] }
+    const beta: Caller = { ...alpha, id: 'beta' }
+    const gate = gateOn({
+      alpha: [item(notes), item(tree), item({ type: 'luoshu.list', paths: ['journal/**'] }, { off: true }), item({ type: 'luoshu.list', paths: ['inbox/**'] }, { firstUse: true })],
+    })
+    expect(gate.canList(alpha, 'notes/a.md')).toBe(true)
+    expect(gate.canList(alpha, 'projects/plan.md')).toBe(true)
+    expect(gate.canRead(alpha, 'projects/plan.md')).toBe(false)
+    expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['projects/plan.md'] }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.canList(alpha, 'journal/a.md')).toBe(false)
+    expect(gate.canList(alpha, 'inbox/a.md')).toBe(false)
+    expect(gate.canList(alpha, 'other/a.md')).toBe(false)
+    expect(gate.canList(editor, 'other/a.md')).toBe(true)
+    expect(gate.canList(editor, '.scratch.md')).toBe(false)
+    expect(gate.canList(trusted, 'notes/a.md')).toBe(false)
+    expect(gate.canList(beta, 'notes/a.md')).toBe(false)
+  })
+
   it('gives the ui types a plugin holds switched on as its verbs in the editor, and none in the trusted window', () => {
     const gate = gateOn({
       alpha: [item({ type: 'ui.panel' }), item({ type: 'ui.command' }, { off: true }), item({ type: 'ui.keys' }, { firstUse: true }), item(notes)],

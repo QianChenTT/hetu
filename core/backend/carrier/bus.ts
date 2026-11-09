@@ -3,15 +3,15 @@ import type { FloorConstant } from '../../api/floor.ts'
 
 type Send = (message: unknown) => void
 
-// How a path event goes out now: the gate's canRead decides for each subscriber, every path passes with the gate off by
-// the human, or every path is held back while the gate is down
+// How a path event goes out now: the gate's canList decides for each subscriber, since an event says only that a name
+// changed, every path passes with the gate off by the human, or every path is held back while the gate is down
 export type Paths = 'ask' | 'all' | 'none'
 
 // What the carrier lends the bus. key moves whenever the gate's state, whether it can be asked or the StateView does,
 // which is when the bus asks the gate about its subscriptions again. view is the StateView number, null when unreadable
 export type BusParts = {
   state(): { key: string, paths: Paths, view: number | null }
-  canRead(caller: Caller, path: string): boolean
+  canList(caller: Caller, path: string): boolean
   // The gate's answer on one subscription it holds: allow, refuse, which ends it, or down when the gate gave no answer,
   // which holds it back until the gate allows it
   recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down'
@@ -139,7 +139,7 @@ export class Bus {
           this.parts.dropped(subscriber.caller, 'gate-down')
           continue
         }
-        if (this.paths === 'ask' && !this.parts.canRead(subscriber.caller, path)) continue
+        if (this.paths === 'ask' && !this.parts.canList(subscriber.caller, path)) continue
       }
       this.deliver(subscriber, topic, path)
     }

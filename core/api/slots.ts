@@ -64,10 +64,19 @@ export type StateView = {
 export type Gate = {
   decide(access: Access): Decision
   canRead(caller: Caller, path: string): boolean
+  // Whether the caller may see the path's name: an on item of luoshu.list or luoshu.read covering it
+  canList(caller: Caller, path: string): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
   stateChanged(view: StateView): void
 }
+
+// The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
+export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
+
+// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
+// the luoshu failed
+export type LuoshuRole = { open(opening: Opening): void }
 
 // A host guard answers from its own state and makes no calls
 export type Guard = { check(call: GuardCall): 'allow' | 'deny' }

@@ -17,7 +17,7 @@ export const stopReasons = frozen([
   // found with no entry yet, waiting for the human's approval
   'new',
   // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
-  // the gate's stateChanged, a security control whose module gave no role
+  // the gate's stateChanged or the luoshu's open, a security control or the luoshu whose module gave no role
   'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role',
   // held back because a security control failed and hetu stopped
   'control-failed',

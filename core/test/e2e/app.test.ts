@@ -20,12 +20,15 @@ describe('hetu as an Electron app', () => {
     // Sandboxed and isolated with no Node: the page sees none of Node's globals
     expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))
+    await until(async () => (await records(dataDir)).some(record => record.event === 'plugin.started' && record.plugin === 'search'))
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
     expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
-    // search ships in the install, is copied into the plugin folder and waits for the luoshu until the luoshu is built
+    // search ships in the install, is copied into the plugin folder and starts once the luoshu is ready, which answers
+    // unavailable until a folder is picked
     expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'search', version: '0.1.0' })
-    expect(all.find(record => record.event === 'plugin.waiting')).toMatchObject({ plugin: 'search', reason: 'dependency:luoshu:absent' })
+    expect(all.find(record => record.event === 'plugin.started' && record.plugin === 'luoshu')).toBeDefined()
+    expect(all.some(record => record.event === 'plugin.waiting' && record.plugin === 'search')).toBe(false)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'on', capabilities: 'absent', watchdog: 'absent',
     })

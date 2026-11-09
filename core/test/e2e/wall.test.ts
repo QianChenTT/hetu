@@ -7,9 +7,11 @@ import { cleanup, exited, launch, logged, temp, until, workersPage } from './hel
 
 afterEach(cleanup)
 
-// The luoshu's host half as one ES module, which can import only Node's built-ins: its plugin and its provider role
+// The luoshu's host half as one ES module, which can import only Node's built-ins: its plugin, its provider role and
+// the luoshu role the loader hands the folder to
 const host = `
 export default Object.freeze({ kind: 'hetu-plugin', spec: Object.freeze({ start() {} }) })
+export const luoshu = { open() {} }
 export const provider = {
   async prepare(call) {
     return { scope: { paths: [call.args.path] } }

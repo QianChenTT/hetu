@@ -30,6 +30,7 @@ export type Screen = {
   }[]
   switches: Switch[]
   limits: Limit[]
+  luoshu: string
 }
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
@@ -151,6 +152,7 @@ export function screen(list: SecurityList): Screen {
     })),
     switches: switchesOf(list),
     limits: limitsOf(list),
+    luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
   }
 }
 
@@ -220,6 +222,15 @@ export class TrustedPage {
 
   relaunch(): void {
     this.call('core.relaunch')
+  }
+
+  // The OS folder dialog in main, then the folder picked asked for as luoshu.set, which waits for the Confirm. A
+  // cancelled dialog asks for nothing
+  pickFolder(): void {
+    this.call('core.pickFolder', undefined, reply => {
+      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.set', folder: reply.result })
+      else if (reply.ok !== true) this.settle(reply)
+    })
   }
 
   // A note of the page's own, such as a value that isn't a number, drawn until the next answer

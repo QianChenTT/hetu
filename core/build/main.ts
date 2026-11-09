@@ -8,7 +8,7 @@ import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 // The first-party plugins built, each a worker from src/worker.ts
 const FIRST_PARTY = ['search']
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
-const INSTALL = ['gate', 'storage']
+const INSTALL = ['gate', 'storage', 'luoshu']
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')

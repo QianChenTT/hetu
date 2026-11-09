@@ -497,6 +497,7 @@ describe('the core actions the loader serves', () => {
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
     })
     expect(list.limits).toEqual({ all: {}, plugins: {} })
+    expect(list.luoshu).toBe(null)
     expect(list.stopped).toBe(null)
   })
 
@@ -509,6 +510,14 @@ describe('the core actions the loader serves', () => {
     expect(list.limits).toEqual({ all: { readyMs: 20000 }, plugins: { alpha: { callsInFlight: 8 } } })
     list.limits.all.readyMs = 1
     expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
+  })
+
+  it('names the notes folder once luoshu.set applies', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const folder = path.join(made.base, 'notes')
+    await made.loader.apply({ kind: 'luoshu.set', folder })
+    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
   })
 
   it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {

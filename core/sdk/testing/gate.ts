@@ -13,7 +13,7 @@ export type FakeMode = 'manifest' | 'allow-all' | 'deny-all' | 'gate-failed' | '
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'luoshu.read' || item.type === 'luoshu.write') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list') {
       const paths = access.scope.paths ?? []
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
@@ -44,6 +44,11 @@ export class ModeGate implements Gate {
 
   canRead(caller: Caller, path: string): boolean {
     return this.answer(caller, granted => holds(granted, { capability: 'luoshu.read', scope: { paths: [path] } }))
+  }
+
+  canList(caller: Caller, path: string): boolean {
+    return this.answer(caller, granted => ['luoshu.list', 'luoshu.read'].some(capability =>
+      holds(granted, { capability: capability as 'luoshu.list', scope: { paths: [path] } })))
   }
 
   verbs(): string[] {

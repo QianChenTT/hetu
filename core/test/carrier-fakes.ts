@@ -69,7 +69,7 @@ export class FakeLoader implements Loader {
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'luoshu.read' || item.type === 'luoshu.write') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list') {
       const paths = access.scope.paths ?? []
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
@@ -87,6 +87,9 @@ export class FakeGate implements Gate {
   // Takes over from the grant table when set
   decision: ((access: Access) => unknown) | null = null
   readable: ((caller: Caller, path: string) => unknown) | null = null
+  readonly lists: { caller: Caller, path: string }[] = []
+  // Answers canList in place of the grant table, a throw included
+  listable: ((caller: Caller, path: string) => unknown) | null = null
   private readonly loader: FakeLoader
 
   constructor(loader: FakeLoader) {
@@ -114,6 +117,13 @@ export class FakeGate implements Gate {
     this.reads.push({ caller, path })
     if (this.readable !== null) return this.readable(caller, path) as boolean
     return holds(this.grantsOf(caller), { capability: 'luoshu.read', scope: { paths: [path] } })
+  }
+
+  canList(caller: Caller, path: string): boolean {
+    this.lists.push({ caller, path })
+    if (this.listable !== null) return this.listable(caller, path) as boolean
+    const granted = this.grantsOf(caller)
+    return holds(granted, { capability: 'luoshu.list', scope: { paths: [path] } }) || holds(granted, { capability: 'luoshu.read', scope: { paths: [path] } })
   }
 
   verbs(): string[] {
@@ -148,6 +158,7 @@ export class FakeLuoshu implements Provider {
   async prepare(call: Call): Promise<Prepared> {
     this.prepared.push(call)
     await this.hold.prepare
+    if (call.action === 'luoshu.list') return { scope: {} }
     const { path, baseVersion } = call.args as { path: string, baseVersion?: string }
     const scope = { paths: [path.split('/').map(name => this.short.get(name) ?? name).join('/')] }
     return baseVersion === undefined ? { scope } : { scope, baseVersion }
@@ -157,6 +168,8 @@ export class FakeLuoshu implements Provider {
     this.performed.push({ call, prepared })
     await this.hold.perform
     if (this.perform_ !== null) return this.perform_(call, prepared)
+    // Every name, unfiltered, as the luoshu lists them
+    if (call.action === 'luoshu.list') return { paths: [...this.files.keys()].sort(), next: null }
     const path = prepared.scope.paths![0]
     if (call.action === 'luoshu.write') {
       this.files.set(path, (call.args as { text: string }).text)
