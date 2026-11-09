@@ -67,6 +67,11 @@ export class UiPort {
     return this.current
   }
 
+  // The connected plugins the human can pick as the layout
+  layoutChoices(): string[] {
+    return [...this.layouts].sort()
+  }
+
   // The owner's port came, or what it holds changed. What it no longer holds is taken back
   held(owner: string, verbs: readonly string[]): void {
     const view = verbs.includes('ui.view')
