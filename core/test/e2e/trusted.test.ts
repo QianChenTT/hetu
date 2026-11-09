@@ -104,7 +104,8 @@ describe('a security control that fails at start', () => {
     const page = await trustedPage(app)
     await showing(page, `hetu stopped: the security plugin gate ${line}`)
     expect(await visibleWindows(app)).toEqual(['hetu://trusted/'])
-    expect(await logged(dataDir, 'core.stopped', { control: 'gate' })).toBe(true)
+    // The record lands a moment after the window shows, later on a slow machine
+    await until(() => logged(dataDir, 'core.stopped', { control: 'gate' }))
     expect(await logged(dataDir, 'core.ready')).toBe(false)
   })
 
