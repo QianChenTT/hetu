@@ -3,6 +3,7 @@ import {
   type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, parseBridgeCall, refused, reply, verbNeeds,
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
+import { normalKey } from './keys.ts'
 import type { CoreLink } from './link.ts'
 import type { Versions } from './versions.ts'
 
@@ -63,11 +64,14 @@ export class Drawer {
   private readonly edited: (instance: string, plugin: string) => void
   private readonly connections = new Map<string, Connection>()
   private reaches = new Map<string, Promise<Reach>>()
+  private readonly mac: boolean
 
-  constructor(link: CoreLink, instances: () => Iterable<Instance>, edited: (instance: string, plugin: string) => void) {
+  // mac says Mod is Cmd, as the page names keys
+  constructor(link: CoreLink, instances: () => Iterable<Instance>, edited: (instance: string, plugin: string) => void, mac = false) {
     this.link = link
     this.instances = instances
     this.edited = edited
+    this.mac = mac
   }
 
   // core.status comes on the shell's subscription
@@ -119,7 +123,7 @@ export class Drawer {
     }
   }
 
-  // A key in the editor, as CodeMirror names it, after the core keys. The first plugin bound to it hears its command
+  // A key in the editor, named as keys.ts names it, after the core keys. The first plugin bound to it hears its command
   // and true says the key was taken. Otherwise each plugin holding the key stream that reads the note hears the key
   key(instance: string | null, key: string): boolean {
     if (CORE_KEYS.includes(key)) return false
@@ -262,7 +266,7 @@ export class Drawer {
         return { version: instance.versions.version }
       }
       case 'editor.bind':
-        conn.bindings = new Map(call.args.bindings.map(binding => [binding.key, binding.command]))
+        conn.bindings = new Map(call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command]))
         return null
       case 'editor.keys':
         conn.keys = call.args.on

@@ -9,9 +9,21 @@
 <body>
 <ul id="banner" hidden></ul>
 <div id="notices" hidden></div>
+<header id="bar">
+<span id="title">No note open</span>
+<button id="open" type="button">Open a note</button>
 <button id="security" type="button">Plugins and security</button>
-<main>
-<p>hetu is running. The editor comes with editor-core</p>
-</main>
+</header>
+<div id="note-bar" hidden><span id="note-text"></span><span id="note-actions"></span></div>
+<main id="editors"><p id="empty">Press Ctrl+P to open a note. Ctrl+/ shows the real text of the note</p></main>
+<div id="palette" hidden>
+<input id="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Note name">
+<ul id="palette-list"></ul>
+<p id="palette-note" hidden></p>
+</div>
+<section id="raw" hidden tabindex="-1">
+<header><span id="raw-title"></span><label>Written last <select id="raw-recent"></select></label><button id="raw-close" type="button">Close</button></header>
+<pre id="raw-text"></pre>
+</section>
 </body>
 </html>

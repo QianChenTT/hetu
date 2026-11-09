@@ -263,6 +263,15 @@ describe("the bridge's drawer end", () => {
     expect(CORE_KEYS).toEqual(['Mod-/', 'Mod-p', 'Mod-s', 'Mod-q'])
   })
 
+  it("matches a binding however the plugin spelled the key, as the page names keys", async () => {
+    const { drawer } = started({ alpha: { verbs: ['ui.command'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.bind', { bindings: [{ key: 'Shift-Ctrl-K', command: 'kill' }, { key: 'Ctrl-/', command: 'hide' }] })
+    expect(drawer.key('n1', 'Mod-Shift-k')).toBe(true)
+    expect(drawer.key('n1', 'Mod-/')).toBe(false)
+  })
+
   it('streams keys only for instances whose notes the plugin reads', async () => {
     const notes = [note('n1', 'a.md', 'a'), note('n2', 'secret.md', 's')]
     const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.keys'] } }, notes)

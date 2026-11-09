@@ -5,7 +5,7 @@ import type { CoreLink } from './link.ts'
 // views themselves are the page's, reached through Editors so this runs in the tests
 
 export type Editors = {
-  create(instance: string, text: string): void
+  create(instance: string, text: string, path: string): void
   text(instance: string): string
   // remote marks a change from outside: kept out of undo and not the human's typing
   replace(instance: string, text: string, remote: boolean): void
@@ -106,7 +106,7 @@ export class Notes {
       const read = await this.read(path)
       const key = await draftKey(path)
       const instance = `n${++this.n}`
-      this.editors.create(instance, read.text)
+      this.editors.create(instance, read.text, path)
       const note: OpenNote = {
         instance, path, key, version: read.version, dirty: false, changes: 0, edits: new Set(), draft: null, saving: null,
       }
@@ -197,10 +197,12 @@ export class Notes {
     await this.link.call('storage.delete', { key: note.key })
   }
 
-  // Reads the note again over the buffer, after a stale save or an outside change, and offers a draft still kept
+  // Reads the note again over the buffer, after a stale save or an outside change, and offers a draft still kept. A
+  // dirty buffer is kept as a draft first, so nothing typed is lost
   async reload(instance: string): Promise<void> {
     const note = this.opened.get(instance)
     if (note === undefined) return
+    await this.keep(note)
     let read: Read
     try {
       read = await this.read(note.path)

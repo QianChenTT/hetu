@@ -318,6 +318,17 @@ describe('a save from outside', () => {
     expect(told).toEqual([])
   })
 
+  it('keeps a dirty buffer as a draft before reloading over it', async () => {
+    const { notes, views, space, saveOutside } = started()
+    const instance = await notes.open('a.md')
+    views.type(instance, 'mine, unsaved')
+    notes.changed(instance)
+    saveOutside('a.md', 'theirs')
+    await notes.reload(instance)
+    expect(space.get(keyOf('a.md'))).toMatchObject({ text: 'mine, unsaved', base: 'v-note a' })
+    expect(views.texts.get(instance)).toBe('theirs')
+  })
+
   it('reloads after a stale save and offers the kept draft again', async () => {
     const { notes, views, told, saveOutside } = started()
     const instance = await notes.open('a.md')

@@ -35,29 +35,10 @@ export class Versions {
     return composed
   }
 
-  // Marks made for version n, moved through the changes since. A range whose text was deleted goes, as does one
-  // reaching past the text it was made for. Null for a version not kept or not made
+  // Marks made for version n, moved through the changes since. Null for a version not kept or not made
   mapMarks(marks: readonly Mark[], n: number): Mark[] | null {
     const since = this.since(n)
-    if (since === null) return null
-    const out: Mark[] = []
-    for (const mark of marks) {
-      if (mark.kind === 'line') {
-        if (mark.from > since.length) continue
-        const from = since.mapPos(mark.from, 1, MapMode.TrackDel)
-        if (from !== null) out.push({ ...mark, from })
-        continue
-      }
-      if (mark.to > since.length) continue
-      if (mark.kind === 'widget' && mark.from === mark.to) {
-        out.push({ ...mark, from: since.mapPos(mark.from, -1), to: since.mapPos(mark.from, -1) })
-        continue
-      }
-      const from = since.mapPos(mark.from, 1)
-      const to = since.mapPos(mark.to, -1)
-      if (to > from) out.push({ ...mark, from, to })
-    }
-    return out
+    return since === null ? null : mapThrough(marks, since)
   }
 
   // An edit made for version n, mapped through the changes since, as CodeMirror's collaboration guide rebases. stale
@@ -71,4 +52,28 @@ export class Versions {
     })
     return touched ? 'stale' : changes.map(since)
   }
+}
+
+// Marks moved through changes. A range whose text was deleted goes, as does one reaching past the text the changes start
+// from. A point widget stays before text typed at its place
+export function mapThrough(marks: readonly Mark[], changes: ChangeSet): Mark[] {
+  const out: Mark[] = []
+  for (const mark of marks) {
+    if (mark.kind === 'line') {
+      if (mark.from > changes.length) continue
+      const from = changes.mapPos(mark.from, 1, MapMode.TrackDel)
+      if (from !== null) out.push({ ...mark, from })
+      continue
+    }
+    if (mark.to > changes.length) continue
+    if (mark.kind === 'widget' && mark.from === mark.to) {
+      const at = changes.mapPos(mark.from, -1)
+      out.push({ ...mark, from: at, to: at })
+      continue
+    }
+    const from = changes.mapPos(mark.from, 1)
+    const to = changes.mapPos(mark.to, -1)
+    if (to > from) out.push({ ...mark, from, to })
+  }
+  return out
 }
