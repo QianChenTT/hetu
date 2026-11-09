@@ -46,7 +46,7 @@ describe('a mark', () => {
     ['an empty styled range', { kind: 'mark', from: 2, to: 2, style: 'em' }],
     ['an empty hidden range', { kind: 'hide', from: 2, to: 2 }],
     ['a fraction', { kind: 'hide', from: 0.5, to: 2 }],
-    ['a widget with a bidi control', { kind: 'widget', from: 0, to: 0, text: 'a‮b' }],
+    ['a widget with a bidi control', { kind: 'widget', from: 0, to: 0, text: `a${String.fromCodePoint(0x202e)}b` }],
     ['a widget with no text', { kind: 'widget', from: 0, to: 0, text: '' }],
     ['a widget past 200 characters', { kind: 'widget', from: 0, to: 0, text: 'x'.repeat(201) }],
   ])('refuses %s', (_name, given) => {
