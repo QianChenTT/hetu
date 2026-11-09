@@ -2,19 +2,32 @@ import type { Capability } from 'hetu-core/api/capabilities.ts'
 import { classNames, type Capabilities, type ScreenSubject } from 'hetu-core/api/slots.ts'
 import { capabilityText } from 'hetu-core/api/trusted.ts'
 
-// A scope whose first part is ** reaches the notes of every folder
-const everywhere = (paths: readonly string[]) => paths.some(scope => scope === '**' || scope.startsWith('**/'))
+// A scope stays inside one place when its first part is a plain folder or note name. One with a wildcard there, **
+// or * or another, reaches across the whole notes folder, whatever comes after
+const confined = (scope: string) => {
+  const first = scope.split('/')[0]
+  return first !== '' && !/[*?[\]{}]/.test(first)
+}
 
 // One grant's class, from the table Han took on 2026-10-23. A subscription reaches nothing on its own, since an event
-// carries a path only to a subscriber that may list it. The key stream holds what is typed, so it reads
+// carries a path only to a subscriber that may list it. The key stream holds what is typed, so it reads. A type this
+// plugin doesn't know is 4, so nothing new is ever class 0 and updates on its own by default
 function classOf(granted: Capability): number {
   switch (granted.type) {
+    case 'ui.panel':
+    case 'ui.decoration':
+    case 'ui.command':
+    case 'ui.statusBar':
+    case 'storage':
+    case 'events.subscribe':
+    case 'plugin.call':
+      return 0
     case 'ui.keys':
     case 'luoshu.read':
     case 'luoshu.list':
       return 1
     case 'luoshu.write':
-      return everywhere(granted.paths) ? 4 : 2
+      return granted.paths.every(confined) ? 2 : 4
     case 'history':
       return 2
     case 'net.fetch':
@@ -24,12 +37,14 @@ function classOf(granted: Capability): number {
     case 'log.read':
       return 4
     default:
-      return 0
+      return 4
   }
 }
 
+// What tells a plugin a note's content: reading it, listing it, the key stream and history read, and a write, whose
+// version check answers whether a guessed text is the note's
 const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted.type === 'luoshu.list' || granted.type === 'ui.keys'
-  || (granted.type === 'history' && granted.access === 'read')
+  || granted.type === 'luoshu.write' || (granted.type === 'history' && granted.access === 'read')
 const network = (granted: Capability) => granted.type === 'net.fetch'
 
 // Reading and network anywhere in what a plugin holds and reaches, which together could send notes out (Han)
@@ -52,7 +67,7 @@ export function createCapabilities(): Capabilities {
       return granted.filter(item => classOf(item) === 4 || (pair && closing(item)))
     },
 
-    // A plugin with network, its own or reached, names the plugins that read and can reach it
+    // A plugin with network, its own or through the plugins it is connected to, names the connected plugins that read
     screen({ granted, reachable, callers }: ScreenSubject): string[] {
       const n = classify(granted, reachable)
       const readers = [...granted, ...reachable].some(network) ? callers.filter(caller => caller.granted.some(reads)).map(caller => caller.id) : []
@@ -60,8 +75,8 @@ export function createCapabilities(): Capabilities {
       if (n === 4 && paired([...granted, ...reachable])) head += ': it can read notes and reach the network, so it could send notes out'
       else if (n === 4) head += `: ${granted.filter(item => classOf(item) === 4).map(capabilityText).join(', ')}`
       const lines = [head]
-      if (reachable.length > 0) lines.push(`Through plugin.call it reaches: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
-      if (readers.length > 0) lines.push(`Plugins that read and can reach it: ${readers.join(', ')}`)
+      if (reachable.length > 0) lines.push(`Through plugin.call it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
+      if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call: ${readers.join(', ')}`)
       return lines
     },
   }

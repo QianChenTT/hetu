@@ -132,10 +132,10 @@ describe('a stored key\'s hash line', () => {
     return { store, file, bytes: await readFile(file) }
   }
 
-  it('sits under one JSON line naming the key', async () => {
+  it('sits under one JSON line naming the space and the key', async () => {
     const { bytes } = await stored()
     const [line, hash, end] = bytes.toString('utf8').split('\n')
-    expect(JSON.parse(line)).toEqual({ key: 'grants', value: { agent: 'a' } })
+    expect(JSON.parse(line)).toEqual({ space: 'search', key: 'grants', value: { agent: 'a' } })
     expect(hash).toMatch(/^[0-9a-f]{64}$/)
     expect(end).toBe('')
   })
@@ -149,6 +149,14 @@ describe('a stored key\'s hash line', () => {
   ])('answers tampered for %s', async (_name, damage) => {
     const { store, file, bytes } = await stored()
     await writeFile(file, damage(bytes.toString('utf8')))
+    expect(await ask(store, search, 'storage.get', { key: 'grants' })).toEqual({ refused: { code: 'tampered' } })
+  })
+
+  it('answers tampered for the same key’s file copied from another plugin’s space, whose hash still checks', async () => {
+    const store = opened()
+    await ask(store, plugin('git'), 'storage.set', { key: 'grants', value: { agent: 'git' } })
+    await ask(store, search, 'storage.set', { key: 'grants', value: { agent: 'a' } })
+    await writeFile(keyFile('storage', 'search', 'grants'), await readFile(keyFile('storage', 'git', 'grants')))
     expect(await ask(store, search, 'storage.get', { key: 'grants' })).toEqual({ refused: { code: 'tampered' } })
   })
 
@@ -186,7 +194,7 @@ describe('the cache', () => {
     await ask(store, search, 'cache.set', { key: 'index', value: [1] })
     const file = keyFile('cache', 'search', 'index')
     expect((await readFile(file, 'utf8')).split('\n').filter(line => line !== '')).toHaveLength(1)
-    await writeFile(file, '{"key":"index","value":[2]}\n')
+    await writeFile(file, '{"space":"search","key":"index","value":[2]}\n')
     expect(await ask(store, search, 'cache.get', { key: 'index' })).toEqual([2])
   })
 
@@ -200,7 +208,8 @@ describe('the cache', () => {
 })
 
 describe('the quota', () => {
-  const small = { storage: { bytes: 400, keys: 3 }, cache: { bytes: 300, keys: 2 } }
+  // Two lines of 100 characters fit in 500 bytes with their space, key and hash lines, a third doesn't
+  const small = { storage: { bytes: 500, keys: 3 }, cache: { bytes: 300, keys: 2 } }
 
   it('is core/api\'s unless a test passes its own', () => {
     expect(createStorage().quotas).toEqual(quotas)
@@ -255,11 +264,47 @@ describe('calls on one space', () => {
     expect(await ask(store, search, 'storage.get', { key: 'k' })).toBe(9)
   })
 
+  it('counts only key files, so a file of another name in the space takes nothing from the quota', async () => {
+    await mkdir(spaceDir('storage', 'search'), { recursive: true })
+    await writeFile(path.join(spaceDir('storage', 'search'), 'notes.txt'), 'x'.repeat(1000))
+    const store = opened({ quotas: { storage: { bytes: 400, keys: 3 }, cache: { bytes: 400, keys: 3 } } })
+    expect(await ask(store, search, 'storage.set', { key: 'a', value: 1 })).toBeNull()
+  })
+
   it('remove the temp files a crash left the first time the space is touched and never count them', async () => {
     await mkdir(spaceDir('storage', 'search'), { recursive: true })
     await writeFile(path.join(spaceDir('storage', 'search'), 'key-a.5f0e.tmp'), 'x'.repeat(1000))
     const store = opened({ quotas: { storage: { bytes: 400, keys: 3 }, cache: { bytes: 400, keys: 3 } } })
     expect(await ask(store, search, 'storage.set', { key: 'a', value: 1 })).toBeNull()
     expect(await readdir(spaceDir('storage', 'search'))).toEqual(['key-a'])
+  })
+})
+
+describe('a clear of a space', () => {
+  it('runs after every call already queued on it, so no set queued before the clear survives it', async () => {
+    const store = opened()
+    await ask(store, search, 'storage.set', { key: 'kept', value: 1 })
+    const queued = Array.from({ length: 20 }, (_, i) => ask(store, search, 'storage.set', { key: `planted${i}`, value: i }))
+    // Each set's prepare answers first, then its perform joins the space's queue, as for a plugin the loader then stops
+    await new Promise(resolve => setImmediate(resolve))
+    const cleared = store.clear('storage', 'search')
+    await Promise.all(queued)
+    await cleared
+    expect(await readdir(spaceDir('storage', 'search')).catch(() => [])).toEqual([])
+    expect(await ask(store, search, 'storage.get', { key: 'kept' })).toBeNull()
+    // A set after the clear starts the space again
+    expect(await ask(store, search, 'storage.set', { key: 'fresh', value: 2 })).toBeNull()
+    expect(await ask(store, search, 'storage.get', { key: 'fresh' })).toBe(2)
+  })
+
+  it('clears the cache apart from storage and leaves other spaces alone', async () => {
+    const store = opened()
+    await ask(store, search, 'storage.set', { key: 'k', value: 1 })
+    await ask(store, search, 'cache.set', { key: 'k', value: 1 })
+    await ask(store, plugin('git'), 'cache.set', { key: 'k', value: 1 })
+    await store.clear('cache', 'search')
+    expect(await ask(store, search, 'cache.get', { key: 'k' })).toBeNull()
+    expect(await ask(store, search, 'storage.get', { key: 'k' })).toBe(1)
+    expect(await ask(store, plugin('git'), 'cache.get', { key: 'k' })).toBe(1)
   })
 })

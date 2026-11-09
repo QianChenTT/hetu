@@ -215,7 +215,7 @@ describe('the fake core\'s storage', () => {
     expect(await ask(store, 'storage.set', { key: 'k0', value: 2 })).toBeNull()
     expect(await ask(store, 'storage.set', { key: 'more', value: 1 }, { kind: 'window', role: 'editor', n: 0 })).toBeNull()
     // A value as large as the cache's bytes, with its line around it, is past them
-    const big = 'x'.repeat(quotas.cache.bytes - '{"key":"big","value":""}\n'.length)
+    const big = 'x'.repeat(quotas.cache.bytes - '{"space":"reader","key":"big","value":""}\n'.length)
     expect(await ask(store, 'cache.set', { key: 'big', value: big })).toBeNull()
     expect(await ask(store, 'cache.set', { key: 'big', value: `${big}x` })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
     expect(await ask(store, 'cache.get', { key: 'big' })).toBe(big)

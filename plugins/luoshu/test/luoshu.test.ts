@@ -42,11 +42,15 @@ function opened(options: Parameters<typeof createLuoshu>[0] = {}): Luoshu & { he
   return Object.assign(made, { heard })
 }
 
-const callOf = (action: string, args: unknown): Call => ({ callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 })
+// A listing carries the carrier's canList, every name allowed unless a test says otherwise
+const callOf = (action: string, args: unknown, canList: ((path: string) => boolean) | null = () => true): Call => ({
+  callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000,
+  ...(action === 'luoshu.list' && canList !== null ? { canList } : {}),
+})
 
 // prepare then perform, as the carrier makes a call. A refusal from either comes back as the value thrown or given
-async function ask(made: Luoshu, action: string, args: unknown): Promise<unknown> {
-  const call = callOf(action, args)
+async function ask(made: Luoshu, action: string, args: unknown, canList?: ((path: string) => boolean) | null): Promise<unknown> {
+  const call = callOf(action, args, canList)
   const prepared = await made.provider.prepare(call)
   if (!('scope' in prepared)) return { refused: prepared }
   try {
@@ -164,10 +168,35 @@ describe('listing', () => {
     expect(await ask(made, 'luoshu.list', { after: 'e.md' })).toEqual({ paths: ['journal/b.md'], next: null })
   })
 
+  it('pages over only the names canList allows, so next never names one the caller can’t list', async () => {
+    for (let i = 0; i < 30; i++) await writeFile(path.join(folder, 'journal', `hidden-${String(i).padStart(2, '0')}.md`), 'x')
+    for (const name of ['p1.md', 'p2.md', 'p3.md']) await writeFile(path.join(folder, 'journal', name), name)
+    const shown = (at: string) => !at.includes('hidden-')
+    const made = opened({ pageSize: 2 })
+    expect(await ask(made, 'luoshu.list', { folder: 'journal' }, shown)).toEqual({ paths: ['journal/b.md', 'journal/p1.md'], next: 'journal/p1.md' })
+    expect(await ask(made, 'luoshu.list', { folder: 'journal', after: 'journal/p1.md' }, shown)).toEqual({ paths: ['journal/p2.md', 'journal/p3.md'], next: null })
+    // A folder holding only names the caller can't list answers as a folder that isn't there
+    expect(await ask(made, 'luoshu.list', { folder: 'journal' }, () => false)).toEqual({ paths: [], next: null })
+    expect(await ask(made, 'luoshu.list', { folder: 'missing' }, () => false)).toEqual({ paths: [], next: null })
+  })
+
+  it('refuses a listing that comes without the carrier’s canList', async () => {
+    expect(await ask(opened(), 'luoshu.list', {}, null)).toEqual({ refused: { code: 'failed' } })
+  })
+
   it('lists under one folder, and nothing under one that isn\'t there', async () => {
     const made = opened()
     expect(await ask(made, 'luoshu.list', { folder: 'journal' })).toEqual({ paths: ['journal/b.md'], next: null })
     expect(await ask(made, 'luoshu.list', { folder: 'missing' })).toEqual({ paths: [], next: null })
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('leaves out hetu’s data folder spelled in another case', async () => {
+    const inside = path.join(folder, 'hetu-data')
+    await mkdir(inside)
+    await writeFile(path.join(inside, 'key-api_token'), 'secret')
+    const made = createLuoshu()
+    made.role.open({ folder, dataDir: path.join(folder, 'HETU-DATA'), installDir: path.join(base, 'install') })
+    expect(await ask(made, 'luoshu.list', {})).toEqual({ paths: ['a.md', 'journal/b.md'], next: null })
   })
 
   it('leaves out hetu\'s own folders and follows no link or junction', async () => {
@@ -180,6 +209,30 @@ describe('listing', () => {
     const made = createLuoshu()
     made.role.open({ folder, dataDir: inside, installDir: path.join(base, 'install') })
     expect(await ask(made, 'luoshu.list', {})).toEqual({ paths: ['a.md', 'journal/b.md'], next: null })
+  })
+})
+
+describe('a folder change while calls are in flight', () => {
+  it('refuses a write or a listing prepared under the folder before, so neither acts on the old one', async () => {
+    const made = opened()
+    const write = callOf('luoshu.write', { path: 'a.md', text: 'late', baseVersion: sha('note a') })
+    const writing = await made.provider.prepare(write)
+    const list = callOf('luoshu.list', { folder: 'journal' })
+    const listing = await made.provider.prepare(list)
+    const other = path.join(base, 'other')
+    await mkdir(other)
+    made.role.open({ folder: other, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    await expect(made.provider.perform(write, writing as Prepared)).rejects.toEqual({ code: 'unavailable' })
+    await expect(made.provider.perform(list, listing as Prepared)).rejects.toEqual({ code: 'unavailable' })
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('note a')
+  })
+})
+
+describe('a note too large to answer', () => {
+  it('is refused failed and too-large from its size, before it is read', async () => {
+    await writeFile(path.join(folder, 'big.md'), 'x'.repeat(2048))
+    expect(await ask(opened({ readCap: 1024 }), 'luoshu.read', { path: 'big.md' })).toEqual({ refused: { code: 'failed', reason: 'too-large' } })
+    expect(await ask(opened({ readCap: 1024 }), 'luoshu.read', { path: 'a.md' })).toEqual({ text: 'note a', version: sha('note a') })
   })
 })
 

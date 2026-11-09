@@ -1052,7 +1052,8 @@ export class Carrier {
     if (info?.state === 'starting') return this.finish(pending, no('starting'))
     const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
     if (provider === null) return this.finish(pending, no(this.down('unavailable')))
-    const call = this.callOf(pending, args)
+    const lister = listing ? this.lister(pending) : null
+    const call = lister === null ? this.callOf(pending, args) : frozen({ ...this.callOf(pending, args), canList: lister.canList })
     // The provider's own handle may name this call as the parent of its sub-calls
     const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
     if (host?.open) {
@@ -1102,9 +1103,13 @@ export class Carrier {
       result = await provider.perform(call, prepared)
     } catch (err) {
       if (id === 'storage' && refusalIn(err)?.code === 'tampered') this.tampered(pending, args)
+      lister?.charge()
       return this.thrown(pending, id, 'perform', err)
     }
-    if (listing) return this.finish(pending, this.listed(pending, result))
+    if (lister !== null) {
+      lister.charge()
+      return this.finish(pending, this.listed(lister, result))
+    }
     this.result(pending, id, result)
   }
 
@@ -1223,34 +1228,53 @@ export class Carrier {
     this.coalesced.hit('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
   }
 
-  // A listing's page as its caller may see it: the names the gate's canList allows and the provider's next. The gate's
-  // time counts against the caller's second as filterReadable's does. The page is at most LIST_PAGE names, so one
-  // listing that starts within the budget finishes
-  private listed(pending: Pending, result: unknown): Outcome {
+  // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
+  // caller, every name passing with the gate off by the human. A throw counts as a no and fails the listing. The whole
+  // listing, the walk and the gate's time alike, counts against the caller's second as filterReadable's does
+  private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
+    const off = this.slot('gate') === 'off'
+    const gate = off ? null : this.holder(() => this.options.gate())
+    let threw = false
+    const started = this.clock()
+    let charged = false
+    return {
+      canList: path => {
+        if (off) return true
+        if (gate === null || threw) return false
+        try {
+          return gate.canList(pending.caller, path) === true
+        } catch {
+          threw = true
+          return false
+        }
+      },
+      threw: () => threw,
+      charge: () => {
+        if (charged) return
+        charged = true
+        this.secondOf(pending.way.principal).spent += this.clock() - started
+      },
+    }
+  }
+
+  // A listing's page as the provider gave it, checked again before the caller sees it: at most LIST_PAGE names, each
+  // one the caller may list, and a next that is null or the page's last name. Anything else fails, so a provider that
+  // filters wrongly leaks no name, not even as where the next page starts
+  private listed(lister: { canList: (path: string) => boolean, threw: () => boolean }, result: unknown): Outcome {
+    if (lister.threw()) {
+      this.fault('gate', 'canList')
+      return no('policy-down')
+    }
     const paths = field(result, 'paths')
     const next = field(result, 'next')
     if (!Array.isArray(paths) || paths.length > LIST_PAGE || !paths.every(path => typeof path === 'string')) return no('failed')
-    if (next !== null && typeof next !== 'string') return no('failed')
-    const state = this.slot('gate')
-    if (state === 'off') return { ok: true, result: { paths: [...paths], next } }
-    const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
-    if (gate === null) return no(this.down('policy-down'))
-    const spent = this.secondOf(pending.way.principal)
-    const started = this.clock()
-    const kept: string[] = []
-    try {
-      for (const path of paths) if (gate.canList(pending.caller, path) === true) kept.push(path)
-    } catch {
-      this.fault('gate', 'canList')
-      return no('policy-down')
-    } finally {
-      spent.spent += this.clock() - started
-    }
-    return { ok: true, result: { paths: kept, next } }
+    if (next !== null && next !== paths.at(-1)) return no('failed')
+    if (!paths.every(path => lister.canList(path))) return no(lister.threw() ? 'policy-down' : 'failed')
+    return { ok: true, result: { paths: [...paths], next } }
   }
 
-  // Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second of
-  // the gate's time, so a flood of listings costs main nothing past the budget
+  // Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second,
+  // so a flood of listings costs main at most one listing past the budget each second
   private listingRefused(pending: Pending): RefusalCode | null {
     if (this.slot('gate') === 'off') return null
     if (!this.askable()) return this.down('policy-down')

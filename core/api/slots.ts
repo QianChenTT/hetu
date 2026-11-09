@@ -17,6 +17,9 @@ export type Call = {
   readonly action: string
   readonly args: unknown
   readonly deadline: number
+  // For a listing only: whether the caller may see a name, as the gate answers. The provider pages over the names it
+  // allows, so no name the caller can't list reaches it, not even as where the next page starts
+  readonly canList?: (path: string) => boolean
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
@@ -90,6 +93,10 @@ export type Capabilities = {
   firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[]
   screen(subject: ScreenSubject): string[]
 }
+
+// How the loader clears a space through the storage plugin, so the clear runs after every call already queued on the
+// space and nothing a stopped plugin queued lands after it
+export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
 
 // The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
 export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }

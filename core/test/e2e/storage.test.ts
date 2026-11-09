@@ -45,7 +45,7 @@ describe('the storage plugin in the install', () => {
     expect((await ask(first.page, 'storage.get', { key: 'favorites' })).result).toEqual(['search/results'])
     await first.app.close()
     const [line, hash] = (await readFile(path.join(dataDir, favorites), 'utf8')).split('\n')
-    expect(JSON.parse(line)).toEqual({ key: 'favorites', value: ['search/results'] })
+    expect(JSON.parse(line)).toEqual({ space: 'window.editor', key: 'favorites', value: ['search/results'] })
     expect(hash).toMatch(/^[0-9a-f]{64}$/)
 
     const second = await started(dataDir)

@@ -664,16 +664,27 @@ describe('a listing', () => {
     return { ...parts, search: parts.connect(worker('search')) }
   }
 
-  it('keeps the names the caller may list or read and the provider’s next, asking the gate no decide', async () => {
-    const { search, gate, luoshu } = listing()
+  it('hands the luoshu a canList that asks the gate, so a page holds only names the caller may list or read', async () => {
+    const { search, gate } = listing()
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
-    luoshu.perform_ = () => ({ paths: ['notes/a.md', 'secret/b.md'], next: 'secret/b.md' })
-    expect((await search.ask('luoshu.list', { folder: 'notes', after: 'notes/0.md' })).result).toEqual({ paths: ['notes/a.md'], next: 'secret/b.md' })
     expect(gate.asked).toEqual([])
-    expect(gate.lists.map(asked => asked.path)).toEqual(['.scratch.md', 'notes/a.md', 'projects/plan.md', 'secret/b.md', 'notes/a.md', 'secret/b.md'])
+    expect(gate.lists.map(asked => asked.path)).toEqual(expect.arrayContaining(['secret/b.md', '.scratch.md']))
   })
 
-  it('keeps every name with the gate off by the human and answers policy-down while the gate is down', async () => {
+  it.each([
+    ['a name the caller may not list', { paths: ['notes/a.md', 'secret/b.md'], next: null }],
+    ['a next past the page', { paths: ['notes/a.md'], next: 'secret/b.md' }],
+    ['a next that is not the page’s last name', { paths: ['notes/a.md', 'projects/plan.md'], next: 'notes/a.md' }],
+    ['no object', null],
+    ['names that aren’t text', { paths: [1], next: null }],
+    ['more names than a page', { paths: Array.from({ length: LIST_PAGE + 1 }, (_, i) => `notes/${i}.md`), next: null }],
+  ])('answers failed for a provider page with %s, so no name leaks past the gate', async (_name, page) => {
+    const { search, luoshu } = listing()
+    luoshu.perform_ = () => page
+    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
+  })
+
+  it('lets every name through with the gate off by the human and answers policy-down while the gate is down', async () => {
     const { search, loader } = listing()
     loader.slots.gate = 'off'
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['.scratch.md', 'notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
@@ -690,26 +701,15 @@ describe('a listing', () => {
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
   })
 
-  it.each([
-    ['no object', null],
-    ['names that aren’t text', { paths: [1], next: null }],
-    ['a next that isn’t text', { paths: ['notes/a.md'], next: 3 }],
-    ['more names than a page', { paths: Array.from({ length: LIST_PAGE + 1 }, (_, i) => `notes/${i}.md`), next: null }],
-  ])('answers failed for a listing of %s', async (_name, page) => {
-    const { search, luoshu } = listing()
-    luoshu.perform_ = () => page
-    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
-  })
-
-  it('answers throttled without listing once the caller spent its second of the gate’s time', async () => {
+  it('charges the whole listing, the walk with it, to the caller’s second, and answers throttled once it is spent', async () => {
     const clock = { now: 1000 }
-    const { search, gate, luoshu } = listing({ clock: () => clock.now })
-    luoshu.perform_ = () => ({ paths: Array.from({ length: 150 }, (_, i) => `notes/${i}.md`), next: null })
-    gate.listable = () => {
-      clock.now += 1
-      return true
+    const { search, luoshu } = listing({ clock: () => clock.now })
+    // A walk of a large folder, which asks the gate nothing for a caller that holds nothing
+    luoshu.perform_ = () => {
+      clock.now += 150
+      return { paths: [], next: null }
     }
-    expect((await search.ask('luoshu.list', {})).result).toMatchObject({ next: null })
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: [], next: null })
     const listed = luoshu.performed.length
     expect(code(await search.ask('luoshu.list', {}))).toBe('throttled')
     expect(luoshu.performed).toHaveLength(listed)
