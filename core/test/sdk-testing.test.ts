@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
-import { type FakeCore, fakeCore, type FakeCoreOptions, type FakeMode } from '../sdk/testing/index.ts'
+import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer, type FakeMode } from '../sdk/testing/index.ts'
 import type { Capability } from '../api/capabilities.ts'
 import { quotas } from '../api/storage.ts'
 import type { Call } from '../api/slots.ts'
@@ -23,7 +23,7 @@ const manifest = (over: object = {}) => ({
   id: 'reader',
   name: 'Reader',
   version: '1.0.0',
-  api: '^1',
+  api: '^2',
   entries: { worker: 'dist/worker.js' },
   provides: { actions: { read: {}, list: {} } },
   capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }],
@@ -233,5 +233,73 @@ describe('the fake core\'s gate', () => {
     const granted: Capability[] = [{ type: 'luoshu.list', paths: ['notes/**'] }]
     expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['notes/a.md'] } })).toBe(true)
     expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['secret/b.md'] } })).toBe(false)
+  })
+})
+
+describe('the fake drawer', () => {
+  const drawn = (over: object = {}) => manifest({
+    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
+    views: { board: { title: 'Board', kind: 'view' } },
+    ...over,
+  })
+
+  it('opens the first instance of each declared view and tells the plugin', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer })
+    cores.push(made)
+    const opened: unknown[] = []
+    await made.start(definePlugin({ start(ctx) { ctx.ui.on('view.opened', event => opened.push(event)) } }))
+    await until(() => opened.length === 1)
+    expect(drawer.instances()).toEqual([{ instance: 'v1', view: 'board' }])
+    expect(opened[0]).toMatchObject({ topic: 'view.opened', instance: 'v1', view: 'board' })
+  })
+
+  it('draws through ctx.ui and refuses a skeleton without ui.layout', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const ctx = given as unknown as PluginContext
+    await ctx.ui.views.draw('v1', { kind: 'text', id: 'a', text: 'cards' })
+    await ctx.ui.layout.draw({ kind: 'box', id: 'root', children: [{ kind: 'slot', id: 's', instance: 'v1' }] })
+    expect(drawer.tree('v1')).toEqual({ kind: 'text', id: 'a', text: 'cards' })
+    expect(drawer.tree('layout')).toMatchObject({ kind: 'box', id: 'root' })
+
+    const plain = new FakeDrawer()
+    const other = fakeCore({ manifest: drawn({ id: 'other', capabilities: [{ type: 'ui.view' }] }), drawer: plain })
+    cores.push(other)
+    let second: PluginContext | null = null
+    await other.start(definePlugin({ start(ctx2) { second = ctx2 } }))
+    await expect((second as unknown as PluginContext).ui.layout.draw({ kind: 'box', id: 'root' })).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('serves editor.read and editor.edit on a note it holds, at its version, and editor.open inside the read scope', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const ctx = given as unknown as PluginContext
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    expect(await ctx.editor.instances()).toEqual([{ instance, path: 'notes/a.md', version: 0 }])
+    expect(await ctx.editor.read(instance)).toMatchObject({ text: 'hello', version: 0 })
+    expect(await ctx.editor.edit(instance, 0, [5, [0, ' world']])).toEqual({ version: 1 })
+    expect(drawer.text(instance)).toBe('hello world')
+    await expect(ctx.editor.edit(instance, 0, [5, [0, '!']])).rejects.toMatchObject({ code: 'stale' })
+    await ctx.editor.open('notes/b.md')
+    await expect(ctx.editor.open('secret/b.md')).rejects.toMatchObject({ code: 'not-granted' })
+    expect(drawer.opened).toEqual(['notes/b.md'])
+  })
+
+  it('hands events from the test to the plugin\'s handlers', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn(), drawer })
+    cores.push(made)
+    const heard: unknown[] = []
+    await made.start(definePlugin({ start(ctx) { ctx.ui.on('layout.drop', event => heard.push(event)) } }))
+    drawer.emit({ topic: 'layout.drop', instance: 'v1', zone: 'left', x: 0, y: 0.5 })
+    await until(() => heard.length === 1)
+    expect(heard[0]).toMatchObject({ topic: 'layout.drop', zone: 'left' })
   })
 })

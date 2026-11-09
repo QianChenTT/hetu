@@ -6,7 +6,9 @@ import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
+import type { ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
+import type { ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
@@ -74,6 +76,11 @@ function lookup<T extends object>(entries: Record<string, T>): Readonly<Record<s
 }
 
 const target = z.strictObject({ plugin: pluginId })
+// A frame entry's name, which is never the name of another half
+const frameName = localName.refine(name => name !== 'worker' && name !== 'host' && name !== 'page', 'the name of another half')
+// A frame's single-use URL as main minted it: the views host, a token of 32 hex digits, then a path in the plugin
+export const FRAME_TOKEN = /^[0-9a-f]{32}$/
+const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
 
 const coreTable = {
   // The caller as its way in names it
@@ -111,6 +118,13 @@ const coreTable = {
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
   // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
   'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
+  // Each plugin's declared views and theme with whether it runs, which the drawer reads again on core.status and
+  // core.security
+  'core.views': { from: 'windows', args: nothing },
+  // A single-use URL main serves one of a running plugin's frames from, out of the bytes it started with
+  'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
+  // The frame at that URL is gone. navigated says it loaded again, which the floor records
+  'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -259,6 +273,20 @@ export type ActionResults = {
   'luoshu.write': { version: string }
   'luoshu.list': { paths: string[], next: string | null }
   'core.pickFolder': string | null
-  'editor.reach': { read: boolean, write: boolean, verbs: string[] }
+  'editor.reach': { read: boolean, write: boolean, list: boolean, verbs: string[] }
+  'core.views': { plugins: CoreViewsPlugin[] }
+  'editor.frame': { url: string }
+  'editor.frameGone': null
+}
+
+// One plugin as core.views lists it: one that declares views or a theme, whatever its state
+export type CoreViewsPlugin = {
+  plugin: string
+  name: string
+  running: boolean
+  // Whether it has a worker, which a view needs to draw
+  worker: boolean
+  views: Record<string, ViewSpec>
+  theme: ThemeSpec | null
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown

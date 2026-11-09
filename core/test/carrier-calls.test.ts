@@ -777,11 +777,18 @@ describe('editor.reach', () => {
   it("answers what the gate gives the plugin for one note: read, write and its ui items", async () => {
     const { way } = made()
     const reach = async (args: unknown) => (await way.ask('editor', 'editor.reach', args)).result
-    expect(await reach({ plugin: 'alpha', path: 'notes/own/a.md' })).toEqual({ read: true, write: true, verbs: ['ui.decoration', 'ui.command'] })
-    expect(await reach({ plugin: 'alpha', path: 'notes/b.md' })).toEqual({ read: true, write: false, verbs: ['ui.decoration', 'ui.command'] })
-    expect(await reach({ plugin: 'alpha', path: 'other.md' })).toEqual({ read: false, write: false, verbs: ['ui.decoration', 'ui.command'] })
-    expect(await reach({ plugin: 'alpha' })).toEqual({ read: false, write: false, verbs: ['ui.decoration', 'ui.command'] })
-    expect(await reach({ plugin: 'beta', path: 'notes/b.md' })).toEqual({ read: false, write: false, verbs: [] })
+    const verbs = ['ui.decoration', 'ui.command']
+    expect(await reach({ plugin: 'alpha', path: 'notes/own/a.md' })).toEqual({ read: true, write: true, list: true, verbs })
+    expect(await reach({ plugin: 'alpha', path: 'notes/b.md' })).toEqual({ read: true, write: false, list: true, verbs })
+    expect(await reach({ plugin: 'alpha', path: 'other.md' })).toEqual({ read: false, write: false, list: false, verbs })
+    expect(await reach({ plugin: 'alpha' })).toEqual({ read: false, write: false, list: false, verbs })
+    expect(await reach({ plugin: 'beta', path: 'notes/b.md' })).toEqual({ read: false, write: false, list: false, verbs: [] })
+  })
+
+  it("answers list from what the plugin may list, names it can't read included", async () => {
+    const { way, gate } = made()
+    gate.grants.alpha = [...gate.grants.alpha!, { type: 'luoshu.list', paths: ['names/**'] }]
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'names/a.md' })).result).toMatchObject({ read: false, list: true })
   })
 
   it('asks the gate about the plugin as the caller, at the canonical stage', async () => {
@@ -803,7 +810,7 @@ describe('editor.reach', () => {
     const { way, loader } = made()
     loader.slots.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
-      .toEqual({ read: true, write: true, verbs: ['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys'] })
+      .toEqual({ read: true, write: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['starting', 'failed', 'absent'] as const) {
       loader.slots.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')

@@ -1,3 +1,4 @@
+import type { PluginFile } from '../../lib/hash-files.ts'
 import type { WorkerStart } from '../loader/seams.ts'
 
 // The ports between plugin workers and the editor page's drawer. Main makes one channel for each pair of a running worker
@@ -53,17 +54,25 @@ export class DrawerPorts<P> {
 }
 
 type WorkerSide = { start(start: WorkerStart): void, terminate(id: string, incarnation: number): void }
+type ViewsSide = {
+  started(id: string, incarnation: number, files: readonly PluginFile[], frames: Readonly<Record<string, string>>): void
+  ended(id: string, incarnation: number): void
+}
 
 // The runtime's worker starts and ends with the drawer ports told: a start marked drawer and every end, which the loader
-// sends for each incarnation that ends, a crash included
-export function withDrawers(workers: WorkerSide, drawers: Pick<DrawerPorts<unknown>, 'started' | 'ended'>): WorkerSide {
+// sends for each incarnation that ends, a crash included. The views host gets a drawer worker's files and frames, which
+// it serves the plugin's frames and icons from until that incarnation ends
+export function withDrawers(workers: WorkerSide, drawers: Pick<DrawerPorts<unknown>, 'started' | 'ended'>, views?: ViewsSide): WorkerSide {
   return {
     start(start) {
       workers.start(start)
-      if (start.drawer) drawers.started(start.id, start.incarnation)
+      if (!start.drawer) return
+      views?.started(start.id, start.incarnation, start.files ?? [], start.frames ?? {})
+      drawers.started(start.id, start.incarnation)
     },
     terminate(id, incarnation) {
       drawers.ended(id, incarnation)
+      views?.ended(id, incarnation)
       workers.terminate(id, incarnation)
     },
   }

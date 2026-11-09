@@ -129,7 +129,7 @@ describe('the first-party reconcile', () => {
     const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
     const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
     const wider = { type: 'luoshu.write' as const, paths: ['**'] }
-    const panel = { type: 'ui.panel' as const }
+    const panel = { type: 'ui.view' as const }
     const granted = (version: string, capabilities: object[]) => filesFor(workerManifest('git', { version, capabilities }))
     const made = await harness({
       install: installWith({ git: granted('1.1.0', [read, wider, panel]) }),

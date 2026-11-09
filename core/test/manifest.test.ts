@@ -9,22 +9,22 @@ const search = {
   id: 'search',
   name: 'Search',
   version: '1.2.0',
-  api: '^1',
+  api: '^2',
   entries: { worker: 'dist/worker.js', frames: { panel: 'dist/panel.html' } },
   requires: ['luoshu'],
   provides: { actions: { query: {} }, topics: ['indexed'] },
   capabilities: [
     { type: 'luoshu.read', paths: ['**'] },
     { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
-    { type: 'ui.panel' },
+    { type: 'ui.view' },
   ],
 }
-const minimal = { id: 'hello', name: 'Hello', version: '0.1.0', api: '^1', entries: { worker: 'worker.js' } }
+const minimal = { id: 'hello', name: 'Hello', version: '0.1.0', api: '^2', entries: { worker: 'worker.js' } }
 const leases = {
   id: 'leases',
   name: 'Leases',
   version: '1.0.0',
-  api: '^1',
+  api: '^2',
   entries: { host: 'host.js' },
   provides: { actions: { acquire: {}, renew: {}, release: {}, list: {} } },
   capabilities: [{ type: 'guard.hook' }],
@@ -52,14 +52,15 @@ describe('a manifest', () => {
   })
 
   it('parses an api range outside this core, which the loader refuses with api', () => {
-    expect(API_VERSION).toBe(1)
-    expect(supportsApi('^1')).toBe(true)
-    expect(supportsApi('^2')).toBe(false)
+    expect(API_VERSION).toBe(2)
+    expect(supportsApi('^2')).toBe(true)
+    expect(supportsApi('^1')).toBe(false)
+    expect(supportsApi('^3')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
     expect(supportsApi('^12')).toBe(false)
-    expect(folderManifest.safeParse({ ...minimal, api: '^2' }).success).toBe(true)
+    expect(folderManifest.safeParse({ ...minimal, api: '^1' }).success).toBe(true)
     expect(folderManifest.safeParse({ ...minimal, api: '^999999' }).success).toBe(true)
   })
 
@@ -83,7 +84,7 @@ describe('a manifest', () => {
     ['an api with a leading zero', { ...minimal, api: '^01' }],
     ['an api major over six digits', { ...minimal, api: '^1000000' }],
     ['no entry', { ...minimal, entries: {} }],
-    ['no entries field', { id: 'hello', name: 'Hello', version: '0.1.0', api: '^1' }],
+    ['no entries field', { id: 'hello', name: 'Hello', version: '0.1.0', api: '^2' }],
     ['an empty frames map, which gives nothing to run', { ...minimal, entries: { frames: {} } }],
     ['an entry leaving the folder', { ...minimal, entries: { worker: '../worker.js' } }],
     ['a frame path leaving the folder', { ...minimal, entries: { frames: { panel: '../panel.html' } } }],
@@ -112,6 +113,26 @@ describe('a manifest', () => {
     ['a tier', { ...minimal, tier: 'host' }],
     ['a $schema', { ...minimal, $schema: 'https://example.com/schema.json' }],
     ['uses with version ranges, out of v1', { ...minimal, uses: { git: '^1' } }],
+    ['a view with no title', { ...minimal, views: { tree: { kind: 'view' } } }],
+    ['a view of an unknown kind', { ...minimal, views: { tree: { title: 'Tree', kind: 'panel' } } }],
+    ['a view title with a right to left override', { ...minimal, views: { tree: { title: `Tree${String.fromCodePoint(0x202e)}`, kind: 'view' } } }],
+    ['a view title past 64 characters', { ...minimal, views: { tree: { title: 'x'.repeat(65), kind: 'view' } } }],
+    ['a view name that is not a name', { ...minimal, views: { 'my tree': { title: 'Tree', kind: 'view' } } }],
+    ['a view with an unknown field', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', html: '<b>' } } }],
+    ['a view whose frame is no frame entry', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', frame: 'panel' } } }],
+    ['a view icon that is a script', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', icon: 'dist/icon.js' } } }],
+    ['a view icon leaving the folder', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', icon: '../icon.svg' } } }],
+    ['a view minimum past its maximum', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', size: { min: 400, max: 200 } } } }],
+    ['a view size past 4096', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', size: { preferred: 5000 } } } }],
+    ['a view size that is not whole', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', size: { min: 1.5 } } } }],
+    ['a priority past 100', { ...minimal, views: { tree: { title: 'Tree', kind: 'view', priority: 101 } } }],
+    ['17 views', { ...minimal, views: Object.fromEntries(many(17, i => `v${i}`).map(name => [name, { title: name, kind: 'item' }])) }],
+    ['a theme token outside the list', { ...minimal, theme: { tokens: { 'color-link': '#000000' } } }],
+    ['a theme color with a url', { ...minimal, theme: { tokens: { 'color-bg': 'url(x)' } } }],
+    ['a theme color past its grammar', { ...minimal, theme: { tokens: { 'color-bg': '#00000000' } } }],
+    ['a theme font with a quote', { ...minimal, theme: { tokens: { 'font-ui': 'Inter", x' } } }],
+    ['a theme with an unknown field', { ...minimal, theme: { tokens: {}, css: 'a{}' } }],
+    ['a theme font size past 24px', { ...minimal, theme: { tokens: { 'font-size': '25px' } } }],
   ]
 
   it.each(refused)('refuses %s from the folder and from the install', (_name, value) => {
@@ -123,6 +144,29 @@ describe('a manifest', () => {
     for (const value of [null, [], 'search', 5]) {
       expect(folderManifest.safeParse(value).success).toBe(false)
     }
+  })
+})
+
+describe('views and a theme', () => {
+  const drawn = {
+    ...minimal,
+    entries: { worker: 'dist/worker.js', frames: { board: 'dist/board.html' } },
+    capabilities: [{ type: 'ui.view' }],
+    views: {
+      tree: { title: 'Notes', kind: 'view', icon: 'dist/tree.svg', size: { min: 160, preferred: 240, max: 480 }, priority: 40 },
+      board: { title: 'Board', kind: 'view', frame: 'board' },
+      words: { title: 'Words', kind: 'item', icon: 'dist/words.png', size: { min: 60 } },
+    },
+    theme: { tokens: { 'color-bg': '#fafafa', 'color-editor-fg': '#222', 'font-ui': 'Inter, system-ui', 'font-size': '14px', radius: '4px', space: '8px' } },
+  }
+
+  it.each(both)('takes views and a theme from the %s', (_from, schema) => {
+    expect(schema.parse(drawn)).toEqual(drawn)
+  })
+
+  it.each(both)('comes out of the %s with a views map of no prototype', (_from, schema) => {
+    const parsed = schema.parse({ ...minimal, views: raw('{"toString":{"title":"x","kind":"view"}}') })
+    expect(Object.getPrototypeOf(parsed.views)).toBe(null)
   })
 })
 
@@ -241,7 +285,7 @@ describe('keys that reach Object', () => {
     ['prototype as an action', minimalText.replace(/}$/, ',"provides":{"actions":{"prototype":{}}}}')],
     ['__proto__ inside an action', minimalText.replace(/}$/, ',"provides":{"actions":{"handle":{"__proto__":{"from":["x"]}}}}}')],
     ['__proto__ inside a capability', minimalText.replace(/}$/, ',"capabilities":[{"type":"storage","__proto__":{}}]}')],
-    ['constructor inside a capability', minimalText.replace(/}$/, ',"capabilities":[{"type":"ui.panel","constructor":1}]}')],
+    ['constructor inside a capability', minimalText.replace(/}$/, ',"capabilities":[{"type":"ui.view","constructor":1}]}')],
   ])('refuses %s', (_name, text) => {
     expect(folderManifest.safeParse(raw(text)).success).toBe(false)
     expect(installManifest.safeParse(raw(text)).success).toBe(false)

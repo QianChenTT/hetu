@@ -585,7 +585,10 @@ describe('the windows\' own actions', () => {
     const way = windowWay(carrier, { editor, trusted })
     for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
     expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
-    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch'])
+    expect((await way.ask('editor', 'editor.frame', { plugin: 'alpha', frame: 'board' })).ok).toBe(true)
+    const url = 'hetu://views/0123456789abcdef0123456789abcdef/board.html'
+    expect((await way.ask('editor', 'editor.frameGone', { url, navigated: true })).ok).toBe(true)
+    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch', 'editor.frame', 'editor.frameGone'])
     expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
   })
 

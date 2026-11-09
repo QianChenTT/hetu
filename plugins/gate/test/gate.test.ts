@@ -76,7 +76,7 @@ describe('deciding', () => {
   it('allows a type with no scope to a plugin holding it', () => {
     const gate = gateOn({ alpha: [item({ type: 'log.read' })] })
     expect(gate.decide(access(alpha, 'log.read', {}))).toMatchObject({ allow: true })
-    expect(gate.decide(access(alpha, 'ui.panel', {}))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'ui.view', {}))).toMatchObject({ code: 'not-granted' })
   })
 
   it('refuses a type it has no scope rule for even to a plugin holding it, until its provider brings the fields', () => {
@@ -171,9 +171,9 @@ describe('reading on another\'s behalf', () => {
 
   it('gives the ui types a plugin holds switched on as its verbs in the editor, and none in the trusted window', () => {
     const gate = gateOn({
-      alpha: [item({ type: 'ui.panel' }), item({ type: 'ui.command' }, { off: true }), item({ type: 'ui.keys' }, { firstUse: true }), item(notes)],
+      alpha: [item({ type: 'ui.view' }), item({ type: 'ui.command' }, { off: true }), item({ type: 'ui.keys' }, { firstUse: true }), item(notes)],
     })
-    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.panel'])
+    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.view'])
     expect(gate.verbs('alpha', 'trusted')).toEqual([])
     expect(gate.verbs('beta', 'editor')).toEqual([])
   })

@@ -793,7 +793,7 @@ describe('subscribing', () => {
     ['a topic outside the grammar', ['Search.indexed']],
     ['a signal', ['events.dropped']],
     ['a topic in another core namespace', ['security.request']],
-    ['a ui verb', ['ui.panel']],
+    ['a ui verb', ['ui.view']],
     ['an Object member', ['constructor']],
     ['a key plain data refuses', ['__proto__']],
   ])('refuses a subscribe naming %s invalid before the gate hears of it', async (_name, topics) => {

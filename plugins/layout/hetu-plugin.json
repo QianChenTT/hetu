@@ -1,0 +1,11 @@
+{
+  "id": "layout",
+  "name": "Layout",
+  "version": "0.1.0",
+  "api": "^2",
+  "entries": { "worker": "dist/worker.js" },
+  "capabilities": [
+    { "type": "ui.layout" },
+    { "type": "storage" }
+  ]
+}

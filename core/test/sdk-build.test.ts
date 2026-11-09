@@ -25,7 +25,7 @@ async function folder(files: Record<string, string>): Promise<string> {
 }
 
 const manifest = (over: object = {}) => JSON.stringify({
-  id: 'sample', name: 'Sample', version: '1.0.0', api: '^1', entries: { worker: 'dist/worker.js' }, ...over,
+  id: 'sample', name: 'Sample', version: '1.0.0', api: '^2', entries: { worker: 'dist/worker.js' }, ...over,
 })
 
 describe('building a plugin', () => {

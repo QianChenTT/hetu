@@ -66,10 +66,10 @@ const everyCapability = [
   { type: 'luoshu.read', paths: ['**'] },
   { type: 'luoshu.write', paths: ['04 - Daily/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
-  { type: 'ui.panel' },
+  { type: 'ui.view' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.statusBar' },
+  { type: 'ui.layout' },
   { type: 'ui.keys' },
   { type: 'events.subscribe', topics: ['note.written'] },
   { type: 'storage' },
@@ -298,7 +298,7 @@ describe('writing', () => {
 
   it('keeps the items the human switched off, and reads an entry written without the list as none switched off', async () => {
     const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
-    await addPlugin('search', { granted: [read, { type: 'ui.panel' }], off: [read] })
+    await addPlugin('search', { granted: [read, { type: 'ui.view' }], off: [read] })
     await addPlugin('git', { granted: [read] })
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
@@ -542,7 +542,7 @@ describe('writing', () => {
       // Entries are for folder plugins, which never hold an install-only type
       ['a plugin with an install-only capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'guard.hook' }] }))],
       ['a plugin with more capabilities than core/api allows', () => store.writePlugin('search', pluginIn({
-        granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'ui.panel' })),
+        granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'ui.view' })),
       }))],
       // Counted across entries, so one type split over many can't get past the cap
       ['a plugin with more scopes for one type than core/api allows', () => store.writePlugin('search', pluginIn({

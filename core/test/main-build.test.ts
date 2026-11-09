@@ -37,9 +37,19 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'hidden-marks', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'hidden-marks', 'layout', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
+  })
+
+  it('writes hetu\'s own layout into the install as a first-party copy, a worker holding ui.layout and storage', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'layout')
+    expect(list.plugins.layout).toEqual({ path: 'plugins/layout', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { built: true })).toEqual([])
   })
 
   it('writes the gate and the capabilities plugin into the install as host halves, each one module importing nothing, with the hash of its files', async () => {

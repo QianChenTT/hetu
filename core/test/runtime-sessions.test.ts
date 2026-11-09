@@ -85,6 +85,28 @@ describe('the sessions', () => {
     expect(editor.headers.get('content-security-policy')).not.toContain('worker-src')
   })
 
+  it('lets the editor page frame and show images from the views host, and no other page', async () => {
+    const editor = (await serve('editor', get('hetu://editor/'), root)).headers.get('content-security-policy') ?? ''
+    expect(editor).toContain('frame-src hetu://views')
+    expect(editor).toContain("img-src 'self' hetu://views")
+    expect(editor).toContain("frame-ancestors 'none'")
+    const trusted = (await serve('trusted', get('hetu://trusted/'), root)).headers.get('content-security-policy') ?? ''
+    expect(trusted).not.toContain('hetu://views')
+  })
+
+  it('serves the views host from what main holds for it, with the frame\'s own CSP', async () => {
+    const views = {
+      serve: (url: string) => (url === 'hetu://views/t/a.html' ? { bytes: new Uint8Array(Buffer.from('<p>a</p>')), type: 'text/html; charset=utf-8', csp: "default-src 'none'; frame-ancestors hetu://editor" } : null),
+    }
+    const page = await serve('editor', get('hetu://views/t/a.html'), root, views)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toBe('<p>a</p>')
+    expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; frame-ancestors hetu://editor")
+    expect(page.headers.get('x-content-type-options')).toBe('nosniff')
+    expect((await serve('editor', get('hetu://views/t/b.html'), root, views)).status).toBe(404)
+    expect((await serve('editor', get('hetu://views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
+  })
+
   it('answers only GET and HEAD', async () => {
     expect((await serve('editor', get('hetu://editor/', 'POST'), root)).status).toBe(405)
     const head = await serve('editor', get('hetu://editor/', 'HEAD'), root)

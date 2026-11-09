@@ -74,23 +74,317 @@ body {
   flex: 1;
 }
 
+/* The stage plugins draw in. Nothing in it reaches above it: the base layer is a stacking context of its own below the
+   lifted layer, which holds the editors, titles and frames over their placeholders, and the overlay layer above both.
+   Theme variables are set on the base and lifted layers only */
+/* Every token's value with no theme picked, which a theme's own values set on the same layers replace */
+#base,
 #editors {
+  --hetu-color-bg: #ffffff;
+  --hetu-color-fg: #1f1f1f;
+  --hetu-color-muted: #6b6b6b;
+  --hetu-color-accent: #1a5fb4;
+  --hetu-color-border: #dddddd;
+  --hetu-color-surface: #f6f6f6;
+  --hetu-color-editor-bg: #ffffff;
+  --hetu-color-editor-fg: #1f1f1f;
+  --hetu-color-selection: #d7e4f7;
+  --hetu-font-ui: system-ui, sans-serif;
+  --hetu-font-editor: system-ui, sans-serif;
+  --hetu-font-mono: ui-monospace, monospace;
+  --hetu-font-size: 13px;
+  --hetu-space: 8px;
+  --hetu-radius: 4px;
+}
+
+#stage {
   flex: 1;
   min-height: 0;
+  position: relative;
   overflow: hidden;
+  contain: strict;
+}
+
+#base {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  isolation: isolate;
+  contain: strict;
+  overflow: hidden;
+  background: var(--hetu-color-bg, #ffffff);
+  color: var(--hetu-color-fg, #1f1f1f);
+  font-family: var(--hetu-font-ui, system-ui, sans-serif);
+  font-size: var(--hetu-font-size, 13px);
+}
+
+#base > * {
+  width: 100%;
+  height: 100%;
+}
+
+#editors {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+#editors > * {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+#editors > [hidden] {
+  display: none;
+}
+
+#overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+#overlay > * {
+  position: absolute;
+  pointer-events: auto;
 }
 
 #empty {
+  margin: 0;
   padding: 24px;
   color: #666666;
+  background: #ffffff;
+  font: 14px system-ui, sans-serif;
+}
+
+.hetu-frame {
+  z-index: 1;
+  border: 0;
 }
 
 .editor {
-  height: 100%;
+  z-index: 2;
 }
 
 .editor .cm-editor {
   height: 100%;
+  background: var(--hetu-color-editor-bg, #ffffff);
+  color: var(--hetu-color-editor-fg, #1f1f1f);
+}
+
+.editor .cm-content {
+  font-family: var(--hetu-font-editor, system-ui, sans-serif);
+}
+
+.editor .cm-selectionBackground,
+.editor .cm-focused .cm-selectionBackground {
+  background: var(--hetu-color-selection, #d7e4f7) !important;
+}
+
+/* What the drawer draws for plugins, in fixed styles no plugin or theme reaches */
+.hetu-title {
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  background: #f3f3f3;
+  color: #1f1f1f;
+  font: 12px system-ui, sans-serif;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+  cursor: default;
+}
+
+.hetu-down {
+  padding: 12px;
+  color: #666666;
+  font: 12px system-ui, sans-serif;
+}
+
+.hetu-popover {
+  isolation: isolate;
+  contain: paint;
+  max-width: 60vw;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--hetu-color-surface, #ffffff);
+  border: 1px solid #999999;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+}
+
+.hetu-strip {
+  flex: none;
+  padding: 1px 6px;
+  background: #333333;
+  color: #ffffff;
+  font: 11px system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.hetu-popover-body {
+  overflow: auto;
+}
+
+/* Plugin nodes: text stays inside its own box when it reorders, slots clip what they hold */
+.hetu-text {
+  unicode-bidi: isolate;
+}
+
+.hetu-slot {
+  contain: paint;
+  overflow: hidden;
+}
+
+.hetu-scroll {
+  overflow: auto;
+}
+
+.hetu-list {
+  overflow: auto;
+}
+
+.hetu-list > div {
+  position: relative;
+}
+
+.hetu-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.hetu-divider {
+  flex: 0 0 4px;
+  background: #dddddd;
+}
+
+.hetu-divider-row {
+  cursor: col-resize;
+}
+
+.hetu-divider-column {
+  cursor: row-resize;
+}
+
+.hetu-plain {
+  position: relative;
+}
+
+#drag-ghost {
+  position: fixed;
+  z-index: 2147483644;
+  max-width: 240px;
+  padding: 2px 8px;
+  background: #333333;
+  color: #ffffff;
+  font: 12px system-ui, sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+#drop-mark {
+  position: fixed;
+  z-index: 2147483643;
+  box-sizing: border-box;
+  border: 2px solid #1a5fb4;
+  background: rgb(26 95 180 / 12%);
+  pointer-events: none;
+}
+
+#drag-ghost[hidden],
+#drop-mark[hidden] {
+  display: none;
+}
+
+/* The views menu, in the core layer */
+#menu {
+  position: fixed;
+  top: 48px;
+  right: 16px;
+  width: min(420px, 90vw);
+  max-height: 80vh;
+  z-index: 2147483645;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #1f1f1f;
+  border: 1px solid #999999;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 20%);
+  font: 13px system-ui, sans-serif;
+}
+
+#menu[hidden] {
+  display: none;
+}
+
+#menu header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #eeeeee;
+  border-bottom: 1px solid #cccccc;
+  font-weight: bold;
+}
+
+#menu-body {
+  overflow-y: auto;
+  padding: 4px 10px 10px;
+}
+
+#menu h2 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: #555555;
+}
+
+#menu .menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+#menu .menu-views {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#menu .menu-views li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+#menu .menu-name {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#menu .menu-star {
+  border: 0;
+  background: none;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#menu .menu-note {
+  margin: 4px 0;
+  color: #666666;
 }
 
 .editor .cm-scroller {

@@ -104,7 +104,7 @@ describe('reserved ids', () => {
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
     'gate', 'capabilities', 'log',
     'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
-    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify',
+    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -112,7 +112,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'])
+    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'])
   })
 
   it.each(expected)('reserves %j', id => {

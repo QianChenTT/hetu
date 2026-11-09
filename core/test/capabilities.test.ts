@@ -13,10 +13,10 @@ const everyType = [
   { type: 'luoshu.write', paths: ['04 - Daily/**'] },
   { type: 'luoshu.list', paths: ['notes/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
-  { type: 'ui.panel' },
+  { type: 'ui.view' },
+  { type: 'ui.layout' },
   { type: 'ui.decoration' },
   { type: 'ui.command' },
-  { type: 'ui.statusBar' },
   { type: 'ui.keys' },
   { type: 'events.subscribe', topics: ['luoshu.changed', 'search.indexed'] },
   { type: 'storage' },
@@ -29,9 +29,9 @@ const everyType = [
 ]
 
 describe('the fixed list', () => {
-  it('keeps every type state.ts had and adds guard.hook, plugin.call, ui.keys, log.read and luoshu.list', () => {
+  it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2', () => {
     expect(capabilityTypes).toEqual([
-      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
+      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
       'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
     ])
   })
@@ -48,7 +48,7 @@ describe('the fixed list', () => {
     expect(capabilities.parse(everyType)).toEqual(everyType)
   })
 
-  it.each(['watchdog.control', 'luoshu.delete', 'host.replace', 'ui.*', 'exec.any', ''])('refuses the type %j', type => {
+  it.each(['watchdog.control', 'luoshu.delete', 'host.replace', 'ui.*', 'exec.any', '', 'ui.panel', 'ui.statusBar'])('refuses the type %j', type => {
     expect(capability.safeParse({ type }).success).toBe(false)
   })
 
@@ -179,9 +179,9 @@ describe('size caps', () => {
   })
 
   it(`takes ${MAX_CAPABILITIES} entries and refuses one more`, () => {
-    const list = Array.from({ length: MAX_CAPABILITIES }, () => ({ type: 'ui.panel' }))
+    const list = Array.from({ length: MAX_CAPABILITIES }, () => ({ type: 'ui.view' }))
     expect(capabilities.safeParse(list).success).toBe(true)
-    expect(capabilities.safeParse([...list, { type: 'ui.panel' }]).success).toBe(false)
+    expect(capabilities.safeParse([...list, { type: 'ui.view' }]).success).toBe(false)
   })
 
   it('refuses an argument array past its cap', () => {
@@ -200,8 +200,8 @@ describe('install-only types', () => {
   it('refuses one for a plugin-folder plugin and takes it for an install plugin', () => {
     expect(folderCapability.safeParse({ type: 'guard.hook' }).success).toBe(false)
     expect(capability.safeParse({ type: 'guard.hook' }).success).toBe(true)
-    expect(folderCapabilities.safeParse([{ type: 'ui.panel' }, { type: 'guard.hook' }]).success).toBe(false)
-    expect(capabilities.safeParse([{ type: 'ui.panel' }, { type: 'guard.hook' }]).success).toBe(true)
+    expect(folderCapabilities.safeParse([{ type: 'ui.view' }, { type: 'guard.hook' }]).success).toBe(false)
+    expect(capabilities.safeParse([{ type: 'ui.view' }, { type: 'guard.hook' }]).success).toBe(true)
   })
 
   it.each(everyType.filter(granted => !isInstallOnly(granted.type)))('takes $type from the plugin folder', granted => {
@@ -221,7 +221,7 @@ describe('keys that reach Object', () => {
   })
 
   it('refuses one nested in a list entry', () => {
-    expect(capabilities.safeParse(raw('[{"type":"ui.panel"},{"type":"plugin.call","targets":["search"],"__proto__":{}}]')).success).toBe(false)
+    expect(capabilities.safeParse(raw('[{"type":"ui.view"},{"type":"plugin.call","targets":["search"],"__proto__":{}}]')).success).toBe(false)
   })
 })
 
