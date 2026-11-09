@@ -130,8 +130,7 @@ type Staged = { dir: string, read: Read }
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http',
-  'editor-core', 'hidden-marks',
+  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http', 'hidden-marks',
 ] as const)
 
 const FOLDER_RANK = 1000

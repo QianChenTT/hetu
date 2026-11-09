@@ -78,8 +78,8 @@ describe('slots, providers and guards', () => {
     })
   })
 
-  it('serves core, security, watchdog, events, ui, plugin and log in the core', () => {
-    expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log'])
+  it('serves core, security, watchdog, events, ui, plugin, log and editor in the core', () => {
+    expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'])
   })
 
   it('lets guards hook luoshu.write and expects none until leases ships', () => {
@@ -87,10 +87,9 @@ describe('slots, providers and guards', () => {
     expect(guards).toEqual({ 'luoshu.write': [] })
   })
 
-  it('lists the install plugins, host-level and in-page', () => {
+  it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
     expect(installIds).toEqual([
-      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
-      'editor-core', 'hidden-marks',
+      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
     ])
   })
 
@@ -102,9 +101,9 @@ describe('slots, providers and guards', () => {
 describe('reserved ids', () => {
   // Section 3: every namespace the carrier serves, every slot, provider and install id and the ids first party keeps
   const expected = [
-    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog',
+    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
     'gate', 'capabilities', 'log',
-    'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'editor-core', 'hidden-marks',
+    'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify',
   ]
 
@@ -125,7 +124,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor', 'trusted', 'hetu'])(
+  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetu'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)

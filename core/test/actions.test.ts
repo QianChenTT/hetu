@@ -26,6 +26,7 @@ describe('the core actions', () => {
       'core.quit': 'windows',
       'core.relaunch': 'trusted',
       'core.pickFolder': 'trusted',
+      'editor.reach': 'windows',
       'watchdog.stop': 'watchdog',
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',
@@ -83,6 +84,11 @@ describe('the core actions', () => {
     ['watchdog.restart', { plugin: 'search', force: true }, false],
     ['watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 }, true],
     ['watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 1.5 }, false],
+    ['editor.reach', { plugin: 'search', path: 'notes/a.md' }, true],
+    ['editor.reach', { plugin: 'search', path: 'notes/../a.md' }, false],
+    ['editor.reach', { plugin: 'Search', path: 'a.md' }, false],
+    ['editor.reach', { plugin: 'search' }, false],
+    ['editor.reach', { plugin: 'search', path: 'a.md', write: true }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
   })

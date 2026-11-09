@@ -108,6 +108,9 @@ const coreTable = {
   // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.set,
   // which waits for the Confirm
   'core.pickFolder': { from: 'trusted', args: nothing },
+  // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
+  // it holds. The drawer asks before it serves a plugin anything about an open note
+  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path }) },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -253,5 +256,6 @@ export type ActionResults = {
   'luoshu.write': { version: string }
   'luoshu.list': { paths: string[], next: string | null }
   'core.pickFolder': string | null
+  'editor.reach': { read: boolean, write: boolean, verbs: string[] }
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown
