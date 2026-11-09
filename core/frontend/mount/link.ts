@@ -62,13 +62,23 @@ export class CoreLink {
       return
     }
     if (got.kind !== 'event' || typeof got.topic !== 'string') return
+    // The window fell past its credits and these topics' events were lost, core.status and core.security among them
+    // maybe. Each topic's handlers hear it with no path, so each reads again what it can't know changed
+    if (got.topic === 'events.dropped') {
+      const topics = (message as { topics?: unknown }).topics
+      if (Array.isArray(topics)) for (const topic of topics) if (typeof topic === 'string') this.tell({ topic })
+      return
+    }
     if (typeof got.seq === 'number') this.bridge.send({ v: 1, kind: 'ack', seq: got.seq })
-    const event: CoreEvent = typeof got.path === 'string' ? { topic: got.topic, path: got.path } : { topic: got.topic }
-    for (const handler of this.handlers.get(got.topic) ?? []) {
+    this.tell(typeof got.path === 'string' ? { topic: got.topic, path: got.path } : { topic: got.topic })
+  }
+
+  private tell(event: CoreEvent): void {
+    for (const handler of this.handlers.get(event.topic) ?? []) {
       try {
         handler(event)
       } catch (err) {
-        console.error(`a handler for ${got.topic} failed`, err)
+        console.error(`a handler for ${event.topic} failed`, err)
       }
     }
   }

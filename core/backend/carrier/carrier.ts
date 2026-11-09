@@ -894,12 +894,14 @@ export class Carrier {
   // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
   // anything about the note: read it, write it and the ui items it holds, from the gate with the plugin as the caller at
   // the canonical stage. A write whose item still asks at first use counts as none, since the bridge raises no prompt.
-  // Everything with the gate off, policy-down while it starts or is down, as for any call
+  // Everything with the gate off while a record can still land, policy-down while it starts or is down, as for any call
   private reach(args: unknown): Outcome {
     const plugin = field(args, 'plugin') as string
     const path = field(args, 'path') as string | undefined
     const state = this.slot('gate')
     if (state === 'off') {
+      const open = this.gateOpen()
+      if (open !== 'pass') return no(open as RefusalCode)
       const verbs = capabilityTypes.filter(type => type.startsWith('ui.'))
       return { ok: true, result: { read: path !== undefined, write: path !== undefined, verbs } }
     }

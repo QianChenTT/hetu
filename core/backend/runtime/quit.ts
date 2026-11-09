@@ -53,6 +53,8 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
 
 // How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
 export const QUIT_GRACE_MS = 2000
+// How long a quit the human asked for waits after core.quitting before its windows close, for the same drafts
+export const DRAFT_GRACE_MS = 750
 
 // What main does about a failure, kept apart from Electron so it runs in tests
 export type FailureParts = {

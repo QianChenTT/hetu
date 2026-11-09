@@ -1,6 +1,6 @@
-import { CORE_KEYS, Drawer, type PortLike } from './bridge.ts'
+import { Drawer, type PortLike } from './bridge.ts'
 import { EditorViews } from './editor.ts'
-import { keyName } from './keys.ts'
+import { coreKeyOf, keyName } from './keys.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { type NoteNotice, Notes } from './notes.ts'
 import { filterNames, listNames } from './palette.ts'
@@ -46,6 +46,7 @@ function drawBanner(shell: Shell, lines: string[], notices: Notice[]): void {
 function refusalText(code: string, reason?: string): string {
   if (reason === 'too-large') return 'This note is past the size hetu takes, so it can\'t be saved or kept as a draft'
   if (code === 'unavailable') return 'No notes folder is picked, so nothing can be saved'
+  if (code === 'throttled') return 'hetu is busy, so not every note is listed yet. Open this again in a moment'
   return `hetu refused: ${code}${reason === undefined ? '' : ` (${reason})`}`
 }
 
@@ -60,9 +61,10 @@ function start(bridge: Bridge): void {
   let drawer: Drawer | null = null
   const views = new EditorViews(element('editors'), {
     created: instance => drawer?.opened(instance),
-    changed: (instance, changes, remote) => {
+    changed: (instance, changes, remote, hid) => {
       drawer?.changed(instance, changes)
       if (!remote) notes?.changed(instance.id)
+      for (const plugin of hid) notes?.edited(instance.id, plugin)
       drawTitle()
       if (rawOpen) drawRawSoon()
     },
@@ -77,7 +79,7 @@ function start(bridge: Bridge): void {
     drawTitle()
   })
   notes = theNotes
-  const theDrawer = new Drawer(link, () => views.instances(), (instance, plugin) => theNotes.edited(instance, plugin), mac)
+  const theDrawer = new Drawer(link, () => views.instances(), (instance, plugin) => theNotes.edited(instance, plugin), { mac })
   drawer = theDrawer
   const raw = new RawSource(link, theNotes, id => views.text(id))
   shell.onStatus = status => views.hiddenMarks(status.page.includes('hidden-marks'))
@@ -95,7 +97,11 @@ function start(bridge: Bridge): void {
     const notice = id === null ? undefined : noteNotices.get(id)
     const bar = element('note-bar')
     bar.hidden = notice === undefined
-    if (notice === undefined || id === null) return
+    if (notice === undefined || id === null) {
+      element('note-text').textContent = ''
+      element('note-actions').replaceChildren()
+      return
+    }
     const clear = () => {
       noteNotices.delete(id)
       drawNoteBar()
@@ -150,6 +156,12 @@ function start(bridge: Bridge): void {
     drawNoteBar()
   }
 
+  // Every dirty note kept as a draft before hetu quits, so nothing typed in the last second is lost
+  async function quit(): Promise<void> {
+    await theNotes.keepAll()
+    await link.call('core.quit')
+  }
+
   async function save(): Promise<void> {
     const id = views.shown()
     if (id === null) return
@@ -163,6 +175,8 @@ function start(bridge: Bridge): void {
   let names: string[] = []
   let matches: string[] = []
   let picked = 0
+  // Each opening's listing, so pages of an older one still coming are dropped
+  let listing = 0
 
   function drawPalette(): void {
     matches = filterNames(names, element<HTMLInputElement>('palette-input').value)
@@ -181,19 +195,33 @@ function start(bridge: Bridge): void {
   }
 
   async function openPalette(): Promise<void> {
-    const listed = await listNames(link)
-    names = listed.names
+    const run = ++listing
+    names = []
     picked = 0
     const note = element('palette-note')
-    note.textContent = listed.refused !== undefined
-      ? refusalText(listed.refused)
-      : listed.cut ? 'Only the first 20,000 names are listed' : ''
-    note.hidden = note.textContent === ''
+    note.textContent = 'Listing notes'
+    note.hidden = false
     const input = element<HTMLInputElement>('palette-input')
     input.value = ''
     element('palette').hidden = false
     drawPalette()
     input.focus()
+    // Names show as each page comes, so a large luoshu is searchable while the rest are listed
+    const listed = await listNames(link, {
+      onPage: page => {
+        if (run !== listing) return
+        names.push(...page)
+        note.textContent = `Listing notes, ${names.length} so far`
+        drawPalette()
+      },
+    })
+    if (run !== listing) return
+    names = listed.names
+    note.textContent = listed.refused !== undefined
+      ? refusalText(listed.refused)
+      : listed.cut ? 'Only the first 20,000 names are listed' : ''
+    note.hidden = note.textContent === ''
+    drawPalette()
   }
 
   function closePalette(): void {
@@ -256,7 +284,8 @@ function start(bridge: Bridge): void {
     rawOpen = !rawOpen
     element('raw').hidden = !rawOpen
     if (rawOpen) {
-      rawFocus = views.focused()
+      // The note being typed in, else the one on screen, as after a click on the bar's button
+      rawFocus = views.focused() ?? views.shown()
       rawPick = undefined
       element('raw').focus()
       void drawRaw()
@@ -281,23 +310,24 @@ function start(bridge: Bridge): void {
   // ---- the core keys, taken before CodeMirror or any binding
 
   window.addEventListener('keydown', event => {
-    const name = keyName(event, mac)
-    if (name === 'Escape' && rawOpen) {
+    if (event.key === 'Escape' && rawOpen) {
       event.preventDefault()
       toggleRaw()
       return
     }
-    if (name === null || !CORE_KEYS.includes(name)) return
+    const core = coreKeyOf(event, mac)
+    if (core === null) return
     event.preventDefault()
     event.stopPropagation()
     if (event.repeat) return
-    if (name === 'Mod-/') toggleRaw()
-    else if (name === 'Mod-p') void openPalette()
-    else if (name === 'Mod-s') void save()
-    else if (name === 'Mod-q') void link.call('core.quit')
+    if (core === 'raw') toggleRaw()
+    else if (core === 'open') void openPalette()
+    else if (core === 'save') void save()
+    else void quit()
   }, true)
 
   element('open').addEventListener('click', () => void openPalette())
+  element('raw-open').addEventListener('click', toggleRaw)
   element('security').addEventListener('click', () => shell.open())
 
   // ---- each plugin's port to the bridge, from main through the preload

@@ -1,5 +1,6 @@
 import type { MessagePortMain } from 'electron'
 import { describe, expect, it } from 'vitest'
+import { DrawerPorts, withDrawers } from '../backend/runtime/drawer-ports.ts'
 import { type Renderer, WorkerRenderer, WorkerRenderers } from '../backend/runtime/workers.ts'
 
 class FakePort {
@@ -321,5 +322,49 @@ describe("a worker's port to the drawer", () => {
     const none = new FakePort()
     groups.drawer('beta', 1, none as unknown as MessagePortMain)
     expect(none.closed).toBe(true)
+  })
+})
+
+describe("a worker's drawer port through its whole way", () => {
+  it('reaches a worker started while the editor page is loaded, sent right after its start', () => {
+    const { workers, renderers } = runtime()
+    const drawers = new DrawerPorts<string>({
+      channel: () => ({ port1: new FakePort(), port2: new FakePort() }),
+      toWorker: (id, incarnation, port) => workers.drawer(id, incarnation, port as MessagePortMain),
+      toPage: () => {},
+      endInPage: () => {},
+    })
+    drawers.loaded('page')
+    const side = withDrawers(workers, drawers)
+    side.start({ ...start('search').start, drawer: true })
+    renderers[0].says({ kind: 'ready' })
+    expect(renderers[0].posted.map(post => post.channel)).toEqual(['hetu:start', 'hetu:drawer'])
+  })
+
+  it('closes a drawer port still waiting when the renderers close', () => {
+    const { workers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    workers.close()
+    expect(port.closed).toBe(true)
+  })
+
+  it('closes a drawer port still waiting when its renderer is gone', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    renderers[0].dies('crashed')
+    expect(port.closed).toBe(true)
+  })
+
+  it('closes a waiting drawer port a newer one replaces', () => {
+    const { workers } = runtime()
+    workers.start(start('search').start)
+    const first = new FakePort()
+    workers.drawer('search', 1, first as unknown as MessagePortMain)
+    workers.drawer('search', 1, new FakePort() as unknown as MessagePortMain)
+    expect(first.closed).toBe(true)
   })
 })

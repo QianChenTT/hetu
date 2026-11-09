@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CoreLink } from '../frontend/mount/link.ts'
-import { filterNames, listNames, PALETTE_PAGES } from '../frontend/mount/palette.ts'
+import { filterNames, LIST_WAIT_MS, listNames, PALETTE_PAGES } from '../frontend/mount/palette.ts'
 import { fakeCore } from './mount-fakes.ts'
 
 // A luoshu listing a page of size names at a time, as luoshu.list answers
@@ -29,10 +29,43 @@ describe('listing names for the palette', () => {
   it('stops after the pages it may take and says it was cut', async () => {
     const names = Array.from({ length: 30 }, (_, i) => `n${String(i).padStart(2, '0')}.md`)
     const { link, core } = listing(names, 1)
-    const listed = await listNames(link, 4)
+    const listed = await listNames(link, { pages: 4 })
     expect(listed).toEqual({ names: names.slice(0, 4), cut: true })
     expect(core.calls('luoshu.list')).toHaveLength(4)
     expect(PALETTE_PAGES).toBe(20)
+  })
+
+  it('waits and asks again for the same page when a listing is throttled, and goes on from there', async () => {
+    const names = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md']
+    let throttles = 2
+    const core = fakeCore({
+      'luoshu.list': args => {
+        const after = (args as { after?: string }).after
+        if (after === 'c.md' && throttles-- > 0) return { ok: false, refusal: { code: 'throttled' } }
+        const start = after === undefined ? 0 : names.indexOf(after) + 1
+        const page = names.slice(start, start + 3)
+        return { ok: true, result: { paths: page, next: start + 3 < names.length ? page.at(-1)! : null } }
+      },
+    })
+    const link = new CoreLink(core.bridge)
+    link.start()
+    const waits: number[] = []
+    const pages: string[][] = []
+    const listed = await listNames(link, { wait: async ms => void waits.push(ms), onPage: page => void pages.push(page) })
+    expect(listed).toEqual({ names, cut: false })
+    expect(waits).toEqual([1000, 1000])
+    expect(core.calls('luoshu.list').map(call => call.args)).toEqual([{}, { after: 'c.md' }, { after: 'c.md' }, { after: 'c.md' }])
+    expect(pages).toEqual([['a.md', 'b.md', 'c.md'], ['d.md', 'e.md']])
+  })
+
+  it(`gives up with what it has once it waited ${LIST_WAIT_MS / 1000} s in all`, async () => {
+    const core = fakeCore({ 'luoshu.list': () => ({ ok: false, refusal: { code: 'throttled' } }) })
+    const link = new CoreLink(core.bridge)
+    link.start()
+    let waited = 0
+    const listed = await listNames(link, { wait: async ms => void (waited += ms) })
+    expect(listed).toEqual({ names: [], cut: false, refused: 'throttled' })
+    expect(waited).toBe(LIST_WAIT_MS)
   })
 
   it('answers the refusal with what it listed so far', async () => {

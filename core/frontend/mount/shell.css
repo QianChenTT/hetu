@@ -56,6 +56,10 @@ body {
   text-overflow: ellipsis;
 }
 
+#note-bar[hidden] {
+  display: none;
+}
+
 #note-bar {
   display: flex;
   align-items: center;

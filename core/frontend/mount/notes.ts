@@ -17,7 +17,8 @@ export type NoteNotice =
   | { kind: 'stale' | 'outside', instance: string, path: string }
   | { kind: 'refused', instance: string, path: string, code: string, reason?: string }
 
-type Draft = { path: string, base: string, text: string, at: number }
+// edits names the plugins whose edits the text holds, which the save after a Restore names as onBehalf
+type Draft = { path: string, base: string, text: string, at: number, edits: string[] }
 
 export type OpenNote = {
   readonly instance: string
@@ -58,10 +59,13 @@ export async function draftKey(path: string): Promise<string> {
   return `draft${[...digest].map(byte => byte.toString(16).padStart(2, '0')).join('').slice(0, 56)}`
 }
 
-function isDraft(value: unknown): value is Draft {
-  if (typeof value !== 'object' || value === null) return false
-  const { path, base, text, at } = value as Record<string, unknown>
-  return typeof path === 'string' && typeof base === 'string' && typeof text === 'string' && typeof at === 'number'
+// A draft as stored. One kept before drafts named their plugins reads as naming none
+function draftOf(value: unknown): Draft | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { path, base, text, at, edits } = value as Record<string, unknown>
+  if (typeof path !== 'string' || typeof base !== 'string' || typeof text !== 'string' || typeof at !== 'number') return null
+  const named = Array.isArray(edits) ? edits.filter((plugin): plugin is string => typeof plugin === 'string') : []
+  return { path, base, text, at, edits: named }
 }
 
 type Read = { text: string, version: string }
@@ -88,9 +92,11 @@ export class Notes {
   // one by another program luoshu.outside
   start(): void {
     this.link.on('core.quitting', () => void this.keepAll())
+    // With no path the window missed these events, so every open note is read again
     for (const topic of ['luoshu.changed', 'luoshu.outside']) {
       this.link.on(topic, event => {
         if (event.path !== undefined) void this.outside(event.path)
+        else for (const note of this.opened.values()) void this.outside(note.path)
       })
     }
     void this.link.subscribe(['luoshu.changed', 'luoshu.outside'])
@@ -183,11 +189,12 @@ export class Notes {
   restore(instance: string): void {
     const note = this.opened.get(instance)
     if (note?.draft == null) return
-    const { text } = note.draft
+    const { text, edits } = note.draft
     note.draft = null
     this.editors.replace(instance, text, false)
     note.dirty = true
     note.changes++
+    for (const plugin of edits) note.edits.add(plugin)
   }
 
   async discard(instance: string): Promise<void> {
@@ -198,11 +205,11 @@ export class Notes {
   }
 
   // Reads the note again over the buffer, after a stale save or an outside change, and offers a draft still kept. A
-  // dirty buffer is kept as a draft first, so nothing typed is lost
+  // dirty buffer is kept as a draft first, and stays as it is when that fails, so nothing typed is lost
   async reload(instance: string): Promise<void> {
     const note = this.opened.get(instance)
     if (note === undefined) return
-    await this.keep(note)
+    if (!await this.keep(note)) return
     let read: Read
     try {
       read = await this.read(note.path)
@@ -240,17 +247,21 @@ export class Notes {
     return got.result as Read
   }
 
-  private async keep(note: OpenNote): Promise<void> {
-    if (!note.dirty || !this.opened.has(note.instance)) return
-    const value: Draft = { path: note.path, base: note.version, text: this.editors.text(note.instance), at: this.clock() }
+  // A dirty note's text as its draft. False when the draft couldn't be kept, which the human is told
+  private async keep(note: OpenNote): Promise<boolean> {
+    if (!note.dirty || !this.opened.has(note.instance)) return true
+    const value: Draft = {
+      path: note.path, base: note.version, text: this.editors.text(note.instance), at: this.clock(), edits: [...note.edits].sort(),
+    }
     const kept = await this.link.call('storage.set', { key: note.key, value })
     if (!kept.ok) this.refused(note, kept.refusal?.code ?? 'failed', kept.refusal?.reason)
+    return kept.ok
   }
 
   private async offerDraft(note: OpenNote): Promise<void> {
     const got = await this.link.call('storage.get', { key: note.key })
-    const draft = got.ok ? got.result : null
-    if (!isDraft(draft) || draft.path !== note.path) return
+    const draft = got.ok ? draftOf(got.result) : null
+    if (draft === null || draft.path !== note.path) return
     note.draft = draft
     this.tell({ kind: 'draft', instance: note.instance, path: note.path, at: draft.at, changedSince: draft.base !== note.version })
   }

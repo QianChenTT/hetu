@@ -8,19 +8,45 @@ export const PALETTE_PAGES = 20
 // Names shown at once
 export const PALETTE_SHOWN = 50
 
+// How long a listing waits in all for the window's listing budget, a second at a time
+export const LIST_WAIT_MS = 60_000
+
 export type Listed = { names: string[], cut: boolean, refused?: string }
 
-// Every name in the luoshu a page at a time, up to pages of them. cut says there were more
-export async function listNames(link: CoreLink, pages: number = PALETTE_PAGES): Promise<Listed> {
+export type ListOptions = {
+  pages?: number
+  // A second's pause after a throttled page, then the same page is asked for again
+  wait?: (ms: number) => Promise<void>
+  // Each page as it comes, so the palette can show names while the rest are listed
+  onPage?: (names: string[]) => void
+}
+
+const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+// Every name in the luoshu a page at a time, up to pages of them. cut says there were more. The core charges a listing
+// to the window's own budget, so in a large luoshu a page comes back throttled: the same page is asked for again a
+// second later, until the listing waited LIST_WAIT_MS in all
+export async function listNames(link: CoreLink, options: ListOptions = {}): Promise<Listed> {
+  const pages = options.pages ?? PALETTE_PAGES
+  const wait = options.wait ?? pause
   const names: string[] = []
   let after: string | undefined
-  for (let page = 0; page < pages; page++) {
+  let waited = 0
+  for (let page = 0; page < pages;) {
     const got = await link.call('luoshu.list', after === undefined ? {} : { after })
-    if (!got.ok) return { names, cut: false, refused: got.refusal?.code ?? 'failed' }
+    if (!got.ok) {
+      const code = got.refusal?.code ?? 'failed'
+      if (code !== 'throttled' || waited >= LIST_WAIT_MS) return { names, cut: false, refused: code }
+      await wait(1000)
+      waited += 1000
+      continue
+    }
     const { paths, next } = got.result as { paths: string[], next: string | null }
     names.push(...paths)
+    options.onPage?.(paths)
     if (next === null) return { names, cut: false }
     after = next
+    page++
   }
   return { names, cut: true }
 }

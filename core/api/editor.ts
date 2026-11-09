@@ -32,7 +32,13 @@ export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
 export const markStyles = frozen(['strong', 'em', 'strike', 'highlight', 'code', 'link', 'muted', 'error', 'warning', 'info'] as const)
 export const lineStyles = frozen(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock', 'rule'] as const)
 
+// Marks one plugin holds on one note, across its sets, and the sets they're in
 export const MAX_MARKS = 5000
+export const MAX_MARK_SETS = 16
+// What one plugin may have the drawer do in a second: marks drawn and note text read. Past either a call answers
+// throttled, so no plugin keeps the editor page busy
+export const MARKS_PER_SECOND = 20_000
+export const READ_CHARS_PER_SECOND = 4 * 1024 * 1024
 export const MAX_WIDGET_TEXT = 200
 export const MAX_BINDINGS = 64
 // Change sets the drawer keeps per instance to map late data. Data made for an older version is dropped or refused
@@ -62,8 +68,10 @@ export type LineStyle = typeof lineStyles[number]
 export const changeJson = z.array(z.union([position, z.tuple([position], z.string())])).max(MAX_CHANGE_PARTS)
 export type ChangeJson = z.infer<typeof changeJson>
 
-// A key as CodeMirror names one: up to four modifiers, then one printable character or a named key
+// A key as CodeMirror names one: up to four modifiers, then one printable character or a named key. A binding holds
+// Mod, Ctrl, Alt or Meta, so what the human types into a note never reaches one
 const key = z.string().max(40).regex(/^(?:(?:Mod|Ctrl|Alt|Shift|Meta)-){0,4}(?:[!-~]|[A-Z][A-Za-z0-9]{1,15})$/)
+  .refine(spec => spec.split(/-(?!$)/).slice(0, -1).some(part => part !== 'Shift'), 'no modifier')
 
 const head = { v: z.literal(VERSION), kind: z.literal('call'), id: z.int().min(1) }
 export const bridgeCall = z.discriminatedUnion('verb', [
