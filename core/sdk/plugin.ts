@@ -3,6 +3,7 @@ import type { DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
+import { Editor, type EditorClient } from './editor.ts'
 import { type EventHandler, type EventOptions, Events, type Subscription } from './events.ts'
 import { attempt } from './refused.ts'
 import { type Handler, type IncomingCall, Serving } from './serving.ts'
@@ -32,6 +33,8 @@ export type PluginContext = Client & {
     publish(name: string, path?: string): Promise<void>
   }
   readonly try: typeof attempt
+  // The editor bridge to the open notes, for a worker whose plugin holds a ui item while an editor page is open
+  readonly editor: EditorClient
 }
 
 export type PluginSpec = {
@@ -43,8 +46,9 @@ export type Plugin = { readonly kind: 'hetu-plugin', readonly spec: PluginSpec }
 
 type Limit = 'messagesPerSecond' | 'callsInFlight' | 'callDeadlineMs'
 
-// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the floor constants
-export type RunOptions = { limits?: Partial<Record<Limit, number>> }
+// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the floor constants.
+// editor is the bridge the runtime connects to each port to the drawer
+export type RunOptions = { limits?: Partial<Record<Limit, number>>, editor?: Editor }
 
 // What the stopped answer keeps back from the grace, so it lands before the loader ends the way
 const STOP_MARGIN_MS = 250
@@ -81,8 +85,10 @@ class Half {
   private ctx: PluginContext | null = null
   private serving: Serving | null = null
   private events: Events | null = null
+  private readonly editor: Editor
 
   constructor(spec: PluginSpec, transport: Transport, options: RunOptions) {
+    this.editor = options.editor ?? new Editor()
     const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
     // Every message the half sends goes through one pacing, lifecycle answers included: the Sender's, or the
     // transport's own for a worker, whose relay counts bytes as well as messages. Two in a row would let a backlog out
@@ -143,6 +149,7 @@ class Half {
         publish: (name, path) => events.publish(name, path),
       },
       try: attempt,
+      editor: this.editor,
     }
     this.ctx = ctx
     void this.start(ctx)

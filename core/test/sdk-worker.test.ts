@@ -127,10 +127,32 @@ describe('a plugin started in a worker', () => {
     self.onmessage?.({ data: { v: 1, kind: 'port', limits }, ports: [] })
     expect(self.onmessage).not.toBeNull()
     self.onmessage?.({ data: { v: 1, kind: 'port', limits }, ports: [port] })
-    expect(self.onmessage).toBeNull()
     port.gets(JSON.stringify({ v: 1, kind: 'init', id: 'hello', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null }))
     await vi.waitFor(() => expect(port.posted).toContain('{"v":1,"kind":"ready"}'))
     expect(started).toBe(true)
+  })
+
+  it('takes a port to the drawer any time after its port, and no second port', async () => {
+    const self = scope()
+    const seen: string[] = []
+    runInWorker(definePlugin({
+      start: ctx => {
+        ctx.editor.on('opened', event => seen.push((event as { instance: string }).instance))
+      },
+    }), self)
+    const port = new FakePort()
+    self.onmessage?.({ data: { v: 1, kind: 'drawer' }, ports: [new FakePort()] })
+    self.onmessage?.({ data: { v: 1, kind: 'port', limits }, ports: [port] })
+    port.gets(JSON.stringify({ v: 1, kind: 'init', id: 'hello', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null }))
+    await vi.waitFor(() => expect(port.posted).toContain('{"v":1,"kind":"ready"}'))
+    const second = new FakePort()
+    self.onmessage?.({ data: { v: 1, kind: 'port', limits }, ports: [second] })
+    const drawer = new FakePort()
+    self.onmessage?.({ data: { v: 1, kind: 'drawer' }, ports: [drawer] })
+    drawer.gets(JSON.stringify({ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }))
+    expect(seen).toEqual(['n1'])
+    second.gets(JSON.stringify({ v: 1, kind: 'ping' }))
+    expect(second.posted).toEqual([])
   })
 
   it('stays waiting for a port message without whole positive limits', () => {

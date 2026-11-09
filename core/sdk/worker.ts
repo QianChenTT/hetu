@@ -1,4 +1,5 @@
 import { messageCap, newBudget, type RelayLimits, relayLimitsOf, spend, weigh } from '../api/rate.ts'
+import { Editor } from './editor.ts'
 import { type Plugin, run } from './plugin.ts'
 import type { Transport } from './transport.ts'
 
@@ -83,15 +84,24 @@ export function portTransport(port: WorkerPort, given: WorkerLimits, clock: () =
   }
 }
 
-// Runs a plugin in a worker. The worker host page sends one message, { v: 1, kind: 'port' } carrying the worker's end of
-// its channel and the plugin's limits. Anything before it is ignored. The plugin build calls this for each worker entry
+// Runs a plugin in a worker. The worker host page sends { v: 1, kind: 'port' } carrying the worker's end of its channel
+// and the plugin's limits, once. Anything before it is ignored. After it, each { v: 1, kind: 'drawer' } carries a port to
+// an editor page's drawer, which the editor bridge takes in place of the last. The plugin build calls this for each
+// worker entry
 export function runInWorker(plugin: Plugin, scope: WorkerScope = globalThis as unknown as WorkerScope): void {
+  let held: WorkerLimits | null = null
+  const editor = new Editor()
   scope.onmessage = event => {
     const data = event.data as { v?: unknown, kind?: unknown, limits?: unknown } | null
     const port = event.ports[0] as WorkerPort | undefined
-    const limits = relayLimitsOf(data?.limits)
-    if (data?.v !== 1 || data.kind !== 'port' || port === undefined || limits === null) return
-    scope.onmessage = null
-    run(plugin, portTransport(port, limits), { limits: { messagesPerSecond: limits.messagesPerSecond } })
+    if (data?.v !== 1 || port === undefined) return
+    if (held === null) {
+      const limits = relayLimitsOf(data.limits)
+      if (data.kind !== 'port' || limits === null) return
+      held = limits
+      run(plugin, portTransport(port, limits), { limits: { messagesPerSecond: limits.messagesPerSecond }, editor })
+      return
+    }
+    if (data.kind === 'drawer') editor.connect(portTransport(port, held))
   }
 }
