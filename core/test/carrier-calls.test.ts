@@ -810,6 +810,21 @@ describe('editor.reach', () => {
     }
   })
 
+  // As a direct call: with the gate off, a call with power passes only while its record can land
+  it('answers policy-down with the gate off once the log has failed, and everything again with recording off', async () => {
+    let now = 0
+    const parts = harness({ clock: () => now })
+    const way = windowWay(parts.carrier, { editor })
+    parts.loader.slots.gate = 'off'
+    parts.log.failing = true
+    const search = parts.connect(worker('search'))
+    await search.ask('storage.get', { key: 'index' })
+    now = 30_000
+    expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' }))).toBe('policy-down')
+    parts.loader.nothing = true
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, write: true })
+  })
+
   it('refuses policy-down and records a fault when the gate throws', async () => {
     const { way, gate, carrier, log } = made()
     gate.readable = () => { throw new Error('broken') }
