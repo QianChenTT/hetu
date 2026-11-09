@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeKinds, MAX_FOLDER_LENGTH } from '../api/changes.ts'
+import { change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
+import { isSecurityControl, securityControls } from '../api/ids.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -14,6 +15,7 @@ const everyKind = [
   { kind: 'plugin.remove', plugin: 'search' },
   { kind: 'plugin.restore', plugin: 'git' },
   { kind: 'plugin.clearStorage', plugin: 'mcp' },
+  { kind: 'plugin.reset', plugin: 'gate' },
   { kind: 'grant.widen', plugin: 'search', capability: { type: 'luoshu.read', paths: ['**'] } },
   { kind: 'grant.narrow', plugin: 'search', capability: { type: 'luoshu.read', paths: ['notes/**'] } },
   { kind: 'item.on', plugin: 'search', capability: { type: 'ui.panel' } },
@@ -29,9 +31,10 @@ const everyKind = [
 ]
 
 describe('the change kinds', () => {
-  it("are the nineteen change kinds the trusted window applies", () => {
+  it("are the twenty change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
+      'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.set', 'devMode', 'exec.anyCommand', 'skipVerification',
       'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set',
     ])
@@ -162,5 +165,76 @@ describe('keys that reach Object', () => {
     ['prototype in the capability', '{"kind":"item.off","plugin":"s","capability":{"type":"log.read","prototype":{}}}'],
   ])('refuses %s', (_name, text) => {
     expect(change.safeParse(raw(text)).success).toBe(false)
+  })
+})
+
+describe('whether a change widens', () => {
+  const effect = (one: unknown) => changeEffect(change.parse(one))
+  const cap = { type: 'luoshu.read', paths: ['notes/**'] }
+
+  it.each([
+    ['a new entry', { kind: 'plugin.approve', plugin: 'search' }],
+    ['an update', { kind: 'plugin.update', plugin: 'search' }],
+    ['a first-party copy brought back', { kind: 'plugin.restore', plugin: 'git' }],
+    ['a plugin switched on', { kind: 'plugin.on', plugin: 'search' }],
+    ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
+    ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],
+    ['capabilities switched off', { kind: 'plugin.off', plugin: 'capabilities' }],
+    ['the watchdog switched off', { kind: 'plugin.off', plugin: 'watchdog' }],
+    ['a grant added', { kind: 'grant.widen', plugin: 'search', capability: cap }],
+    ['an item switched back on', { kind: 'item.on', plugin: 'search', capability: cap }],
+    ['a new notes folder', { kind: 'luoshu.set', folder: '/Users/han/notes' }],
+    ['dev mode on', { kind: 'devMode', plugin: 'search', on: true }],
+    ['any command on', { kind: 'exec.anyCommand', plugin: 'git', on: true }],
+    ['the hash checks skipped', { kind: 'skipVerification', on: true }],
+    ['an unsigned build trusted', { kind: 'allowUnsigned', hash: HASH, on: true }],
+    ['the Confirm switched off', { kind: 'confirmOff', on: true }],
+    ['recording stopped', { kind: 'recordNothing', on: true }],
+    ['a limit raised', { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' }],
+    // A lower value can starve hetu's own controls or its audit, which the core can't tell apart from a safe one
+    ['a limit lowered', { kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }],
+  ])('widens with %s', (_name, one) => {
+    expect(effect(one)).toBe('widens')
+  })
+
+  it.each([
+    ['the gate switched back on', { kind: 'plugin.on', plugin: 'gate' }],
+    ['the watchdog switched back on', { kind: 'plugin.on', plugin: 'watchdog' }],
+    ['a plugin switched off', { kind: 'plugin.off', plugin: 'search' }],
+    ['a provider switched off', { kind: 'plugin.off', plugin: 'exec' }],
+    ['a grant taken away', { kind: 'grant.narrow', plugin: 'search', capability: cap }],
+    ['an item switched off', { kind: 'item.off', plugin: 'search', capability: cap }],
+    ['dev mode off', { kind: 'devMode', plugin: 'search', on: false }],
+    ['any command off', { kind: 'exec.anyCommand', plugin: 'git', on: false }],
+    ['the hash checks back', { kind: 'skipVerification', on: false }],
+    ['an unsigned build no longer trusted', { kind: 'allowUnsigned', hash: HASH, on: false }],
+    ['the Confirm back', { kind: 'confirmOff', on: false }],
+    ['recording again', { kind: 'recordNothing', on: false }],
+  ])('narrows with %s', (_name, one) => {
+    expect(effect(one)).toBe('narrows')
+  })
+
+  it.each([
+    ['a removal', { kind: 'plugin.remove', plugin: 'search' }],
+    ['a plugin storage cleared', { kind: 'plugin.clearStorage', plugin: 'mcp' }],
+    ['a reset', { kind: 'plugin.reset', plugin: 'gate' }],
+  ])('destroys data with %s', (_name, one) => {
+    expect(effect(one)).toBe('destroys')
+  })
+
+  it('answers every kind', () => {
+    for (const one of everyKind) expect(['widens', 'narrows', 'destroys']).toContain(changeEffect(change.parse(one) as Change))
+  })
+})
+
+describe('the security controls', () => {
+  it('are the slot holders and the guards core/api expects, which the log is not', () => {
+    for (const id of ['gate', 'capabilities', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
+    for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
+  })
+
+  it('are only those the install names, in the fixed order', () => {
+    expect(securityControls(['luoshu', 'watchdog', 'gate', 'storage'])).toEqual(['gate', 'watchdog'])
+    expect(securityControls([])).toEqual([])
   })
 })

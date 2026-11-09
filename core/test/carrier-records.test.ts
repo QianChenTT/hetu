@@ -6,7 +6,7 @@ import { EventLog } from '../lib/event-log.ts'
 import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions, CoreLog, FloorLog, Landing } from '../backend/carrier/seams.ts'
-import { cleanup, code, editor, FakeLog, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -24,6 +24,16 @@ function plugins(over: Partial<CarrierOptions> = {}) {
 async function written(carrier: Carrier, log: FakeLog) {
   await carrier.flush()
   return log.events('audit.call').map(record => record.fields)
+}
+
+// Answers each call as it reaches the plugin, waited for since a busy machine can take longer than any pause
+function answering(side: Side) {
+  const answered = new Set<unknown>()
+  return async (result: unknown) => {
+    const call = await side.waitFor(message => message.kind === 'call' && !answered.has(message.callId))
+    answered.add(call.callId)
+    side.answer(call.callId, result)
+  }
 }
 
 describe('audit records', () => {
@@ -139,18 +149,16 @@ describe('audit records', () => {
     const search = connect(worker('search'))
     const git = connect(worker('git'))
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
+    const answerSearch = answering(search)
+    const answerGit = answering(git)
     for (let i = 0; i < 3; i++) {
       const id = panel.call('search.query')
-      await tick(5)
-      const calls = search.inbox.filter(message => message.kind === 'call')
-      search.answer(calls.at(-1)!.callId, i)
+      await answerSearch(i)
       await panel.reply(id)
     }
     for (let i = 0; i < 2; i++) {
       const id = search.call('git.log')
-      await tick(5)
-      const calls = git.inbox.filter(message => message.kind === 'call')
-      git.answer(calls.at(-1)!.callId, i)
+      await answerGit(i)
       await search.reply(id)
     }
     expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
@@ -842,6 +850,60 @@ describe('a failing log', () => {
     expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
+  // Step 14: a log that fails stops hetu. The carrier tells the loader once, the loader quits and starts hetu again
+  it('tells the loader once that the log failed, with the gate on as with it off', async () => {
+    const told: number[] = []
+    const { at, connect } = failing({ logFailed: () => { told.push(1); return true } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(29_999)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(told).toEqual([])
+    at(30_000)
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    await search.ask('storage.set', { key: 'd', value: 4 })
+    expect(told).toEqual([1])
+  })
+
+  // Once a second too, so a log that failed while no call comes in is still told
+  it('tells the loader from its once a second look with no call coming in', async () => {
+    const told: number[] = []
+    let now = 0
+    const parts = harness({ clock: () => now, logFailed: () => { told.push(1); return true } })
+    parts.log.failing = true
+    const search = parts.connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    now = 30_000
+    await tick(1300)
+    expect(told).toEqual([1])
+  })
+
+  // The loader may not take it, while it starts or stops, so the carrier tells it again until it does
+  it('tells the loader again until it takes it', async () => {
+    let taken = false
+    const told: number[] = []
+    const { at, connect } = failing({ logFailed: () => { told.push(1); return taken } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    at(30_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    taken = true
+    await search.ask('storage.set', { key: 'c', value: 3 })
+    await search.ask('storage.set', { key: 'd', value: 4 })
+    expect(told).toEqual([1, 1])
+  })
+
+  it('tells nothing while the human turned recording off', async () => {
+    const told: number[] = []
+    const { at, connect, loader } = failing({ logFailed: () => { told.push(1); return true } })
+    const search = connect(worker('search'))
+    await search.ask('storage.set', { key: 'a', value: 1 })
+    loader.nothing = true
+    at(40_000)
+    await search.ask('storage.set', { key: 'b', value: 2 })
+    expect(told).toEqual([])
+  })
+
   it('takes the wait from logFailMs, which the human may set for all', async () => {
     const { at, connect, loader } = failing()
     loader.human.all = { logFailMs: 1000 }
@@ -881,5 +943,73 @@ describe('a failing log', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// Record nothing's own record is the last one: the loader drains what waits before it writes that record, and
+// what still waits once recording is off is let go, counted in that record
+describe('recording going off', () => {
+  it('drains the audit queue and the floor backlog and says nothing still waits', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    carrier.floor('plugin.found', { plugin: 'alpha' })
+    expect(await carrier.drain(1000)).toBe(0)
+    expect(log.events('audit.call')).toHaveLength(1)
+    expect(log.events('plugin.found')).toHaveLength(1)
+  })
+
+  it('stops waiting at its deadline and counts what still waits on a log that can\'t write', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    log.failing = true
+    await search.ask('storage.get', { key: 'k' })
+    await search.ask('storage.set', { key: 'k', value: 1 })
+    carrier.floor('plugin.found', { plugin: 'alpha' })
+    const started = performance.now()
+    expect(await carrier.drain(50)).toBe(3)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('lets go of audit records still queued once recording is off, so none lands after the switch', async () => {
+    const log = new FakeLog()
+    const { carrier, connect, loader } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    loader.nothing = true
+    await carrier.flush()
+    loader.nothing = false
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+  })
+})
+
+// A call record could land after the switch's own record, written while the switch was being applied
+describe('the writer while recording goes off', () => {
+  it('writes nothing more once drained until it resumes, then writes what waited', async () => {
+    const log = new FakeLog()
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    expect(await carrier.drain(1000)).toBe(0)
+    await search.ask('storage.get', { key: 'k' })
+    await carrier.flush()
+    expect(log.events('audit.call')).toEqual([])
+    carrier.resume()
+    await carrier.flush()
+    expect(log.events('audit.call')).toHaveLength(1)
+  })
+
+  it('stops waiting at its deadline on a log whose writes never settle', async () => {
+    const log = new FakeLog()
+    log.appendMany = () => new Promise(() => {})
+    log.append = () => new Promise(() => {})
+    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const search = connect(worker('search'))
+    await search.ask('storage.get', { key: 'k' })
+    const started = performance.now()
+    expect(await carrier.drain(50)).toBe(1)
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 })

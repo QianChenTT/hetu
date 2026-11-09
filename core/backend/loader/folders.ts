@@ -13,6 +13,7 @@ export const folders = {
   plugins: (dataDir: string, id: string) => path.join(dataDir, 'plugins', id),
   staging: (dataDir: string) => path.join(dataDir, 'staging'),
   marker: (dataDir: string, id: string) => path.join(dataDir, 'starting', id),
+  failedOnce: (dataDir: string) => path.join(dataDir, 'failed-once'),
   cache: (dataDir: string, id: string) => path.join(dataDir, 'cache', id),
   storage: (dataDir: string, id: string) => path.join(dataDir, 'storage', id),
   installed: (dataDir: string) => path.join(dataDir, 'installed.json'),
@@ -93,6 +94,26 @@ export async function writeMarker(dataDir: string, id: string): Promise<void> {
     await handle.close()
   }
   await syncDir(path.dirname(file))
+}
+
+// The security control that failed while hetu ran, written before hetu quits to start again. A run that finds it and
+// meets a failure of any control stops in the stopped mode instead of restarting a second time. Like a start
+// marker it can only hold hetu stopped, so it needs no hash. Only a clean Quit or the human's choice clears it
+export async function readFailedOnce(dataDir: string): Promise<string | null> {
+  try {
+    const id = (await readFile(folders.failedOnce(dataDir), 'utf8')).trim()
+    return id === 'log' || pluginId.safeParse(id).success ? id : null
+  } catch {
+    return null
+  }
+}
+
+export async function writeFailedOnce(dataDir: string, id: string): Promise<void> {
+  await replaceFile(folders.failedOnce(dataDir), id)
+}
+
+export async function clearFailedOnce(dataDir: string): Promise<void> {
+  await retried(() => rm(folders.failedOnce(dataDir), { force: true }))
 }
 
 export async function removeMarker(dataDir: string, id: string): Promise<void> {

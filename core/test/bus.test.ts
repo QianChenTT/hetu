@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { floorConstants } from '../api/floor.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
@@ -592,13 +593,13 @@ describe('core.*', () => {
     expect(trustedWay.events().map(message => message.topic)).toEqual(['core.status'])
     expect(gate.asked).toEqual([])
     expect((await trustedWay.ask('trusted', 'events.unsubscribe', { topics: ['core.security'] })).ok).toBe(true)
-    // It holds credits like any subscriber and its ack frees them
-    loader.human.all = { eventCredits: 2 }
+    // It holds the floor's credits like any window and its ack frees them
+    const credits = floorConstants.eventCredits
+    for (let i = 0; i < credits; i++) carrier.changed()
+    trustedWay.post('trusted', { v: 1, kind: 'ack', seq: credits })
     carrier.changed()
-    carrier.changed()
-    trustedWay.post('trusted', { v: 1, kind: 'ack', seq: 2 })
-    carrier.changed()
-    expect(trustedWay.events().map(message => message.seq ?? message.topic)).toEqual([1, 2, 'events.dropped', 3])
+    const seqs = trustedWay.events().map(message => message.seq ?? message.topic)
+    expect(seqs.slice(-3)).toEqual([credits, 'events.dropped', credits + 1])
   })
 
   // The first StateView the carrier reads is where it starts, so the first changed() sends no core.security
@@ -613,6 +614,14 @@ describe('core.*', () => {
     const events = way.events()
     expect(events.map(message => message.topic)).toEqual(['core.status', 'core.status', 'core.status', 'core.security', 'core.status'])
     expect(events.every(message => !('path' in message) && eventShape.safeParse(message).success)).toBe(true)
+  })
+
+  // So the editor can keep a draft before hetu ends
+  it('sends core.quitting to the windows that hear it when hetu is about to quit', async () => {
+    const { carrier, way } = setup()
+    await way.ask('editor-1', 'events.subscribe', { topics: ['core.quitting'] })
+    carrier.quitting()
+    expect(way.events().map(message => message.topic)).toEqual(['core.quitting'])
   })
 
   it('refuses a core topic the core never sends', async () => {
@@ -1194,7 +1203,7 @@ describe('credits', () => {
     expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.outside', 'luoshu.changed'] })
   })
 
-  it('keeps credits per half and gives a window the human\'s value for all', async () => {
+  it('keeps credits per half and keeps a window on the floor\'s credits when the value for all is lower', async () => {
     const { connect, loader, search, way, edited } = setup()
     loader.human.all = { eventCredits: 2 }
     loader.human.plugins.search = { eventCredits: 1 }
@@ -1207,7 +1216,7 @@ describe('credits', () => {
     await settle()
     expect(search.events()).toHaveLength(1)
     expect(panel.events()).toHaveLength(1)
-    expect(paths(way.events())).toEqual(['notes/a.md', 'notes/b.md'])
+    expect(paths(way.events())).toEqual(['notes/a.md', 'notes/b.md', 'notes/c.md'])
   })
 
   it('counts an ack against the rate like any message', async () => {

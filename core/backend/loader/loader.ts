@@ -1,11 +1,14 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { CoreStatus } from '../../api/actions.ts'
-import { change as changeSchema, type Change } from '../../api/changes.ts'
+import type { CoreStatus, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
+import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
+import { describeChange } from '../../api/describe.ts'
+import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
-  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, pluginId, providers, slotIds,
+  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
+  securityControls, slotIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import {
@@ -20,12 +23,14 @@ import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import type { FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/state.ts'
-import type { HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
+import type { AskRefusal, Asks, HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
 import {
-  clear, folders, readInstalled, removeMarker, stage, swapIn, writeInstalled, writeMarker, type Installed,
+  clear, clearFailedOnce, folders, readFailedOnce, readInstalled, removeMarker, stage, swapIn, writeFailedOnce, writeInstalled,
+  writeMarker, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
+import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
 export type LoaderOptions = {
@@ -39,12 +44,25 @@ export type LoaderOptions = {
   platform?: string
   // The guards expected on an action. Defaults to core/api's list, which is empty until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // Raises plugin.update naming the plugins an update would stop. The held request and its Confirm come with the
-  // trusted window
-  raise?: (request: { kind: 'plugin.update', plugin: string, stops: readonly string[] }) => void
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
+  // A security control failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the
+  // trusted window once the loader stopped in the stopped mode
+  onFailure?: (failure: Failure) => void
+  // How long a request must be first in line before its Confirm counts. The input delay unless a test names another
+  confirmDelayMs?: number
+  // How long a Confirm waits for its record to land, 10 s unless a test names another
+  confirmRecordMs?: number
 }
+
+// What the runtime does about a security control that failed while hetu ran
+export type Failure =
+  | { action: 'relaunch', control: string, reason: string }
+  | { action: 'stopped', mode: StoppedMode }
+
+// The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
+// with #77
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', watchdog: 'watchdog' })
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -188,7 +206,6 @@ export class Loader implements Seam {
   private readonly installDir: string
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
-  private readonly raise: LoaderOptions['raise']
   private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
@@ -216,6 +233,16 @@ export class Loader implements Seam {
   private pumping: Promise<void> | null = null
   private again = false
   private queue: Promise<unknown> = Promise.resolve()
+  private readonly requests: Requests
+  private readonly onFailure: LoaderOptions['onFailure']
+  // controls while only the security controls may start, all once they are up, stopped once one failed
+  private phase: 'controls' | 'all' | 'stopped' = 'controls'
+  private stoppedMode: StoppedMode | null = null
+  // The control the run before restarted for, from the restart marker
+  private failedBefore: string | null = null
+  private failing = false
+  // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
+  private readonly declinedAsks = new Set<string>()
 
   constructor(options: LoaderOptions) {
     const { booted } = options
@@ -226,14 +253,32 @@ export class Loader implements Seam {
     this.installDir = options.installDir
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
-    this.raise = options.raise
     this.logWrites = options.logWrites ?? (() => true)
+    this.onFailure = options.onFailure
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
     for (const check of booted.checks) {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
     }
+    this.requests = new Requests({
+      effect: change => changeEffect(change),
+      fingerprint: change => this.store.fingerprint('plugin' in change ? change.plugin : null),
+      exclusive: work => this.serial(work),
+      applyNow: change => this.applyNow(change),
+      record: (event, fields, signal) => this.link.record(event, fields, signal),
+      confirmOff: () => this.state.switches.confirmOff,
+      drain: ms => this.link.drain(ms),
+      resume: () => this.link.resume(),
+      changed: () => this.refresh(),
+      clock: () => performance.now(),
+      delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
+      ...(options.confirmRecordMs !== undefined ? { recordMs: options.confirmRecordMs } : {}),
+      declined: (plugin, change) => {
+        if (change.kind === 'item.on') this.declinedAsks.add(`${plugin}
+${capabilityKey(change.capability)}`)
+      },
+    })
   }
 
   // ---- the carrier's seam
@@ -320,13 +365,97 @@ export class Loader implements Seam {
   // guard role
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
+    const args = (call.args ?? {}) as Record<string, unknown>
+    switch (call.action) {
+      case 'security.request':
+        return this.request(args.change, call.caller)
+      case 'security.confirm':
+        await this.confirm(args.requestId as string, args.typed === undefined ? {} : { typed: args.typed as string })
+        return null
+      case 'security.cancel':
+        await this.cancel(args.requestId as string)
+        return null
+      case 'security.list':
+        return this.securityList()
+      case 'core.stop':
+      case 'core.restart': {
+        const k = this.known.get(args.plugin as string)
+        if (k === undefined) throw { code: 'not-found' }
+        if (k.place !== 'sandboxed') throw { code: 'not-granted' }
+        // The human stopped it from the trusted window, so only the trusted window starts it again
+        const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
+        if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
+        if (call.action === 'core.stop') await this.stop(k.id, 'human')
+        else await this.restart(k.id, 'human')
+        return null
+      }
+    }
     const target = (call.args as { plugin?: unknown } | null)?.plugin
     if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
     const k = typeof target === 'string' ? this.known.get(target) : undefined
     if (k === undefined || k.place !== 'sandboxed') throw { code: 'not-found' }
+    // The human's stop outranks the watchdog's policy
+    if (call.action === 'watchdog.restart' && this.stoppedByHuman(k)) throw { code: 'not-granted' }
     if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
     else await this.restart(k.id, 'watchdog')
     return null
+  }
+
+  private stoppedByHuman(k: Known): boolean {
+    return k.held?.state === 'stopped' && k.held.reason === 'human'
+  }
+
+  // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words
+  private securityList(): SecurityList {
+    const { switches } = this.state
+    const plugins: ListedPlugin[] = this.list().map(row => {
+      const k = this.known.get(row.id)
+      const entry = row.from === 'folder' ? k?.entry ?? null : null
+      const off = new Set((entry?.off ?? []).map(capabilityKey))
+      const asking = new Set((entry?.firstUse ?? []).map(capabilityKey))
+      return {
+        id: row.id, from: row.from, place: row.place, state: row.state, reason: row.reason,
+        security: row.from === 'install' && isSecurityControl(row.id),
+        firstParty: row.from === 'folder' && isOne(firstPartyIds, row.id),
+        on: row.from === 'install' ? !isOne(switches.off, row.id) : entry?.enabled ?? false,
+        items: (entry?.granted ?? []).map(capability => ({
+          capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
+        })),
+      }
+    })
+    const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => {
+      const { text, notes } = describeChange(change)
+      return {
+        id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
+        type: mustType(change),
+      }
+    })
+    return {
+      plugins,
+      switches: {
+        devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
+        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
+      },
+      requests,
+      stopped: this.stoppedMode,
+    }
+  }
+
+  // What an approval or an update would load, from the one read it was found or staged with: the version and every
+  // grant an approval takes from the manifest, the versions an update goes from and to
+  private what(change: Change): string[] {
+    if (change.kind === 'plugin.approve') {
+      const manifest = this.known.get(change.plugin)?.read.manifest
+      if (manifest === undefined || manifest === null) return []
+      const asks = manifest.capabilities ?? []
+      return [`Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`))]
+    }
+    if (change.kind === 'plugin.update') {
+      const to = this.staged.get(change.plugin)?.read.manifest?.version
+      const from = this.known.get(change.plugin)?.entry?.version
+      return to === undefined || from === undefined ? [] : [`From ${from} to ${to}`]
+    }
+    return []
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -342,6 +471,8 @@ export class Loader implements Seam {
       recordNothing: switches.recordNothing,
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
+      pending: this.pending(),
+      stopped: this.stoppedMode,
     }
   }
 
@@ -368,6 +499,13 @@ export class Loader implements Seam {
   // shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
+    this.failedBefore = await readFailedOnce(this.dataDir)
+    // The security controls start alone first. One that is on and fails stops hetu before anything else runs
+    this.replan()
+    await this.settled()
+    const failed = this.controlFailure()
+    if (failed !== null) return this.enterStopped(failed)
+    this.phase = 'all'
     this.replan()
     await this.settled()
     await this.saveInstalled()
@@ -376,6 +514,78 @@ export class Loader implements Seam {
     this.replan()
     await this.settled()
     if (!this.closing) this.note('core.ready', Object.fromEntries(slotIds.map(id => [id, this.slot(id)])))
+  }
+
+  // The stopped mode hetu is in, null while it runs
+  stopped(): StoppedMode | null {
+    return this.stoppedMode
+  }
+
+  // The first security control the install names that is on and not ready once the controls started: tampered, absent
+  // from the install while the list names it, or failed. An install list that can't be read counts as tampered, since
+  // it ships inside hetu's own files. One the human switched off is no failure
+  private controlFailure(): StoppedMode | null {
+    const again = (_control: string) => this.failedBefore !== null
+    if (this.listResult === 'invalid') return { control: 'install', why: 'tampered', reason: null, again: again('install') }
+    for (const id of securityControls(Object.keys(this.install?.plugins ?? {}))) {
+      const k = this.known.get(id)
+      if (k === undefined || isOne(this.state.switches.off, id) || k.state === 'ready') continue
+      const refusedFor = (reason: string) => k.state === 'refused' && k.reason === reason
+      const why = refusedFor('tampered') ? 'tampered' : refusedFor('missing') ? 'absent' : 'failed'
+      return { control: id, why, reason: k.reason, again: again(id) }
+    }
+    return null
+  }
+
+  // The stopped mode: every plugin stops and none starts. Only the trusted window opens, with the human's three choices
+  private async enterStopped(mode: StoppedMode): Promise<void> {
+    this.stoppedMode = mode
+    this.phase = 'stopped'
+    this.note('core.stopped', { control: mode.control, why: mode.why, reason: mode.reason, again: mode.again })
+    this.replan()
+    await this.pumped()
+  }
+
+  // A security control or the core's log failed while hetu ran. The first time, the restart marker goes down and the
+  // runtime quits with an error to start hetu again. When the run before already restarted for a failure, of this
+  // control or another, hetu stops in the stopped mode instead, so two controls failing in turns can't restart it
+  // forever. A marker that can't be written stops it too, since nothing would then bound the restarts. One failure is
+  // enough, the ones after it change nothing. Answers whether it took the failure, so a failure told while hetu starts
+  // or stops can be told again
+  controlFailed(control: string, reason: string): boolean {
+    if (this.closing || this.phase !== 'all' || this.failing) return false
+    this.failing = true
+    this.note('core.failed', { control, reason })
+    const stop = (again: boolean) => {
+      const mode: StoppedMode = { control, why: 'failed', reason, again }
+      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode }))
+    }
+    if (this.failedBefore !== null) {
+      stop(true)
+      return true
+    }
+    // Shutdown and a clean Quit wait for the write like any marker's, so neither can cut it off or clear it first
+    const work = writeFailedOnce(this.dataDir, control).then(() => true, () => false)
+    const tracked = work.then(() => {})
+    this.markerWork.add(tracked)
+    void work.then(written => {
+      this.markerWork.delete(tracked)
+      if (written) this.tell({ action: 'relaunch', control, reason })
+      else stop(false)
+    })
+    return true
+  }
+
+  private tell(failure: Failure): void {
+    try {
+      this.onFailure?.(failure)
+    } catch {}
+  }
+
+  // The human quit hetu: nothing failed, so the next failure restarts hetu again
+  async cleanQuit(): Promise<void> {
+    while (this.markerWork.size > 0) await Promise.all(this.markerWork)
+    await clearFailedOnce(this.dataDir).catch(() => {})
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start
@@ -713,7 +923,7 @@ export class Loader implements Seam {
 
   // Whether a plugin should be running now
   private runs(k: Known): boolean {
-    return !this.closing && k.held === null && this.verdictOf(k).kind === 'start'
+    return !this.closing && this.phase !== 'stopped' && k.held === null && this.verdictOf(k).kind === 'start'
   }
 
   // ---- the plan and its states
@@ -753,11 +963,14 @@ export class Loader implements Seam {
       this.note('plugin.refused', { plugin: k.id, reason: shown.reason })
     } else if (shown.state === 'found' && shown.reason === 'new') {
       this.note('plugin.found', { plugin: k.id })
+      // A plugin found in the folder waits as a notice for the human's approval
+      this.requests.raise({ kind: 'plugin.approve', plugin: k.id }, null, MAX_PENDING)
     }
   }
 
   private final(k: Known, verdict: Verdict): { state: PluginState, reason: string | null } {
     if (this.closing && verdict.kind === 'start') return { state: 'stopped', reason: 'shutdown' }
+    if (this.phase === 'stopped' && verdict.kind === 'start') return { state: 'stopped', reason: 'control-failed' }
     switch (verdict.kind) {
       case 'start':
         return k.place === 'host' && k.ran ? { state: 'stopped', reason: 'restart-hetu' } : { state: 'found', reason: null }
@@ -879,6 +1092,7 @@ export class Loader implements Seam {
 
   private startable(k: Known): boolean {
     if (k.live !== null || !this.runs(k) || (k.place === 'host' && k.ran)) return false
+    if (this.phase === 'controls' && !(k.from === 'install' && isSecurityControl(k.id))) return false
     return (k.read.manifest?.requires ?? []).every(id => this.known.get(id)?.state === 'ready')
   }
 
@@ -998,6 +1212,9 @@ export class Loader implements Seam {
     if (!live.imported || [...live.halves.values()].some(run => !run.ready)) return
     if (live.readyTimer !== null) clearTimeout(live.readyTimer)
     live.readyTimer = null
+    // A security control with no role to play would refuse everything while reading as up, so it fails here
+    const role = roleOf[k.id]
+    if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
     // The gate has the StateView before it answers anything. A throw marks it failed
     if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
     k.state = 'ready'
@@ -1079,6 +1296,7 @@ export class Loader implements Seam {
     this.note(`plugin.${state}`, { plugin: k.id, incarnation: live.n, reason })
     this.replan()
     this.release(k, live, 'crashed')
+    if (k.from === 'install' && isSecurityControl(k.id)) this.controlFailed(k.id, reason)
   }
 
   // A ping down the worker's port every heartbeatMs. heartbeatMisses unanswered in a row read unresponsive: calls to it
@@ -1158,9 +1376,46 @@ export class Loader implements Seam {
 
   // ---- the state
 
-  // Applies a change the trusted window confirmed, exactly as stored, through the one StateStore. A write that fails
-  // applies nothing. Each applied change raises the StateView by one. The Confirm and the held request come with the
-  // trusted window
+  // A security request from a window: a narrowing change applies at once, a widening or destroying one waits for the
+  // trusted window's Confirm. The carrier has checked the caller is a window
+  request(input: unknown, from: Caller): Promise<RequestAnswer> {
+    const parsed = changeSchema.safeParse(input)
+    if (!parsed.success) return Promise.reject({ code: 'invalid' })
+    return this.requests.request(parsed.data, from)
+  }
+
+  // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
+  confirm(id: string, options: { typed?: string }): Promise<void> {
+    return this.requests.confirm(id, options)
+  }
+
+  cancel(id: string): Promise<void> {
+    return this.requests.cancel(id)
+  }
+
+  pending(): PendingRequest[] {
+    return this.requests.pending()
+  }
+
+  // The prompt behind the gate's ask: an item.on held for the item a plugin's call asked to use for the first time,
+  // which the human opens from its notice. ask is the item's key as the gate gave it. Only a plugin's item whose first
+  // use asks can be raised, one open per plugin within firstUseAsks
+  readonly asks: Asks = {
+    raise: (ask, access): string | AskRefusal => {
+      const { caller } = access
+      if (caller.kind !== 'plugin') return { code: 'not-granted' }
+      const entry = this.known.get(caller.id)?.entry ?? null
+      const item = entry?.firstUse?.find(asked => capabilityKey(asked) === ask)
+      if (entry === null || item === undefined || !entry.granted.some(granted => capabilityKey(granted) === ask)) return { code: 'not-granted' }
+      if (this.declinedAsks.has(`${caller.id}
+${ask}`)) return { code: 'not-granted', reason: 'declined' }
+      return this.requests.raise({ kind: 'item.on', plugin: caller.id, capability: item }, caller.id, this.link.limit(caller.id, 'firstUseAsks'))
+    },
+  }
+
+  // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
+  // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
+  // directly
   apply(input: Change): Promise<void> {
     return this.serial(() => this.applyNow(changeSchema.parse(input)))
   }
@@ -1173,6 +1428,8 @@ export class Loader implements Seam {
   }
 
   private async applyNow(change: Change): Promise<void> {
+    // The human chose in the stopped mode, so the next failure restarts hetu again
+    if (this.phase === 'stopped') await clearFailedOnce(this.dataDir).catch(() => {})
     switch (change.kind) {
       case 'plugin.on':
       case 'plugin.off':
@@ -1215,9 +1472,81 @@ export class Loader implements Seam {
       case 'item.on':
       case 'item.off':
         return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
-      default:
-        throw new Error(`${change.kind} comes with a later step`)
+      case 'grant.widen':
+      case 'grant.narrow':
+        return this.grant(change.plugin, change.capability, change.kind === 'grant.widen')
+      case 'plugin.clearStorage':
+        return this.clearStorage(change.plugin)
+      case 'plugin.reset':
+        return this.reset(change.plugin)
     }
+  }
+
+  // A capability added to a folder plugin's entry or taken out with its switch. Adding one it holds changes nothing
+  private async grant(id: string, capability: Capability, add: boolean): Promise<void> {
+    const k = this.known.get(id)
+    const entry = k?.from === 'folder' ? k.entry : null
+    if (entry === null) throw new Error(`no plugin entry for ${id}`)
+    const key = capabilityKey(capability)
+    const has = entry.granted.some(granted => capabilityKey(granted) === key)
+    if (add && has) return
+    const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
+    const next: Plugin = { ...entry, granted }
+    if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
+    await this.store.writePlugin(id, next)
+    this.putEntry(id, next)
+    this.bump()
+  }
+
+  // A running plugin stops while what it keeps is cleared, then starts again as a new incarnation
+  private async stoppedWhile<T>(k: Known, work: () => Promise<T>): Promise<T> {
+    const running = k.live !== null
+    if (running) {
+      k.held = { kind: 'held', state: 'stopped', reason: 'update' }
+      this.replan()
+      await this.pumped()
+    }
+    try {
+      return await work()
+    } finally {
+      if (running && k.held?.reason === 'update') k.held = null
+      this.replan()
+    }
+  }
+
+  private async clearStorage(id: string): Promise<void> {
+    const k = this.known.get(id)
+    if (k === undefined) throw new Error(`no plugin ${id}`)
+    await this.stoppedWhile(k, () => clear(folders.storage(this.dataDir, id)))
+  }
+
+  // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
+  // again with the code it has. An install plugin waits for Restart hetu, since a host half starts once per run and
+  // the reset may follow a start that froze main
+  private async reset(id: string): Promise<void> {
+    const k = this.known.get(id)
+    if (k === undefined) throw new Error(`no plugin ${id}`)
+    await this.stoppedWhile(k, async () => {
+      for (const dir of [folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) await clear(dir)
+      await removeMarker(this.dataDir, id)
+      this.markers.delete(id)
+      // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
+      const { limits } = this.state.switches
+      if (Object.hasOwn(limits.plugins, id)) {
+        const plugins = bare({ ...limits.plugins })
+        delete plugins[id]
+        await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
+      }
+      if (k.from === 'folder' && k.entry !== null) {
+        await this.store.removePlugin(id)
+        delete this.state.plugins[id]
+        this.entryChecks.set(id, 'absent')
+        k.entry = null
+        this.bump()
+      }
+    })
+    if (k.from === 'install') k.held = { kind: 'held', state: 'stopped', reason: 'restart-hetu' }
+    this.replan()
   }
 
   // The lists hold ids as plain strings here. The store parses the whole value against the switches' schema before it
@@ -1248,6 +1577,8 @@ export class Loader implements Seam {
     if (item === undefined) throw new Error(`${id} wasn't granted that item`)
     const others = (entry.off ?? []).filter(off => capabilityKey(off) !== key)
     const next: Plugin = { ...entry, off: on ? others : [...others, item] }
+    // Switching an item on is the human's Confirm of its first use too
+    if (on && entry.firstUse !== undefined) next.firstUse = entry.firstUse.filter(asked => capabilityKey(asked) !== key)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
     this.bump()
@@ -1256,19 +1587,23 @@ export class Loader implements Seam {
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
   // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
-  // switched off is off. No item asks at its first use until the Confirm flow and the classes come, since with nothing to
-  // raise the prompt an ask could only refuse
+  // switched off is off. An item in the entry's firstUse list asks at its first use, which nothing writes until the
+  // capabilities plugin at step 17. An install plugin's items never ask
   private stateView(): StateView {
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
-    const items = (granted: readonly Capability[], switchedOff: readonly Capability[]) => {
+    const items = (granted: readonly Capability[], switchedOff: readonly Capability[], asking: readonly Capability[] = []) => {
       const off = new Set(switchedOff.map(capabilityKey))
-      return granted.map(capability => ({ capability: structuredClone(capability), off: off.has(capabilityKey(capability)), firstUse: false }))
+      const firstUse = new Set(asking.map(capabilityKey))
+      return granted.map(capability => {
+        const key = capabilityKey(capability)
+        return { capability: structuredClone(capability), off: off.has(key), firstUse: firstUse.has(key) }
+      })
     }
     // A plugin the human switched off holds nothing from the change on, so a call it makes in its stop grace passes on
     // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
       if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
-      plugins[id] = items(entry.granted, entry.off ?? [])
+      plugins[id] = items(entry.granted, entry.off ?? [], entry.firstUse ?? [])
     }
     for (const k of this.known.values()) {
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
@@ -1419,9 +1754,9 @@ export class Loader implements Seam {
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    try {
-      this.raise?.({ kind: 'plugin.update', plugin: id, stops })
-    } catch {}
+    // A newer update replaces the staged one, so the request the human may have seen for the older one goes
+    this.requests.withdraw(change => change.kind === 'plugin.update' && change.plugin === id)
+    this.requests.raise({ kind: 'plugin.update', plugin: id }, null, MAX_PENDING)
     return { outcome: 'confirm', stops }
   }
 

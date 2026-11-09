@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
@@ -87,6 +88,9 @@ const plugin = z.strictObject({
   // Items of granted the human switched off, each as granted holds it. Left out of an entry written before the switches
   // came, which then has none off. One granted doesn't hold switches nothing off
   off: folderCapabilities.optional(),
+  // Items of granted whose first use still asks for the human's Confirm, each as granted holds it. The capabilities
+  // plugin names them from step 17. Left out of an entry written before first use came, which then asks for none
+  firstUse: folderCapabilities.optional(),
 })
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against
@@ -299,6 +303,23 @@ export class StateStore {
       // No target for the read-only check: rm deletes a read-only file by itself, and a folder throws EISDIR, no lock
       await retried(() => rm(file, { force: true }))
       await syncDir(path.dirname(file))
+    })
+  }
+
+  // The bytes of the switches, the luoshu and the named plugin's entry as one digest, read in the queue so it follows
+  // every write already asked for. A held security request compares it at its Confirm, so a change or an edit made
+  // between the request and the click answers stale. An absent or unreadable file counts as what it is
+  fingerprint(plugin: string | null): Promise<string> {
+    return this.serial(async () => {
+      const files = [this.file('switches.json'), this.file('luoshu.json')]
+      if (plugin !== null) files.push(this.file('plugins', `${pluginId.parse(plugin)}.json`))
+      const digest = createHash('sha256')
+      for (const file of files) {
+        const bytes = await readFile(file).then(read => createHash('sha256').update(read).digest('hex'), (err: NodeJS.ErrnoException) => err.code === 'ENOENT' ? 'absent' : 'unreadable')
+        digest.update(`${bytes}
+`)
+      }
+      return digest.digest('hex')
     })
   }
 

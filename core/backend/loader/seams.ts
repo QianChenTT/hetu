@@ -34,6 +34,11 @@ export type CarrierLink = {
   // either. The loader keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
   // passes unguarded and nothing reads as down
   stopping(): void
+  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // wait. Record nothing's switch drains first, so its own record is the last one written
+  drain(ms: number): Promise<number>
+  // Recording didn't go off after a drain, so the audit writer goes on
+  resume(): void
   // A floor constant as it applies to one plugin: the human's value for it or for all, lowered by the watchdog. The
   // loader takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
   limit(plugin: string, name: FloorConstant): number

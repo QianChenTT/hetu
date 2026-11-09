@@ -109,9 +109,11 @@ describe('hetu as an Electron app', () => {
     expect(network.hits()).toBe(0)
   })
 
+  // A machine with no microphone, a CI runner among them, refuses with NotFoundError before any permission is asked, so
+  // Chromium's fake device stands in for one and the permission handler is what answers
   it('keeps the editor page where it is and gives it no new window and no permission', async () => {
     const dataDir = await temp()
-    const app = await launch(dataDir)
+    const app = await launch(dataDir, {}, ['--use-fake-device-for-media-stream'])
     const page = await editorPage(app)
     const network = await counting()
     await page.evaluate(url => {

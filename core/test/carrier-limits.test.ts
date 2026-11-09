@@ -50,6 +50,32 @@ describe('limits', () => {
   })
 })
 
+// A window that lowered a value for all locked the trusted window out of every request. The values for all
+// reach windows only where they raise the floor, while the core-wide ones follow the human either way
+describe('the limits a window runs on', () => {
+  const human = (all: Record<string, number>) => new Limits(() => ({ all, plugins: {} }))
+
+  it('never go below the floor for a window, so no lowered value locks the trusted window out', () => {
+    const limits = human({ argumentBytes: 8, bytesInFlight: 1, messagesPerSecond: 1, callDeadlineMs: 1 })
+    for (const name of ['argumentBytes', 'bytesInFlight', 'messagesPerSecond', 'callDeadlineMs'] as const) {
+      expect(limits.of(null, name)).toBe(floorConstants[name])
+    }
+  })
+
+  it('take a value for all that raises the floor', () => {
+    expect(human({ argumentBytes: 4 * 1024 * 1024 }).of(null, 'argumentBytes')).toBe(4 * 1024 * 1024)
+  })
+
+  it('leave the core-wide ones to the human both ways', () => {
+    const limits = human({ auditQueue: 5, floorBacklog: 7, logFailMs: 60_000 })
+    expect([limits.of(null, 'auditQueue'), limits.of(null, 'floorBacklog'), limits.of(null, 'logFailMs')]).toEqual([5, 7, 60_000])
+  })
+
+  it('still give a plugin the lowered value for all', () => {
+    expect(human({ argumentBytes: 8 }).of('search', 'argumentBytes')).toBe(8)
+  })
+})
+
 describe('the message count', () => {
   const at = (perSecond: number, floodMs = 5000, floodFactor = 10) =>
     (name: string) => ({ messagesPerSecond: perSecond, floodMs, floodFactor } as Record<string, number>)[name]
@@ -183,15 +209,19 @@ describe('the ceiling', () => {
     expect(git.inbox.filter(message => message.kind === 'call')).toHaveLength(3)
   })
 
-  it('keeps a ceiling per window', async () => {
+  // A window runs on the floor's ceiling, which a value for all lowered by mistake can't take below
+  it('keeps a ceiling per window at the floor\'s value', async () => {
     const { carrier, connect, loader } = harness()
     loader.slots.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.all = { callsInFlight: 1 }
     const git = connect(worker('git'))
     const way = windowWay(carrier, { 'editor-1': editor, 'editor-2': { kind: 'window', role: 'editor', n: 2 } })
-    way.post('editor-1', { v: 1, kind: 'call', id: 100, action: 'git.log', args: {} })
-    await git.delivered('git.log')
+    for (let id = 100; id < 100 + floorConstants.callsInFlight; id++) way.post('editor-1', { v: 1, kind: 'call', id, action: 'git.log', args: {} })
+    for (let waited = 0; git.inbox.filter(message => message.kind === 'call').length < floorConstants.callsInFlight; waited++) {
+      if (waited > 200) throw new Error('the calls never arrived')
+      await tick(5)
+    }
     expect((await way.ask('editor-2', 'core.self')).ok).toBe(true)
     expect(code(await way.ask('editor-1', 'core.self'))).toBe('throttled')
   })
@@ -293,14 +323,17 @@ describe('the rate', () => {
     expect(samples).toEqual([{ kind: 'dropped', caller: worker('search'), count: 3 }])
   })
 
+  // Past the floor's flood cap too, since a window's way is never closed and a value for all can't lower its rate
   it('drops a window\'s messages over the rate but never closes its way in', async () => {
     const clock = 1_000_000
     const { carrier, loader } = harness({ clock: () => clock })
     loader.human.all = { messagesPerSecond: 2, floodMs: 1000, floodFactor: 1 }
     const way = windowWay(carrier, { 'editor-1': editor })
-    for (let i = 1; i <= 10; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
-    await tick(20)
-    expect(way.replies.map(reply => reply.id)).toEqual([1, 2])
+    const sent = floorConstants.messagesPerSecond * floorConstants.floodFactor + 10
+    for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
+    await tick(50)
+    expect(way.replies).toHaveLength(floorConstants.messagesPerSecond)
+    expect(way.replies.at(-1)?.id).toBe(floorConstants.messagesPerSecond)
     expect(loader.crashes).toEqual([])
   })
 })

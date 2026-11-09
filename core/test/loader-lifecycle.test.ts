@@ -305,11 +305,11 @@ describe('restarts', () => {
     await expect(made.loader.restart('nobody', 'human')).rejects.toEqual({ code: 'not-found' })
   })
 
-  it('serves only watchdog.stop and watchdog.restart on the carrier\'s core seam', async () => {
+  it('serves watchdog.stop and watchdog.restart on the core seam and refuses a change outside the schema', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.loader.start()
     const call = (action: string, args: unknown) => ({ callId: 'c', caller: wkr('watchdog'), action, args, deadline: Date.now() + 1000 })
-    await expect(made.loader.serve(call('security.request', { change: {} }))).rejects.toEqual({ code: 'unavailable' })
+    await expect(made.loader.serve(call('security.request', { change: {} }))).rejects.toEqual({ code: 'invalid' })
     await expect(made.loader.serve(call('watchdog.stop', { plugin: 'gate' }))).rejects.toEqual({ code: 'not-found' })
     await expect(made.loader.serve(call('watchdog.stop', { plugin: 'alpha' }))).resolves.toBe(null)
     expect(stateOf(made.loader, 'alpha')).toBe('stopped')

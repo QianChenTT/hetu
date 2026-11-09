@@ -18,6 +18,13 @@ describe('the core actions', () => {
       'log.verify': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
+      'security.cancel': 'trusted',
+      'security.open': 'windows',
+      'security.list': 'trusted',
+      'core.stop': 'trusted',
+      'core.restart': 'windows',
+      'core.quit': 'windows',
+      'core.relaunch': 'trusted',
       'watchdog.stop': 'watchdog',
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',
@@ -52,6 +59,23 @@ describe('the core actions', () => {
     ['security.confirm', { requestId: 'req-1' }, true],
     ['security.confirm', { requestId: 'a b' }, false],
     ['security.confirm', { request: 'req-1' }, false],
+    // What the human typed to prove attention, which the core checks against the control's id
+    ['security.confirm', { requestId: 'req-1', typed: 'gate' }, true],
+    ['security.confirm', { requestId: 'req-1', typed: 'x'.repeat(65) }, false],
+    ['security.confirm', { requestId: 'req-1', typed: 7 }, false],
+    ['security.cancel', { requestId: 'req-1' }, true],
+    ['security.cancel', {}, false],
+    ['security.open', undefined, true],
+    ['security.open', { requestId: 'req-1' }, true],
+    ['security.open', { requestId: 'a b' }, false],
+    ['security.list', undefined, true],
+    ['security.list', { all: true }, false],
+    ['core.stop', { plugin: 'search' }, true],
+    ['core.stop', { plugin: 'search', force: true }, false],
+    ['core.restart', { plugin: 'search' }, true],
+    ['core.quit', undefined, true],
+    ['core.quit', { code: 1 }, false],
+    ['core.relaunch', undefined, true],
     ['watchdog.stop', { plugin: 'search' }, true],
     ['watchdog.stop', { plugin: 'my.plugin' }, false],
     ['watchdog.stop', { plugin: 'search', force: true }, false],
@@ -66,7 +90,7 @@ describe('the core actions', () => {
 describe('the bus\'s actions', () => {
   it('serves subscribe, unsubscribe and publish in events, with the two topics the core sends', () => {
     expect(Object.keys(eventActions)).toEqual(['events.subscribe', 'events.unsubscribe', 'events.publish'])
-    expect(coreTopics).toEqual(['core.status', 'core.security'])
+    expect(coreTopics).toEqual(['core.status', 'core.security', 'core.quitting'])
     expect(Object.isFrozen(eventActions) && Object.isFrozen(coreTopics)).toBe(true)
     expect(Object.getPrototypeOf(eventActions)).toBeNull()
     // Acknowledging is the ack message, never a call

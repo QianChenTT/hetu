@@ -113,14 +113,23 @@ describe('the start order', () => {
 
 describe('install plugins', () => {
   it('refuses one whose bytes fail the install list, which reads tampered, and starts the rest', async () => {
-    const { loader, runtime, link } = await harness({ install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } } })
+    const { loader, runtime, link } = await harness({ install: { ...twoHosts(), storage: { ...host('storage'), hash: wrongHash } } })
+    await loader.start()
+    expect(stateOf(loader, 'storage')).toBe('refused')
+    expect(reasonOf(loader, 'storage')).toBe('tampered')
+    expect(runtime.order()).toEqual(['gate'])
+    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'storage', from: 'install', result: 'tampered' })
+    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'ok' })
+  })
+
+  // A tampered security plugin always stops hetu from starting
+  it('stops hetu when the tampered one is a security control, before the rest start', async () => {
+    const { loader, runtime } = await harness({ install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } } })
     await loader.start()
     expect(loader.slot('gate')).toBe('tampered')
-    expect(stateOf(loader, 'gate')).toBe('refused')
     expect(reasonOf(loader, 'gate')).toBe('tampered')
-    expect(runtime.order()).toEqual(['storage'])
-    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'tampered' })
-    expect(link.events('plugin.checked')).toContainEqual({ plugin: 'storage', from: 'install', result: 'ok' })
+    expect(loader.stopped()).toMatchObject({ control: 'gate', why: 'tampered' })
+    expect(runtime.order()).toEqual([])
   })
 
   it('reads a slot absent when the install holds no plugin for it', async () => {
@@ -194,19 +203,21 @@ describe('install plugins', () => {
     expect(reasonOf(loader, 'luoshu')).toBe('place')
   })
 
-  it('refuses a slot holder that requires anything, a plugin that requires one and an install plugin that requires a folder plugin', async () => {
+  // A slot holder refused this way is a security control that failed, so hetu stops
+  it('refuses a slot holder that requires anything', async () => {
+    const { loader } = await harness({ install: { ...coreInstall(), gate: host('gate', { requires: ['storage'] }), storage: host('storage') } })
+    await loader.start()
+    expect(reasonOf(loader, 'gate')).toBe('requires')
+    expect(loader.stopped()).toMatchObject({ control: 'gate', why: 'failed', reason: 'requires' })
+  })
+
+  it('refuses a plugin that requires a slot holder and an install plugin that requires a folder plugin', async () => {
     const { loader } = await harness({
-      install: {
-        ...coreInstall(),
-        gate: host('gate', { requires: ['storage'] }),
-        storage: host('storage'),
-        luoshu: host('luoshu', { requires: ['outline'] }),
-      },
+      install: { ...coreInstall(), storage: host('storage'), luoshu: host('luoshu', { requires: ['outline'] }) },
       folder: { outline: filesFor(workerManifest('outline', { requires: ['gate'] })) },
       entries: { outline: signed() },
     })
     await loader.start()
-    expect(reasonOf(loader, 'gate')).toBe('requires')
     expect(reasonOf(loader, 'luoshu')).toBe('requires')
     expect(reasonOf(loader, 'outline')).toBe('requires')
     expect(stateOf(loader, 'storage')).toBe('ready')
@@ -301,7 +312,9 @@ describe('start markers', () => {
       await next.loader.start()
       expect(next.loader.slot('gate')).toBe('failed')
       expect(reasonOf(next.loader, 'gate')).toBe('marker')
-      expect(next.runtime.order()).toEqual(['storage'])
+      // The gate is a security control, so its marker stops hetu before the rest start
+      expect(next.loader.stopped()).toMatchObject({ control: 'gate', reason: 'marker' })
+      expect(next.runtime.order()).toEqual([])
       expect(next.link.events('plugin.failed')).toContainEqual({ plugin: 'gate', incarnation: 0, reason: 'marker' })
     } finally {
       await booted.release()

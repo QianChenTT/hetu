@@ -38,7 +38,7 @@ async function joined(options: {
   entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
-  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -56,7 +56,7 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, ...options.wire })
+  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     await loader.shutdown().catch(() => {})
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
@@ -421,10 +421,20 @@ describe('core.status, for a window\'s banner', () => {
       recordNothing: false,
       logWrites: true,
       luoshuPicked: false,
+      pending: [],
+      stopped: null,
     })
     runtime.half('alpha').crash()
     await until(() => loader.plugin('alpha')?.state === 'crashed')
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
+  })
+
+  it('names the requests waiting for the human, a plugin found in the folder among them', async () => {
+    const { carrier, loader, dataDir } = await joined()
+    await writeFolder(path.join(dataDir, 'plugins', 'beta'), filesFor(workerManifest('beta')))
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.status')).result).toMatchObject({ pending: [{ kind: 'plugin.approve', plugin: 'beta' }] })
   })
 
   it('says the log can\'t write while boot\'s event log is failing', async () => {
@@ -558,5 +568,116 @@ describe('the gate plugin on the joined core', () => {
     expect(parts.loader.slot('gate')).toBe('failed')
     expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
+  })
+})
+
+describe('the windows\' own actions', () => {
+  const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
+  const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
+
+  it('go to the runtime for opening the trusted window, Quit and Restart hetu, and the rest to the loader', async () => {
+    const served: string[] = []
+    const { carrier, loader } = await joined({
+      wire: { windows: { serve: async call => { served.push(call.action); return null }, armed: () => true } },
+    })
+    await loader.start()
+    const way = windowWay(carrier, { editor, trusted })
+    for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
+    expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
+    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch'])
+    expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
+  })
+
+  it('count a Confirm only once the runtime says the trusted window armed', async () => {
+    let armed = false
+    const { carrier, loader } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
+    await loader.start()
+    const way = windowWay(carrier, { editor, trusted })
+    const reply = await way.ask('editor', 'security.request', { change: { kind: 'skipVerification', on: true } })
+    const id = (reply.result as { held: string }).held
+    expect((await way.ask('trusted', 'security.confirm', { requestId: id })).refusal).toMatchObject({ code: 'throttled' })
+    armed = true
+    expect((await way.ask('trusted', 'security.confirm', { requestId: id })).ok).toBe(true)
+  })
+
+  it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {
+    const { carrier, loader } = await joined()
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
+  })
+})
+
+describe('a failing log', () => {
+  it('quits hetu to start it again once its oldest record waited logFailMs unwritten', async () => {
+    const failures: unknown[] = []
+    const { loader, runtime } = await joined({
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      before: booted => {
+        booted.state.switches.limits.all.logFailMs = 100
+        Object.defineProperty(booted.log, 'healthy', { get: () => false })
+        booted.log.appendMany = async () => { throw new Error('disk full') }
+      },
+      wire: { onFailure: failure => { failures.push(failure) } },
+    })
+    await loader.start()
+    await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
+    await new Promise(resolve => setTimeout(resolve, 150))
+    await runtime.half('alpha').ask('luoshu.read', { path: 'notes/b.md' })
+    await until(() => failures.length > 0)
+    expect(failures).toEqual([{ action: 'relaunch', control: 'log', reason: 'log-failing' }])
+  })
+})
+
+// #101: every switch keeps this design's fail-safe default and none has an
+// off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
+// against a gate that refuses everything, so a call that passes shows the gate was skipped
+describe('the off states', () => {
+  async function switchedOff(off: string[], decides: 'refuses' | 'item-off' | 'allows' = 'refuses') {
+    const luoshu = new FakeLuoshu()
+    luoshu.files.set('notes/a.md', 'x')
+    const gate = gateDeciding((_access, view) => decides === 'allows'
+      ? { allow: true, view }
+      : { allow: false, code: decides === 'item-off' ? 'switched-off' : 'not-granted', view })
+    const parts = await joined({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
+      before: booted => { booted.state.switches.off = off as typeof booted.state.switches.off },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return parts
+  }
+  const read = async (parts: Awaited<ReturnType<typeof switchedOff>>) => {
+    const reply = await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
+    return reply?.ok === true ? 'passes' : code(reply!)
+  }
+
+  it.each([
+    ['nothing switched off: the gate decides', [], 'not-granted'],
+    ['the gate: a call with power passes, still recorded', ['gate'], 'passes'],
+    ['the gate and the luoshu: unavailable, since no switch gives a power the framework lacks', ['gate', 'luoshu'], 'unavailable'],
+  ])('with %s', async (_name, off, answer) => {
+    expect(await read(await switchedOff(off))).toBe(answer)
+  })
+
+  // The gate is asked first, so the luoshu's own state shows once the gate allows
+  it('with the luoshu: its calls answer unavailable once the gate allowed them', async () => {
+    expect(await read(await switchedOff(['luoshu'], 'allows'))).toBe('unavailable')
+  })
+
+  // Decision 12: allowing all means all, so a per-item switch lapses while the gate is off
+  it('lets the per-item switches lapse with the gate off', async () => {
+    expect(await read(await switchedOff([], 'item-off'))).toBe('switched-off')
+    expect(await read(await switchedOff(['gate'], 'item-off'))).toBe('passes')
+  })
+
+  it('records the call that passed with the gate off', async () => {
+    const parts = await switchedOff(['gate'])
+    await read(parts)
+    await parts.carrier.flush()
+    const records = await floorRecords(parts.dataDir)
+    expect(records.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read')).toMatchObject([{ gate: 'off', code: null }])
   })
 })
