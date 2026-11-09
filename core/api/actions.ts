@@ -108,6 +108,9 @@ const coreTable = {
   // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.set,
   // which waits for the Confirm
   'core.pickFolder': { from: 'trusted', args: nothing },
+  // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
+  // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
+  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
   // Only on sandboxed plugins that hold no guard or slot role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
@@ -221,7 +224,8 @@ export type SecurityList = {
 }
 
 // What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
-// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the requests
+// switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the in-page
+// plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
   slots: Record<typeof slotIds[number], SlotState>
@@ -232,6 +236,8 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
+  // The in-page install plugins that are ready, which the editor window applies: hidden-marks
+  page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null
 }
@@ -253,5 +259,6 @@ export type ActionResults = {
   'luoshu.write': { version: string }
   'luoshu.list': { paths: string[], next: string | null }
   'core.pickFolder': string | null
+  'editor.reach': { read: boolean, write: boolean, verbs: string[] }
 }
 export type ResultOf<A extends string> = A extends keyof ActionResults ? ActionResults[A] : unknown

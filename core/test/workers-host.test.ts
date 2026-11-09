@@ -285,3 +285,87 @@ describe('the worker host page', () => {
     expect(reports).toHaveLength(2)
   })
 })
+
+describe("the worker host page's relay to the drawer", () => {
+  // A running worker given a port to the editor page: the page's own end of the worker's new channel and the drawer's
+  function drawn(over: Partial<Limits> = {}) {
+    const parts = running(over)
+    const drawer = new FakePort()
+    parts.page.drawer('search', 1, drawer)
+    const made = parts.inner[1]
+    return { ...parts, drawer, mine: made.port1, workers: made.port2 }
+  }
+
+  it("hands the worker its end of a new channel, never the editor page's port", () => {
+    const { worker, workers, drawer } = drawn()
+    expect(worker.posted[1]).toEqual({ message: { v: 1, kind: 'drawer' }, transfer: [workers] })
+    expect(worker.posted[1].transfer).not.toContain(drawer)
+  })
+
+  it("passes the worker's text within the cap to the drawer and the drawer's messages to the worker", () => {
+    const { mine, drawer, main } = drawn()
+    mine.gets(text({ v: 1, kind: 'call', id: 1, verb: 'editor.read' }))
+    expect(drawer.posted).toEqual([text({ v: 1, kind: 'call', id: 1, verb: 'editor.read' })])
+    expect(main.posted).toEqual([])
+    drawer.gets('{"v":1,"kind":"reply","id":1}')
+    expect(mine.posted).toEqual(['{"v":1,"kind":"reply","id":1}'])
+  })
+
+  it.each([
+    ['an object', { v: 1, kind: 'call' }],
+    ['text past the cap', 'x'.repeat(cap + 1)],
+    ['text that isn\'t JSON', 'call'],
+  ])('cuts the worker off for %s on the drawer port, as on its calls', (_name, data) => {
+    const { mine, worker, drawer, reports } = drawn()
+    mine.gets(data)
+    expect(worker.ended).toBe(true)
+    expect(reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' }])
+    expect(drawer.posted).toEqual([])
+    expect(drawer.closed).toBe(true)
+  })
+
+  it('cuts the worker off at the flood cap on the drawer port', () => {
+    const { mine, worker, reports, at } = drawn()
+    at(0)
+    for (let i = 0; i < 12; i++) mine.gets(text('m'))
+    expect(worker.ended).toBe(false)
+    mine.gets(text('m'))
+    expect(worker.ended).toBe(true)
+    expect(reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'flood' }])
+  })
+
+  it('counts the drawer apart from main, so the editor stream never starves calls', () => {
+    const { mine, own, main, drawer, at } = drawn()
+    at(1000)
+    for (let i = 0; i < 3; i++) mine.gets(text(`d${i}`))
+    for (let i = 0; i < 3; i++) own.gets(text(`m${i}`))
+    expect(drawer.posted).toHaveLength(3)
+    expect(main.posted).toHaveLength(3)
+  })
+
+  it('replaces the port for a new editor page and closes the old one', () => {
+    const { page, drawer, inner, worker } = drawn()
+    const next = new FakePort()
+    page.drawer('search', 1, next)
+    expect(drawer.closed).toBe(true)
+    expect(inner[1].port1.closed).toBe(true)
+    inner[2].port1.gets(text('m'))
+    expect(next.posted).toEqual([text('m')])
+    expect(drawer.posted).toEqual([])
+    expect(worker.posted[2].message).toEqual({ v: 1, kind: 'drawer' })
+  })
+
+  it('closes the drawer port when the worker ends', () => {
+    const { page, drawer } = drawn()
+    page.terminate('search', 1)
+    expect(drawer.closed).toBe(true)
+  })
+
+  it('closes a port for a worker it is not running', () => {
+    const { page } = host()
+    const drawer = new FakePort()
+    page.drawer('search', 1, drawer)
+    page.drawer(7, 1, new FakePort())
+    expect(drawer.closed).toBe(true)
+  })
+})

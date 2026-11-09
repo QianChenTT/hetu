@@ -421,6 +421,7 @@ describe('core.status, for a window\'s banner', () => {
       recordNothing: false,
       logWrites: true,
       luoshuPicked: false,
+      page: [],
       pending: [],
       stopped: null,
     })

@@ -130,8 +130,7 @@ type Staged = { dir: string, read: Read }
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http',
-  'editor-core', 'hidden-marks',
+  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http', 'hidden-marks',
 ] as const)
 
 const FOLDER_RANK = 1000
@@ -601,6 +600,7 @@ ${capabilityKey(change.capability)}`)
       recordNothing: switches.recordNothing,
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
+      page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
       pending: this.pending(),
       stopped: this.stoppedMode,
     }
@@ -1327,7 +1327,8 @@ ${capabilityKey(change.capability)}`)
       this.link.register(core, run.caller)
       live.halves.set('worker', run)
       const code = k.read.files.find(file => file.path === worker)!.bytes
-      this.runtime.startWorker({ id: k.id, incarnation: live.n, code, port: plugin })
+      const drawer = this.grantsOf(k.id).some(granted => granted.type.startsWith('ui.'))
+      this.runtime.startWorker({ id: k.id, incarnation: live.n, code, port: plugin, drawer })
     }
 
     const deps = this.depsOf(k)

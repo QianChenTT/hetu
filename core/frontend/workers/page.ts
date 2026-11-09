@@ -18,13 +18,15 @@ const host = new WorkerHost({
   },
 })
 
-// Only the preload posts to this window: main's starts and ends, each start with main's end of the plugin's channel
+// Only the preload posts to this window: main's starts and ends, each start with main's end of the plugin's channel, and
+// each worker's port to the editor page's drawer
 window.addEventListener('message', event => {
   if (event.source !== window || event.origin !== location.origin) return
   const data = event.data as { hetu?: unknown, id?: unknown, incarnation?: unknown, limits?: unknown } | null
   if (data?.hetu === 'start') host.start(data, asPort(event.ports[0]))
   else if (data?.hetu === 'terminate') host.terminate(data.id, data.incarnation)
   else if (data?.hetu === 'limits') host.relimit(data.id, data.incarnation, data.limits)
+  else if (data?.hetu === 'drawer') host.drawer(data.id, data.incarnation, asPort(event.ports[0]))
 })
 
 setInterval(() => host.flush(), 1000)

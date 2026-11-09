@@ -9,6 +9,10 @@ import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 const FIRST_PARTY = ['search']
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
 const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu']
+// The in-page install plugins, each a module the editor page compiles in from core/frontend/mount. The install's copy
+// holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
+// loader path for in-page code
+const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
 
 const core = path.join(import.meta.dirname, '..')
 const frontend = path.join(core, 'frontend')
@@ -77,6 +81,26 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     for (const output of outputs) await writeFile(path.join(root, ...output.path.split('/')), output.text)
     const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
+  }
+  for (const [id, module] of Object.entries(PAGE)) {
+    const source = path.join(core, '..', 'plugins', id)
+    const root = path.join(outDir, 'plugins', id)
+    await rm(root, { recursive: true, force: true })
+    await mkdir(path.join(root, 'dist'), { recursive: true })
+    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
+    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
+    // Its own code only: CodeMirror is the page's
+    await build({
+      ...shared,
+      entryPoints: [path.join(frontend, 'mount', module)],
+      outfile: path.join(root, 'dist', 'page.js'),
+      platform: 'browser',
+      format: 'esm',
+      target: CHROMIUM,
+      packages: 'external',
+    })
+    const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
+    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)

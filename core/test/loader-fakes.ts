@@ -177,6 +177,8 @@ export class Half {
 export class FakeRuntime implements Runtime {
   readonly started: { id: string, incarnation: number, half: 'worker' | 'host', code: string | null }[] = []
   readonly terminated: { id: string, incarnation: number }[] = []
+  // The workers started with a port to the drawer
+  readonly drawers: string[] = []
   readonly halves = new Map<string, Half>()
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
@@ -217,6 +219,7 @@ export class FakeRuntime implements Runtime {
 
   startWorker(start: WorkerStart): void {
     this.started.push({ id: start.id, incarnation: start.incarnation, half: 'worker', code: start.code.toString() })
+    if (start.drawer) this.drawers.push(start.id)
     const behaviour = this.of(start.id)
     if (behaviour.throws) throw new Error('the renderer is gone')
     const port = start.port as MessagePort

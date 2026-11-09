@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { coreActions, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
-import type { CapabilityType } from '../../api/capabilities.ts'
+import { capabilityTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
@@ -872,6 +872,7 @@ export class Carrier {
   private async coreAction(pending: Pending, args: unknown): Promise<void> {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
+    if (pending.action === 'editor.reach') return this.finish(pending, this.reach(args))
     if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. Its reads answer
@@ -888,6 +889,37 @@ export class Carrier {
       return this.finish(pending, { ok: true, result: null })
     }
     return this.serve(pending, this.options.core, args)
+  }
+
+  // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
+  // anything about the note: read it, write it and the ui items it holds, from the gate with the plugin as the caller at
+  // the canonical stage. A write whose item still asks at first use counts as none, since the bridge raises no prompt.
+  // Everything with the gate off, policy-down while it starts or is down, as for any call
+  private reach(args: unknown): Outcome {
+    const plugin = field(args, 'plugin') as string
+    const path = field(args, 'path') as string | undefined
+    const state = this.slot('gate')
+    if (state === 'off') {
+      const verbs = capabilityTypes.filter(type => type.startsWith('ui.'))
+      return { ok: true, result: { read: path !== undefined, write: path !== undefined, verbs } }
+    }
+    const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
+    if (gate === null) return no(this.down('policy-down'))
+    const caller: Caller = frozen({ kind: 'plugin', id: plugin, half: 'worker', incarnation: 1 })
+    try {
+      const held = gate.verbs(plugin, 'editor')
+      const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
+      if (path === undefined) return { ok: true, result: { read: false, write: false, verbs } }
+      const read = gate.canRead(caller, path) === true
+      const decision = gate.decide(frozen({
+        stage: 'canonical', caller, action: 'luoshu.write', capability: 'luoshu.write', scope: frozen({ paths: [path] }),
+      }))
+      const write = 'allow' in decision && decision.allow === true
+      return { ok: true, result: { read, write, verbs } }
+    } catch {
+      this.fault('gate', 'reach')
+      return no('policy-down')
+    }
   }
 
   // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may

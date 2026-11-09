@@ -10,8 +10,8 @@ export const WORKERS_URL = `${SCHEME}://workers/`
 
 // The hidden renderer as the runtime drives it, faked in the tests
 export type Renderer = {
-  // To the page's preload, a start with the worker's port
-  post(channel: 'hetu:start' | 'hetu:terminate' | 'hetu:limits', message: unknown, ports?: MessagePortMain[]): void
+  // To the page's preload, a start with the worker's port or a port to the editor page's drawer
+  post(channel: 'hetu:start' | 'hetu:terminate' | 'hetu:limits' | 'hetu:drawer', message: unknown, ports?: MessagePortMain[]): void
   // What the page's own frame sent
   onPage(listener: (message: unknown) => void): void
   // Once, when the renderer's process is gone
@@ -47,6 +47,8 @@ export class WorkerRenderer {
   private ready = false
   private closed = false
   private queue: Start[] = []
+  // Drawer ports for starts still queued, sent right after their start
+  private readonly waiting = new Map<string, MessagePortMain>()
   private readonly running = new Map<string, { id: string, incarnation: number }>()
   private readonly ending = new Map<string, { id: string, timer: ReturnType<typeof setTimeout> }>()
 
@@ -73,6 +75,8 @@ export class WorkerRenderer {
     if (queued !== undefined) {
       this.queue = this.queue.filter(start => start !== queued)
       queued.port.close()
+      this.waiting.get(key(id, incarnation))?.close()
+      this.waiting.delete(key(id, incarnation))
       return
     }
     const at = key(id, incarnation)
@@ -81,6 +85,22 @@ export class WorkerRenderer {
     timer.unref?.()
     this.ending.set(at, { id, timer })
     this.renderer?.post('hetu:terminate', { id, incarnation })
+  }
+
+  // A port to the editor page's drawer for a worker: to its page with the worker named, after its start when that still
+  // waits, and closed for a worker not here
+  drawer(id: string, incarnation: number, port: MessagePortMain): void {
+    const at = key(id, incarnation)
+    if (!this.closed && this.running.has(at)) {
+      this.renderer?.post('hetu:drawer', { id, incarnation }, [port])
+      return
+    }
+    if (!this.closed && this.queue.some(start => start.id === id && start.incarnation === incarnation)) {
+      this.waiting.get(at)?.close()
+      this.waiting.set(at, port)
+      return
+    }
+    port.close()
   }
 
   // Nothing running and nothing waiting to start
@@ -92,6 +112,7 @@ export class WorkerRenderer {
   close(): void {
     this.closed = true
     for (const start of this.queue.splice(0)) start.port.close()
+    this.closeWaiting()
     this.renderer?.destroy()
     this.renderer = null
   }
@@ -120,6 +141,15 @@ export class WorkerRenderer {
     this.running.set(key(start.id, start.incarnation), { id: start.id, incarnation: start.incarnation })
     const limits = this.options.limits(start.id)
     this.renderer?.post('hetu:start', { id: start.id, incarnation: start.incarnation, code: start.code, limits }, [start.port])
+    const at = key(start.id, start.incarnation)
+    const drawer = this.waiting.get(at)
+    this.waiting.delete(at)
+    if (drawer !== undefined) this.renderer?.post('hetu:drawer', { id: start.id, incarnation: start.incarnation }, [drawer])
+  }
+
+  private closeWaiting(): void {
+    for (const port of this.waiting.values()) port.close()
+    this.waiting.clear()
   }
 
   private heard(message: unknown): void {
@@ -151,6 +181,7 @@ export class WorkerRenderer {
     this.options.record('renderer.gone', { reason, plugins: plugins.join(',') })
     this.running.clear()
     for (const start of this.queue.splice(0)) start.port.close()
+    this.closeWaiting()
     // Its window stays until destroyed, so a run that loses renderers doesn't gather dead hidden windows
     this.renderer?.destroy()
     this.renderer = null
@@ -243,6 +274,12 @@ export class WorkerRenderers {
 
   limited(id: string): void {
     this.groups.get(groupOf(id))?.limited(id)
+  }
+
+  drawer(id: string, incarnation: number, port: MessagePortMain): void {
+    const workers = this.groups.get(groupOf(id))
+    if (workers === undefined) port.close()
+    else workers.drawer(id, incarnation, port)
   }
 
   close(): void {
