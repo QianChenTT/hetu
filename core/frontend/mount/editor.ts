@@ -15,8 +15,9 @@ import { mapThrough, Versions } from './versions.ts'
 
 export type ViewHooks = {
   created(instance: Instance): void
-  // remote marks a change from outside, kept out of undo
-  changed(instance: Instance, changes: ChangeSet, remote: boolean): void
+  // remote marks a change from outside, kept out of undo. hid names the plugins whose hidden text the human's change
+  // removed, which the save then names too
+  changed(instance: Instance, changes: ChangeSet, remote: boolean, hid: string[]): void
   // A key CodeMirror's own keymaps left, for the plugins' bindings. True when one took it
   key(instance: string, event: KeyboardEvent): boolean
 }
@@ -60,12 +61,29 @@ const pluginMarks = StateField.define<{ owned: Owned, drawn: Drawn }>({
     const all = [...owned.values()].flatMap(sets => [...sets.values()].flat())
     return { owned, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
   },
+  // A plugin's hidden ranges are not atomic: a delete beside one takes one character, not the whole range the plugin
+  // chose. Hidden marks' own, from the install, are
   provide: field => [
     EditorView.decorations.from(field, value => value.drawn.marks),
     EditorView.decorations.from(field, value => value.drawn.hidden),
-    EditorView.atomicRanges.of(view => view.state.field(field).drawn.hidden),
   ],
 })
+
+// The plugins whose hidden ranges or widgets a change removes text from, in the text before it
+function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
+  const owners: string[] = []
+  for (const [owner, sets] of owned) {
+    let hit = false
+    changes.iterChangedRanges((fromA, toA) => {
+      if (hit || toA === fromA) return
+      for (const marks of sets.values()) {
+        if (marks.some(mark => (mark.kind === 'hide' || mark.kind === 'widget') && mark.from < toA && mark.to > fromA)) hit = true
+      }
+    })
+    if (hit) owners.push(owner)
+  }
+  return owners
+}
 
 // Hidden marks over the visible ranges, built again when the text, the viewport or the parse moves
 const hiddenMarksView = ViewPlugin.fromClass(class {
@@ -129,7 +147,10 @@ export class EditorViews implements Editors {
             for (const tr of update.transactions) {
               if (!tr.docChanged) continue
               instance.versions.push(tr.changes)
-              this.hooks.changed(instance, tr.changes, tr.annotation(Transaction.remote) === true)
+              const remote = tr.annotation(Transaction.remote) === true
+              const human = !remote && tr.annotation(fromPlugin) === undefined
+              const hid = human ? hiddenBy(tr.startState.field(pluginMarks).owned, tr.changes) : []
+              this.hooks.changed(instance, tr.changes, remote, hid)
             }
           }),
         ],
