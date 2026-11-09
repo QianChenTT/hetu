@@ -482,6 +482,22 @@ ${capabilityKey(change.capability)}`)
     return []
   }
 
+  // A plugin's storage or cache space cleared through the storage plugin while it runs, in the space's turn after the
+  // calls already queued on it, so a set a stopping plugin queued can't land after the clear. With storage down nothing
+  // is queued and the folder goes directly
+  private async clearSpace(kind: 'storage' | 'cache', id: string): Promise<void> {
+    const role = this.role('storage', 'storage')
+    if (role !== null) {
+      try {
+        await role.clear(kind, id)
+        return
+      } catch {
+        this.note('fault', { plugin: 'storage', step: 'clear' })
+      }
+    }
+    await clear(kind === 'storage' ? folders.storage(this.dataDir, id) : folders.cache(this.dataDir, id))
+  }
+
   // ---- classes
 
   // The capabilities slot's role while the slot is on and its plugin ready, null otherwise
@@ -829,7 +845,7 @@ ${capabilityKey(change.capability)}`)
       return false
     }
     await swapIn(this.dataDir, id, dir)
-    if (previous !== null && previous !== listed.version) await clear(folders.cache(this.dataDir, id)).catch(() => {})
+    if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
     const granted = read.manifest!.capabilities ?? []
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
@@ -1248,7 +1264,7 @@ ${capabilityKey(change.capability)}`)
     const landing = await this.landing(k.id, 'plugin.updated', { plugin: k.id, from, to: k.listed!.version })
     if (landing === 'lost') return
     k.updated = null
-    await clear(folders.cache(this.dataDir, k.id)).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
+    await this.clearSpace('cache', k.id).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
     k.previousVersion = from
     await this.saveInstalled()
   }
@@ -1630,7 +1646,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async clearStorage(id: string): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
-    await this.stoppedWhile(k, () => clear(folders.storage(this.dataDir, id)))
+    await this.stoppedWhile(k, () => this.clearSpace('storage', id))
   }
 
   // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
@@ -1640,7 +1656,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
     await this.stoppedWhile(k, async () => {
-      for (const dir of [folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) await clear(dir)
+      for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id)
       await removeMarker(this.dataDir, id)
       this.markers.delete(id)
       // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
@@ -1815,9 +1831,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.bump()
     this.replan()
     await this.pumped()
-    for (const dir of [folders.plugins(this.dataDir, id), folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) {
-      await clear(dir).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
-    }
+    await clear(folders.plugins(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
+    for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
     this.known.delete(id)
     this.replan()
   }
@@ -1927,7 +1942,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       await this.pumped()
     }
     if (old.version !== to) {
-      await clear(folders.cache(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'cache' }))
+      await this.clearSpace('cache', id).catch(() => this.note('fault', { plugin: id, step: 'cache' }))
       k.previousVersion = old.version
     }
     k.entry = entry

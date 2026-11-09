@@ -1,6 +1,6 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { FloorConstant } from '../../api/floor.ts'
-import type { Capabilities, Gate, Guard, LuoshuRole, Provider, Watchdog } from '../../api/slots.ts'
+import type { Capabilities, Gate, Guard, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Landing, Port } from '../carrier/seams.ts'
@@ -46,7 +46,7 @@ export type CarrierLink = {
 
 // What a host half's module gives the core once imported: the role interfaces it holds. The carrier asks them
 // through the loader, which hands one on only while its plugin is ready
-export type HostExports = { gate?: Gate, guard?: Guard, provider?: Provider, watchdog?: Watchdog, luoshu?: LuoshuRole, capabilities?: Capabilities }
+export type HostExports = { gate?: Gate, guard?: Guard, provider?: Provider, watchdog?: Watchdog, luoshu?: LuoshuRole, capabilities?: Capabilities, storage?: StorageRole }
 
 // A host half's end of its in-process way. Messages the carrier sends before listen are kept for it
 export type HostLink = { post(message: unknown): void, listen(listener: (message: unknown) => void): void }

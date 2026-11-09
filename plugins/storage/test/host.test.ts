@@ -12,7 +12,7 @@ describe('the host half as it ships', () => {
     expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
     const provider = module.provider as Record<string, unknown>
     for (const name of ['prepare', 'perform', 'open']) expect(typeof provider[name]).toBe('function')
-    expect(Object.keys(module).sort()).toEqual(['default', 'provider'])
+    expect(Object.keys(module).sort()).toEqual(['default', 'provider', 'storage'])
   })
 
   it('can\'t build with a built-in its manifest leaves out', async () => {

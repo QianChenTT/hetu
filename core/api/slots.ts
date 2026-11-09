@@ -94,6 +94,10 @@ export type Capabilities = {
   screen(subject: ScreenSubject): string[]
 }
 
+// How the loader clears a space through the storage plugin, so the clear runs after every call already queued on the
+// space and nothing a stopped plugin queued lands after it
+export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
+
 // The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
 export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
 

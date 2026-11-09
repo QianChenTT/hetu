@@ -263,3 +263,32 @@ describe('calls on one space', () => {
     expect(await readdir(spaceDir('storage', 'search'))).toEqual(['key-a'])
   })
 })
+
+describe('a clear of a space', () => {
+  it('runs after every call already queued on it, so no set queued before the clear survives it', async () => {
+    const store = opened()
+    await ask(store, search, 'storage.set', { key: 'kept', value: 1 })
+    const queued = Array.from({ length: 20 }, (_, i) => ask(store, search, 'storage.set', { key: `planted${i}`, value: i }))
+    // Each set's prepare answers first, then its perform joins the space's queue, as for a plugin the loader then stops
+    await new Promise(resolve => setImmediate(resolve))
+    const cleared = store.clear('storage', 'search')
+    await Promise.all(queued)
+    await cleared
+    expect(await readdir(spaceDir('storage', 'search')).catch(() => [])).toEqual([])
+    expect(await ask(store, search, 'storage.get', { key: 'kept' })).toBeNull()
+    // A set after the clear starts the space again
+    expect(await ask(store, search, 'storage.set', { key: 'fresh', value: 2 })).toBeNull()
+    expect(await ask(store, search, 'storage.get', { key: 'fresh' })).toBe(2)
+  })
+
+  it('clears the cache apart from storage and leaves other spaces alone', async () => {
+    const store = opened()
+    await ask(store, search, 'storage.set', { key: 'k', value: 1 })
+    await ask(store, search, 'cache.set', { key: 'k', value: 1 })
+    await ask(store, plugin('git'), 'cache.set', { key: 'k', value: 1 })
+    await store.clear('cache', 'search')
+    expect(await ask(store, search, 'cache.get', { key: 'k' })).toBeNull()
+    expect(await ask(store, search, 'storage.get', { key: 'k' })).toBe(1)
+    expect(await ask(store, plugin('git'), 'cache.get', { key: 'k' })).toBe(1)
+  })
+})

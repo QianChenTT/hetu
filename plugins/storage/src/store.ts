@@ -28,6 +28,8 @@ export type Storage = Provider & {
   readonly quotas: Quotas
   // The data folder the loader hands an install host half. Calls before it answer unavailable
   open(dataDir: string): void
+  // Removes a space in its turn, after every call already queued on it, for the loader's clears
+  clear(kind: Kind, space: string): Promise<void>
 }
 
 // storage.* and cache.* for every caller, each in the space spaceOf names under storage/ and cache/. A stored key is one
@@ -94,6 +96,15 @@ export function createStorage(options: { quotas?: Quotas } = {}): Storage {
 
     open(dir: string): void {
       dataDir = dir
+    },
+
+    clear(kind: Kind, space: string): Promise<void> {
+      if (dataDir === null) return Promise.resolve()
+      const dir = path.join(dataDir, kind, space)
+      return inOrder(`${kind}/${space}`, async () => {
+        await retried(() => rm(dir, { recursive: true, force: true }))
+        swept.delete(dir)
+      })
     },
 
     async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
