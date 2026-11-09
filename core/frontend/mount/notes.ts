@@ -88,9 +88,11 @@ export class Notes {
   // one by another program luoshu.outside
   start(): void {
     this.link.on('core.quitting', () => void this.keepAll())
+    // With no path the window missed these events, so every open note is read again
     for (const topic of ['luoshu.changed', 'luoshu.outside']) {
       this.link.on(topic, event => {
         if (event.path !== undefined) void this.outside(event.path)
+        else for (const note of this.opened.values()) void this.outside(note.path)
       })
     }
     void this.link.subscribe(['luoshu.changed', 'luoshu.outside'])

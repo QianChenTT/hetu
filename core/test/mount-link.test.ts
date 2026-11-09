@@ -68,3 +68,28 @@ describe("the window's link to the core", () => {
     expect(core.sent).toEqual([])
   })
 })
+
+describe('events the window missed past its credits', () => {
+  it('hands each topic events.dropped names to its handlers with no path, and acks nothing for the signal', () => {
+    const core = fakeCore()
+    const link = new CoreLink(core.bridge)
+    link.start()
+    const heard: string[] = []
+    link.on('core.security', event => heard.push(`${event.topic} ${event.path ?? '-'}`))
+    link.on('luoshu.changed', event => heard.push(`${event.topic} ${event.path ?? '-'}`))
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed', 'core.security', 'other.topic'] })
+    expect(heard).toEqual(['luoshu.changed -', 'core.security -'])
+    expect(core.sent).toEqual([])
+  })
+
+  it('ignores an events.dropped whose topics are no list of names', () => {
+    const core = fakeCore()
+    const link = new CoreLink(core.bridge)
+    link.start()
+    const heard: string[] = []
+    link.on('core.status', event => heard.push(event.topic))
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: 'core.status' })
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: [7, 'core.status'] })
+    expect(heard).toEqual(['core.status'])
+  })
+})

@@ -304,6 +304,17 @@ describe("the bridge's drawer end", () => {
     expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
   })
 
+  it('asks the core again when core.security reached the window only folded into events.dropped', async () => {
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'] } }
+    const { drawer, core } = started(reach)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
+    reach.alpha = { read: [] }
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed', 'core.security'] })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
   it("drops a plugin's marks, bindings and port when it ends", async () => {
     const made = note('n1', 'a.md', 'hello')
     const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.decoration', 'ui.command'] } }, [made])

@@ -318,6 +318,16 @@ describe('a save from outside', () => {
     expect(told).toEqual([])
   })
 
+  it('reads every open note again when the window missed luoshu events, since it cannot know which changed', async () => {
+    const { notes, views, core, saveOutside } = started({ 'a.md': 'a', 'b.md': 'b' })
+    const a = await notes.open('a.md')
+    await notes.open('b.md')
+    saveOutside('a.md', 'a changed while the window was behind')
+    core.hears({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.outside'] })
+    await flush()
+    expect(views.replaced).toEqual([{ instance: a, text: 'a changed while the window was behind', remote: true }])
+  })
+
   it('keeps a dirty buffer as a draft before reloading over it', async () => {
     const { notes, views, space, saveOutside } = started()
     const instance = await notes.open('a.md')
