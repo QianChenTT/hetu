@@ -50,6 +50,16 @@ describe('a plugin\'s life through the SDK', () => {
     expect(seen).toMatchObject({ id: 'search', incarnation: 2, lastStop: 'off', previousVersion: '1.0.0' })
   })
 
+  it('hands start the data folder init carries to an install host half and null when it carries none', async () => {
+    let host: PluginContext | null = null
+    let other: PluginContext | null = null
+    running({ start: ctx => { host = ctx } }, init({ dataDir: 'C:\\data' }))
+    running({ start: ctx => { other = ctx } }, init())
+    await until(() => host !== null && other !== null)
+    expect(host!.dataDir).toBe('C:\\data')
+    expect(other!.dataDir).toBeNull()
+  })
+
   it('reads its requires and plugin.call targets from deps', async () => {
     let ctx: PluginContext | null = null
     const { send } = running({ start: given => { ctx = given } }, init({ deps: { luoshu: 'ready', mcp: 'starting', git: 'unavailable' } }))

@@ -283,6 +283,36 @@ describe('the plugin list', () => {
   })
 })
 
+describe('the switches and limits', () => {
+  it('sets a limit and a switch from their sections, each waiting for its Confirm', async () => {
+    const dataDir = await data()
+    const app = await start(dataDir, await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await showing(page, 'readyMs · floor 10000')
+    await tick(PAST_DELAY)
+    await page.getByLabel('New value for readyMs').fill('20000')
+    await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
+    await showing(page, 'Set readyMs to 20000 for every plugin')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await showing(page, 'readyMs · floor 10000 · all: 20000')
+    expect((await new StateStore(dataDir).load()).state.switches.limits.all).toEqual({ readyMs: 20000 })
+
+    await page.locator('p', { hasText: 'Confirm off for this window: off' }).getByRole('button', { name: 'Switch on' }).click()
+    await showing(page, 'Apply changes made in this window without a Confirm')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await showing(page, 'Confirm off for this window: on')
+
+    await page.getByLabel('New value for readyMs').fill('ten')
+    await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
+    await showing(page, 'Type a whole number from 1 up')
+  })
+})
+
 // The roadmap's first proof end to end: a plugin's worker reaches no security or window lifecycle action
 describe('a plugin', () => {
   it('reaches no security.* or window lifecycle action, each refused not-granted and recorded', async () => {

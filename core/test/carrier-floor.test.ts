@@ -34,6 +34,15 @@ describe('shape', () => {
     ['a provider action with a field outside its schema', 'luoshu.read', { path: 'a.md', follow: true }],
     ['a provider action with a field missing', 'luoshu.write', { path: 'a.md' }],
     ['a storage key outside the grammar', 'storage.get', { key: '../other/key' }],
+    // The spellings Windows treats apart on disk never reach the storage plugin as a key
+    ['a storage key with a backslash', 'storage.set', { key: 'a\b', value: 1 }],
+    ['a storage key naming a stream', 'storage.get', { key: 'a:stream' }],
+    ['a storage key ending in a dot', 'storage.get', { key: 'con.' }],
+    ['a storage key ending in a space', 'cache.get', { key: 'nul ' }],
+    ['a storage key with an extension', 'storage.get', { key: 'con.txt' }],
+    ['a storage key spelled as an 8.3 alias', 'storage.get', { key: 'keyabc~1' }],
+    ['a storage key starting with a capital', 'storage.get', { key: 'Con' }],
+    ['a storage key past 64 characters', 'cache.set', { key: `a${'b'.repeat(64)}`, value: 1 }],
   ])('refuses %s invalid', async (_name, action, args) => {
     const { connect, gate, luoshu } = harness()
     const search = connect(worker('search'))

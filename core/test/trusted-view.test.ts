@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ListedPlugin, SecurityList } from '../api/actions.ts'
-import { choiceChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
+import { floorConstantNames, floorConstants } from '../api/floor.ts'
+import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
   id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, firstParty: false, on: true, items: [],
@@ -10,6 +11,7 @@ const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
 const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   plugins: [],
   switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+  limits: { all: {}, plugins: {} },
   requests: [],
   stopped: null,
   ...over,
@@ -64,14 +66,60 @@ describe('what the trusted window draws', () => {
     ])
   })
 
-  it('names each switch that weakens a check', () => {
+  it('gives each switch for all of hetu its state and the change its button asks for', () => {
+    expect(screen(calm()).switches).toEqual([
+      { line: 'Confirm off for this window: off', change: { kind: 'confirmOff', on: true } },
+      { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
+      { line: 'Record nothing: off', change: { kind: 'recordNothing', on: true } },
+    ])
     const drawn = screen(calm({
       switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true, recordNothing: true },
     }))
     expect(drawn.switches).toEqual([
-      'dev mode: search', 'any command: git', 'verification skipped', 'unsigned builds trusted: 1', 'Confirm off for this window',
-      'recording off',
+      { line: 'Confirm off for this window: on', change: { kind: 'confirmOff', on: false } },
+      { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
+      { line: 'Record nothing: on', change: { kind: 'recordNothing', on: false } },
+      { line: 'dev mode: search', change: null },
+      { line: 'any command: git', change: null },
+      { line: 'unsigned builds trusted: 1', change: null },
     ])
+  })
+
+  it('gives a folder plugin its dev mode switch and a plugin holding exec its any command switch', () => {
+    const exec = { type: 'exec', commands: [['git', 'status']], env: [] } as unknown as ListedPlugin['items'][number]['capability']
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'search' }),
+        plugin({ id: 'git', items: [{ capability: exec, off: false, firstUse: false }] }),
+        plugin({ id: 'gate', from: 'install', place: 'host', security: true }),
+      ],
+      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+    }))
+    expect(drawn.plugins.map(row => row.switches)).toEqual([
+      [{ line: 'dev mode: on', change: { kind: 'devMode', plugin: 'search', on: false } }],
+      [
+        { line: 'dev mode: off', change: { kind: 'devMode', plugin: 'git', on: true } },
+        { line: 'any command: off', change: { kind: 'exec.anyCommand', plugin: 'git', on: true } },
+      ],
+      [],
+    ])
+  })
+
+  it('lists each limit with the floor’s value and the values set for all and for each plugin', () => {
+    const drawn = screen(calm({ limits: { all: { readyMs: 20000 }, plugins: { search: { readyMs: 5000, callsInFlight: 8 } } } }))
+    expect(drawn.limits.map(limit => limit.constant)).toEqual(floorConstantNames)
+    expect(drawn.limits.find(limit => limit.constant === 'readyMs')).toEqual({
+      constant: 'readyMs', floor: floorConstants.readyMs, all: 20000, plugins: [{ plugin: 'search', value: 5000 }],
+    })
+    expect(drawn.limits.find(limit => limit.constant === 'callsInFlight')).toEqual({
+      constant: 'callsInFlight', floor: floorConstants.callsInFlight, all: null, plugins: [{ plugin: 'search', value: 8 }],
+    })
+  })
+
+  it('turns what the human typed for a limit into its change, or nothing for what isn’t a positive whole number', () => {
+    expect(limitChange('readyMs', '20000', null)).toEqual({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
+    expect(limitChange('callsInFlight', ' 8 ', 'search')).toEqual({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'search' })
+    for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
   })
 
   describe('the stopped mode', () => {
@@ -170,6 +218,20 @@ describe('the trusted page', () => {
       hears(replyTo(sent.at(-1)!, calm()))
       expect(drawn.at(-1)?.note).toBe(note)
     }
+  })
+
+  it('draws a note of the page’s own, such as a limit that isn’t a number, with the list it reads again', () => {
+    const { sent, page, hears, drawn } = started()
+    page.say('Type a whole number from 1 up')
+    expect(sent.at(-1)).toMatchObject({ action: 'security.list' })
+    hears(replyTo(sent.at(-1)!, calm()))
+    expect(drawn.at(-1)?.note).toBe('Type a whole number from 1 up')
+  })
+
+  it('asks for a limit as a request, which waits for the Confirm', () => {
+    const { sent, page } = started()
+    page.ask(limitChange('readyMs', '20000', 'search')!)
+    expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: 'search' } } })
   })
 
   // With confirmOff on a choice applied through the request and hetu stayed stopped

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Capability, CapabilityType } from './capabilities.ts'
 import { change, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
-import { floorConstantNames } from './floor.ts'
+import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
@@ -196,6 +196,8 @@ export type SecurityList = {
     confirmOff: boolean
     recordNothing: boolean
   }
+  // The values the human set, for all plugins and for each one. A constant not named runs at the floor's value
+  limits: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> }
   requests: HeldRequest[]
   stopped: StoppedMode | null
 }
