@@ -1,12 +1,8 @@
-// The window shell's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
-// function that draws the banner's lines as text
+// The window shell's logic, kept apart from the DOM so it runs in tests. The page hands it the window's link to the core
+// and a function that draws the banner's lines as text
 import type { CoreStatus, PendingRequest } from '../../api/actions.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
-
-export type Bridge = {
-  send(message: unknown): void
-  listen(listener: (message: unknown) => void): void
-}
+import type { CoreLink } from './link.ts'
 
 // What the banner says: each slot not on, the plugins down, each switch that weakens a check and a luoshu not picked.
 // Nothing while all is well
@@ -36,69 +32,50 @@ export function noticeText(request: PendingRequest): string {
   return `A security change is waiting: ${request.kind}${id !== null ? ` ${id}` : ''}`
 }
 
-type Reply = { v?: unknown, kind?: unknown, id?: unknown, ok?: unknown, result?: unknown, topic?: unknown, seq?: unknown }
-
 // Subscribes to core.status and core.quitting, reads the status and draws the banner with a notice per request waiting,
-// then reads it again each time the core says so. Each event is acked, so the window's credits never run out. A
+// then reads it again each time the core says so. The link acks each event, so the window's credits never run out. A
 // notice opens the trusted window only once it has been on screen for the input delay, so a click a plugin timed to
-// land as it appears opens nothing. core.quitting is where the editor keeps a draft from step 18
+// land as it appears opens nothing. The notes keep their drafts on core.quitting
 export class Shell {
-  private readonly bridge: Bridge
+  private readonly link: CoreLink
   private readonly draw: (lines: string[], notices: Notice[]) => void
   private readonly clock: () => number
-  private id = 0
-  private readonly pending = new Map<number, (reply: Reply) => void>()
   // When each notice drawn first appeared
   private readonly shownAt = new Map<string, number>()
 
-  constructor(bridge: Bridge, draw: (lines: string[], notices: Notice[]) => void, clock: () => number = () => performance.now()) {
-    this.bridge = bridge
+  constructor(link: CoreLink, draw: (lines: string[], notices: Notice[]) => void, clock: () => number = () => performance.now()) {
+    this.link = link
     this.draw = draw
     this.clock = clock
   }
 
   start(): void {
-    this.bridge.listen(message => this.heard(message))
-    this.call('events.subscribe', { topics: ['core.status', 'core.quitting'] })
+    this.link.on('core.status', () => this.refresh())
+    void this.link.subscribe(['core.status', 'core.quitting'])
     this.refresh()
   }
 
   // Opens the trusted window at a notice's request, or at the plugin list from the shell's own button
   open(requestId?: string): void {
-    if (requestId === undefined) return this.call('security.open')
+    if (requestId === undefined) return void this.link.call('security.open')
     const shown = this.shownAt.get(requestId)
     if (shown === undefined || this.clock() - shown < INPUT_DELAY_MS) return
-    this.call('security.open', { requestId })
+    void this.link.call('security.open', { requestId })
   }
 
-  private call(action: string, args?: unknown, then?: (reply: Reply) => void): void {
-    const id = ++this.id
-    if (then !== undefined) this.pending.set(id, then)
-    this.bridge.send({ v: 1, kind: 'call', id, action, args })
-  }
+  // The status as last read, for the parts of the page that follow it
+  onStatus: (status: CoreStatus) => void = () => {}
 
   private refresh(): void {
-    this.call('core.status', undefined, reply => {
-      if (reply.ok !== true) return
+    void this.link.call('core.status').then(reply => {
+      if (!reply.ok) return
       const status = reply.result as CoreStatus
       const now = this.clock()
       const ids = new Set(status.pending.map(request => request.id))
       for (const id of this.shownAt.keys()) if (!ids.has(id)) this.shownAt.delete(id)
       for (const id of ids) if (!this.shownAt.has(id)) this.shownAt.set(id, now)
       this.draw(bannerLines(status), status.pending.map(request => ({ id: request.id, text: noticeText(request) })))
+      this.onStatus(status)
     })
-  }
-
-  private heard(message: unknown): void {
-    if (typeof message !== 'object' || message === null) return
-    const got = message as Reply
-    if (got.kind === 'reply' && typeof got.id === 'number') {
-      const then = this.pending.get(got.id)
-      this.pending.delete(got.id)
-      then?.(got)
-    } else if (got.kind === 'event' && (got.topic === 'core.status' || got.topic === 'core.quitting')) {
-      if (typeof got.seq === 'number') this.bridge.send({ v: 1, kind: 'ack', seq: got.seq })
-      if (got.topic === 'core.status') this.refresh()
-    }
   }
 }

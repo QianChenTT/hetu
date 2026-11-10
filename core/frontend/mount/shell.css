@@ -1,6 +1,15 @@
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
+  display: flex;
+  flex-direction: column;
   font-family: system-ui, sans-serif;
+  background: #ffffff;
+  color: #1f1f1f;
 }
 
 #banner {
@@ -21,10 +30,6 @@ body {
   content: " · ";
 }
 
-main {
-  padding: 24px;
-}
-
 #notices {
   padding: 6px 12px;
   background: #e8f0fe;
@@ -35,6 +40,174 @@ main {
   margin-right: 8px;
 }
 
-#security {
-  margin: 8px 12px 0;
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #dddddd;
+  font-size: 13px;
+}
+
+#title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#note-bar[hidden] {
+  display: none;
+}
+
+#note-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #fdecea;
+  border-bottom: 1px solid #e5a29b;
+  font-size: 13px;
+}
+
+#note-text {
+  flex: 1;
+}
+
+#editors {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#empty {
+  padding: 24px;
+  color: #666666;
+}
+
+.editor {
+  height: 100%;
+}
+
+.editor .cm-editor {
+  height: 100%;
+}
+
+.editor .cm-scroller {
+  padding: 16px 24px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* The looks marks may ask for, the drawer's own */
+.cm-hetu-strong { font-weight: bold; }
+.cm-hetu-em { font-style: italic; }
+.cm-hetu-strike { text-decoration: line-through; }
+.cm-hetu-highlight { background: #fff3a3; }
+.cm-hetu-code { font-family: ui-monospace, monospace; background: #f2f2f2; border-radius: 3px; }
+.cm-hetu-link { color: #1a5fb4; text-decoration: underline; }
+.cm-hetu-muted { color: #888888; }
+.cm-hetu-error { text-decoration: underline wavy #c01c28; }
+.cm-hetu-warning { text-decoration: underline wavy #c88800; }
+.cm-hetu-info { text-decoration: underline dotted #1a5fb4; }
+.cm-hetu-widget { color: #555555; }
+.cm-hetu-line-h1 { font-size: 1.8em; font-weight: bold; }
+.cm-hetu-line-h2 { font-size: 1.5em; font-weight: bold; }
+.cm-hetu-line-h3 { font-size: 1.3em; font-weight: bold; }
+.cm-hetu-line-h4 { font-size: 1.15em; font-weight: bold; }
+.cm-hetu-line-h5 { font-size: 1.05em; font-weight: bold; }
+.cm-hetu-line-h6 { font-size: 1em; font-weight: bold; color: #555555; }
+.cm-hetu-line-quote { border-left: 3px solid #cccccc; padding-left: 12px; color: #555555; }
+.cm-hetu-line-codeblock { font-family: ui-monospace, monospace; background: #f6f6f6; }
+.cm-hetu-line-rule { border-bottom: 1px solid #cccccc; }
+
+/* The core layer: the palette and the raw view sit over everything, in fixed styles */
+#palette {
+  position: fixed;
+  top: 48px;
+  left: 50%;
+  width: min(560px, 90vw);
+  transform: translateX(-50%);
+  z-index: 2147483646;
+  background: #ffffff;
+  color: #1f1f1f;
+  border: 1px solid #999999;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 20%);
+  font: 14px system-ui, sans-serif;
+}
+
+#palette-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #dddddd;
+  font: inherit;
+}
+
+#palette-list {
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  list-style: none;
+}
+
+#palette-list li {
+  padding: 4px 10px;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#palette-list li[aria-selected="true"] {
+  background: #dbe7fb;
+}
+
+#palette-note {
+  margin: 0;
+  padding: 4px 10px;
+  color: #666666;
+  font-size: 12px;
+}
+
+#raw {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #000000;
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+}
+
+#raw[hidden] {
+  display: none;
+}
+
+#raw header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: #eeeeee;
+  border-bottom: 1px solid #999999;
+  font: 13px system-ui, sans-serif;
+}
+
+#raw-title {
+  flex: 1;
+  font-weight: bold;
+}
+
+#raw-text {
+  flex: 1;
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
 }

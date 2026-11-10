@@ -16,7 +16,7 @@ describe('hetu as an Electron app', () => {
     const app = await launch(dataDir)
     const window = await editorPage(app)
     expect(window.url()).toBe('hetu://editor/')
-    expect(await window.textContent('body')).toContain('hetu is running')
+    expect(await window.textContent('body')).toContain('Press Ctrl+P to open a note')
     // Sandboxed and isolated with no Node: the page sees none of Node's globals
     expect(await window.evaluate(() => [typeof globalThis.require, typeof globalThis.process, typeof globalThis.Buffer])).toEqual(['undefined', 'undefined', 'undefined'])
     await until(async () => (await events(dataDir)).includes('core.ready'))

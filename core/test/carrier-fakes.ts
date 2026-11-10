@@ -126,8 +126,10 @@ export class FakeGate implements Gate {
     return holds(granted, { capability: 'luoshu.list', scope: { paths: [path] } }) || holds(granted, { capability: 'luoshu.read', scope: { paths: [path] } })
   }
 
-  verbs(): string[] {
-    return []
+  // The ui items in the plugin's grant table, for the editor window only
+  verbs(plugin: string, window: string): string[] {
+    if (window !== 'editor') return []
+    return [...new Set((this.grants[plugin] ?? []).filter(granted => granted.type.startsWith('ui.')).map(granted => granted.type))]
   }
 
   stateChanged(): void {}

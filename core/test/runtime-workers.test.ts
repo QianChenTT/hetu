@@ -1,5 +1,6 @@
 import type { MessagePortMain } from 'electron'
 import { describe, expect, it } from 'vitest'
+import { DrawerPorts, withDrawers } from '../backend/runtime/drawer-ports.ts'
 import { type Renderer, WorkerRenderer, WorkerRenderers } from '../backend/runtime/workers.ts'
 
 class FakePort {
@@ -65,7 +66,7 @@ function runtime(endingMs = 1000) {
 
 const start = (id = 'search', incarnation = 1) => {
   const port = new FakePort()
-  return { start: { id, incarnation, code: Buffer.from(`// ${id}`), port: port as unknown as MessagePortMain }, port }
+  return { start: { id, incarnation, code: Buffer.from(`// ${id}`), port: port as unknown as MessagePortMain, drawer: false }, port }
 }
 
 const starts = (renderer: FakeRenderer) => renderer.posted.filter(post => post.channel === 'hetu:start')
@@ -271,5 +272,99 @@ describe('a renderer per community plugin', () => {
     expect(made.map(group => group.renderers[0].posted.filter(post => post.channel === 'hetu:limits').length)).toEqual([1, 0])
     router.close()
     expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, true])
+  })
+})
+
+describe("a worker's port to the drawer", () => {
+  it('goes to the renderer running the worker, with the worker named', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    renderers[0].says({ kind: 'ready' })
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    expect(renderers[0].posted.at(-1)).toEqual({ channel: 'hetu:drawer', message: { id: 'search', incarnation: 1 }, ports: [port] })
+  })
+
+  it('waits behind a start still queued and goes right after it', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    expect(renderers[0].posted).toEqual([])
+    renderers[0].says({ kind: 'ready' })
+    expect(renderers[0].posted.map(post => post.channel)).toEqual(['hetu:start', 'hetu:drawer'])
+  })
+
+  it('is closed for a worker not running and with a queued start dropped', () => {
+    const { workers } = runtime()
+    const stray = new FakePort()
+    workers.drawer('search', 1, stray as unknown as MessagePortMain)
+    expect(stray.closed).toBe(true)
+    workers.start(start('git').start)
+    const waiting = new FakePort()
+    workers.drawer('git', 1, waiting as unknown as MessagePortMain)
+    workers.terminate('git', 1)
+    expect(waiting.closed).toBe(true)
+  })
+
+  it("reaches the worker's group among the renderers, and is closed when there is none", () => {
+    const made: ReturnType<typeof runtime>[] = []
+    const groups = new WorkerRenderers(() => {
+      const one = runtime()
+      made.push(one)
+      return one.workers
+    })
+    groups.start(start('alpha').start)
+    made[0].renderers[0].says({ kind: 'ready' })
+    const port = new FakePort()
+    groups.drawer('alpha', 1, port as unknown as MessagePortMain)
+    expect(made[0].renderers[0].posted.at(-1)?.channel).toBe('hetu:drawer')
+    const none = new FakePort()
+    groups.drawer('beta', 1, none as unknown as MessagePortMain)
+    expect(none.closed).toBe(true)
+  })
+})
+
+describe("a worker's drawer port through its whole way", () => {
+  it('reaches a worker started while the editor page is loaded, sent right after its start', () => {
+    const { workers, renderers } = runtime()
+    const drawers = new DrawerPorts<string>({
+      channel: () => ({ port1: new FakePort(), port2: new FakePort() }),
+      toWorker: (id, incarnation, port) => workers.drawer(id, incarnation, port as MessagePortMain),
+      toPage: () => {},
+      endInPage: () => {},
+    })
+    drawers.loaded('page')
+    const side = withDrawers(workers, drawers)
+    side.start({ ...start('search').start, drawer: true })
+    renderers[0].says({ kind: 'ready' })
+    expect(renderers[0].posted.map(post => post.channel)).toEqual(['hetu:start', 'hetu:drawer'])
+  })
+
+  it('closes a drawer port still waiting when the renderers close', () => {
+    const { workers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    workers.close()
+    expect(port.closed).toBe(true)
+  })
+
+  it('closes a drawer port still waiting when its renderer is gone', () => {
+    const { workers, renderers } = runtime()
+    workers.start(start('search').start)
+    const port = new FakePort()
+    workers.drawer('search', 1, port as unknown as MessagePortMain)
+    renderers[0].dies('crashed')
+    expect(port.closed).toBe(true)
+  })
+
+  it('closes a waiting drawer port a newer one replaces', () => {
+    const { workers } = runtime()
+    workers.start(start('search').start)
+    const first = new FakePort()
+    workers.drawer('search', 1, first as unknown as MessagePortMain)
+    workers.drawer('search', 1, new FakePort() as unknown as MessagePortMain)
+    expect(first.closed).toBe(true)
   })
 })

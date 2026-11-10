@@ -47,7 +47,7 @@ export const providers = table({
 } as const)
 
 // Served by the carrier, the loader and the runtime, never by a plugin. log.* reads the event log the core writes
-export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log'] as const)
+export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
 // The actions a guard may hook
 export const guardableActions = frozen(['luoshu.write'] as const)
@@ -72,8 +72,7 @@ export function securityControls(listed: readonly string[]): string[] {
 
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net',
-  'editor-core', 'hidden-marks',
+  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
 ] as const)
 
 // First-party plugins in the plugin folder. A copy there keeps the id only with the reserved first-party signer and

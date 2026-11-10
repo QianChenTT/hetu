@@ -760,3 +760,83 @@ describe('a crash', () => {
     expect(code(way.replies[0])).toBe('crashed')
   })
 })
+
+describe('editor.reach', () => {
+  function made() {
+    const parts = harness()
+    parts.gate.grants.alpha = [
+      { type: 'luoshu.read', paths: ['notes/**'] },
+      { type: 'luoshu.write', paths: ['notes/own/**'] },
+      { type: 'ui.decoration' },
+      { type: 'ui.command' },
+    ]
+    const way = windowWay(parts.carrier, { editor })
+    return { ...parts, way }
+  }
+
+  it("answers what the gate gives the plugin for one note: read, write and its ui items", async () => {
+    const { way } = made()
+    const reach = async (args: unknown) => (await way.ask('editor', 'editor.reach', args)).result
+    expect(await reach({ plugin: 'alpha', path: 'notes/own/a.md' })).toEqual({ read: true, write: true, verbs: ['ui.decoration', 'ui.command'] })
+    expect(await reach({ plugin: 'alpha', path: 'notes/b.md' })).toEqual({ read: true, write: false, verbs: ['ui.decoration', 'ui.command'] })
+    expect(await reach({ plugin: 'alpha', path: 'other.md' })).toEqual({ read: false, write: false, verbs: ['ui.decoration', 'ui.command'] })
+    expect(await reach({ plugin: 'alpha' })).toEqual({ read: false, write: false, verbs: ['ui.decoration', 'ui.command'] })
+    expect(await reach({ plugin: 'beta', path: 'notes/b.md' })).toEqual({ read: false, write: false, verbs: [] })
+  })
+
+  it('asks the gate about the plugin as the caller, at the canonical stage', async () => {
+    const { way, gate } = made()
+    await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/own/a.md' })
+    expect(gate.reads.at(-1)?.caller).toMatchObject({ kind: 'plugin', id: 'alpha' })
+    expect(gate.asked.at(-1)).toMatchObject({
+      stage: 'canonical', caller: { kind: 'plugin', id: 'alpha' }, action: 'luoshu.write', capability: 'luoshu.write', scope: { paths: ['notes/own/a.md'] },
+    })
+  })
+
+  it('counts a write that would ask at first use as no write', async () => {
+    const { way, gate, loader } = made()
+    gate.decision = () => ({ ask: 'item', view: loader.current })
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/own/a.md' })).result).toMatchObject({ read: true, write: false })
+  })
+
+  it('answers every reach with the gate off and policy-down while it starts, is failed or absent', async () => {
+    const { way, loader } = made()
+    loader.slots.gate = 'off'
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
+      .toEqual({ read: true, write: true, verbs: ['ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys'] })
+    for (const state of ['starting', 'failed', 'absent'] as const) {
+      loader.slots.gate = state
+      expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
+    }
+  })
+
+  // As a direct call: with the gate off, a call with power passes only while its record can land
+  it('answers policy-down with the gate off once the log has failed, and everything again with recording off', async () => {
+    let now = 0
+    const parts = harness({ clock: () => now })
+    const way = windowWay(parts.carrier, { editor })
+    parts.loader.slots.gate = 'off'
+    parts.log.failing = true
+    const search = parts.connect(worker('search'))
+    await search.ask('storage.get', { key: 'index' })
+    now = 30_000
+    expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' }))).toBe('policy-down')
+    parts.loader.nothing = true
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, write: true })
+  })
+
+  it('refuses policy-down and records a fault when the gate throws', async () => {
+    const { way, gate, carrier, log } = made()
+    gate.readable = () => { throw new Error('broken') }
+    expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'reach', count: 1 }])
+  })
+
+  it('answers windows only', async () => {
+    const { connect } = made()
+    const search = connect(worker('search'))
+    expect(code(await search.ask('editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('not-granted')
+  })
+})
