@@ -1,0 +1,8 @@
+{
+  "id": "exec",
+  "name": "Exec",
+  "version": "0.1.0",
+  "api": "^2",
+  "entries": { "host": "dist/host.js" },
+  "node": ["child_process", "crypto", "fs", "path"]
+}

@@ -8,7 +8,7 @@ import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 // The first-party plugins built, each a worker from src/worker.ts
 const FIRST_PARTY = ['search', 'layout']
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
-const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu']
+const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu', 'history', 'exec']
 // The in-page install plugins, each a module the editor page compiles in from core/frontend/mount. The install's copy
 // holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
 // loader path for in-page code
@@ -42,7 +42,11 @@ export type Built = {
 // main.ts and everything it imports as one ES module, electron left to the runtime, with the install list, the
 // install plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
-export async function buildMain(outDir: string = path.join(core, 'dist')): Promise<Built> {
+// packaged and locked are fixed into main.js as the two constants of backend/runtime/packaged.ts. A run from the
+// source has neither
+export type BuildKind = { packaged?: boolean, locked?: boolean }
+
+export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
   await mkdir(outDir, { recursive: true })
   const main = await build({
     ...shared,
@@ -52,6 +56,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     format: 'esm',
     target: NODE,
     external: ['electron'],
+    define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
   })
   // The install plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
   // before it starts the host half

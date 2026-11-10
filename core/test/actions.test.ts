@@ -171,6 +171,10 @@ describe('the provider actions', () => {
       'cache.get': null,
       'cache.set': null,
       'cache.delete': null,
+      'history.commit': 'history',
+      'history.log': 'history',
+      'history.read': 'history',
+      'exec.run': 'exec',
     })
   })
 
@@ -180,7 +184,10 @@ describe('the provider actions', () => {
 
   it('keeps writes one audit record each and the guardable action among them', () => {
     const writes = Object.entries(providerActions).filter(([, spec]) => spec.write).map(([action]) => action)
-    expect(writes).toEqual(['luoshu.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete'])
+    expect(writes).toEqual([
+      'luoshu.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete',
+      'history.commit', 'exec.run',
+    ])
     for (const action of guardableActions) expect(providerActions[action].write).toBe(true)
   })
 
@@ -196,6 +203,8 @@ describe('the provider actions', () => {
     expect(providerActions['luoshu.read'].scope).toBe('path')
     expect(providerActions['leases.acquire'].scope).toBe('paths')
     expect(providerActions['leases.list'].scope).toBeNull()
+    expect(providerActions['history.commit'].scope).toBe('paths')
+    expect(providerActions['exec.run'].scope).toBe('command')
   })
 
   it.each([

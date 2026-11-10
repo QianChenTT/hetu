@@ -13,7 +13,7 @@ const item = (capability: Capability, more: Partial<GrantedItem> = {}): GrantedI
   ({ capability, off: false, firstUse: false, ...more })
 
 function view(plugins: Record<string, GrantedItem[]>, more: Partial<StateView> = {}): StateView {
-  return { n: 1, foldCase: false, plugins: Object.assign(Object.create(null), plugins), ...more }
+  return { n: 1, foldCase: false, plugins: Object.assign(Object.create(null), plugins), execAny: [], ...more }
 }
 
 function access(caller: Caller, capability: Access['capability'], scope: Scope, stage: Access['stage'] = 'canonical'): Access {
@@ -80,16 +80,81 @@ describe('deciding', () => {
   })
 
   it('refuses a type it has no scope rule for even to a plugin holding it, until its provider brings the fields', () => {
+    const gate = gateOn({ alpha: [item({ type: 'net.fetch', hosts: ['example.com'] })] })
+    expect(gate.decide(access(alpha, 'net.fetch', { paths: ['a.md'] }))).toMatchObject({ code: 'not-granted' })
+  })
+
+  it('judges history on the access and on every path, so reading old versions and committing are two grants', () => {
     const gate = gateOn({
-      alpha: [
-        item({ type: 'net.fetch', hosts: ['example.com'] }),
-        item({ type: 'history', access: 'read', paths: ['**'] }),
-        item({ type: 'exec', commands: [['git', 'status']], env: [] }),
-      ],
+      alpha: [item({ type: 'history', access: 'read', paths: ['notes/**'] }), item({ type: 'history', access: 'commit', paths: ['journal/**'] })],
     })
-    for (const capability of ['net.fetch', 'history', 'exec'] as const) {
-      expect(gate.decide(access(alpha, capability, { paths: ['a.md'] }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'history', { paths: ['notes/a.md'], access: 'read' }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'history', { paths: ['notes/a.md'], access: 'commit' }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'history', { paths: ['journal/a.md'], access: 'commit' }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'history', { paths: ['journal/a.md'], access: 'read' }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'history', { paths: ['journal/a.md', 'notes/a.md'], access: 'commit' }))).toMatchObject({ code: 'not-granted' })
+    // No access in the scope is no question the gate can answer
+    expect(gate.decide(access(alpha, 'history', { paths: ['notes/a.md'] }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'history', { paths: ['notes/a.md'], access: 'rewrite' as never }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'history', { access: 'read' }))).toMatchObject({ code: 'not-granted' })
+  })
+
+  it('switches a history item off and asks at its first use like any other item', () => {
+    const commit: Capability = { type: 'history', access: 'commit', paths: ['**'] }
+    expect(gateOn({ alpha: [item(commit, { off: true })] }).decide(access(alpha, 'history', { paths: ['a.md'], access: 'commit' })))
+      .toMatchObject({ code: 'switched-off' })
+    const asked = gateOn({ alpha: [item(commit, { firstUse: true })] }).decide(access(alpha, 'history', { paths: ['a.md'], access: 'commit' }))
+    expect(JSON.parse((asked as { ask: string }).ask)).toEqual([['access', 'commit'], ['paths', ['**']], ['type', 'history']])
+  })
+
+  it('lets the editor window read history and never commit', () => {
+    const gate = gateOn({})
+    expect(gate.decide(access(editor, 'history', { paths: ['notes/a.md'], access: 'read' }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(editor, 'history', { paths: ['notes/a.md'], access: 'commit' }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(editor, 'history', { paths: ['notes/.todo.md'], access: 'read' }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(trusted, 'history', { paths: ['notes/a.md'], access: 'read' }))).toMatchObject({ code: 'not-granted' })
+  })
+
+  it('judges exec on the whole argument array, never on its words joined', () => {
+    const gate = gateOn({ alpha: [item({ type: 'exec', commands: [['git', 'status'], ['git', 'log', '--oneline']], env: ['HOME'] })] })
+    expect(gate.decide(access(alpha, 'exec', { command: ['git', 'status'] }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'exec', { command: ['git', 'log', '--oneline'] }))).toMatchObject({ allow: true })
+    for (const command of [['git'], ['git', 'status', '--short'], ['git status'], ['git', 'log --oneline'], ['GIT', 'status'], ['status', 'git'], []]) {
+      expect(gate.decide(access(alpha, 'exec', { command }))).toMatchObject({ code: 'not-granted' })
     }
+    expect(gate.decide(access(alpha, 'exec', {}))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'exec', { command: 'git status' as never }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'exec', { command: ['git', 7 as never] }))).toMatchObject({ code: 'not-granted' })
+    expect(gate.decide(access(editor, 'exec', { command: ['git', 'status'] }))).toMatchObject({ code: 'not-granted' })
+  })
+
+  it('switches one exec item off and asks at the first use of another, each by its own commands', () => {
+    const status: Capability = { type: 'exec', commands: [['git', 'status']], env: [] }
+    const push: Capability = { type: 'exec', commands: [['git', 'push']], env: ['HOME'] }
+    const gate = gateOn({ alpha: [item(status, { off: true }), item(push, { firstUse: true })] })
+    expect(gate.decide(access(alpha, 'exec', { command: ['git', 'status'] }))).toMatchObject({ code: 'switched-off' })
+    const asked = gate.decide(access(alpha, 'exec', { command: ['git', 'push'] }))
+    expect(JSON.parse((asked as { ask: string }).ask)).toEqual([['commands', [['git', 'push']]], ['env', ['HOME']], ['type', 'exec']])
+  })
+
+  it('lets a plugin the human named in execAny run a command past its list, only while it holds an exec item that is on', () => {
+    const status: Capability = { type: 'exec', commands: [['git', 'status']], env: [] }
+    const any = gateOn({ alpha: [item(status)], beta: [item(notes)] }, { execAny: ['alpha', 'beta', 'gamma'] })
+    expect(any.decide(access(alpha, 'exec', { command: ['curl', 'https://example.com'] }))).toMatchObject({ allow: true })
+    expect(any.decide(access(alpha, 'exec', { command: ['git', 'status'] }))).toMatchObject({ allow: true })
+    // The switch lifts the list. It hands exec to no plugin that never held it
+    const beta: Caller = { ...alpha, id: 'beta' }
+    const gamma: Caller = { ...alpha, id: 'gamma' }
+    expect(any.decide(access(beta, 'exec', { command: ['curl'] }))).toMatchObject({ code: 'not-granted' })
+    expect(any.decide(access(gamma, 'exec', { command: ['curl'] }))).toMatchObject({ code: 'not-granted' })
+    expect(any.decide(access(alpha, 'exec', {}))).toMatchObject({ code: 'not-granted' })
+    const off = gateOn({ alpha: [item(status, { off: true })] }, { execAny: ['alpha'] })
+    expect(off.decide(access(alpha, 'exec', { command: ['curl'] }))).toMatchObject({ code: 'switched-off' })
+    const asking = gateOn({ alpha: [item(status, { firstUse: true })] }, { execAny: ['alpha'] })
+    expect(asking.decide(access(alpha, 'exec', { command: ['curl'] }))).toMatchObject({ ask: expect.any(String) })
+    // Not named, the list holds
+    const listed = gateOn({ alpha: [item(status)] }, { execAny: ['beta'] })
+    expect(listed.decide(access(alpha, 'exec', { command: ['curl'] }))).toMatchObject({ code: 'not-granted' })
   })
 
   it('refuses a plugin holding nothing, a content caller and a scope without the field its type is judged on', () => {
@@ -182,7 +247,10 @@ describe('reading on another\'s behalf', () => {
 describe('the StateView', () => {
   it('throws on one it can\'t read, which marks the gate failed', () => {
     const gate = createGate()
-    expect(() => gate.stateChanged({ n: 1.5, foldCase: false, plugins: {} })).toThrow()
+    expect(() => gate.stateChanged({ n: 1.5, foldCase: false, plugins: {}, execAny: [] })).toThrow()
+    expect(() => gate.stateChanged({ n: 1, foldCase: false, plugins: {}, execAny: 'alpha' } as never)).toThrow()
+    expect(() => gate.stateChanged({ n: 1, foldCase: false, plugins: {}, execAny: [7] } as never)).toThrow()
+    expect(() => gate.stateChanged({ n: 1, foldCase: false, plugins: {} } as never)).toThrow()
     expect(() => gate.stateChanged({ n: 1, foldCase: 'no', plugins: {} } as never)).toThrow()
     expect(() => gate.stateChanged({ n: 1, foldCase: false } as never)).toThrow()
     expect(() => gate.stateChanged(view({ alpha: [{ capability: notes } as never] }))).toThrow()
@@ -209,11 +277,19 @@ describe('coverage', () => {
       ['luoshu.read', 'luoshu.read', 'path', 'paths'],
       ['luoshu.write', 'luoshu.write', 'path', 'paths'],
       ['leases.acquire', 'luoshu.write', 'paths', 'paths'],
+      ['history.commit', 'history', 'paths', 'access'],
+      ['history.log', 'history', 'path', 'access'],
+      ['history.read', 'history', 'path', 'access'],
+      ['exec.run', 'exec', 'command', 'command'],
     ])
     for (const [, , scope, rule] of rows) {
       expect(rule).not.toBe('none')
-      expect(rule === 'paths').toBe(scope !== null)
+      // Paths are judged by the paths rule or, with an access beside them, by history's. A command by exec's
+      expect(rule === 'command').toBe(scope === 'command')
+      expect(rule === 'paths' || rule === 'access').toBe(scope === 'path' || scope === 'paths')
     }
+    // A history action names its access in core/api, which the carrier puts in the scope
+    for (const [name, capability] of rows) expect('access' in providerActions[name as string]).toBe(capability === 'history')
     expect(scopeRules['events.subscribe']).toBe('topics')
     expect(scopeRules['plugin.call']).toBe('target')
   })

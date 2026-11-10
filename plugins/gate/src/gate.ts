@@ -1,12 +1,14 @@
 import { capabilityKey, type Capability, type CapabilityType } from 'hetu-core/api/capabilities.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
+import { commandKey } from 'hetu-core/api/exec.ts'
 import { compileScopes } from 'hetu-core/api/scope.ts'
 import type { Access, Decision, Gate, GrantedItem, Scope, StateView } from 'hetu-core/api/slots.ts'
 import { windowGrants } from 'hetu-core/api/windows.ts'
 
 // How the gate reads each type's scope: paths through the matcher, every topic named, the target, held with no scope
-// at all, or none for a type whose provider hasn't brought the fields the gate would need, which refuses
-export type Rule = 'paths' | 'topics' | 'target' | 'held' | 'none'
+// at all, access for history, whose paths count only under an item of the same access, command for exec's whole
+// argument array, or none for a type whose provider hasn't brought the fields the gate would need, which refuses
+export type Rule = 'paths' | 'topics' | 'target' | 'held' | 'access' | 'command' | 'none'
 
 export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze({
   'luoshu.read': 'paths',
@@ -22,18 +24,19 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   'ui.keys': 'held',
   storage: 'held',
   'guard.hook': 'held',
-  // Scope holds no host, no read or commit and no command yet
+  // Scope holds no host yet
   'net.fetch': 'none',
-  history: 'none',
-  exec: 'none',
+  history: 'access',
+  exec: 'command',
 })
 
-// One item as the gate matches it, compiled once per StateView
-type Compiled = { type: string, off: boolean, firstUse: boolean, key: string, covers: (part: string) => boolean }
+// One item as the gate matches it, compiled once per StateView. access is a history item's own
+type Compiled = { type: string, off: boolean, firstUse: boolean, key: string, access?: string, covers: (part: string) => boolean }
 
 const on = (item: Compiled) => !item.off && !item.firstUse
 
-function compile(item: GrantedItem, foldCase: boolean): Compiled {
+// any says the human let exec run any command for the item's plugin, which lifts an exec item's list and nothing else
+function compile(item: GrantedItem, foldCase: boolean, any = false): Compiled {
   const { capability, off, firstUse } = item
   if (typeof capability !== 'object' || capability === null || typeof capability.type !== 'string') throw new Error('an item with no capability')
   if (typeof off !== 'boolean' || typeof firstUse !== 'boolean') throw new Error('an item with no switch')
@@ -43,6 +46,11 @@ function compile(item: GrantedItem, foldCase: boolean): Compiled {
   if (rule === 'topics' && 'topics' in capability) covers = set(capability.topics)
   if (rule === 'target' && 'targets' in capability) covers = set(capability.targets)
   if (rule === 'held') covers = () => true
+  if (rule === 'access' && capability.type === 'history') {
+    return { type: capability.type, off, firstUse, key: capabilityKey(capability), access: capability.access, covers: compileScopes(capability.paths, { foldCase }) }
+  }
+  // The whole argument array as one key, so a command matches only the same arguments in the same order
+  if (rule === 'command' && capability.type === 'exec') covers = any ? () => true : set(capability.commands.map(commandKey))
   return { type: capability.type, off, firstUse, key: capabilityKey(capability), covers }
 }
 
@@ -58,6 +66,14 @@ function partsOf(rule: Rule, scope: Scope): readonly string[] | null {
   if (rule === 'topics') return Array.isArray(scope.topics) && scope.topics.length > 0 ? scope.topics : null
   if (rule === 'target') return typeof scope.target === 'string' ? [scope.target] : null
   if (rule === 'held') return ['']
+  if (rule === 'access') {
+    if (scope.access !== 'read' && scope.access !== 'commit') return null
+    return Array.isArray(scope.paths) && scope.paths.length > 0 ? scope.paths : null
+  }
+  if (rule === 'command') {
+    const { command } = scope
+    return Array.isArray(command) && command.length > 0 && command.every(arg => typeof arg === 'string') ? [commandKey(command)] : null
+  }
   return null
 }
 
@@ -84,7 +100,8 @@ export function createGate(): Gate {
       const rule = scopeRules[access.capability] ?? 'none'
       const parts = partsOf(rule, access.scope)
       if (parts === null) return refused('not-granted')
-      const ofType = items.filter(item => item.type === access.capability)
+      // A history item counts only for the access it names, so a read item never covers a commit
+      const ofType = items.filter(item => item.type === access.capability && (rule !== 'access' || item.access === access.scope.access))
       let switchedOff = false
       let ask: string | null = null
       for (const part of parts) {
@@ -118,14 +135,16 @@ export function createGate(): Gate {
 
     // Every item compiled once here. A throw marks the gate failed, so a view it can't read leaves it refusing
     stateChanged(next: StateView): void {
-      const { n, foldCase, plugins } = next
+      const { n, foldCase, plugins, execAny } = next
       if (!Number.isSafeInteger(n) || typeof foldCase !== 'boolean' || typeof plugins !== 'object' || plugins === null) {
         throw new Error('a StateView the gate can\'t read')
       }
+      if (!Array.isArray(execAny) || !execAny.every(id => typeof id === 'string')) throw new Error('a StateView with no execAny list')
+      const any = new Set(execAny)
       const compiled = new Map<string, Compiled[]>()
       for (const [id, items] of Object.entries(plugins)) {
         if (!Array.isArray(items)) throw new Error('a plugin with no items')
-        compiled.set(id, items.map(item => compile(item, foldCase)))
+        compiled.set(id, items.map(item => compile(item, foldCase, any.has(id))))
       }
       const windows = new Map<string, Compiled[]>()
       for (const [role, grants] of Object.entries(windowGrants)) {

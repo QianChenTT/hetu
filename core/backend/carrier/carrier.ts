@@ -176,8 +176,10 @@ function refusalIn(value: unknown): No | null {
   return isOne(reasonCodes, reason) ? { code, reason } : { code }
 }
 
-// The canonical scope prepare gave, copied, so what the gate and the guards judge can't change under them
-function preparedIn(value: unknown): Prepared | null {
+// The canonical scope prepare gave, copied, so what the gate and the guards judge can't change under them. A provider
+// canonicalises paths and nothing else: the access and the command come from the raw scope the carrier built, so a
+// prepare can't turn a commit into a read or one command into another
+function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
   const scope = field(value, 'scope')
   if (typeof scope !== 'object' || scope === null) return null
   const paths = field(scope, 'paths')
@@ -187,7 +189,12 @@ function preparedIn(value: unknown): Prepared | null {
   if (target !== undefined && typeof target !== 'string') return null
   if (baseVersion !== undefined && typeof baseVersion !== 'string') return null
   return frozen({
-    scope: { ...(paths !== undefined ? { paths: [...paths] } : {}), ...(target !== undefined ? { target } : {}) },
+    scope: {
+      ...(paths !== undefined ? { paths: [...paths] } : {}),
+      ...(target !== undefined ? { target } : {}),
+      ...(raw.access !== undefined ? { access: raw.access } : {}),
+      ...(raw.command !== undefined ? { command: [...raw.command] } : {}),
+    },
     ...(baseVersion !== undefined ? { baseVersion } : {}),
   })
 }
@@ -670,10 +677,16 @@ export class Carrier {
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }
     if (target.kind === 'provider') {
-      const { capability, scope } = target.spec
+      const { capability, scope, access } = target.spec
       if (capability === null) return { kind: 'free' }
       const paths = scope === 'path' ? [field(args, 'path') as string] : scope === 'paths' ? [...field(args, 'paths') as string[]] : undefined
-      return { kind: 'power', capability, scope: frozen(paths === undefined ? {} : { paths }) }
+      // A command is canonical as written. access is the action's own, from core/api's table
+      const command = scope === 'command' ? [...field(args, 'command') as string[]] : undefined
+      return {
+        kind: 'power',
+        capability,
+        scope: frozen({ ...(paths !== undefined ? { paths } : {}), ...(access !== undefined ? { access } : {}), ...(command !== undefined ? { command } : {}) }),
+      }
     }
     // A plugin's own halves call each other freely
     if (caller.kind === 'plugin' && caller.id === target.target) return { kind: 'free' }
@@ -1108,7 +1121,7 @@ export class Carrier {
     } catch (err) {
       return this.thrown(pending, id, 'prepare', err)
     }
-    const prepared = preparedIn(given)
+    const prepared = preparedIn(given, kind.kind === 'power' ? kind.scope : undefined)
     const release = () => {
       if (prepared === null) return
       try {

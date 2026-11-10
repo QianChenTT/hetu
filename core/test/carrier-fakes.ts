@@ -75,6 +75,11 @@ export function holds(granted: readonly Capability[], access: Pick<Access, 'capa
     }
     if (item.type === 'plugin.call') return access.scope.target !== undefined && item.targets.includes(access.scope.target)
     if (item.type === 'events.subscribe') return (access.scope.topics ?? []).every(topic => item.topics.includes(topic))
+    if (item.type === 'history') {
+      const paths = access.scope.paths ?? []
+      return item.access === access.scope.access && paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
+    }
+    if (item.type === 'exec') return item.commands.some(command => JSON.stringify(command) === JSON.stringify(access.scope.command))
     return true
   })
 }

@@ -1,18 +1,19 @@
 import { z } from 'zod'
-import type { Capability, CapabilityType } from './capabilities.ts'
+import { MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
 import { change, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
+import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { frozen } from './plain.ts'
-import { MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
+import { hidesOnScreen, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
 import type { ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
-// action here yet. Each provider's own step settles its list: history, exec and net have none yet
+// action here yet. Each provider's own step settles its list: net has none yet
 
 // A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
 // A spelling no canonical path holds is refused here, so it answers invalid before precheck could answer not-granted
@@ -56,12 +57,14 @@ export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
 // leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
-// scope comes from. A write stays one audit record and reads are coalesced. filter list keeps only the result's paths
-// the gate's canList allows
+// scope comes from. access is what a history action does with its paths, which the carrier puts in the scope itself.
+// A write stays one audit record and reads are coalesced. filter list keeps only the result's paths the gate's canList
+// allows
 export type ProviderAction = {
   readonly capability: CapabilityType | null
   readonly args: z.ZodType
-  readonly scope: 'path' | 'paths' | null
+  readonly scope: 'path' | 'paths' | 'command' | null
+  readonly access?: 'read' | 'commit'
   readonly write: boolean
   readonly filter?: 'list'
 }
@@ -150,6 +153,11 @@ export const eventActions = lookup<EventAction>(eventTable)
 
 const key = z.strictObject({ key: localName })
 const keyed = z.strictObject({ key: localName, value: z.unknown() })
+// Line breaks and nothing else a screen could hide, since a window draws the message as it is. It reaches git on stdin
+const commitMessage = z.string().min(1).max(MAX_COMMIT_MESSAGE, { abort: true })
+  .refine(value => !hidesOnScreen(value.replaceAll('\n', '')), 'a character that could hide')
+// A commit by its full id, never a name git would resolve
+const commitId = z.string().regex(/^[0-9a-f]{40}$/)
 
 const providerTable = {
   'luoshu.read': { capability: 'luoshu.read', args: z.strictObject({ path }), scope: 'path', write: false },
@@ -180,6 +188,32 @@ const providerTable = {
   'cache.get': { capability: null, args: key, scope: null, write: false },
   'cache.set': { capability: null, args: keyed, scope: null, write: true },
   'cache.delete': { capability: null, args: key, scope: null, write: true },
+  // The notes at these paths as they are now, into hetu's own history as one commit. A path with no note is recorded
+  // as removed
+  'history.commit': {
+    capability: 'history',
+    access: 'commit',
+    args: z.strictObject({ paths: z.array(path).min(1).max(MAX_COMMIT_PATHS), message: commitMessage }),
+    scope: 'paths',
+    write: true,
+  },
+  // The commits that changed one note, newest first
+  'history.log': {
+    capability: 'history',
+    access: 'read',
+    args: z.strictObject({ path, limit: z.int().min(1).max(MAX_LOG_PAGE).optional() }),
+    scope: 'path',
+    write: false,
+  },
+  // One note's text as a commit holds it. A restore writes it back through luoshu.write
+  'history.read': {
+    capability: 'history', access: 'read', args: z.strictObject({ path, commit: commitId }), scope: 'path', write: false,
+  },
+  // One command as its argument array, which has to be one the caller's manifest declared. The caller gives no
+  // environment, no working directory and no input
+  'exec.run': {
+    capability: 'exec', args: z.strictObject({ command: z.array(text).min(1).max(MAX_SCOPES_PER_TYPE) }), scope: 'command', write: true,
+  },
 } satisfies Record<string, ProviderAction>
 export const providerActions = lookup<ProviderAction>(providerTable)
 
@@ -277,7 +311,20 @@ export type ActionResults = {
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null
+  // null when the notes hold nothing the last commit doesn't
+  'history.commit': { commit: string | null }
+  'history.log': { commits: HistoryCommit[] }
+  'history.read': { text: string, version: string }
+  'exec.run': ExecResult
 }
+
+// One commit as history.log lists it. author is who the change was made for, the caller's client when the call named
+// one, and committer the caller that asked for the commit
+export type HistoryCommit = { commit: string, author: string, committer: string, date: string, message: string }
+
+// How a command ended: its exit code or the signal that ended it, with what it wrote as text. truncated says output
+// past the cap was dropped
+export type ExecResult = { code: number | null, signal: string | null, stdout: string, stderr: string, truncated: boolean }
 
 // One plugin as core.views lists it: one that declares views or a theme, whatever its state
 export type CoreViewsPlugin = {

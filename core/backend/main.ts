@@ -6,6 +6,7 @@ import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
 import type { Failure, Loader } from './loader/loader.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
+import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
@@ -35,15 +36,16 @@ function tell(err: unknown): void {
 
 async function start(): Promise<void> {
   let installDir: string
+  let listDir: string
   try {
-    installDir = installDirFor({ packaged: app.isPackaged, env: process.env, here, resourcesPath: process.resourcesPath, platform: process.platform })
+    ;({ installDir, listDir } = installDirFor({ packaged: PACKAGED, locked: LOCKED, env: process.env, here, resourcesPath: process.resourcesPath, platform: process.platform }))
   } catch (err) {
     tell(err)
     return app.exit(1)
   }
   let booted: Booted
   try {
-    booted = await boot({ packaged: app.isPackaged, installDir, env: process.env, platform: process.platform })
+    booted = await boot({ packaged: LOCKED, installDir, env: process.env, platform: process.platform })
   } catch (err) {
     tell(err)
     return app.exit(1)
@@ -113,7 +115,7 @@ async function start(): Promise<void> {
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
     const renderer = new WorkerRenderers(group => new WorkerRenderer({
-      open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, app.isPackaged, group),
+      open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, LOCKED, group),
       record: (event, fields) => carrier?.floor(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
@@ -138,7 +140,7 @@ async function start(): Promise<void> {
     // main, so a Confirm counts only once it armed
     const trusted = new TrustedWindow({
       open: () => {
-        const window = show(openTrusted(BrowserWindow, sessions.trusted, app.isPackaged, placement(), mountPreload))
+        const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), mountPreload))
         if (carrier !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', carrier)
         return window
       },
@@ -163,13 +165,14 @@ async function start(): Promise<void> {
       },
       showTrusted: () => trusted.show(),
       closeEditors,
-      packaged: app.isPackaged,
+      packaged: LOCKED,
       env: process.env,
       later: (run, ms) => setTimeout(run, ms).unref?.(),
     })
     const wired = wireCore({
       booted,
       installDir,
+      listDir,
       runtime,
       limited: plugin => renderer.limited(plugin),
       onFailure,
@@ -193,7 +196,7 @@ async function start(): Promise<void> {
           }
           if (call.action === 'security.open') trusted.show()
           else if (call.action === 'core.relaunch') {
-            again = relaunches({ packaged: app.isPackaged, env: process.env })
+            again = relaunches({ packaged: LOCKED, env: process.env })
             app.quit()
           } else if (call.action === 'core.quit') app.quit()
           else throw { code: 'unavailable' }
@@ -211,7 +214,7 @@ async function start(): Promise<void> {
     // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
     // load's preload listens
     const editorWindow = () => {
-      const window = openEditor(BrowserWindow, sessions.editor, app.isPackaged, placement(), mountPreload)
+      const window = openEditor(BrowserWindow, sessions.editor, LOCKED, placement(), mountPreload)
       const contents = window.webContents
       new WindowWay(contents as unknown as WindowContents, 'editor', wired.carrier)
       // A frame's token ends with the page that framed it
@@ -239,7 +242,7 @@ async function start(): Promise<void> {
       return window
     }
     const placement = () => quietPlacement({
-      packaged: app.isPackaged,
+      packaged: LOCKED,
       env: process.env,
       displays: screen.getAllDisplays(),
       cursorDisplay: screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id,
@@ -275,7 +278,7 @@ async function start(): Promise<void> {
 // Synchronous up to here, so all of it runs before ready
 let early: ReturnType<typeof beforeReady> = null
 try {
-  early = beforeReady(app, protocol, { env: process.env, platform: process.platform })
+  early = beforeReady(app, protocol, { env: process.env, platform: process.platform, locked: LOCKED, argv: process.argv })
 } catch (err) {
   tell(err)
   app.exit(1)

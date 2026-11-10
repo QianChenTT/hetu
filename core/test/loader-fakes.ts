@@ -189,6 +189,7 @@ export class FakeRuntime implements Runtime {
   private of(id: string): Behaviour {
     const roles: Record<string, HostExports> = {
       gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, capabilities: { capabilities: createCapabilities() },
+      history: { history: { open() {} } }, exec: { exec: { stateChanged() {} } },
     }
     const exports: HostExports = roles[id] ?? {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }

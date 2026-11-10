@@ -1,7 +1,7 @@
 import { run } from '../../sdk/plugin.ts'
 import type { HostExports, HostStart } from '../loader/seams.ts'
 
-const ROLES = ['gate', 'guard', 'provider', 'watchdog', 'luoshu', 'capabilities', 'storage'] as const
+const ROLES = ['gate', 'guard', 'provider', 'watchdog', 'luoshu', 'capabilities', 'storage', 'history', 'exec'] as const
 
 export type HostLoading = {
   // Freezes the built-ins, before the first host half's code runs

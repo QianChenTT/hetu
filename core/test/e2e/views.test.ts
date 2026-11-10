@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -67,6 +67,14 @@ async function running(dataDir: string, plugins: string[]): Promise<{ app: Elect
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
   for (const id of plugins) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor }
+}
+
+// The column widths the layout plugin last stored, from its key's first line as the storage plugin writes it, or null
+// before it stores any
+async function storedWidths(dataDir: string): Promise<unknown> {
+  const text = await readFile(path.join(dataDir, 'storage', 'layout', 'key-arrangement'), 'utf8').catch(() => null)
+  if (text === null) return null
+  return (JSON.parse(text.split('\n')[0]) as { value?: { widths?: unknown } }).value?.widths ?? null
 }
 
 async function started(setup: Setup) {
@@ -149,11 +157,15 @@ describe("hetu's layout", () => {
     const { app, editor, dataDir } = await started({ plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
     await until(async () => (await editor.locator('#base .hetu-divider').count()) >= 1)
     const divider = (await editor.locator('#base .hetu-divider').first().boundingBox())!
+    const before = await storedWidths(dataDir)
     await editor.mouse.move(divider.x + 2, divider.y + 100)
     await editor.mouse.down()
     await editor.mouse.move(divider.x + 102, divider.y + 100, { steps: 6 })
     await editor.mouse.up()
     await until(async () => Math.abs((await editor.locator('#base .hetu-divider').first().boundingBox())!.x - (divider.x + 100)) < 4)
+    // The layout stores the width a few hops after the divider moves and doesn't wait on the write, so a close right
+    // after the divider settles can come before it. Waiting on the stored width keeps a slow start from losing it
+    await until(async () => JSON.stringify(await storedWidths(dataDir)) !== JSON.stringify(before))
     await app.close()
     const again = await running(dataDir, ['board'])
     await until(async () => (await again.editor.locator('#base .hetu-divider').count()) >= 1)

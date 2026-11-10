@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, ExecGrant, ExecView, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -38,6 +38,9 @@ export type LoaderOptions = {
   // the data folder and the start markers it found
   booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir' | 'markers'>
   installDir: string
+  // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
+  // packaged build does inside app.asar
+  listDir?: string
   link: CarrierLink
   runtime: Runtime
   // The rules the install list's paths follow, the platform the install is on
@@ -62,7 +65,9 @@ export type Failure =
 
 // The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
 // with #77
-const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu' })
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({
+  gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu', history: 'history', exec: 'exec',
+})
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -217,6 +222,7 @@ export class Loader implements Seam {
   private readonly store: StateStore
   private readonly dataDir: string
   private readonly installDir: string
+  private readonly listDir: string
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly logWrites: () => boolean
@@ -264,6 +270,7 @@ export class Loader implements Seam {
     this.store = booted.store
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
+    this.listDir = options.listDir ?? options.installDir
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
@@ -762,7 +769,7 @@ ${capabilityKey(change.capability)}`)
   // ---- the install
 
   private async readInstall(): Promise<void> {
-    const file = path.join(this.installDir, INSTALL_LIST)
+    const file = path.join(this.listDir, INSTALL_LIST)
     let bytes: Buffer | null = null
     try {
       bytes = await retried(() => readFile(file), file, 'read')
@@ -1374,9 +1381,12 @@ ${capabilityKey(change.capability)}`)
     // A security control with no role to play would refuse everything while reading as up, so it fails here
     const role = roleOf[k.id]
     if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
-    // The gate has the StateView before it answers anything and the luoshu its folder. A throw marks either failed
+    // The gate has the StateView before it answers anything, the luoshu and history their folder and exec its view
+    // of the grants. A throw marks that one failed
     if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
     if (k.id === 'luoshu' && k.from === 'install' && !this.openLuoshu(k)) return
+    if (k.id === 'history' && k.from === 'install' && !this.openHistory(k)) return
+    if (k.id === 'exec' && k.from === 'install' && !this.pushExec(k)) return
     k.state = 'ready'
     k.reason = null
     k.previousVersion = null
@@ -1628,9 +1638,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'luoshu.set': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
-        // A luoshu not ready yet takes the folder when it is
+        // A luoshu not ready yet takes the folder when it is, and so does history. exec gets it with the bump
         const luoshu = this.known.get('luoshu')
         if (luoshu?.from === 'install' && luoshu.state === 'ready') this.openLuoshu(luoshu)
+        const history = this.known.get('history')
+        if (history?.from === 'install' && history.state === 'ready') this.openHistory(history)
         return this.bump()
       }
       case 'item.on':
@@ -1728,11 +1740,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.replan()
   }
 
-  // One applied change: a new StateView pushed to the gate and the carrier told
+  // One applied change: a new StateView pushed to the gate, exec's view of the grants renewed with it and the carrier
+  // told
   private bump(): void {
     this.n++
     const gate = this.known.get('gate')
     if (gate !== undefined && gate.from === 'install' && gate.state === 'ready') this.pushTo(gate)
+    const exec = this.known.get('exec')
+    if (exec !== undefined && exec.from === 'install' && exec.state === 'ready') this.pushExec(exec)
     this.refresh()
   }
 
@@ -1779,18 +1794,62 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    return frozen({ n: this.n, foldCase: false, plugins })
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand] })
   }
 
   // The folder in the state and hetu's own folders, which the luoshu refuses to reach into
+  private opening(): Opening {
+    return { folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir }
+  }
+
   private openLuoshu(luoshu: Known): boolean {
     const target = luoshu.live?.exports?.luoshu
     if (target === undefined) return true
     try {
-      target.open({ folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir })
+      target.open(this.opening())
       return true
     } catch {
       this.die(luoshu, 'state-changed')
+      return false
+    }
+  }
+
+  // History reads the notes it commits from the same folder
+  private openHistory(history: Known): boolean {
+    const target = history.live?.exports?.history
+    if (target === undefined) return true
+    try {
+      target.open(this.opening())
+      return true
+    } catch {
+      this.die(history, 'state-changed')
+      return false
+    }
+  }
+
+  // What exec checks a command against on its own, read from the StateView: each plugin's exec items, whatever their
+  // switch, since the per-item switch is the gate's and lapses with the gate off while the declared list holds. With
+  // them the plugins the human let run any command and the folders no command may run code from. Read-only
+  private execView(): ExecView {
+    const plugins: Record<string, ExecGrant[]> = Object.create(null)
+    for (const [id, items] of Object.entries(this.stateView().plugins)) {
+      const held: ExecGrant[] = []
+      for (const { capability } of items) {
+        if (capability.type === 'exec') held.push({ commands: capability.commands.map(command => [...command]), env: [...capability.env] })
+      }
+      if (held.length > 0) plugins[id] = held
+    }
+    return frozen({ plugins, any: [...this.state.switches.execAnyCommand], opening: this.opening() })
+  }
+
+  private pushExec(exec: Known): boolean {
+    const target = exec.live?.exports?.exec
+    if (target === undefined) return true
+    try {
+      target.stateChanged(this.execView())
+      return true
+    } catch {
+      this.die(exec, 'state-changed')
       return false
     }
   }
@@ -1866,6 +1925,18 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
+    // What the human let this plugin do goes with it, so a plugin added later under the id asks again
+    const { switches } = this.state
+    const plugins = bare({ ...switches.limits.plugins })
+    delete plugins[id]
+    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins) {
+      await this.writeSwitches({
+        ...switches,
+        execAnyCommand: switches.execAnyCommand.filter(held => held !== id),
+        devMode: switches.devMode.filter(held => held !== id),
+        limits: { all: switches.limits.all, plugins },
+      })
+    }
     this.entryChecks.set(id, 'absent')
     k.entry = null
     k.held = { kind: 'held', state: 'stopped', reason: 'removed' }
@@ -1939,7 +2010,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    // Only a class 0 update loads on its own (Han), and only while the slot can say so, with no grant asked for that the
+    // Only a class 0 update loads on its own, and only while the slot can say so, with no grant asked for that the
     // entry doesn't hold. Its record lands first as any update's does
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))

@@ -100,7 +100,8 @@ describe('scopes', () => {
   })
 
   it('takes exec commands only as non-empty argument arrays', () => {
-    for (const commands of [['git status'], [[]], [['']], [['git', 'a\u0000b']], [[1]]]) {
+    // An item with no command at all would hold exec and run nothing, so the any command switch would lift it
+    for (const commands of [[], ['git status'], [[]], [['']], [['git', 'a\u0000b']], [[1]]]) {
       expect(capability.safeParse({ type: 'exec', commands, env: [] }).success).toBe(false)
     }
     expect(capability.safeParse({ type: 'exec', commands: [['git', 'status']], env: ['HOME\nPATH'] }).success).toBe(false)

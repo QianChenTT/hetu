@@ -9,7 +9,7 @@ const confined = (scope: string) => {
   return first !== '' && !/[*?[\]{}]/.test(first)
 }
 
-// One grant's class, from the table Han took on 2026-10-23. A subscription reaches nothing on its own, since an event
+// One grant's class, from the class table. A subscription reaches nothing on its own, since an event
 // carries a path only to a subscriber that may list it. The key stream holds what is typed, so it reads. A type this
 // plugin doesn't know is 4, so nothing new is ever class 0 and updates on its own by default
 function classOf(granted: Capability): number {
@@ -47,8 +47,34 @@ const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted
   || granted.type === 'luoshu.write' || (granted.type === 'history' && granted.access === 'read')
 const network = (granted: Capability) => granted.type === 'net.fetch'
 
-// Reading and network anywhere in what a plugin holds and reaches, which together could send notes out (Han)
+// Reading and network anywhere in what a plugin holds and reaches, which together could send notes out
 const paired = (all: readonly Capability[]) => all.some(reads) && all.some(network)
+
+// Programs that run another program or code they are handed: shells, interpreters, package runners, fetchers and the
+// Windows hosts for scripts. An exact command with one of these runs whatever its arguments or its config name, so
+// the screen says so. The list misses programs, as any list does, and only adds a line
+const RUNS_OTHERS = new Set([
+  'git', 'node', 'nodejs', 'deno', 'bun', 'npm', 'npx', 'pnpm', 'yarn', 'python', 'py', 'pip', 'pipx', 'uv', 'uvx', 'perl',
+  'ruby', 'gem', 'php', 'lua', 'java', 'dotnet', 'go', 'cargo', 'make', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'cmd',
+  'powershell', 'pwsh', 'wsl', 'cscript', 'wscript', 'mshta', 'rundll32', 'regsvr32', 'msiexec', 'curl', 'wget', 'ssh', 'env',
+  'xargs', 'find', 'sudo', 'doas', 'osascript', 'open', 'start', 'pythonw', 'javaw', 'msbuild', 'forfiles', 'wmic', 'schtasks',
+  'docker', 'awk', 'gawk', 'sed', 'tar', 'busybox', 'nohup', 'timeout', 'at', 'cron', 'crontab', 'launchctl', 'systemctl',
+])
+const PROGRAM_EXTENSION = /\.(exe|com|cmd|bat|ps1)$/
+
+// A program's base name on the list without its folder or its extension, or else without a version on its end, so
+// python3.12.exe reads python and rundll32 stays itself. Null for a program not on the list
+function listedName(program: string): string | null {
+  const base = program.split(/[\\/]/).at(-1)!.toLowerCase().replace(PROGRAM_EXTENSION, '')
+  if (RUNS_OTHERS.has(base)) return base
+  const unversioned = base.replace(/[\d.]+$/, '')
+  return RUNS_OTHERS.has(unversioned) ? unversioned : null
+}
+
+function runsOthers(all: readonly Capability[]): string[] {
+  const names = all.flatMap(item => item.type === 'exec' ? item.commands.map(command => listedName(command[0])) : [])
+  return [...new Set(names.filter(name => name !== null))]
+}
 
 export function createCapabilities(): Capabilities {
   const classify = (granted: readonly Capability[], reachable: readonly Capability[]): number => {
@@ -77,6 +103,8 @@ export function createCapabilities(): Capabilities {
       const lines = [head]
       if (reachable.length > 0) lines.push(`Through plugin.call it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
       if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call: ${readers.join(', ')}`)
+      const runners = runsOthers([...granted, ...reachable])
+      if (runners.length > 0) lines.push(`It can run programs that run other programs or code: ${runners.join(', ')}`)
       return lines
     },
   }
