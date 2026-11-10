@@ -54,6 +54,10 @@ export function executableIn(appOutDir: string, platform: string = process.platf
   return path.join(appOutDir, 'hetu')
 }
 
+// The MSI's file name as electron-builder's template. No space, since a GitHub release changes one in an asset's name
+// and the name would no longer match its line in SHA256SUMS
+export const MSI_NAME = 'hetu-${version}-x64.${ext}'
+
 function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<FuseName, boolean>>): Configuration {
   return {
     appId: 'app.hetu',
@@ -84,6 +88,7 @@ function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<Fuse
     // Per machine into Program Files with one UAC prompt, no folder to pick, never started by the installer, so hetu
     // never runs elevated
     msi: {
+      artifactName: MSI_NAME,
       perMachine: true,
       oneClick: true,
       runAfterFinish: false,
