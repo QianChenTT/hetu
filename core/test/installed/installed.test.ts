@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -16,7 +17,7 @@ describe.runIf(installed !== undefined && process.platform === 'win32')('the ins
 
   it('is per machine in Program Files with hetu.exe in it', () => {
     expect(path.resolve(dir).toLowerCase()).toBe(path.join(process.env.ProgramFiles!, 'hetu').toLowerCase())
-    expect(spawnSync('cmd', ['/c', 'if', 'exist', executableIn(dir), 'echo', 'yes'], { encoding: 'utf8' }).stdout.trim()).toBe('yes')
+    expect(statSync(executableIn(dir)).isFile()).toBe(true)
   })
 
   // Users read and run it. No group a standard user is in may write, change or own anything in it
