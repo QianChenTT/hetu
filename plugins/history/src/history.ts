@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
@@ -27,6 +28,8 @@ export type History = {
   close(): void
 }
 
+// Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
+const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
 const commitId = /^[0-9a-f]{40}$/
 const NO_COMMIT = '0'.repeat(40)
@@ -151,22 +154,30 @@ export function createHistory(options: HistoryOptions = {}): History {
     return ran.code === 0 && commitId.test(id) ? id : null
   }
 
-  // One note's bytes as they are now, null for none. A folder under that name is no note either
+  // One note's bytes as they are now, null for none. A folder under that name is no note either. The note is opened once
+  // and checked and read through that one handle, so what is read is what was checked: a name swapped for a link to a
+  // file outside the notes folder between a check and a read by name would have put that file in the repo. Where the
+  // system has them, a link at the last name is refused and a FIFO opens without waiting for a writer
   async function bytesOf(target: Canonical): Promise<Buffer | null> {
-    let size: number
+    let handle
     try {
-      const info = await stat(target.absolute)
-      if (!info.isFile()) return null
-      size = info.size
+      handle = await open(target.absolute, NOTE_READ)
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR') return null
+      if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null
+      if (code === 'ELOOP') throw refused('failed')
       throw err
     }
-    if (size > fileBytes) throw refused('failed', 'too-large')
-    const bytes = await readFile(target.absolute)
-    if (bytes.length > fileBytes) throw refused('failed', 'too-large')
-    return bytes
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) return null
+      if (info.size > fileBytes) throw refused('failed', 'too-large')
+      const bytes = await handle.readFile()
+      if (bytes.length > fileBytes) throw refused('failed', 'too-large')
+      return bytes
+    } finally {
+      await handle.close()
+    }
   }
 
   async function commit(repo: Repo, call: Call, targets: readonly Canonical[]): Promise<unknown> {
