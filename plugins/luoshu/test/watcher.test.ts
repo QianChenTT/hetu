@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -94,6 +94,28 @@ describe('the watcher', () => {
     await writeFile(path.join(folder, '.git', 'index'), 'x')
     await writeFile(path.join(folder, 'journal', '.c.md.1234.hetu-tmp'), 'x')
     await mkdir(path.join(folder, 'empty'))
+    await tick(600)
+    expect(luoshu.heard).toEqual([])
+  })
+
+  // macOS hands the watch changes from just before it began, such as the setup's own writes. Only a note that differs
+  // from what was on disk once the watch began is news
+  it('publishes nothing for an event on a note whose size and modified time are as they were when the watch began', async () => {
+    // A whole second, so setting it again leaves it exactly as it was
+    const file = path.join(folder, 'a.md')
+    const mtime = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+    await utimes(file, mtime, mtime)
+    const luoshu = await watching()
+    await utimes(file, new Date(), mtime)
+    expect((await stat(file)).mtimeMs).toBe(mtime.getTime())
+    await tick(600)
+    expect(luoshu.heard).toEqual([])
+  })
+
+  it('publishes nothing for a note made and removed again before it settled', async () => {
+    const luoshu = await watching()
+    await writeFile(path.join(folder, 'c.md'), 'brief')
+    await unlink(path.join(folder, 'c.md'))
     await tick(600)
     expect(luoshu.heard).toEqual([])
   })
