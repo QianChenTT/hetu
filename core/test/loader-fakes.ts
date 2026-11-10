@@ -179,6 +179,8 @@ export class FakeRuntime implements Runtime {
   readonly terminated: { id: string, incarnation: number }[] = []
   // The workers started with a port to the drawer
   readonly drawers: string[] = []
+  // Every worker start as the loader made it
+  readonly workerStarts: WorkerStart[] = []
   readonly halves = new Map<string, Half>()
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
@@ -219,6 +221,7 @@ export class FakeRuntime implements Runtime {
 
   startWorker(start: WorkerStart): void {
     this.started.push({ id: start.id, incarnation: start.incarnation, half: 'worker', code: start.code.toString() })
+    this.workerStarts.push(start)
     if (start.drawer) this.drawers.push(start.id)
     const behaviour = this.of(start.id)
     if (behaviour.throws) throw new Error('the renderer is gone')
@@ -266,7 +269,7 @@ export function allowAll(): Gate & { views: number[], seen: StateView[], throws:
   return gate
 }
 
-export const manifest = (id: string, extra: object = {}) => ({ id, name: id, version: '1.0.0', api: '^1', ...extra })
+export const manifest = (id: string, extra: object = {}) => ({ id, name: id, version: '1.0.0', api: '^2', ...extra })
 export const hostManifest = (id: string, extra: object = {}) => manifest(id, { entries: { host: 'host.js' }, ...extra })
 export const workerManifest = (id: string, extra: object = {}) => manifest(id, { entries: { worker: 'worker.js' }, ...extra })
 

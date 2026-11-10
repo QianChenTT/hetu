@@ -36,7 +36,8 @@ export function normalKey(spec: string, mac: boolean): string {
   return named(mods, key)
 }
 
-export type CoreKey = 'raw' | 'open' | 'save' | 'quit'
+export const CORE_KEY_NAMES = Object.freeze(['raw', 'open', 'save', 'quit'] as const)
+export type CoreKey = typeof CORE_KEY_NAMES[number]
 
 // The core keys as the page takes them, before CodeMirror and any binding: Mod with /, P, S or Q and no Alt. Each is
 // known by the character typed or by the physical key, so Mod+S saves on a layout whose S types another letter, and the

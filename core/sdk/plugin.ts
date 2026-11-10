@@ -8,6 +8,7 @@ import { type EventHandler, type EventOptions, Events, type Subscription } from 
 import { attempt } from './refused.ts'
 import { type Handler, type IncomingCall, Serving } from './serving.ts'
 import { Sender, type Transport } from './transport.ts'
+import { Ui, type UiClient } from './ui.ts'
 
 // What start and stop get: the calls, the plugin's own facts from init and the hooks around its life
 export type PluginContext = Client & {
@@ -35,6 +36,8 @@ export type PluginContext = Client & {
   readonly try: typeof attempt
   // The editor bridge to the open notes, for a worker whose plugin holds a ui item while an editor page is open
   readonly editor: EditorClient
+  // The plugin's views and, when the human picked it, the window's layout, on the same port as editor
+  readonly ui: UiClient
 }
 
 export type PluginSpec = {
@@ -86,9 +89,12 @@ class Half {
   private serving: Serving | null = null
   private events: Events | null = null
   private readonly editor: Editor
+  private readonly ui: Ui
 
   constructor(spec: PluginSpec, transport: Transport, options: RunOptions) {
     this.editor = options.editor ?? new Editor()
+    this.editor.hold()
+    this.ui = new Ui(this.editor)
     const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
     // Every message the half sends goes through one pacing, lifecycle answers included: the Sender's, or the
     // transport's own for a worker, whose relay counts bytes as well as messages. Two in a row would let a backlog out
@@ -150,6 +156,7 @@ class Half {
       },
       try: attempt,
       editor: this.editor,
+      ui: this.ui,
     }
     this.ctx = ctx
     void this.start(ctx)
@@ -163,6 +170,8 @@ class Half {
       this.phase = 'failed'
       console.error('hetu: start threw', err)
       return
+    } finally {
+      this.editor.release()
     }
     if (this.phase !== 'starting') return
     this.phase = 'ready'

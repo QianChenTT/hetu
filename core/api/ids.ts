@@ -75,9 +75,9 @@ export const installIds = frozen([
   'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
 ] as const)
 
-// First-party plugins in the plugin folder. A copy there keeps the id only with the reserved first-party signer and
-// bytes equal to the install's copy, which the loader checks
-export const firstPartyIds = frozen(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'] as const)
+// First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
+// the reserved first-party signer and bytes equal to the install's copy, which the loader checks
+export const firstPartyIds = frozen(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,
@@ -92,6 +92,7 @@ const reserved = new Set<string>([
 // Ids a plugin-folder plugin can't take, apart from the first-party copies
 export const reservedIds = frozen([...reserved].sort())
 
+// Titles and owner strips in the editor window show a plugin by its id, so no plugin is called hetu
 export function isReservedId(value: string): boolean {
-  return reserved.has(value)
+  return reserved.has(value) || value === 'hetu' || value.startsWith('hetu-')
 }

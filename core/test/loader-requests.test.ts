@@ -16,7 +16,7 @@ const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
-const panel: Capability = { type: 'ui.panel' }
+const panel: Capability = { type: 'ui.view' }
 const notes: Capability = { type: 'luoshu.read', paths: ['notes/**'] }
 const stateIn = async (dataDir: string) => (await new StateStore(dataDir).load()).state
 const held = (answer: { applied: true } | { held: string }) => {

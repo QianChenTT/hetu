@@ -8,3 +8,5 @@ export { definePlugin, run, type Plugin, type PluginContext, type PluginSpec, ty
 export { attempt, Refused, type TryResult } from './refused.ts'
 export type { Handler, IncomingCall } from './serving.ts'
 export type { Transport } from './transport.ts'
+export { diffTree, type UiClient } from './ui.ts'
+export type { LayoutState, LayoutView, Op, UiEvent, UiNode, UiTopic } from '../api/ui.ts'

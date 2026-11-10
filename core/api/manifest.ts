@@ -1,12 +1,13 @@
 import { z } from 'zod'
-import { capabilities, folderCapabilities, text } from './capabilities.ts'
+import { capabilities, folderCapabilities, screenText, text } from './capabilities.ts'
 import { guardableActions, localName, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain } from './plain.ts'
 import { pathProblem } from './scope.ts'
+import { themeSpec } from './ui.ts'
 
 // The core API's major version. A manifest whose api range leaves this version out still parses and is refused with
-// api, not invalid
-export const API_VERSION = 1
+// api, not invalid. Version 2 renamed the ui items to ui.view and ui.layout and added views and themes
+export const API_VERSION = 2
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024
 // Entries in any other list or map of a manifest
@@ -39,6 +40,34 @@ const frameName = localName.refine(name => name !== 'worker' && name !== 'host' 
 const version = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/)
 const builtin = z.string().max(MAX_NAME_LENGTH, { abort: true }).regex(/^[a-z][a-z0-9_]*(?:\/[a-z][a-z0-9_]*)*$/)
 
+// The views a plugin declares, so a layout can place them and the views menu can list them before the plugin starts
+export const MAX_VIEWS = 16
+export const MAX_VIEW_TITLE = 64
+// Pixels along the axis a view's region splits
+export const MAX_VIEW_SIZE = 4096
+const pixels = z.int().min(0).max(MAX_VIEW_SIZE)
+const icon = entryPath.refine(value => /\.(?:svg|png)$/.test(value), 'an svg or png file')
+
+export const viewSpec = z.strictObject({
+  title: screenText(MAX_VIEW_TITLE),
+  // view is a pane or a tab, item a small one for a status row or toolbar. The kinds grow only with a core API version
+  kind: z.enum(['view', 'item']),
+  icon: icon.optional(),
+  size: z.strictObject({ min: pixels.optional(), preferred: pixels.optional(), max: pixels.optional() })
+    .refine(({ min, preferred, max }) => {
+      const set = [min, preferred, max].filter((value): value is number => value !== undefined)
+      return set.every((value, at) => at === 0 || value >= (set[at - 1] as number))
+    }, 'min, preferred and max out of order')
+    .optional(),
+  // Orders only views the human never touched
+  priority: z.int().min(0).max(100).optional(),
+  // A frame entry draws it in place of a tree
+  frame: frameName.optional(),
+})
+export type ViewSpec = z.infer<typeof viewSpec>
+
+const views = map(localName, viewSpec).refine(entries => Object.keys(entries).length <= MAX_VIEWS, `more than ${MAX_VIEWS} views`)
+
 const folderEntries = { worker: entryPath.optional(), frames: map(frameName, entryPath).optional() }
 const installEntries = { ...folderEntries, host: entryPath.optional(), page: entryPath.optional() }
 
@@ -63,6 +92,16 @@ const common = {
     actions: map(localName, z.strictObject({ from: list(pluginId).optional() })).optional(),
     topics: list(localName).optional(),
   }).optional(),
+  views: views.optional(),
+  // Token values only, picked by the human apart from the layout. A theme needs no grant
+  theme: themeSpec.optional(),
+}
+
+// A view drawn by a frame names one of the plugin's own frame entries
+type Drawn = { entries: { frames?: Record<string, string> | undefined }, views?: Record<string, ViewSpec> | undefined }
+function framesHeld(manifest: Drawn): boolean {
+  const frames = manifest.entries.frames ?? {}
+  return Object.values(manifest.views ?? {}).every(view => view.frame === undefined || Object.hasOwn(frames, view.frame))
 }
 
 // A manifest from the install, where host and page entries, guards, the Node built-ins and install-only types may
@@ -77,7 +116,7 @@ export const installManifest = plain(
   }).refine(
     manifest => !manifest.guards?.length || manifest.capabilities?.some(granted => granted.type === 'guard.hook'),
     'guards without guard.hook',
-  ),
+  ).refine(framesHeld, 'a view whose frame is no frame entry'),
   MAX_MANIFEST_BYTES,
 )
 export type InstallManifest = z.infer<typeof installManifest>
@@ -88,7 +127,7 @@ export const folderManifest = plain(
     ...common,
     entries: z.strictObject(folderEntries).refine(someEntry, 'no entry'),
     capabilities: folderCapabilities.optional(),
-  }),
+  }).refine(framesHeld, 'a view whose frame is no frame entry'),
   MAX_MANIFEST_BYTES,
 )
 export type FolderManifest = z.infer<typeof folderManifest>

@@ -155,14 +155,14 @@ describe('the human\'s switches, applied', () => {
   })
 
   it('approves a found plugin from the one read it was found with', async () => {
-    const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [{ type: 'ui.panel' }] }) } })
+    const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [{ type: 'ui.view' }] }) } })
     await made.loader.start()
     expect(stateOf(made.loader, 'alpha')).toBe('found')
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
     await made.loader.apply({ kind: 'plugin.approve', plugin: 'alpha' })
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
     // No capabilities slot here, so the class is unknown and every item asks at its first use
-    expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.panel' }], class: null, enabled: true, firstUse: [{ type: 'ui.panel' }] })
+    expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.view' }], class: null, enabled: true, firstUse: [{ type: 'ui.view' }] })
     // No provenance yet, so the approved build still needs allowUnsigned to run
     expect(reasonOf(made.loader, 'alpha')).toBe('unsigned')
     await made.loader.apply({ kind: 'allowUnsigned', hash, on: true })
@@ -274,7 +274,7 @@ describe('the human\'s switches, applied', () => {
 
 describe("the StateView's grants", () => {
   const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
-  const panel = { type: 'ui.panel' as const }
+  const panel = { type: 'ui.view' as const }
   const item = (capability: object, off = false) => ({ capability, off, firstUse: false })
 
   async function started() {

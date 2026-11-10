@@ -63,7 +63,7 @@ describe('the install list', () => {
 })
 
 describe('the lifecycle messages', () => {
-  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 1, deps: { luoshu: 'ready' }, lastStop: 'dependency:luoshu:crashed', previousVersion: '1.0.0' }
+  const sent = { v: 1, kind: 'init', id: 'search', incarnation: 2, api: 2, deps: { luoshu: 'ready' }, lastStop: 'dependency:luoshu:crashed', previousVersion: '1.0.0' }
 
   it('carries the id, the API version, the dependencies, lastStop and previousVersion in init', () => {
     expect(init.parse(sent)).toEqual(sent)
@@ -71,7 +71,7 @@ describe('the lifecycle messages', () => {
   })
 
   it.each([
-    ['another API version', { ...sent, api: 2 }],
+    ['another API version', { ...sent, api: 1 }],
     ['incarnation 0', { ...sent, incarnation: 0 }],
     ['a dependency state of its own', { ...sent, deps: { luoshu: 'crashed' } }],
     ['a reason outside the fixed list', { ...sent, lastStop: 'the luoshu plugin is down' }],

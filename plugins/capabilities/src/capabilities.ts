@@ -14,10 +14,10 @@ const confined = (scope: string) => {
 // plugin doesn't know is 4, so nothing new is ever class 0 and updates on its own by default
 function classOf(granted: Capability): number {
   switch (granted.type) {
-    case 'ui.panel':
+    case 'ui.view':
     case 'ui.decoration':
     case 'ui.command':
-    case 'ui.statusBar':
+    case 'ui.layout':
     case 'storage':
     case 'events.subscribe':
     case 'plugin.call':

@@ -580,6 +580,17 @@ describe('the floor lane', () => {
       { plugin: 'gate', step: 'precheck', count: 1 }, { plugin: 'gate', step: 'precheck', count: 2 },
     ])
   })
+
+  it('coalesces the floor records main writes for a plugin, such as a frame of its that navigated', async () => {
+    const { carrier, log } = harness()
+    for (let i = 0; i < 3; i++) carrier.floorCoalesced('frame.navigated', { plugin: 'kanban' })
+    carrier.floorCoalesced('frame.navigated', { plugin: 'board' })
+    await tick()
+    expect(log.events('frame.navigated').map(record => record.fields)).toEqual([{ plugin: 'kanban', count: 1 }, { plugin: 'board', count: 1 }])
+    carrier.close()
+    await tick()
+    expect(log.events('frame.navigated').map(record => record.fields)).toContainEqual({ plugin: 'kanban', count: 2 })
+  })
 })
 
 describe('record nothing', () => {

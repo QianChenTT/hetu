@@ -13,10 +13,10 @@ const call: Capability = { type: 'plugin.call', targets: ['sync'] }
 
 describe('the class of one grant', () => {
   it.each([
-    ['ui.panel', { type: 'ui.panel' }, 0],
+    ['ui.view', { type: 'ui.view' }, 0],
     ['ui.decoration', { type: 'ui.decoration' }, 0],
     ['ui.command', { type: 'ui.command' }, 0],
-    ['ui.statusBar', { type: 'ui.statusBar' }, 0],
+    ['ui.layout', { type: 'ui.layout' }, 0],
     ['storage', { type: 'storage' }, 0],
     ['events.subscribe', { type: 'events.subscribe', topics: ['luoshu.changed'] }, 0],
     ['plugin.call on its own', call, 0],

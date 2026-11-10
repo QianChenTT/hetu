@@ -11,9 +11,10 @@ import { electronRuntime } from './runtime/electron.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
+import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
-import { appMenu, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
+import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
@@ -97,10 +98,12 @@ async function start(): Promise<void> {
     Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate(menu))
     app.on('web-contents-created', (_event, contents) => guardContents(contents))
     lockDown(session.defaultSession, null, pages)
+    // Each running plugin's frames and icons, served on the editor session's views host from the bytes it started with
+    const views = new ViewFiles()
     const sessions = {} as Record<Role, Session>
     for (const role of Object.keys(ROLES) as Role[]) {
       sessions[role] = session.fromPartition(partition(role))
-      lockDown(sessions[role], role, pages)
+      lockDown(sessions[role], role, pages, views)
     }
 
     // The carrier and the loader exist once the core is wired, before any worker starts
@@ -129,7 +132,7 @@ async function start(): Promise<void> {
         if (!page.isDestroyed()) page.postMessage('hetu:drawer-end', { plugin, incarnation })
       },
     })
-    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers), limit, { freeze: freezeIntrinsics, importer: url => import(url) })
+    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, { freeze: freezeIntrinsics, importer: url => import(url) })
 
     // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
     // main, so a Confirm counts only once it armed
@@ -176,6 +179,18 @@ async function start(): Promise<void> {
           if (call.action === 'core.pickFolder') {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
           }
+          if (call.action === 'editor.frame') {
+            const { plugin, frame } = call.args as { plugin: string, frame: string }
+            const url = views.mint(plugin, frame)
+            if (url === null) throw { code: 'not-found' }
+            return { url }
+          }
+          if (call.action === 'editor.frameGone') {
+            const { url, navigated } = call.args as { url: string, navigated: boolean }
+            const gone = views.gone(url)
+            if (gone !== null && navigated) carrier?.floorCoalesced('frame.navigated', { plugin: gone.plugin })
+            return null
+          }
           if (call.action === 'security.open') trusted.show()
           else if (call.action === 'core.relaunch') {
             again = relaunches({ packaged: app.isPackaged, env: process.env })
@@ -199,10 +214,22 @@ async function start(): Promise<void> {
       const window = openEditor(BrowserWindow, sessions.editor, app.isPackaged, placement(), mountPreload)
       const contents = window.webContents
       new WindowWay(contents as unknown as WindowContents, 'editor', wired.carrier)
-      contents.on('did-navigate', () => drawers.unloaded(contents))
-      contents.on('render-process-gone', () => drawers.unloaded(contents))
-      contents.on('destroyed', () => drawers.unloaded(contents))
+      // A frame's token ends with the page that framed it
+      const unloaded = () => {
+        drawers.unloaded(contents)
+        views.unloaded()
+      }
+      contents.on('did-navigate', unloaded)
+      contents.on('render-process-gone', unloaded)
+      contents.on('destroyed', unloaded)
       contents.on('dom-ready', () => drawers.loaded(contents))
+      // The core keys reach the page whatever has focus, a frame included
+      contents.on('before-input-event', (event, input) => {
+        const core = coreKeyOfInput(input, process.platform === 'darwin')
+        if (core === null) return
+        event.preventDefault()
+        if (!input.isAutoRepeat) contents.send('hetu:key', core)
+      })
       // Closing the last window quits hetu, so it goes the way Quit goes and the page keeps its drafts first
       window.on('close', event => {
         if (quitting !== null || [...seen].some(other => other !== window && !other.isDestroyed())) return

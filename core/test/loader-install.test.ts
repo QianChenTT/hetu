@@ -85,7 +85,7 @@ describe('the start order', () => {
     })
     await loader.start()
     expect(runtime.half('outline').got('init')).toEqual([{
-      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 1, deps: { git: 'unavailable', luoshu: 'ready' },
+      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 2, deps: { git: 'unavailable', luoshu: 'ready' },
       lastStop: null, previousVersion: null,
     }])
   })

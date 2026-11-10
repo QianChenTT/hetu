@@ -104,7 +104,7 @@ describe('reserved ids', () => {
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
     'gate', 'capabilities', 'log',
     'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
-    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify',
+    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -112,7 +112,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'])
+    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'])
   })
 
   it.each(expected)('reserves %j', id => {
@@ -124,12 +124,16 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetu'])(
+  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)
     },
   )
+
+  it.each(['hetu', 'hetu-security', 'hetu-x'])('reserves %j, since titles and owner strips show a plugin by its id', id => {
+    expect(isReservedId(id)).toBe(true)
+  })
 
   it('reserves no name from Object', () => {
     for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) expect(isReservedId(id)).toBe(false)

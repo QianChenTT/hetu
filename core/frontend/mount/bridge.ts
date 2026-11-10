@@ -1,11 +1,15 @@
 import { ChangeSet } from '@codemirror/state'
 import {
-  type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS, parseBridgeCall,
+  type BridgeCall, type BridgeEvent, type BridgeReply, type Mark, MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS,
   READ_CHARS_PER_SECOND, refused, reply, verbNeeds,
 } from '../../api/editor.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
+import { type DrawerCall, parseDrawerCall, type UiCall, uiNeeds } from '../../api/ui.ts'
 import { normalKey } from './keys.ts'
 import type { CoreLink } from './link.ts'
+import type { SettingsValue } from './settings.ts'
+import { type UiHooks, UiPort, UiRefusal } from './ui-port.ts'
+import type { ViewBody } from './views.ts'
 import type { Versions } from './versions.ts'
 
 // The drawer's end of each plugin's port: the editor bridge as the editor window serves it. Main hands the page one
@@ -13,7 +17,8 @@ import type { Versions } from './versions.ts'
 // what arrives. Every message is text the relay in the worker host page already held to the plugin's cap and rate.
 // Before serving anything about a note the drawer asks the core what the plugin reaches there, through editor.reach,
 // and keeps the answers until core.security or core.status says something changed. The drawer holds no power of its
-// own: a plugin reaches through it only what the gate gives that plugin
+// own: a plugin reaches through it only what the gate gives that plugin. Views and the layout's skeleton come on the
+// same port, served by UiPort
 
 // An open note as the drawer serves it. The page's editor implements it
 export type Instance = {
@@ -43,8 +48,14 @@ export const RESERVED_KEYS: readonly string[] = Object.freeze([
   ...CORE_KEYS, 'Mod-Shift-/', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a',
 ])
 
-type Reach = { read: boolean, write: boolean, verbs: readonly string[] }
-const none: Reach = Object.freeze({ read: false, write: false, verbs: Object.freeze([]) })
+type Reach = { read: boolean, write: boolean, list: boolean, verbs: readonly string[] }
+const none: Reach = Object.freeze({ read: false, write: false, list: false, verbs: Object.freeze([]) })
+
+// The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
+export const NODES_PER_SECOND = 200_000
+
+const noHooks: UiHooks = { drawn() {}, changed() {}, post: () => 'unavailable', open: async () => {} }
+const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
 
 type Connection = {
   readonly plugin: string
@@ -57,7 +68,7 @@ type Connection = {
   // How many marks each of its sets holds, by instance
   readonly sets: Map<string, Map<string, number>>
   // What it had the drawer do in the second that started at start
-  spent: { start: number, marks: number, chars: number }
+  spent: { start: number, marks: number, chars: number, nodes: number }
 }
 
 class Refusal {
@@ -76,19 +87,30 @@ export class Drawer {
   private reaches = new Map<string, Promise<Reach>>()
   private readonly mac: boolean
   private readonly clock: () => number
+  private readonly settings: () => SettingsValue
+  readonly ui: UiPort
 
   // mac says Mod is Cmd, as the page names keys
   constructor(
     link: CoreLink,
     instances: () => Iterable<Instance>,
     edited: (instance: string, plugin: string) => void,
-    options: { mac?: boolean, clock?: (() => number) | undefined } = {},
+    options: { mac?: boolean, clock?: (() => number) | undefined, ui?: { settings: () => SettingsValue, hooks: UiHooks } } = {},
   ) {
     this.link = link
     this.instances = instances
     this.edited = edited
     this.mac = options.mac ?? false
     this.clock = options.clock ?? (() => performance.now())
+    this.settings = options.ui?.settings ?? noSettings
+    this.ui = new UiPort({
+      send: (owner, body) => this.tellOwner(owner, body),
+      reach: (owner, path) => this.reachOf(owner, path),
+      settings: this.settings,
+      hooks: options.ui?.hooks ?? noHooks,
+      normal: key => normalKey(key, this.mac),
+      reserved: key => RESERVED_KEYS.includes(key),
+    })
   }
 
   // core.status comes on the shell's subscription
@@ -106,12 +128,16 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(), spent: { start: this.clock(), marks: 0, chars: 0 },
+      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(),
+      spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
     port.onmessage = event => {
       if (typeof event.data === 'string' && this.connections.get(plugin) === conn) void this.serve(conn, event.data)
     }
+    void this.reachOf(plugin).then(reach => {
+      if (this.live(conn)) this.ui.held(plugin, reach.verbs)
+    })
     for (const instance of this.instances()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
@@ -142,15 +168,19 @@ export class Drawer {
     }
   }
 
-  // A key in the editor, named as keys.ts names it, after the core keys. The first plugin bound to it hears its command,
-  // with the note's instance only when it reads the note, and true says the key was taken. Otherwise each plugin holding
-  // the key stream that reads the note hears the key
+  // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
+  // with the note's instance only when it reads the note, and true says the key was taken. A key two plugins bind goes
+  // to the one the human picked in the views menu, else to neither. Otherwise each plugin holding the key stream that
+  // reads the note hears the key
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
-    for (const conn of this.connections.values()) {
-      const command = conn.bindings.get(key)
-      if (command === undefined) continue
+    const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
+    const picked = this.settings().keys[key]
+    const owner = bound.length === 1 ? bound[0] : bound.find(conn => conn.plugin === picked)
+    if (owner !== undefined) {
+      const conn = owner
+      const command = conn.bindings.get(key) as string
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
         const named = reach.read && open !== undefined ? open.id : null
@@ -170,6 +200,21 @@ export class Drawer {
     return false
   }
 
+  // A key while focus is in a view instance, after the core keys: the view's own binding, then the global ones
+  viewKey(instance: string, key: string): boolean {
+    if (RESERVED_KEYS.includes(key)) return false
+    return this.ui.viewKey(instance, key) || this.key(null, key)
+  }
+
+  // The keys two plugins bind, which fire for neither until the human picks an owner
+  conflicts(): { key: string, plugins: string[] }[] {
+    const byKey = new Map<string, string[]>()
+    for (const conn of this.connections.values()) {
+      for (const key of conn.bindings.keys()) byKey.set(key, [...byKey.get(key) ?? [], conn.plugin])
+    }
+    return [...byKey].filter(([, plugins]) => plugins.length > 1).map(([key, plugins]) => ({ key, plugins: plugins.sort() }))
+  }
+
   // Something changed what plugins may reach: ask again, and take back what a plugin no longer reaches
   forget(): void {
     this.reaches = new Map()
@@ -179,6 +224,7 @@ export class Drawer {
   private async recheck(conn: Connection): Promise<void> {
     const held = await this.reachOf(conn.plugin)
     if (!this.live(conn)) return
+    this.ui.held(conn.plugin, held.verbs)
     if (!held.verbs.includes('ui.command')) conn.bindings = new Map()
     if (!held.verbs.includes('ui.keys')) conn.keys = false
     for (const id of [...conn.marked]) {
@@ -194,6 +240,7 @@ export class Drawer {
   private drop(conn: Connection): void {
     conn.port.onmessage = null
     conn.port.close()
+    this.ui.ended(conn.plugin)
     for (const id of conn.marked) this.find(id)?.clearMarks(conn.plugin)
     conn.marked.clear()
     conn.sets.clear()
@@ -216,8 +263,8 @@ export class Drawer {
     if (asked === undefined) {
       asked = this.link.call('editor.reach', path === undefined ? { plugin } : { plugin, path }).then(got => {
         if (!got.ok) return none
-        const { read, write, verbs } = got.result as Reach
-        return { read: read === true, write: write === true, verbs: Array.isArray(verbs) ? verbs : [] }
+        const { read, write, list, verbs } = got.result as Reach
+        return { read: read === true, write: write === true, list: list === true, verbs: Array.isArray(verbs) ? verbs : [] }
       }, () => none)
       this.reaches.set(key, asked)
     }
@@ -230,8 +277,14 @@ export class Drawer {
     if (this.live(conn) && reach.read) conn.port.postMessage(JSON.stringify(event(body)))
   }
 
+  // A ui event to an owner's live port
+  private tellOwner(owner: string, body: ViewBody): void {
+    const conn = this.connections.get(owner)
+    if (conn !== undefined) conn.port.postMessage(JSON.stringify({ v: 1, kind: 'event', ...body }))
+  }
+
   private async serve(conn: Connection, text: string): Promise<void> {
-    const call = parseBridgeCall(text)
+    const call = parseDrawerCall(text)
     if (call === null) {
       const id = idOf(text)
       if (id !== null) this.send(conn, refused(id, 'invalid'))
@@ -241,7 +294,7 @@ export class Drawer {
     try {
       answer = reply(call.id, await this.answer(conn, call))
     } catch (err) {
-      answer = refused(call.id, err instanceof Refusal ? err.code : 'failed')
+      answer = refused(call.id, err instanceof Refusal || err instanceof UiRefusal ? err.code : 'failed')
     }
     this.send(conn, answer)
   }
@@ -251,7 +304,28 @@ export class Drawer {
   }
 
   // What a call answers. Throws a Refusal with its code
-  private async answer(conn: Connection, call: BridgeCall): Promise<unknown> {
+  private async answer(conn: Connection, call: DrawerCall): Promise<unknown> {
+    const { plugin } = conn
+    if (Object.hasOwn(uiNeeds, call.verb)) {
+      const item = uiNeeds[call.verb as UiCall['verb']]
+      if (!(await this.reachOf(plugin)).verbs.includes(item)) throw new Refusal('not-granted')
+      if (!this.live(conn)) throw new Refusal('stopped')
+      // A draw is refused before it applies once the second's nodes are spent or its operations could spend the rest:
+      // each may walk the whole tree. It is charged for what it looked at after
+      if (call.verb === 'view.draw' || call.verb === 'layout.draw') {
+        this.spend(conn, 0, 0)
+        const surface = call.verb === 'layout.draw' ? 'layout' : call.args.instance
+        const others = call.args.ops.filter(each => each.op !== 'tree').length
+        if (conn.spent.nodes + others * this.ui.surfaces.size(plugin, surface) > NODES_PER_SECOND) throw new Refusal('throttled')
+      }
+      return this.ui.answer(plugin, call as UiCall, nodes => {
+        conn.spent.nodes += nodes
+      })
+    }
+    return this.answerEditor(conn, call as BridgeCall)
+  }
+
+  private async answerEditor(conn: Connection, call: BridgeCall): Promise<unknown> {
     const needs = verbNeeds[call.verb]
     const { plugin } = conn
     if (needs.ui !== null && !(await this.reachOf(plugin)).verbs.includes(needs.ui)) throw new Refusal('not-granted')
@@ -314,11 +388,13 @@ export class Drawer {
     }
   }
 
-  // Charges the plugin's second for marks drawn and text read, throttled past either budget. A new second starts afresh
+  // Charges the plugin's second for marks drawn and text read, throttled past either budget or once the nodes its draws
+  // looked at passed theirs. A new second starts afresh
   private spend(conn: Connection, marks: number, chars: number): void {
     const now = this.clock()
-    if (now - conn.spent.start >= 1000) conn.spent = { start: now, marks: 0, chars: 0 }
-    if (conn.spent.marks + marks > MARKS_PER_SECOND || conn.spent.chars + chars > READ_CHARS_PER_SECOND) throw new Refusal('throttled')
+    if (now - conn.spent.start >= 1000) conn.spent = { start: now, marks: 0, chars: 0, nodes: 0 }
+    const over = conn.spent.marks + marks > MARKS_PER_SECOND || conn.spent.chars + chars > READ_CHARS_PER_SECOND
+    if (over || conn.spent.nodes > NODES_PER_SECOND) throw new Refusal('throttled')
     conn.spent.marks += marks
     conn.spent.chars += chars
   }

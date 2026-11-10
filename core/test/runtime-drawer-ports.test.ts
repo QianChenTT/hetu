@@ -88,4 +88,22 @@ describe('the runtime side of worker starts', () => {
     expect(ends).toEqual(['alpha#1'])
     expect(drawn).toEqual(['start alpha#1', 'end alpha#1'])
   })
+
+  it('hands a drawer worker\'s files and frames to the views host, and ends them with each incarnation', () => {
+    const held: string[] = []
+    const side = withDrawers(
+      { start: () => {}, terminate: () => {} },
+      { started: () => {}, ended: () => {} },
+      {
+        started: (id, incarnation, files, frames) => void held.push(`start ${id}#${incarnation} ${files.map(file => file.path).join(',')} ${JSON.stringify(frames)}`),
+        ended: (id, incarnation) => void held.push(`end ${id}#${incarnation}`),
+      },
+    )
+    const files = [{ path: 'board.html', bytes: Buffer.from('b') }] as never
+    side.start({ id: 'alpha', incarnation: 1, code: Buffer.from(''), port: null, drawer: true, files, frames: { board: 'board.html' } })
+    side.start({ id: 'beta', incarnation: 1, code: Buffer.from(''), port: null, drawer: false })
+    side.terminate('alpha', 1)
+    side.terminate('beta', 1)
+    expect(held).toEqual(['start alpha#1 board.html {"board":"board.html"}', 'end alpha#1', 'end beta#1'])
+  })
 })

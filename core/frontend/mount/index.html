@@ -13,15 +13,26 @@
 <span id="title">No note open</span>
 <button id="open" type="button">Open a note</button>
 <button id="raw-open" type="button">Real text</button>
+<button id="views" type="button">Views</button>
 <button id="security" type="button">Plugins and security</button>
 </header>
 <div id="note-bar" hidden><span id="note-text"></span><span id="note-actions"></span></div>
-<main id="editors"><p id="empty">Press Ctrl+P to open a note. Ctrl+/ shows the real text of the note</p></main>
+<main id="stage">
+<div id="base"></div>
+<div id="editors"><p id="empty" hidden>Press Ctrl+P to open a note. Ctrl+/ shows the real text of the note</p></div>
+<div id="overlay"></div>
+</main>
+<div id="drag-ghost" hidden></div>
+<div id="drop-mark" hidden></div>
 <div id="palette" hidden>
 <input id="palette-input" type="text" autocomplete="off" spellcheck="false" placeholder="Note name">
 <ul id="palette-list"></ul>
 <p id="palette-note" hidden></p>
 </div>
+<section id="menu" hidden tabindex="-1">
+<header><span>Views and look</span><button id="menu-close" type="button">Close</button></header>
+<div id="menu-body"></div>
+</section>
 <section id="raw" hidden tabindex="-1">
 <header><span id="raw-title"></span><label>Written last <select id="raw-recent"></select></label><button id="raw-close" type="button">Close</button></header>
 <pre id="raw-text"></pre>

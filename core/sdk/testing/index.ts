@@ -3,7 +3,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
 import { type FloorConstant, floorConstants } from '../../api/floor.ts'
 import { dependencyReason } from '../../api/lifecycle.ts'
-import { API_VERSION, folderManifest, installManifest } from '../../api/manifest.ts'
+import { API_VERSION, folderManifest, installManifest, type ViewSpec } from '../../api/manifest.ts'
 import type { PluginState, SlotState } from '../../api/slots.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
@@ -12,10 +12,11 @@ import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
+import { FakeDrawer } from './drawer.ts'
 import { type FakeMode, holds, ModeGate } from './gate.ts'
 import { MemoryStorage, MemoryLuoshu } from './providers.ts'
 
-export { holds }
+export { FakeDrawer, holds }
 export type { FakeMode }
 
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
@@ -24,13 +25,15 @@ export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Re
 // manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the luoshu at start
 // latencyMs is how long the luoshu, storage and cache take to answer each call, so a plugin meets a save or a read that
 // takes time. limits are the human's values for all, read each time, so a test may change them while the plugin runs
+// drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
-  limits?: Partial<Record<FloorConstant, number>>,
+  limits?: Partial<Record<FloorConstant, number>>, drawer?: FakeDrawer,
 }
 
 type Manifest = {
   id: string
+  views?: Record<string, ViewSpec>
   entries: Record<string, unknown>
   requires?: string[]
   provides?: { actions?: Record<string, { from?: string[] }>, topics?: string[] }
@@ -192,6 +195,7 @@ export class FakeCore {
   private readonly luoshuWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
+  private readonly drawer: FakeDrawer | null
   private readonly missing: Set<string>
   private incarnation = 0
   private lastStop: string | null = null
@@ -202,6 +206,7 @@ export class FakeCore {
     this.manifest = manifestOf(options.manifest)
     this.mode = options.mode ?? 'manifest'
     this.readyMs = options.readyMs ?? floorConstants.readyMs
+    this.drawer = options.drawer ?? null
     this.half = 'host' in this.manifest.entries ? 'host' : 'worker'
     this.limits = { ...options.limits }
     this.loader = new FakeLoader(this.mode === 'gate-failed' ? 'failed' : 'on', this.limits)
@@ -327,7 +332,8 @@ export class FakeCore {
       topics: this.manifest.provides?.topics ?? [],
     })
     const ready = this.loader.waitFor(caller, 'ready', this.readyMs)
-    run(plugin, transportOf(this.carrier, caller))
+    run(plugin, transportOf(this.carrier, caller), this.drawer === null ? {} : { editor: this.drawer.fresh() })
+    this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
     this.carrier.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,
     })

@@ -1,4 +1,5 @@
 import type { BrowserWindow, Session, WebContents, WebPreferences } from 'electron'
+import { type CoreKey, coreKeyOf } from '../../frontend/mount/keys.ts'
 import { SCHEME } from './before-ready.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`
@@ -88,4 +89,11 @@ export function openTrusted(
   window.once('ready-to-show', () => (placement.quiet ? window.showInactive() : window.show()))
   window.loadURL(TRUSTED_URL).catch((err: unknown) => console.error(`the trusted page didn't load: ${String(err)}`))
   return window
+}
+
+// A core key from the editor window's input as main sees it before the page or any frame does, named the page's own
+// way. A frame with focus would hear a key first, so main takes the core keys and hands them to the page
+export function coreKeyOfInput(input: { type: string, key: string, code: string, control: boolean, meta: boolean, alt: boolean, shift: boolean }, mac: boolean): CoreKey | null {
+  if (input.type !== 'keyDown') return null
+  return coreKeyOf({ key: input.key, code: input.code, ctrlKey: input.control, metaKey: input.meta, altKey: input.alt, shiftKey: input.shift }, mac)
 }

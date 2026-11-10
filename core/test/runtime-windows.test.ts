@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
-import { appMenu, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
+import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
 
 // A web contents as the guard sees it: events to answer and the window open handler
 class FakeContents extends EventEmitter {
@@ -140,5 +140,24 @@ describe('the application menu', () => {
 
   it('holds only Quit on macOS, where the menu bar is the app\u2019s', () => {
     expect(appMenu('darwin')).toEqual([{ label: 'hetu', submenu: [{ role: 'quit' }] }])
+  })
+})
+
+describe('the core keys main takes', () => {
+  const press = (key: string, extra: Partial<{ code: string, control: boolean, meta: boolean, alt: boolean, shift: boolean, type: string, isAutoRepeat: boolean }> = {}) =>
+    ({ type: 'keyDown', key, code: '', control: true, meta: false, alt: false, shift: false, isAutoRepeat: false, ...extra })
+
+  it('names the core keys from the window\'s input before any frame hears them, the page\'s own way', () => {
+    expect(coreKeyOfInput(press('/'), false)).toBe('raw')
+    expect(coreKeyOfInput(press('p'), false)).toBe('open')
+    expect(coreKeyOfInput(press('ы', { code: 'KeyS' }), false)).toBe('save')
+    expect(coreKeyOfInput(press('q', { control: false, meta: true }), true)).toBe('quit')
+  })
+
+  it('takes nothing else, no key up and no other modifier', () => {
+    expect(coreKeyOfInput(press('k'), false)).toBe(null)
+    expect(coreKeyOfInput(press('/', { control: false }), false)).toBe(null)
+    expect(coreKeyOfInput(press('s', { alt: true }), false)).toBe(null)
+    expect(coreKeyOfInput(press('s', { type: 'keyUp' }), false)).toBe(null)
   })
 })

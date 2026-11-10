@@ -5,12 +5,15 @@ import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, type Vi
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
 import { hiddenMarks, markdownSupport } from './hidden-marks.ts'
+import type { Rect } from './drag.ts'
+import { lay } from './layers.ts'
 import { drawMarks } from './marks.ts'
 import type { Editors } from './notes.ts'
 import { mapThrough, Versions } from './versions.ts'
 
-// The drawer's editor slot: a CodeMirror view per open note, one shown at a time. CodeMirror is core mechanism here and
-// decides nothing. Hidden marks is applied only while its install plugin is ready. Plugins' marks come only through
+// The drawer's editor slots: a CodeMirror view per open note, each laid over the box of the editor slot the layout
+// placed for it, in the lifted layer, and hidden while no slot holds it. The current one is the note the human works in.
+// CodeMirror is core mechanism here and decides nothing. Hidden marks is applied only while its install plugin is ready. Plugins' marks come only through
 // the bridge, drawn with the drawer's own classes. Nothing here reaches the core: the notes and the drawer do
 
 export type ViewHooks = {
@@ -20,6 +23,8 @@ export type ViewHooks = {
   changed(instance: Instance, changes: ChangeSet, remote: boolean, hid: string[]): void
   // A key CodeMirror's own keymaps left, for the plugins' bindings. True when one took it
   key(instance: string, event: KeyboardEvent): boolean
+  // The human moved into another open note
+  focused?(instance: string): void
 }
 
 // Which plugin made a change
@@ -140,6 +145,14 @@ export class EditorViews implements Editors {
           EditorView.lineWrapping,
           keymap.of([...defaultKeymap, ...historyKeymap]),
           Prec.lowest(EditorView.domEventHandlers({ keydown: event => this.hooks.key(id, event) })),
+          // A click into a note another slot shows makes it the current one
+          EditorView.domEventHandlers({
+            focus: () => {
+              if (this.shownId === id) return
+              this.shownId = id
+              this.hooks.focused?.(id)
+            },
+          }),
           this.marksSwitch.of(this.marksOn ? hiddenMarksView : []),
           pluginMarks,
           EditorView.updateListener.of(update => {
@@ -214,10 +227,27 @@ export class EditorViews implements Editors {
     if (this.shownId === id) this.shownId = null
   }
 
-  show(id: string): void {
-    for (const [each, open] of this.open) open.element.hidden = each !== id
+  // Makes the note current, has it laid out and focuses it unless told not to
+  show(id: string, focus = true): void {
     this.shownId = this.open.has(id) ? id : null
-    this.open.get(id)?.view.focus()
+    this.onCurrent?.()
+    if (focus) this.open.get(id)?.view.focus()
+  }
+
+  // Told when the current note changes, so the layers place it before it takes focus
+  onCurrent: (() => void) | null = null
+
+  ids(): string[] {
+    return [...this.open.keys()]
+  }
+
+  // The editor laid over the box of its slot, or hidden
+  place(id: string, box: Rect | null): void {
+    const open = this.open.get(id)
+    if (open === undefined) return
+    const wasHidden = open.element.hidden
+    lay(open.element, box)
+    if (wasHidden && box !== null) open.view.requestMeasure()
   }
 
   shown(): string | null {

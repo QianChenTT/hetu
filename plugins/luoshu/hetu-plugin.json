@@ -2,7 +2,7 @@
   "id": "luoshu",
   "name": "Luoshu",
   "version": "0.1.0",
-  "api": "^1",
+  "api": "^2",
   "entries": { "host": "dist/host.js" },
   "node": ["crypto", "fs", "path"],
   "provides": { "topics": ["changed", "outside"] }
