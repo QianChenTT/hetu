@@ -1827,15 +1827,16 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
   }
 
-  // What exec checks a command against on its own, read from the StateView: each plugin's exec items, whatever their
-  // switch, since the per-item switch is the gate's and lapses with the gate off while the declared list holds. With
-  // them the plugins the human let run any command and the folders no command may run code from. Read-only
+  // What exec checks a command against on its own, read from the StateView: each plugin's exec items that are on. Exec
+  // keeps this list with the gate off, so an item the human switched off leaves it, or the command would run again
+  // exactly when the gate isn't there to refuse it. With them the plugins the human let run any command and the folders
+  // no command may run code from. Read-only
   private execView(): ExecView {
     const plugins: Record<string, ExecGrant[]> = Object.create(null)
     for (const [id, items] of Object.entries(this.stateView().plugins)) {
       const held: ExecGrant[] = []
-      for (const { capability } of items) {
-        if (capability.type === 'exec') held.push({ commands: capability.commands.map(command => [...command]), env: [...capability.env] })
+      for (const { capability, off } of items) {
+        if (capability.type === 'exec' && !off) held.push({ commands: capability.commands.map(command => [...command]), env: [...capability.env] })
       }
       if (held.length > 0) plugins[id] = held
     }

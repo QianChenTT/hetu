@@ -32,7 +32,7 @@ const say = (text: string) => [node, '-e', `process.stdout.write(${JSON.stringif
 
 type Outcome = { ok: boolean, result?: unknown, code?: string }
 
-async function started(setup: { notes?: Record<string, string>, plugins: Record<string, Capability[]>, switches?: Partial<Switches> }) {
+async function started(setup: { notes?: Record<string, string>, plugins: Record<string, Capability[]>, off?: Record<string, Capability[]>, switches?: Partial<Switches> }) {
   const folder = await temp()
   for (const [name, text] of Object.entries(setup.notes ?? {})) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
@@ -45,7 +45,7 @@ async function started(setup: { notes?: Record<string, string>, plugins: Record<
   for (const [id, granted] of Object.entries(setup.plugins)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }))
-    await store.writePlugin(id, await entryFor(root, { granted, class: 4 }))
+    await store.writePlugin(id, await entryFor(root, { granted, class: 4, off: setup.off?.[id] ?? [] }))
   }
   const app = await launch(dataDir)
   const editor = await editorPage(app)
@@ -127,5 +127,22 @@ describe('exec in the install', () => {
       [JSON.stringify(listed), null, 'off'],
       [JSON.stringify(say('unlisted')), 'not-granted', 'off'],
     ])
+  })
+
+  it('with the gate off refuses a listed command whose item the human switched off, even under the any command switch', async () => {
+    const kept = say('kept')
+    const dropped = say('dropped')
+    const runner: Capability[] = [{ type: 'exec', commands: [kept], env: [] }, { type: 'exec', commands: [dropped], env: [] }]
+    const lone: Capability[] = [{ type: 'exec', commands: [dropped], env: [] }]
+    const { app } = await started({
+      plugins: { runner, lone },
+      off: { runner: [runner[1]!], lone },
+      switches: { off: ['gate'], execAnyCommand: ['lone'] },
+    })
+    const worker = await pluginWorker(app, 'runner')
+    expect(await call(worker, 'exec.run', { command: kept })).toMatchObject({ ok: true, result: { stdout: 'kept' } })
+    expect(await call(worker, 'exec.run', { command: dropped })).toEqual({ ok: false, code: 'not-granted' })
+    // Any command lifts the list only for a plugin with an exec item that is on
+    expect(await call(await pluginWorker(app, 'lone'), 'exec.run', { command: say('any') })).toEqual({ ok: false, code: 'not-granted' })
   })
 })

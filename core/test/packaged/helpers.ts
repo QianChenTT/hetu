@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFile, link, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { stateDir } from '../../backend/boot/state.ts'
@@ -23,18 +23,41 @@ export async function temp(): Promise<string> {
   return dir
 }
 
+// A new folder on the packed folder's volume, since a hard link can't cross volumes and a runner's temp folder can be
+// on another. Where nothing can be written beside it, such as an install, the temp folder
+async function besideApp(): Promise<string> {
+  try {
+    const root = path.join(path.dirname(appDir), 'copies')
+    await mkdir(root, { recursive: true })
+    const dir = await mkdtemp(path.join(root, 'hetu-packaged-'))
+    made.push(dir)
+    return dir
+  } catch {
+    return temp()
+  }
+}
+
 // A copy of the packed folder made of hard links, so a test changes the files it names and costs no copy of the rest.
-// The files named are copied for real, since writing through a link would change the original
+// The files named are copied for real, since writing through a link would change the original. A file Linux won't
+// hard-link for another user, such as chrome-sandbox once it is root's with the setuid bit, is linked by name instead,
+// since a real copy would lose both and a locked build can't start without the sandbox
 export async function linkedCopy(real: readonly string[] = []): Promise<string> {
-  const to = path.join(await temp(), 'app')
+  const to = path.join(await besideApp(), 'app')
+  // Signing a copy again on macOS rewrites the bundle's signature files, which through a link would change the original
+  const copied = (file: string) => real.includes(file) || file.includes('/_CodeSignature/')
   const walk = async (from: string, into: string) => {
     await mkdir(into, { recursive: true })
     for (const entry of await readdir(from, { withFileTypes: true })) {
       const source = path.join(from, entry.name)
       const target = path.join(into, entry.name)
-      if (entry.isDirectory()) await walk(source, target)
-      else if (real.includes(path.relative(appDir, source).split(path.sep).join('/'))) await copyFile(source, target)
-      else await link(source, target)
+      // A link inside the folder, such as those in a macOS framework, is made again as the same link
+      if (entry.isSymbolicLink()) await symlink(await readlink(source), target)
+      else if (entry.isDirectory()) await walk(source, target)
+      else if (copied(path.relative(appDir, source).split(path.sep).join('/'))) await copyFile(source, target)
+      else await link(source, target).catch(async (err: unknown) => {
+        if (process.platform !== 'linux' || (err as { code?: string }).code !== 'EPERM') throw err
+        await symlink(source, target)
+      })
     }
   }
   await walk(appDir, to)

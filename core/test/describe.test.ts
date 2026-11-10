@@ -59,10 +59,11 @@ describe("the core's words for a change", () => {
     expect(describeChange(one({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: 'search' })).text).toBe('Set readyMs to 20000 for search')
   })
 
-  // Decision 12: allow all means all, so the per-item switches lapse
-  it('says switching the gate off lets every call with power pass and lapses the per-item switches', () => {
+  // Decision 12: allow all means all, so the per-item switches lapse. Exec keeps its own list, which leaves out an item
+  // switched off, so a command the human switched off stays refused
+  it('says switching the gate off lets every call with power pass and lapses the per-item switches, but not for a command', () => {
     const { notes } = describeChange(one({ kind: 'plugin.off', plugin: 'gate' }))
-    expect(notes.some(note => note.includes('per-item switches'))).toBe(true)
+    expect(notes.some(note => note.includes('per-item switches') && note.includes('a command whose item is off'))).toBe(true)
   })
 
   it('recommends keeping a security plugin on whenever one is switched off, and only then', () => {

@@ -1,0 +1,155 @@
+name: Release
+
+# By hand only: the Actions tab's Run workflow, or `gh workflow run release.yml --ref main`. Builds the Windows MSI
+# from main and publishes it as a pre-release named after the version in package.json
+on:
+  workflow_dispatch:
+
+# Nothing by default. Each job asks for exactly what it needs
+permissions: {}
+
+# One release at a time, and a release under way is never cancelled half done
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # The MSI built, installed, checked and uninstalled on a fresh runner, then attested. Nothing is published here
+  build:
+    # Only main ships. A run started on another branch skips both jobs
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    permissions:
+      contents: read # the checkout and whether the version's tag exists
+      actions: read # the CI runs of this commit
+      id-token: write # the OIDC token for the Sigstore certificate the attestation is signed with
+      attestations: write # store the attestation
+      artifact-metadata: write # the storage record actions/attest makes for the MSI
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: read the version
+        id: version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::package.json's version $version isn't x.y.z"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # A tag names one build forever, so a version already out is never built again
+      - name: refuse a version already released
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --silent 2>/dev/null; then
+            echo "::error::v$VERSION is already tagged. Raise the version in package.json first"
+            exit 1
+          fi
+      # What ships is what CI passed: the tests, the end-to-end runs, the packaged suites and the scans, on all three
+      # systems, for this exact commit on main
+      - name: require this commit's CI on main to have passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=$SHA" --jq '.total_count')
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::CI hasn't passed on main for $SHA. Wait for it or run it again first"
+            exit 1
+          fi
+      - name: install packages
+        run: npm ci --ignore-scripts
+      # The one install script run: Electron's, which fetches its binary and checks it against the checksums its package
+      # ships, the package itself pinned by the lock file
+      - name: fetch Electron
+        run: node node_modules/electron/install.js
+      - name: build the MSI
+        run: npm run package
+      - name: check the MSI against its SHA256SUMS
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        working-directory: dist-package/installer
+        run: |
+          test -f "hetu-$VERSION-x64.msi"
+          test "$(ls *.msi | wc -l)" -eq 1
+          sha256sum -c SHA256SUMS
+      # The MSI that ships, installed per machine as a person would, checked and removed again
+      - name: install, check and uninstall
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $msi = Get-Item "dist-package/installer/hetu-$env:VERSION-x64.msi"
+          $install = Start-Process msiexec -ArgumentList '/i', $msi.FullName, '/qn', '/norestart' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "msiexec /i ended with $($install.ExitCode)" }
+          $env:HETU_INSTALLED = Join-Path $env:ProgramFiles 'hetu'
+          npm run test:installed -w hetu-core
+          if ($LASTEXITCODE -ne 0) { throw 'the installed checks failed' }
+          $remove = Start-Process msiexec -ArgumentList '/x', $msi.FullName, '/qn', '/norestart' -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "msiexec /x ended with $($remove.ExitCode)" }
+          if (Test-Path $env:HETU_INSTALLED) { throw 'the install folder is still there' }
+      # A signed record of which workflow built the MSI from which commit, checked with gh attestation verify
+      - name: attest the MSI's build
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist-package/installer/hetu-${{ steps.version.outputs.version }}-x64.msi
+      - name: keep the MSI and its hash for the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hetu-release
+          path: |
+            dist-package/installer/hetu-${{ steps.version.outputs.version }}-x64.msi
+            dist-package/installer/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  # The release made apart from the build, so the token that writes to the repo never meets npm or the build
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the release and its tag
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hetu-release
+          path: release
+      - name: check the files against SHA256SUMS
+        working-directory: release
+        run: sha256sum -c SHA256SUMS
+      # Made as a draft with its files, then published, so nothing is missing once it is out. A draft left by a run
+      # that failed after making it is removed first
+      - name: publish the pre-release
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          tag="v$VERSION"
+          draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$draft" = "false" ]; then echo "::error::$tag is already released"; exit 1; fi
+          if [ "$draft" = "true" ]; then gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes; fi
+          cat > notes.md <<EOF
+          The Windows installer, built from $SHA by the Release workflow. A pre-release: hetu is 0.x and the installer isn't signed, so Windows names an unknown publisher and SmartScreen may warn first
+
+          Check the download against its build:
+
+          \`\`\`
+          gh attestation verify hetu-$VERSION-x64.msi --repo $GITHUB_REPOSITORY
+          \`\`\`
+
+          or against SHA256SUMS with \`sha256sum -c SHA256SUMS\`
+          EOF
+          gh release create "$tag" "hetu-$VERSION-x64.msi" SHA256SUMS --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "hetu $VERSION" --notes-file notes.md --prerelease --draft
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
