@@ -101,6 +101,8 @@ function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<Fuse
 // The stage, the package around it and a SHA256SUMS file over what was made. The tool sits behind this one function,
 // and every proof tests what it made
 export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: string, made: string[] }> {
+  // The driven build takes the inspector and the environment's folders, so it never ships
+  if (kind.target === 'installer' && !kind.locked) throw new Error('an installer is built only around a locked build')
   const stage = path.join(kind.out, 'stage')
   await rm(kind.out, { recursive: true, force: true })
   await stageInstall(stage, { locked: kind.locked })

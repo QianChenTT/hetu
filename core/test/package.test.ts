@@ -1,5 +1,20 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { icoFromPng } from '../build/package.ts'
+import { icoFromPng, packageHetu } from '../build/package.ts'
+
+describe('what may become an installer', () => {
+  it('refuses an installer around a build that isn\'t locked, before anything is staged', async () => {
+    const out = await mkdtemp(path.join(tmpdir(), 'hetu-package-'))
+    try {
+      await expect(packageHetu({ target: 'installer', locked: false, out })).rejects.toThrow('locked')
+      expect(await readdir(out)).toEqual([])
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
+  })
+})
 
 // The start of a PNG, enough for the header to be read
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 7)])
