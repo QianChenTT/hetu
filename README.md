@@ -52,4 +52,15 @@ npx electron .
 
 A run from the source keeps its data in its own `hetu-dev` folder, or in `HETU_DATA_DIR` when that is set. `npm run test:e2e` builds the app and drives it with Playwright
 
+## Install
+
+`npm run package` builds `dist-package/installer/hetu-0.4.0.msi` on Windows with a `SHA256SUMS` file beside it. `npm run package:dir` builds the unpacked folder alone on any system. `npm run test:packaged` starts the packed folder as it ships, `npm run test:e2e:packaged` drives a packed build that isn't locked
+
+- **Install:** run the MSI. It installs for every user of the machine into `C:\Program Files\hetu` after one UAC prompt, with a Start menu shortcut and nothing to pick. The installer isn't signed, so Windows names an unknown publisher and SmartScreen may warn first. Smart App Control set to On blocks an unsigned app outright: Windows Security, App & browser control, Smart App Control shows its state
+- **Run:** from the Start menu, with no arguments. The installed hetu refuses every argument and every debugging switch and exits
+- **Update:** run a newer MSI. An older one over a newer install is refused
+- **Repair:** run the same MSI again. This is the way back when hetu stops on a changed file
+- **Remove:** Settings, Apps, hetu. Your data stays in `%LOCALAPPDATA%\hetu`: the security state, the event log, folder plugins and their storage, the history repos. Delete that folder to remove it too. Your notes folder is never touched
+- **What protects the install:** the folder is read-only for standard users. Electron's fuses turn off every way to run code in hetu besides its own `app.asar` and check that file's integrity on Windows and macOS. Each install plugin is checked against the list inside `app.asar` on every start
+
 Claude Code sessions opened in this folder connect to the daemon through `.mcp.json` once the folder is trusted and the server approved
