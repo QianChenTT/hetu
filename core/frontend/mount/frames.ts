@@ -235,6 +235,9 @@ export class Frames {
       if (taken.ok && this.mounted.get(instance) === held) this.relay(held.owner, instance, taken.data)
     }
     held.port = port1
+    // '*' is the only target a frame sandboxed to scripts alone accepts, since its origin is opaque. The port goes only
+    // on the first load of the single-use path main served, and a frame that navigates after it is removed with no port
+    // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
     held.element.contentWindow.postMessage({ v: 1, kind: 'view' }, '*', [port2])
   }
 }
