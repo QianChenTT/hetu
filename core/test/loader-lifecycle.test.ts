@@ -118,8 +118,11 @@ describe('a crash', () => {
       entries: { mapper: signed(), outline: signed({ granted: [{ type: 'plugin.call', targets: ['mapper'] }] }) },
     })
     await made.loader.start()
+    // mapper can come ready after outline started, which outline hears as deps too, so only one after the crash counts
+    await until(() => stateOf(made.loader, 'mapper') === 'ready' && stateOf(made.loader, 'outline') === 'ready')
+    const before = made.runtime.half('outline').got('deps').length
     made.runtime.half('mapper').crash()
-    await until(() => made.runtime.half('outline').got('deps').length > 0)
+    await until(() => made.runtime.half('outline').got('deps').length > before)
     expect(made.runtime.half('outline').got('deps').at(-1)).toEqual({ v: 1, kind: 'deps', deps: { mapper: 'unavailable' } })
     expect(stateOf(made.loader, 'outline')).toBe('ready')
   })
