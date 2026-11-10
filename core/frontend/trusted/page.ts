@@ -1,6 +1,6 @@
 import type { Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
-import { type Bridge, choiceChange, type Choice, type PluginAction, type Screen, TrustedPage } from './view.ts'
+import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
 
 // The preload's bridge, there only in the window's top frame
 const bridge = (window as unknown as { hetu?: Bridge }).hetu
@@ -17,6 +17,15 @@ function button(text: string, act: () => void): HTMLButtonElement {
   made.type = 'button'
   made.addEventListener('click', act)
   return made
+}
+
+// A switch's line with the button that asks for its change
+function switchLine(page: TrustedPage, row: Switch, className?: string): HTMLParagraphElement {
+  const line = element('p', row.line)
+  if (className !== undefined) line.className = className
+  const { change } = row
+  if (change !== null) line.append(button('on' in change && change.on ? 'Switch on' : 'Switch off', () => page.ask(change)))
+  return line
 }
 
 // Confirm stays disabled for the input delay after the window shows or gains focus. Main drops the input anyway, this
@@ -109,15 +118,51 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
         } as Change)))
         row.append(line)
       }
+      for (const own of plugin.switches) row.append(switchLine(page, own, 'item'))
       list.append(row)
     }
     parts.push(list)
 
     const switches = element('section')
     switches.append(element('h2', 'Switches'))
-    for (const line of shown.switches) switches.append(element('p', line))
+    for (const row of shown.switches) switches.append(switchLine(page, row))
     switches.append(element('p', 'hetu recommends keeping every security plugin on'))
     parts.push(switches)
+
+    const luoshu = element('section')
+    luoshu.className = 'luoshu'
+    luoshu.append(element('h2', 'Notes'))
+    const folderLine = element('p', shown.luoshu)
+    folderLine.append(button('Pick a folder', () => page.pickFolder()))
+    luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
+    parts.push(luoshu)
+
+    const limits = element('section')
+    limits.className = 'limits'
+    limits.append(element('h2', 'Limits'))
+    limits.append(element('p', 'Each runs at the floor’s value unless you set one, for all plugins or for one. Every change waits for your Confirm'))
+    for (const limit of shown.limits) {
+      const row = element('div')
+      row.className = 'limit'
+      const set = [...(limit.all !== null ? [`all: ${limit.all}`] : []), ...limit.plugins.map(one => `${one.plugin}: ${one.value}`)]
+      row.append(element('p', [limit.constant, `floor ${limit.floor}`, ...set].join(' · ')))
+      const value = element('input')
+      value.inputMode = 'numeric'
+      value.autocomplete = 'off'
+      value.spellcheck = false
+      value.setAttribute('aria-label', `New value for ${limit.constant}`)
+      const who = element('select')
+      who.setAttribute('aria-label', `Who ${limit.constant} is set for`)
+      who.append(new Option('all plugins', ''))
+      for (const plugin of shown.plugins) who.append(new Option(plugin.id, plugin.id))
+      row.append(value, who, button('Set', () => {
+        const change = limitChange(limit.constant, value.value, who.value === '' ? null : who.value)
+        if (change === null) page.say('Type a whole number from 1 up')
+        else page.ask(change)
+      }))
+      limits.append(row)
+    }
+    parts.push(limits)
 
     parts.push(button('Restart hetu', () => page.relaunch()))
     parts.push(button('Quit', () => page.quit()))

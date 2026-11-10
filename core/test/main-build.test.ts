@@ -36,16 +36,16 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['gate', 'search'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
 
-  it('writes the gate into the install as a host half, one module importing nothing, with the hash of its files', async () => {
+  it('writes the gate and the capabilities plugin into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    for (const [id, role] of [['gate', 'gate']]) {
+    for (const [id, role] of [['gate', 'gate'], ['capabilities', 'capabilities']]) {
       const root = path.join(out, 'plugins', id)
       expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
       expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
@@ -55,6 +55,34 @@ describe('the main bundle', () => {
       const module = await import(`data:text/javascript;base64,${text.toString('base64')}`) as Record<string, unknown>
       expect(typeof module[role]).toBe('object')
     }
+  })
+
+  it('writes the luoshu into the install as a host half with its provider and luoshu roles', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'luoshu')
+    expect(list.plugins.luoshu).toEqual({ path: 'plugins/luoshu', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
+    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
+    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
+    expect(typeof (module.luoshu as { open?: unknown }).open).toBe('function')
+    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
+  })
+
+  it('writes storage into the install as a host half importing only the built-ins its manifest names', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'storage')
+    expect(list.plugins.storage).toEqual({ path: 'plugins/storage', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
+    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
+    const imports = new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))
+    expect([...imports].sort()).toEqual(['node:crypto', 'node:fs/promises', 'node:path'])
+    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
+    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
   })
 
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {

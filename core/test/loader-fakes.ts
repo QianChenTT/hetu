@@ -1,3 +1,4 @@
+import { createCapabilities } from '../../plugins/capabilities/src/capabilities.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -180,9 +181,12 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
-  // A security control's module gives its role, as the install's own do, so a test stops hetu only on purpose
+  // A security control's module and the luoshu's give their role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
-    const exports: HostExports = id === 'gate' ? { gate: allowAll() } : id === 'watchdog' ? { watchdog: { sample() {} } } : {}
+    const roles: Record<string, HostExports> = {
+      gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, capabilities: { capabilities: createCapabilities() },
+    }
+    const exports: HostExports = roles[id] ?? {}
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
@@ -248,6 +252,7 @@ export function allowAll(): Gate & { views: number[], seen: StateView[], throws:
     throws: false,
     decide: () => ({ allow: true as const, view: gate.views.at(-1) ?? 0 }),
     canRead: () => true,
+    canList: () => true,
     verbs: () => [],
     stateChanged(view: StateView) {
       if (gate.throws) throw new Error('bad view')

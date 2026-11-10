@@ -436,7 +436,7 @@ describe('the gate off by the human', () => {
     await edited('secret/a.md')
     await until(() => paths(ghost.events()).length === 1)
     expect(gate.asked).toEqual([])
-    expect(gate.reads).toEqual([])
+    expect(gate.lists).toEqual([])
   })
 
   it('answers a subscribe policy-down once the log has failed for logFailMs, as any call with power', async () => {
@@ -448,7 +448,7 @@ describe('the gate off by the human', () => {
     expect((await mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
   })
 
-  // canRead is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
+  // canList is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
   // power doesn't reach them, as filterReadable passes every path then too
   it('delivers every path once the log has failed, since only calls with power need the log', async () => {
     const { at, carrier, gate, search, edited } = await failing()
@@ -460,7 +460,7 @@ describe('the gate off by the human', () => {
     await until(() => paths(search.events()).length === 2)
     expect(paths(search.events())).toEqual(['secret/a.md', 'secret/b.md'])
     expect(signals(search.events(), 'events.dropped')).toEqual([])
-    expect(gate.reads).toEqual([])
+    expect(gate.lists).toEqual([])
   })
 
   it('passes everything once the log has failed if the human turned recording off too', async () => {
@@ -886,45 +886,59 @@ describe('read scope', () => {
     expect(paths(way.events())).toEqual(['notes/a.md', 'secret/b.md', 'notes/d.md'])
   })
 
-  it('asks canRead about the exact path for each subscriber on every delivery', async () => {
+  it('asks canList about the exact path for each subscriber on every delivery', async () => {
     const { search, edited, gate } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     const path = 'notes/\u00dcn\u00ef code.md'
     await edited(path)
     await edited(path)
     await until(() => paths(search.events()).length === 2)
-    expect(gate.reads).toEqual([{ caller: worker('search'), path }, { caller: worker('search'), path }])
+    expect(gate.lists).toEqual([{ caller: worker('search'), path }, { caller: worker('search'), path }])
   })
 
-  it('does not ask canRead about an event with no path, and delivers it', async () => {
+  it('delivers a path to a subscriber that may only list it, and to none that may neither list nor read it', async () => {
+    const { search, git, edited, gate } = setup()
+    gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.list', paths: ['projects/**'] }]
+    gate.grants.git = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }]
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await git.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await edited('projects/plan.md')
+    await edited('notes/a.md')
+    await until(() => paths(search.events()).length === 1)
+    await settle()
+    expect(paths(search.events())).toEqual(['projects/plan.md'])
+    expect(git.events()).toEqual([])
+  })
+
+  it('does not ask canList about an event with no path, and delivers it', async () => {
     const { git, indexed, gate } = setup()
-    gate.readable = () => false
+    gate.listable = () => false
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await indexed()
     await until(() => heard(git.events(), 'search.indexed').length === 1)
-    expect(gate.reads).toEqual([])
+    expect(gate.lists).toEqual([])
     expect('path' in git.events()[0]).toBe(false)
   })
 
-  it('does not ask canRead about a topic the subscriber did not name', async () => {
+  it('does not ask canList about a topic the subscriber did not name', async () => {
     const { search, gate, luoshuHalf } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.outside'] })
     await luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })
     await settle()
-    expect(gate.reads).toEqual([])
+    expect(gate.lists).toEqual([])
     expect(search.events()).toEqual([])
   })
 
-  // An async or sloppy canRead answers with something truthy that is not a yes
+  // An async or sloppy canList answers with something truthy that is not a yes
   it.each([
     ['a number', 1],
     ['a string', 'yes'],
     ['an object', {}],
     ['a promise of yes', Promise.resolve(true)],
     ['undefined', undefined],
-  ])('reads %s from canRead as a no', async (_name, answer) => {
+  ])('reads %s from canList as a no', async (_name, answer) => {
     const { search, mcp, edited, gate } = setup()
-    gate.readable = caller => (caller as { id: string }).id === 'search' ? answer : true
+    gate.listable = caller => (caller as { id: string }).id === 'search' ? answer : true
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
@@ -933,9 +947,9 @@ describe('read scope', () => {
     expect(search.events()).toEqual([])
   })
 
-  it('treats a canRead that throws as a no, records the fault and still serves the others', async () => {
+  it('treats a canList that throws as a no, records the fault and still serves the others', async () => {
     const { carrier, search, mcp, edited, gate, log } = setup()
-    gate.readable = caller => {
+    gate.listable = caller => {
       if ((caller as { id: string }).id === 'search') throw new Error('matcher bug at /Users/han/luoshu')
       return true
     }
@@ -947,7 +961,7 @@ describe('read scope', () => {
     expect(search.events()).toEqual([])
     carrier.close()
     await tick()
-    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canRead', count: 1 }])
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
   })
 
   it('gives a standing subscription nothing, path-less events included', async () => {

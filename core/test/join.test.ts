@@ -370,7 +370,7 @@ describe('what wireCore hands the carrier', () => {
     const parts = await joined({
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
       wire,
     })
     await parts.loader.start()
@@ -495,7 +495,7 @@ describe('a guard down through the joined core', () => {
     const parts = await joined({
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, leases: listing },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate: allowAll() } }, luoshu: { exports: { provider: luoshu } }, ...behave },
+      behave: { gate: { exports: { gate: allowAll() } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } }, ...behave },
       wire: { guardsFor: () => ['leases'] },
       before: booted => {
         booted.state.switches = { ...booted.state.switches, limits: { all: { readyMs: 300 }, plugins: {} } }
@@ -522,7 +522,7 @@ describe('the gate plugin on the joined core', () => {
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read, write] })) },
       entries: { alpha: { granted: [read, write], ...entry } },
-      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu } } },
+      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
     })
     await parts.loader.start()
     await parts.loader.settled()
@@ -558,7 +558,7 @@ describe('the gate plugin on the joined core', () => {
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read] })) },
       entries: { alpha: { granted: [read] } },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
     })
     await parts.loader.start()
     await parts.loader.settled()
@@ -642,7 +642,7 @@ describe('the off states', () => {
     const parts = await joined({
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu } } },
+      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
       before: booted => { booted.state.switches.off = off as typeof booted.state.switches.off },
     })
     await parts.loader.start()

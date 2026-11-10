@@ -17,6 +17,9 @@ export type Call = {
   readonly action: string
   readonly args: unknown
   readonly deadline: number
+  // For a listing only: whether the caller may see a name, as the gate answers. The provider pages over the names it
+  // allows, so no name the caller can't list reaches it, not even as where the next page starts
+  readonly canList?: (path: string) => boolean
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
@@ -64,10 +67,43 @@ export type StateView = {
 export type Gate = {
   decide(access: Access): Decision
   canRead(caller: Caller, path: string): boolean
+  // Whether the caller may see the path's name: an on item of luoshu.list or luoshu.read covering it
+  canList(caller: Caller, path: string): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
   stateChanged(view: StateView): void
 }
+
+// The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
+export const classNames = frozen(['Contained', 'Reader', 'Writer', 'Network', 'Powerful'] as const)
+
+// What the trusted window shows under the core's words is made from: what the plugin asks for, what it reaches through
+// plugin.call followed in turn, and every plugin that can reach it with what each holds. Which of those read is policy
+export type ScreenSubject = {
+  readonly granted: readonly Capability[]
+  readonly reachable: readonly Capability[]
+  readonly callers: readonly { readonly id: string, readonly granted: readonly Capability[] }[]
+}
+
+// The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
+// it at an approval, a first-party copy, an update and a widened grant. A throw counts as the slot down, which leaves a
+// class null, counted as 4
+export type Capabilities = {
+  classify(granted: readonly Capability[], reachable: readonly Capability[]): number
+  firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[]
+  screen(subject: ScreenSubject): string[]
+}
+
+// How the loader clears a space through the storage plugin, so the clear runs after every call already queued on the
+// space and nothing a stopped plugin queued lands after it
+export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
+
+// The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
+export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
+
+// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
+// the luoshu failed
+export type LuoshuRole = { open(opening: Opening): void }
 
 // A host guard answers from its own state and makes no calls
 export type Guard = { check(call: GuardCall): 'allow' | 'deny' }

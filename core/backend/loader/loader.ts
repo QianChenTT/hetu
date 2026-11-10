@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -62,7 +62,7 @@ export type Failure =
 
 // The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
 // with #77
-const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', watchdog: 'watchdog' })
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu' })
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -143,6 +143,20 @@ const refused = (reason: string): Status => ({ kind: 'refused', reason })
 // The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
 // off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
 // off unless it is exactly an item that was on. An item no longer granted goes with its switch
+// The items of a new copy that ask at first use, less those the human already confirmed in the copy before: items
+// that asked under the old grants and no longer do. An item that never asked isn't confirmed, so one the new grants
+// make ask, such as network once reading joins it, asks. With the slot down for the old grants nothing counts as
+// confirmed
+function carriedFirstUse(old: Plugin | null, asking: readonly Capability[], askedBefore: readonly Capability[] | null): Capability[] {
+  if (old === null || askedBefore === null) return [...asking]
+  const asked = new Set(askedBefore.map(capabilityKey))
+  const stillAsking = new Set((old.firstUse ?? []).map(capabilityKey))
+  const confirmed = new Set(old.granted.map(capabilityKey).filter(key => asked.has(key) && !stillAsking.has(key)))
+  return asking.filter(item => !confirmed.has(capabilityKey(item)))
+}
+
+const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
+
 function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
   const off = old?.off ?? []
   if (off.length === 0) return []
@@ -421,6 +435,7 @@ ${capabilityKey(change.capability)}`)
         items: (entry?.granted ?? []).map(capability => ({
           capability, off: off.has(capabilityKey(capability)), firstUse: asking.has(capabilityKey(capability)),
         })),
+        class: entry?.class ?? null,
       }
     })
     const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => {
@@ -436,6 +451,11 @@ ${capabilityKey(change.capability)}`)
         devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
         allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
       },
+      limits: {
+        all: { ...switches.limits.all },
+        plugins: Object.fromEntries(Object.entries(switches.limits.plugins).map(([id, set]) => [id, { ...set }])),
+      },
+      luoshu: this.state.luoshu?.folder ?? null,
       requests,
       stopped: this.stoppedMode,
     }
@@ -448,14 +468,124 @@ ${capabilityKey(change.capability)}`)
       const manifest = this.known.get(change.plugin)?.read.manifest
       if (manifest === undefined || manifest === null) return []
       const asks = manifest.capabilities ?? []
-      return [`Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`))]
+      return [
+        `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
+        ...this.screen(change.plugin, asks),
+      ]
     }
     if (change.kind === 'plugin.update') {
       const to = this.staged.get(change.plugin)?.read.manifest?.version
-      const from = this.known.get(change.plugin)?.entry?.version
-      return to === undefined || from === undefined ? [] : [`From ${from} to ${to}`]
+      const entry = this.known.get(change.plugin)?.entry
+      return to === undefined || entry === undefined || entry === null ? [] : [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted)]
+    }
+    if (change.kind === 'grant.widen') {
+      const granted = this.known.get(change.plugin)?.entry?.granted ?? []
+      return this.screen(change.plugin, [...granted, change.capability])
     }
     return []
+  }
+
+  // A plugin's storage or cache space cleared through the storage plugin while it runs, in the space's turn after the
+  // calls already queued on it, so a set a stopping plugin queued can't land after the clear. With storage down nothing
+  // is queued and the folder goes directly
+  private async clearSpace(kind: 'storage' | 'cache', id: string): Promise<void> {
+    const role = this.role('storage', 'storage')
+    if (role !== null) {
+      try {
+        await role.clear(kind, id)
+        return
+      } catch {
+        this.note('fault', { plugin: 'storage', step: 'clear' })
+      }
+    }
+    await clear(kind === 'storage' ? folders.storage(this.dataDir, id) : folders.cache(this.dataDir, id))
+  }
+
+  // ---- classes
+
+  // The capabilities slot's role while the slot is on and its plugin ready, null otherwise
+  private capabilities(): Capabilities | null {
+    return this.slot('capabilities') === 'on' ? this.role('capabilities', 'capabilities') : null
+  }
+
+  // What a plugin holds: a plugin-folder plugin's entry, an install plugin's manifest
+  private grantsOf(id: string): readonly Capability[] {
+    const k = this.known.get(id)
+    if (k?.from === 'install') return k.read.manifest?.capabilities ?? []
+    return this.state.plugins[id]?.granted ?? []
+  }
+
+  // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
+  // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
+  // can pass notes out through it. granted is id's own, which may be a change not applied yet
+  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
+    const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
+    const held = (other: string) => (other === id ? granted : this.grantsOf(other))
+    const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
+    for (const from of ids) {
+      for (const to of targetsOf(held(from))) {
+        if (to === from) continue
+        if (!links.has(to)) links.set(to, new Set())
+        links.get(from)!.add(to)
+        links.get(to)!.add(from)
+      }
+    }
+    const seen = new Set<string>([id])
+    const queue = [...links.get(id)!]
+    while (queue.length > 0) {
+      const other = queue.shift()!
+      if (seen.has(other)) continue
+      seen.add(other)
+      queue.push(...links.get(other)!)
+    }
+    seen.delete(id)
+    return [...seen].sort().map(other => ({ id: other, granted: held(other) }))
+  }
+
+  private reachable(id: string, granted: readonly Capability[]): Capability[] {
+    return this.connected(id, granted).flatMap(other => [...other.granted])
+  }
+
+  // A plugin's class and the items that ask at first use, from the slot. With the slot down the class is null, which
+  // counts as 4, and every item asks
+  private classed(id: string, granted: readonly Capability[]): { class: number | null, firstUse: Capability[] } {
+    const slot = this.capabilities()
+    if (slot !== null) {
+      try {
+        const reachable = this.reachable(id, granted)
+        const n = slot.classify(granted, reachable)
+        const asking = slot.firstUse(granted, reachable)
+        if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
+      } catch {}
+      this.note('fault', { plugin: 'capabilities', step: 'classify' })
+    }
+    return { class: null, firstUse: [...granted] }
+  }
+
+  // What asks at first use under granted as the slot says, null when it can't say
+  private askingFor(id: string, granted: readonly Capability[]): Capability[] | null {
+    const slot = this.capabilities()
+    if (slot === null) return null
+    try {
+      const asking = slot.firstUse(granted, this.reachable(id, granted))
+      return Array.isArray(asking) ? asking : null
+    } catch {
+      return null
+    }
+  }
+
+  // The slot's lines under the core's words, or with the slot down what that means
+  private screen(id: string, granted: readonly Capability[]): string[] {
+    const slot = this.capabilities()
+    if (slot !== null) {
+      try {
+        const connected = this.connected(id, granted)
+        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected })
+        if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
+      } catch {}
+      this.note('fault', { plugin: 'capabilities', step: 'screen' })
+    }
+    return ['The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use']
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -736,17 +866,21 @@ ${capabilityKey(change.capability)}`)
       return false
     }
     await swapIn(this.dataDir, id, dir)
-    if (previous !== null && previous !== listed.version) await clear(folders.cache(this.dataDir, id)).catch(() => {})
+    if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
     const granted = read.manifest!.capabilities ?? []
-    const off = carriedOff(this.state.plugins[id] ?? null, granted)
+    const before = this.state.plugins[id] ?? null
+    const off = carriedOff(before, granted)
+    const classed = this.classed(id, granted)
+    const firstUse = carriedFirstUse(before, classed.firstUse, before === null ? null : this.askingFor(id, before.granted))
     const entry: Plugin = {
       version: listed.version,
       contentHash: listed.hash,
       signer: FIRST_PARTY_SIGNER,
       granted,
-      class: null,
+      class: classed.class,
       enabled,
       ...(off.length > 0 ? { off } : {}),
+      ...(firstUse.length > 0 ? { firstUse } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -1151,7 +1285,7 @@ ${capabilityKey(change.capability)}`)
     const landing = await this.landing(k.id, 'plugin.updated', { plugin: k.id, from, to: k.listed!.version })
     if (landing === 'lost') return
     k.updated = null
-    await clear(folders.cache(this.dataDir, k.id)).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
+    await this.clearSpace('cache', k.id).catch(() => this.note('fault', { plugin: k.id, step: 'cache' }))
     k.previousVersion = from
     await this.saveInstalled()
   }
@@ -1202,7 +1336,12 @@ ${capabilityKey(change.capability)}`)
       v: VERSION, kind: 'init', id: k.id, incarnation: live.n, api: API_VERSION, deps, lastStop: k.lastStop,
       previousVersion: k.previousVersion,
     }
-    for (const run of live.halves.values()) this.link.send(run.caller, init)
+    // An install host half runs in main with Node, so the data folder is no secret from it: storage keeps its spaces
+    // there and later host plugins their working folders. A worker never hears it
+    for (const [half, run] of live.halves) {
+      const own = half === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
+      this.link.send(run.caller, own)
+    }
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
   }
@@ -1215,8 +1354,9 @@ ${capabilityKey(change.capability)}`)
     // A security control with no role to play would refuse everything while reading as up, so it fails here
     const role = roleOf[k.id]
     if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
-    // The gate has the StateView before it answers anything. A throw marks it failed
+    // The gate has the StateView before it answers anything and the luoshu its folder. A throw marks either failed
     if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
+    if (k.id === 'luoshu' && k.from === 'install' && !this.openLuoshu(k)) return
     k.state = 'ready'
     k.reason = null
     k.previousVersion = null
@@ -1465,10 +1605,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
         return this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
       }
-      case 'luoshu.set':
+      case 'luoshu.set': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
+        // A luoshu not ready yet takes the folder when it is
+        const luoshu = this.known.get('luoshu')
+        if (luoshu?.from === 'install' && luoshu.state === 'ready') this.openLuoshu(luoshu)
         return this.bump()
+      }
       case 'item.on':
       case 'item.off':
         return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
@@ -1491,7 +1635,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return
     const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
-    const next: Plugin = { ...entry, granted }
+    // The class follows, and a new item asks at first use when the slot says so or can't say
+    const classed = this.classed(id, granted)
+    const asking = (entry.firstUse ?? []).filter(item => capabilityKey(item) !== key)
+    if (add && classed.firstUse.some(item => capabilityKey(item) === key)) asking.push(capability)
+    const next: Plugin = { ...entry, granted, class: classed.class }
+    delete next.firstUse
+    if (asking.length > 0) next.firstUse = asking
     if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
@@ -1517,7 +1667,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async clearStorage(id: string): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
-    await this.stoppedWhile(k, () => clear(folders.storage(this.dataDir, id)))
+    await this.stoppedWhile(k, () => this.clearSpace('storage', id))
   }
 
   // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
@@ -1527,7 +1677,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
     await this.stoppedWhile(k, async () => {
-      for (const dir of [folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) await clear(dir)
+      for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id)
       await removeMarker(this.dataDir, id)
       this.markers.delete(id)
       // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
@@ -1612,6 +1762,19 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return frozen({ n: this.n, foldCase: false, plugins })
   }
 
+  // The folder in the state and hetu's own folders, which the luoshu refuses to reach into
+  private openLuoshu(luoshu: Known): boolean {
+    const target = luoshu.live?.exports?.luoshu
+    if (target === undefined) return true
+    try {
+      target.open({ folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir })
+      return true
+    } catch {
+      this.die(luoshu, 'state-changed')
+      return false
+    }
+  }
+
   private pushTo(gate: Known): boolean {
     const target = gate.live?.exports?.gate
     if (target === undefined) return true
@@ -1661,8 +1824,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       throw new Error(`nothing to approve for ${id}`)
     }
     const manifest = k.read.manifest!
+    const granted = manifest.capabilities ?? []
+    const classed = this.classed(id, granted)
     const entry: Plugin = {
-      version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true,
+      version: manifest.version, contentHash: k.read.hash!, signer: null, granted, class: classed.class, enabled: true,
+      ...(classed.firstUse.length > 0 ? { firstUse: classed.firstUse } : {}),
     }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -1686,9 +1852,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.bump()
     this.replan()
     await this.pumped()
-    for (const dir of [folders.plugins(this.dataDir, id), folders.storage(this.dataDir, id), folders.cache(this.dataDir, id)]) {
-      await clear(dir).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
-    }
+    await clear(folders.plugins(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
+    for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id).catch(() => this.note('fault', { plugin: id, step: 'remove' }))
     this.known.delete(id)
     this.replan()
   }
@@ -1754,6 +1919,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
+    // Only a class 0 update loads on its own (Han), and only while the slot can say so, with no grant asked for that the
+    // entry doesn't hold. Its record lands first as any update's does
+    const holds = new Set(k.entry.granted.map(capabilityKey))
+    const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
+    if (k.entry.class === 0 && asksNothingNew && this.capabilities() !== null && this.classed(id, k.entry.granted).class === 0) {
+      await this.applyStaged(id)
+      return { outcome: 'applied' }
+    }
     // A newer update replaces the staged one, so the request the human may have seen for the older one goes
     this.requests.withdraw(change => change.kind === 'plugin.update' && change.plugin === id)
     this.requests.raise({ kind: 'plugin.update', plugin: id }, null, MAX_PENDING)
@@ -1780,7 +1953,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
     const relative = path.relative(folders.staging(this.dataDir), staged.dir)
     if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
-    const entry: Plugin = { ...old, version: to, contentHash: read.hash! }
+    const entry: Plugin = { ...old, version: to, contentHash: read.hash!, class: this.classed(id, old.granted).class }
     await this.store.writePlugin(id, entry)
     this.state.plugins[id] = entry
     this.entryChecks.set(id, 'ok')
@@ -1790,7 +1963,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       await this.pumped()
     }
     if (old.version !== to) {
-      await clear(folders.cache(this.dataDir, id)).catch(() => this.note('fault', { plugin: id, step: 'cache' }))
+      await this.clearSpace('cache', id).catch(() => this.note('fault', { plugin: id, step: 'cache' }))
       k.previousVersion = old.version
     }
     k.entry = entry

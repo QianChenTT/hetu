@@ -61,6 +61,21 @@ export type TrustedLike = {
 
 type Prevented = { preventDefault(): void }
 
+// Electron's dialog.showOpenDialog over a parent window, which the tests fake
+export type FolderDialog = (
+  parent: TrustedLike,
+  options: { properties: ('openDirectory' | 'createDirectory')[], title: string },
+) => Promise<{ canceled: boolean, filePaths: string[] }>
+
+// The OS folder dialog over the trusted window for core.pickFolder, answering the folder or null when the human
+// cancelled. With no trusted window open it opens nothing, since only that window may ask
+export async function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promise<string | null> {
+  const parent = trusted.window
+  if (parent === null) return null
+  const picked = await dialog(parent, { properties: ['openDirectory', 'createDirectory'], title: 'Pick the notes folder' })
+  return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]
+}
+
 // The one trusted window: opened by a human's click on a core control, focused when one is open, its input held back by
 // the delay in main where no page code can skip it. A Confirm counts only from it once armed
 export class TrustedWindow {

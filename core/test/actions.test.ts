@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coreActions, coreTopics, eventActions, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, providerActions } from '../api/actions.ts'
+import { coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, providerActions } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
@@ -25,6 +25,7 @@ describe('the core actions', () => {
       'core.restart': 'windows',
       'core.quit': 'windows',
       'core.relaunch': 'trusted',
+      'core.pickFolder': 'trusted',
       'watchdog.stop': 'watchdog',
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',
@@ -139,6 +140,8 @@ describe('the provider actions', () => {
     expect(Object.fromEntries(Object.entries(providerActions).map(([action, spec]) => [action, spec.capability]))).toEqual({
       'luoshu.read': 'luoshu.read',
       'luoshu.write': 'luoshu.write',
+      // Free at the gate's decide step: the carrier keeps only the names the gate's canList allows
+      'luoshu.list': null,
       'leases.acquire': 'luoshu.write',
       'leases.renew': null,
       'leases.release': null,
@@ -160,6 +163,14 @@ describe('the provider actions', () => {
     const writes = Object.entries(providerActions).filter(([, spec]) => spec.write).map(([action]) => action)
     expect(writes).toEqual(['luoshu.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete'])
     for (const action of guardableActions) expect(providerActions[action].write).toBe(true)
+  })
+
+  it('filters only a listing, a page of at most 1,000 names, by what the caller may list', () => {
+    expect(Object.entries(providerActions).filter(([, spec]) => 'filter' in spec).map(([action, spec]) => [action, (spec as { filter: string }).filter]))
+      .toEqual([['luoshu.list', 'list']])
+    expect(providerActions['luoshu.list'].scope).toBeNull()
+    expect(providerActions['luoshu.list'].write).toBe(false)
+    expect(LIST_PAGE).toBe(1000)
   })
 
   it('takes the raw scope from the argument it names', () => {
@@ -191,6 +202,13 @@ describe('the provider actions', () => {
     ['luoshu.write', { path: 'a.md' }, false],
     ['luoshu.write', { path: 'a.md', text: 42 }, false],
     ['luoshu.write', { path: 'notes\\a.md', text: 'x' }, false],
+    ['luoshu.list', {}, true],
+    ['luoshu.list', undefined, false],
+    ['luoshu.list', { folder: 'notes' }, true],
+    ['luoshu.list', { folder: 'notes', after: 'notes/a.md' }, true],
+    ['luoshu.list', { folder: 'notes\\b' }, false],
+    ['luoshu.list', { after: '../a.md' }, false],
+    ['luoshu.list', { page: 2 }, false],
     ['leases.acquire', { paths: ['a.md'] }, true],
     ['leases.acquire', { paths: [] }, false],
     ['leases.acquire', { paths: Array.from({ length: MAX_LEASE_PATHS + 1 }, (_, i) => `${i}.md`) }, false],

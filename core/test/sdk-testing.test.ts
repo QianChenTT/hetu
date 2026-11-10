@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, type FakeCoreOptions, type FakeMode } from '../sdk/testing/index.ts'
+import type { Capability } from '../api/capabilities.ts'
+import { quotas } from '../api/storage.ts'
+import type { Call } from '../api/slots.ts'
+import { MemoryStorage } from '../sdk/testing/providers.ts'
 import { tick } from './carrier-fakes.ts'
 
 const cores: FakeCore[] = []
@@ -181,5 +185,53 @@ describe('a core that takes time and holds the floor lower', () => {
     fake.limits.callsInFlight = 3
     expect(await reads()).toHaveLength(4)
     expect(fake.luoshu.busiest()).toBe(3)
+  })
+})
+
+describe('the fake core\'s storage', () => {
+  const caller = { kind: 'plugin', id: 'reader', half: 'worker', incarnation: 1 } as const
+  let n = 0
+  async function ask(store: MemoryStorage, action: string, args: object, from: Call['caller'] = caller): Promise<unknown> {
+    const call: Call = { callId: `m${++n}`, caller: from, action, args, deadline: Date.now() + 30000 }
+    const prepared = await store.prepare(call)
+    if (!('scope' in prepared)) return { refused: prepared }
+    try {
+      return await store.perform(call)
+    } catch (err) {
+      return { refused: err }
+    }
+  }
+
+  it('refuses undefined as the storage plugin does, since JSON can\'t hold it', async () => {
+    const store = new MemoryStorage()
+    expect(await ask(store, 'storage.set', { key: 'k', value: undefined })).toEqual({ refused: { code: 'invalid' } })
+    expect(await ask(store, 'cache.set', { key: 'k' })).toEqual({ refused: { code: 'invalid' } })
+  })
+
+  it('holds each space to core/api\'s quotas, counted as the storage plugin counts its files', async () => {
+    const store = new MemoryStorage()
+    for (let i = 0; i < quotas.storage.keys; i++) expect(await ask(store, 'storage.set', { key: `k${i}`, value: 1 })).toBeNull()
+    expect(await ask(store, 'storage.set', { key: 'more', value: 1 })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(store, 'storage.set', { key: 'k0', value: 2 })).toBeNull()
+    expect(await ask(store, 'storage.set', { key: 'more', value: 1 }, { kind: 'window', role: 'editor', n: 0 })).toBeNull()
+    // A value as large as the cache's bytes, with its line around it, is past them
+    const big = 'x'.repeat(quotas.cache.bytes - '{"space":"reader","key":"big","value":""}\n'.length)
+    expect(await ask(store, 'cache.set', { key: 'big', value: big })).toBeNull()
+    expect(await ask(store, 'cache.set', { key: 'big', value: `${big}x` })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(store, 'cache.get', { key: 'big' })).toBe(big)
+  })
+
+  it('refuses a content caller, which has no space', async () => {
+    const content = { kind: 'content', plugin: 'reader', token: 'a'.repeat(32) } as const
+    expect(await ask(new MemoryStorage(), 'storage.get', { key: 'k' }, content)).toEqual({ refused: { code: 'not-granted' } })
+  })
+})
+
+describe('the fake core\'s gate', () => {
+  it('matches a list grant\'s paths, as the gate plugin does', async () => {
+    const { holds } = await import('../sdk/testing/gate.ts')
+    const granted: Capability[] = [{ type: 'luoshu.list', paths: ['notes/**'] }]
+    expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['notes/a.md'] } })).toBe(true)
+    expect(holds(granted, { capability: 'luoshu.list', scope: { paths: ['secret/b.md'] } })).toBe(false)
   })
 })

@@ -11,6 +11,7 @@ const many = (n: number, make: (i: number) => string) => Array.from({ length: n 
 const everyType = [
   { type: 'luoshu.read', paths: ['**'] },
   { type: 'luoshu.write', paths: ['04 - Daily/**'] },
+  { type: 'luoshu.list', paths: ['notes/**'] },
   { type: 'net.fetch', hosts: ['example.com'] },
   { type: 'ui.panel' },
   { type: 'ui.decoration' },
@@ -28,9 +29,9 @@ const everyType = [
 ]
 
 describe('the fixed list', () => {
-  it('keeps every type state.ts had and adds guard.hook, plugin.call, ui.keys and log.read', () => {
+  it('keeps every type state.ts had and adds guard.hook, plugin.call, ui.keys, log.read and luoshu.list', () => {
     expect(capabilityTypes).toEqual([
-      'luoshu.read', 'luoshu.write', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
+      'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.panel', 'ui.decoration', 'ui.command', 'ui.statusBar', 'ui.keys',
       'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
     ])
   })

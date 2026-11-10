@@ -496,7 +496,28 @@ describe('the core actions the loader serves', () => {
     expect(list.switches).toEqual({
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
     })
+    expect(list.limits).toEqual({ all: {}, plugins: {} })
+    expect(list.luoshu).toBe(null)
     expect(list.stopped).toBe(null)
+  })
+
+  it('lists the limits the human set, for all and for each plugin, as copies the window can’t change', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
+    await made.loader.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'alpha' })
+    const list = await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+    expect(list.limits).toEqual({ all: { readyMs: 20000 }, plugins: { alpha: { callsInFlight: 8 } } })
+    list.limits.all.readyMs = 1
+    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
+  })
+
+  it('names the notes folder once luoshu.set applies', async () => {
+    const made = await harness()
+    await made.loader.start()
+    const folder = path.join(made.base, 'notes')
+    await made.loader.apply({ kind: 'luoshu.set', folder })
+    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
   })
 
   it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {
@@ -616,14 +637,14 @@ describe('the request to approve a plugin', () => {
     await made.loader.start()
     const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
 
   it('says when it asks for nothing', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
     await made.loader.start()
     const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
 })
 

@@ -11,7 +11,7 @@ import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
-import { TrustedWindow } from './runtime/trusted.ts'
+import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
 import { appMenu, guardContents, openEditor, openTrusted, quietPlacement } from './runtime/windows.ts'
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
@@ -154,6 +154,9 @@ async function start(): Promise<void> {
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
+          if (call.action === 'core.pickFolder') {
+            return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
+          }
           if (call.action === 'security.open') trusted.show()
           else if (call.action === 'core.relaunch') {
             again = relaunches({ packaged: app.isPackaged, env: process.env })

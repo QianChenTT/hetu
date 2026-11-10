@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
-import { INPUT_DELAY_MS, InputDelay, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
+import { type FolderDialog, INPUT_DELAY_MS, InputDelay, pickFolder, TrustedWindow, type TrustedLike } from '../backend/runtime/trusted.ts'
 
 const key = (type: 'keyDown' | 'keyUp', code: string, isAutoRepeat = false) => ({ type, code, isAutoRepeat })
 const mouse = (type: string, button: 'left' | 'right' | 'middle' = 'left') => ({ type, button })
@@ -181,5 +181,30 @@ describe('the trusted window', () => {
     const later = event()
     windows[0].webContents.emit('before-input-event', later, key('keyDown', 'KeyG'))
     expect(later.prevented).toBe(false)
+  })
+})
+
+describe('picking the notes folder', () => {
+  it('opens the OS folder dialog over the trusted window and answers the folder, or null when cancelled', async () => {
+    const { window } = trusted()
+    const parent = window.show()
+    const asked: { parent: TrustedLike, properties: string[] }[] = []
+    const dialog: FolderDialog = async (over, options) => {
+      asked.push({ parent: over, properties: options.properties })
+      return { canceled: false, filePaths: ['/Users/someone/notes'] }
+    }
+    expect(await pickFolder(window, dialog)).toBe('/Users/someone/notes')
+    expect(asked).toEqual([{ parent, properties: ['openDirectory', 'createDirectory'] }])
+    expect(await pickFolder(window, async () => ({ canceled: true, filePaths: [] }))).toBeNull()
+  })
+
+  it('opens no dialog while no trusted window is open', async () => {
+    const { window } = trusted()
+    let asked = 0
+    expect(await pickFolder(window, async () => {
+      asked++
+      return { canceled: false, filePaths: ['/notes'] }
+    })).toBeNull()
+    expect(asked).toBe(0)
   })
 })

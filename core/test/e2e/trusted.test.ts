@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
 import { cleanup, editorPage, exists, exited, launch, logged, pageAt, repo, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
@@ -280,6 +280,79 @@ describe('the plugin list', () => {
     await page.locator('.plugin', { hasText: 'hung ·' }).getByRole('button', { name: 'Stop' }).click()
     await until(() => logged(dataDir, 'plugin.stopped', { plugin: 'hung' }))
     await showing(page, 'hung · plugin folder · sandboxed · stopped (human)')
+  })
+})
+
+describe('the switches and limits', () => {
+  it('sets a limit and a switch from their sections, each waiting for its Confirm', async () => {
+    const dataDir = await data()
+    const app = await start(dataDir, await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await showing(page, 'readyMs · floor 10000')
+    await tick(PAST_DELAY)
+    await page.getByLabel('New value for readyMs').fill('20000')
+    await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
+    await showing(page, 'Set readyMs to 20000 for every plugin')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await showing(page, 'readyMs · floor 10000 · all: 20000')
+    expect((await new StateStore(dataDir).load()).state.switches.limits.all).toEqual({ readyMs: 20000 })
+
+    await page.locator('p', { hasText: 'Confirm off for this window: off' }).getByRole('button', { name: 'Switch on' }).click()
+    await showing(page, 'Apply changes made in this window without a Confirm')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await showing(page, 'Confirm off for this window: on')
+
+    await page.getByLabel('New value for readyMs').fill('ten')
+    await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
+    await showing(page, 'Type a whole number from 1 up')
+  })
+})
+
+describe('a plugin’s class', () => {
+  // target holds network. writer reads and can call target, so together they could send notes out: class 4, and the
+  // plugin.call that brings the network in asks at its first use
+  const workers = {
+    target: { code: lifecycle(), manifest: { provides: { actions: { hello: {} } } }, entry: { granted: [{ type: 'net.fetch', hosts: ['example.com'] }], class: 3 } },
+  } satisfies Record<string, Worker>
+
+  it('shows on the approval and the plugin list, and the item that closes a read plus network pair asks at its first use', async () => {
+    const dataDir = await data({
+      workers,
+      before: async dir => {
+        const root = path.join(dir, 'plugins', 'writer')
+        const capabilities = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['target'] }]
+        await writeFolder(root, filesFor(workerManifest('writer', { requires: ['target'], capabilities }), {
+          'worker.js': lifecycle('send({ v: 1, kind: \'call\', id: 1, action: \'target.hello\', args: {} })'),
+        }))
+        // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
+        await new StateStore(dir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(root)] })
+      },
+    })
+    const installDir = await temp()
+    await writeInstall(installDir, { gate: { files: await shipped('gate') }, capabilities: { files: await shipped('capabilities') } })
+    const app = await start(dataDir, installDir)
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await showing(page, 'writer · plugin folder · sandboxed · found (new) · class unknown, counted as 4')
+    await tick(PAST_DELAY)
+    await page.locator('.plugin', { hasText: 'writer ·' }).getByRole('button', { name: 'Approve' }).click()
+    await showing(page, 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
+    await showing(page, 'Through plugin.call it is connected to: net.fetch to "example.com"')
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await showing(page, 'class 4')
+    const notice = editor.getByRole('button', { name: 'The plugin "writer" asks to use something for the first time' })
+    await notice.waitFor()
+    const entry = (await new StateStore(dataDir).load()).state.plugins.writer
+    expect(entry).toMatchObject({ class: 4, firstUse: [{ type: 'plugin.call', targets: ['target'] }] })
   })
 })
 

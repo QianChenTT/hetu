@@ -535,6 +535,38 @@ describe('the floor lane', () => {
     ])
   })
 
+  it('writes storage.tampered with the space and the key when storage answers tampered, one per space each second', async () => {
+    const { carrier, connect, storage, log } = harness()
+    storage.perform = async () => { throw { code: 'tampered' } }
+    const search = connect(worker('search'))
+    expect((await search.ask('storage.get', { key: 'grants' })).refusal).toEqual({ code: 'tampered', action: 'storage.get' })
+    await search.ask('storage.get', { key: 'other' })
+    await search.ask('storage.get', { key: 'third' })
+    await connect(worker('git')).ask('storage.get', { key: 'grants' })
+    await tick()
+    expect(log.events('storage.tampered').map(record => record.fields)).toEqual([
+      { space: 'search', key: 'grants', count: 1 }, { space: 'git', key: 'grants', count: 1 },
+    ])
+    carrier.close()
+    await tick()
+    expect(log.events('storage.tampered').map(record => record.fields)).toEqual([
+      { space: 'search', key: 'grants', count: 1 }, { space: 'git', key: 'grants', count: 1 }, { space: 'search', key: 'third', count: 2 },
+    ])
+  })
+
+  it('writes no storage.tampered for another refusal from storage or tampered from another provider', async () => {
+    const { carrier, connect, gate, storage, luoshu, log } = harness()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    storage.perform = async () => { throw { code: 'failed', reason: 'quota' } }
+    luoshu.perform_ = () => { throw { code: 'tampered' } }
+    const search = connect(worker('search'))
+    expect((await search.ask('storage.set', { key: 'k', value: 1 })).refusal).toEqual({ code: 'failed', action: 'storage.set', reason: 'quota' })
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('tampered')
+    carrier.close()
+    await tick()
+    expect(log.events('storage.tampered')).toEqual([])
+  })
+
   it('coalesces faults a plugin can trigger, one record per second with a count', async () => {
     const { carrier, connect, gate, log } = harness()
     gate.decision = () => { throw new Error('broken') }

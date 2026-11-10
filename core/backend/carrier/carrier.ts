@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { coreActions, eventActions, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
+import { coreActions, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
@@ -11,6 +11,7 @@ import {
   type GuardableAction,
 } from '../../api/ids.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
+import { spaceOf } from '../../api/storage.ts'
 import {
   pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Sample, type Scope,
   type SlotState,
@@ -269,7 +270,7 @@ export class Carrier {
     this.looking.unref?.()
     this.bus = new Bus({
       state: () => this.busState(),
-      canRead: (caller, path) => this.readable(caller, path),
+      canList: (caller, path) => this.listable(caller, path),
       recheck: (caller, topic) => this.recheck(caller, topic),
       limit: (plugin, name) => this.limits.of(plugin, name),
       // Coalesced, since a publisher's pace or a subscriber's own can make them
@@ -905,12 +906,8 @@ export class Carrier {
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
     const budget = this.limits.of(live.way.plugin, 'filterMsPerSecond')
+    const spent = this.secondOf(live.way.principal)
     const started = this.clock()
-    let spent = this.filtered.get(live.way.principal)
-    if (spent === undefined || started - spent.second >= 1000 || started < spent.second) {
-      spent = { second: started, spent: 0 }
-      this.filtered.set(live.way.principal, spent)
-    }
     if (spent.spent >= budget) return no('throttled')
     const view = this.view()
     const before = live.filtering
@@ -992,7 +989,7 @@ export class Carrier {
   }
 
   // What the bus delivers paths under. The key holds everything a subscription the gate holds depends on, so the bus
-  // asks again whenever it moves. canRead is true with the gate off by the human whatever the log, since deliveries
+  // asks again whenever it moves. canList is true with the gate off by the human whatever the log, since deliveries
   // are never logged, as filterReadable passes every path then. A gate that can't be asked is down
   private busState(): { key: string, paths: Paths, view: number | null } {
     const state = this.slot('gate')
@@ -1007,14 +1004,15 @@ export class Carrier {
     return this.slot('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
   }
 
-  // canRead on every delivery of a path: only an exact true counts and a throw is a no that is recorded
-  private readable(caller: Caller, path: string): boolean {
+  // canList on every delivery of a path and on each name a listing found: only an exact true counts and a throw is a no
+  // that is recorded
+  private listable(caller: Caller, path: string): boolean {
     const gate = this.holder(() => this.options.gate())
     if (gate === null) return false
     try {
-      return gate.canRead(caller, path) === true
+      return gate.canList(caller, path) === true
     } catch {
-      this.fault('gate', 'canRead')
+      this.fault('gate', 'canList')
       return false
     }
   }
@@ -1047,11 +1045,15 @@ export class Carrier {
   // 6 route to a provider, then 7 prepare, 8 decide, 9 guard and 10 perform. The provider's lock, held from prepare,
   // goes back through release when the call stops before perform
   private async provide(pending: Pending, id: string, args: unknown, kind: Kind): Promise<void> {
+    const listing = providerActions[pending.action]?.filter === 'list'
+    const unlisted = listing ? this.listingRefused(pending) : null
+    if (unlisted !== null) return this.finish(pending, no(unlisted))
     const info = this.info(id)
     if (info?.state === 'starting') return this.finish(pending, no('starting'))
     const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
     if (provider === null) return this.finish(pending, no(this.down('unavailable')))
-    const call = this.callOf(pending, args)
+    const lister = listing ? this.lister(pending) : null
+    const call = lister === null ? this.callOf(pending, args) : frozen({ ...this.callOf(pending, args), canList: lister.canList })
     // The provider's own handle may name this call as the parent of its sub-calls
     const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
     if (host?.open) {
@@ -1100,7 +1102,13 @@ export class Carrier {
     try {
       result = await provider.perform(call, prepared)
     } catch (err) {
+      if (id === 'storage' && refusalIn(err)?.code === 'tampered') this.tampered(pending, args)
+      lister?.charge()
       return this.thrown(pending, id, 'perform', err)
+    }
+    if (lister !== null) {
+      lister.charge()
+      return this.finish(pending, this.listed(lister, result))
     }
     this.result(pending, id, result)
   }
@@ -1209,6 +1217,79 @@ export class Carrier {
     const measured = measurePlain(result, this.limits.of(producer, 'resultBytes'))
     if (!measured.ok) return this.finish(pending, no('failed', measured.tooLarge ? 'too-large' : undefined))
     this.finish(pending, { ok: true, result })
+  }
+
+  // A stored key failed its hash line. The plugin decides what to do with it. A plugin can trigger this, so it is one
+  // record per space each second, naming the first key and then the last with the count
+  private tampered(pending: Pending, args: unknown): void {
+    const space = spaceOf(pending.caller)
+    const key = field(args, 'key')
+    if (space === null || typeof key !== 'string') return
+    this.coalesced.hit('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
+  }
+
+  // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
+  // caller, every name passing with the gate off by the human. A throw counts as a no and fails the listing. The whole
+  // listing, the walk and the gate's time alike, counts against the caller's second as filterReadable's does
+  private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
+    const off = this.slot('gate') === 'off'
+    const gate = off ? null : this.holder(() => this.options.gate())
+    let threw = false
+    const started = this.clock()
+    let charged = false
+    return {
+      canList: path => {
+        if (off) return true
+        if (gate === null || threw) return false
+        try {
+          return gate.canList(pending.caller, path) === true
+        } catch {
+          threw = true
+          return false
+        }
+      },
+      threw: () => threw,
+      charge: () => {
+        if (charged) return
+        charged = true
+        this.secondOf(pending.way.principal).spent += this.clock() - started
+      },
+    }
+  }
+
+  // A listing's page as the provider gave it, checked again before the caller sees it: at most LIST_PAGE names, each
+  // one the caller may list, and a next that is null or the page's last name. Anything else fails, so a provider that
+  // filters wrongly leaks no name, not even as where the next page starts
+  private listed(lister: { canList: (path: string) => boolean, threw: () => boolean }, result: unknown): Outcome {
+    if (lister.threw()) {
+      this.fault('gate', 'canList')
+      return no('policy-down')
+    }
+    const paths = field(result, 'paths')
+    const next = field(result, 'next')
+    if (!Array.isArray(paths) || paths.length > LIST_PAGE || !paths.every(path => typeof path === 'string')) return no('failed')
+    if (next !== null && next !== paths.at(-1)) return no('failed')
+    if (!paths.every(path => lister.canList(path))) return no(lister.threw() ? 'policy-down' : 'failed')
+    return { ok: true, result: { paths: [...paths], next } }
+  }
+
+  // Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second,
+  // so a flood of listings costs main at most one listing past the budget each second
+  private listingRefused(pending: Pending): RefusalCode | null {
+    if (this.slot('gate') === 'off') return null
+    if (!this.askable()) return this.down('policy-down')
+    return this.secondOf(pending.way.principal).spent >= this.limits.of(pending.way.plugin, 'filterMsPerSecond') ? 'throttled' : null
+  }
+
+  // The gate's time spent on behalf of one principal in the current second of the carrier's clock
+  private secondOf(principal: string): { second: number, spent: number } {
+    const now = this.clock()
+    let spent = this.filtered.get(principal)
+    if (spent === undefined || now - spent.second >= 1000 || now < spent.second) {
+      spent = { second: now, spent: 0 }
+      this.filtered.set(principal, spent)
+    }
+    return spent
   }
 
   // A thrown refusal keeps its code. Anything else is failed, with its text for debug only. plugin is the provider whose

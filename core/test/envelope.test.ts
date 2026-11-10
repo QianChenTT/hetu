@@ -27,8 +27,8 @@ describe('the fixed lists', () => {
     ])
   })
 
-  it('has the five reason codes', () => {
-    expect(reasonCodes).toEqual(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id'])
+  it('has the six reason codes', () => {
+    expect(reasonCodes).toEqual(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id', 'quota'])
   })
 
   it('keeps every list frozen, so code sharing the process can not add to one', () => {

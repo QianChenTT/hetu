@@ -11,6 +11,7 @@ export type Rule = 'paths' | 'topics' | 'target' | 'held' | 'none'
 export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze({
   'luoshu.read': 'paths',
   'luoshu.write': 'paths',
+  'luoshu.list': 'paths',
   'events.subscribe': 'topics',
   'plugin.call': 'target',
   'log.read': 'held',
@@ -102,6 +103,11 @@ export function createGate(): Gate {
 
     canRead(caller: Caller, path: string): boolean {
       return itemsOf(caller).some(item => item.type === 'luoshu.read' && on(item) && item.covers(path))
+    },
+
+    // A name is listed through luoshu.list, or through luoshu.read, which lists what it reads
+    canList(caller: Caller, path: string): boolean {
+      return itemsOf(caller).some(item => (item.type === 'luoshu.list' || item.type === 'luoshu.read') && on(item) && item.covers(path))
     },
 
     verbs(plugin: string, window: string): string[] {

@@ -17,7 +17,7 @@ export const stopReasons = frozen([
   // found with no entry yet, waiting for the human's approval
   'new',
   // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
-  // the gate's stateChanged, a security control whose module gave no role
+  // the gate's stateChanged or the luoshu's open, a security control or the luoshu whose module gave no role
   'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role',
   // held back because a security control failed and hetu stopped
   'control-failed',
@@ -56,7 +56,8 @@ const deps = z.record(pluginId, z.enum(depStates))
 const head = { v: z.literal(VERSION) }
 
 // The core's first message on a half's way. lastStop is why the plugin last stopped or waited in this run, null on its
-// first start. previousVersion is the version an update replaced, until the new version reaches ready once
+// first start. previousVersion is the version an update replaced, until the new version reaches ready once. dataDir
+// goes to an install plugin's host half only
 export const init = z.strictObject({
   ...head,
   kind: z.literal('init'),
@@ -66,6 +67,7 @@ export const init = z.strictObject({
   deps,
   lastStop: reason.nullable(),
   previousVersion: pluginVersion.nullable(),
+  dataDir: z.string().min(1).optional(),
 })
 export type Init = z.infer<typeof init>
 

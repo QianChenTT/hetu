@@ -35,8 +35,8 @@ describe('a staged update', () => {
     const next = worker('alpha', { version: '1.1.0' })
     const dir = await stage(made.dataDir, next)
     const hash = await hashOf(dir)
-    // Only a class 0 update may load on its own and nothing reads a class yet, so every update waits for a Confirm
-    // naming what it stops: the plugin itself and what requires it
+    // alpha is class 1, and only a class 0 update loads on its own, so this one waits for a Confirm naming what it
+    // stops: the plugin itself and what requires it
     expect(await made.loader.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
     expect(made.loader.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'alpha' }])
     expect(made.link.events('plugin.updated')).toEqual([])

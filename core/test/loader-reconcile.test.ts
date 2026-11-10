@@ -39,7 +39,9 @@ describe('the first-party reconcile', () => {
     const loaded = await new StateStore(made.dataDir).load()
     expect(loaded.state.plugins.git).toEqual({
       version: '1.0.0', contentHash: installHash, signer: FIRST_PARTY_SIGNER,
+      // No capabilities slot here, so the class is unknown and every item asks at its first use
       granted: [{ type: 'history', access: 'commit', paths: ['**'] }], class: null, enabled: true,
+      firstUse: [{ type: 'history', access: 'commit', paths: ['**'] }],
     })
     expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'git', version: '1.0.0' }])
     expect(stateOf(made.loader, 'git')).toBe('ready')

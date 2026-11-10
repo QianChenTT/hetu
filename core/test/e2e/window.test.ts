@@ -19,9 +19,10 @@ describe('a window\'s way in', () => {
   it('shows the banner the shell draws from core.status', async () => {
     const app = await launch(await dataWith({}))
     const page = await editorPage(app)
-    await until(async () => (await page.locator('#banner li').count()) > 0)
-    const lines = await page.locator('#banner li').allTextContents()
-    expect(lines).toEqual(['capabilities: absent', 'watchdog: absent', 'pick a luoshu folder'])
+    // The install holds the gate and the capabilities plugin, so only the watchdog's slot reads absent once both started
+    const settled = ['watchdog: absent', 'pick a luoshu folder']
+    await until(async () => JSON.stringify(await page.locator('#banner li').allTextContents()) === JSON.stringify(settled))
+    expect(await page.locator('#banner li').allTextContents()).toEqual(settled)
   })
 
   it('gives each load of the window its own way: a reload takes the next n', async () => {

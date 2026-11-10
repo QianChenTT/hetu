@@ -4,7 +4,7 @@ import type { CallOptions, RequestOptions } from './calls.ts'
 // The provider actions a plugin calls by name. The same list as core/api's providerActions, which a test holds it to.
 // Kept here as strings, so a plugin bundles none of core/api's schemas
 export const providerActionNames = [
-  'luoshu.read', 'luoshu.write',
+  'luoshu.read', 'luoshu.write', 'luoshu.list',
   'leases.acquire', 'leases.renew', 'leases.release', 'leases.list',
   'storage.get', 'storage.set', 'storage.delete',
   'cache.get', 'cache.set', 'cache.delete',

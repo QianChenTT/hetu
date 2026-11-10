@@ -45,6 +45,11 @@ describe("the core's words for a change", () => {
     expect(text).toBe('Give search luoshu.read on "save note"')
   })
 
+  it('names the paths a list grant reaches', () => {
+    const { text } = describeChange(one({ kind: 'grant.widen', plugin: 'tree', capability: { type: 'luoshu.list', paths: ['notes/**'] } }))
+    expect(text).toBe('Give tree luoshu.list on "notes/**"')
+  })
+
   it('quotes the notes folder', () => {
     expect(describeChange(one({ kind: 'luoshu.set', folder: '/Users/han/notes' })).text).toBe('Use "/Users/han/notes" as the notes folder')
   })

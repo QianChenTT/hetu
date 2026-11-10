@@ -16,6 +16,8 @@ export type PluginContext = Client & {
   readonly lastStop: string | null
   // The version an update replaced, until the new one reaches ready once
   readonly previousVersion: string | null
+  // hetu's data folder, for an install plugin's host half only, null for every other half
+  readonly dataDir: string | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
@@ -113,7 +115,7 @@ class Half {
   }
 
   private init(message: Record<string, unknown>): void {
-    const { id, incarnation, lastStop, previousVersion } = message
+    const { id, incarnation, lastStop, previousVersion, dataDir } = message
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     this.readDeps(message.deps)
     this.phase = 'starting'
@@ -128,6 +130,7 @@ class Half {
       incarnation,
       lastStop: typeof lastStop === 'string' ? lastStop : null,
       previousVersion: typeof previousVersion === 'string' ? previousVersion : null,
+      dataDir: typeof dataDir === 'string' && dataDir !== '' ? dataDir : null,
       has: dep => {
         const state = this.deps[dep] as DepState | undefined
         return state === 'ready' || state === 'starting'
