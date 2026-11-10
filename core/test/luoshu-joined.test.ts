@@ -90,7 +90,7 @@ describe('the guard step', () => {
   })
 })
 
-// Row 12 of the proposal's case against: the audit trail near 250 calls a second. The vault is Han's size, 469 notes
+// The audit trail near 250 calls a second. The vault is a real one's size, 469 notes
 // and about 4.2 MB, or a copy of a real one where HETU_BUDGET_LUOSHU names it
 describe('indexing a vault through the carrier with the log on', () => {
   it('reads every note within its budget, and a save made halfway doesn\'t wait behind the reads', async () => {
