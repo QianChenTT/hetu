@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { createReadStream, watch, type FSWatcher } from 'node:fs'
-import { mkdir, open, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises'
+import { constants, createReadStream, watch, type FSWatcher } from 'node:fs'
+import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
@@ -30,6 +30,8 @@ export type LuoshuOptions = {
 // A write's temp file sits beside the note, a dot file so Obsidian, ** grants and the listing pass it by
 const TEMP = '.hetu-tmp'
 const isTemp = (name: string) => name.startsWith('.') && name.endsWith(TEMP)
+// Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
+const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
 
 const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
@@ -94,18 +96,30 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     free?.()
   }
 
+  // The note is opened once and checked and read through that one handle, so what is answered is what was checked: a
+  // name swapped for a link to a file outside the notes folder between a check and a read by name would have handed
+  // the caller that file. Anything but a regular file is no note
   async function read(target: Canonical): Promise<unknown> {
-    let bytes: Buffer
+    let handle
     try {
-      const size = (await stat(target.absolute)).size
-      if (size > readCap) throw refused('failed', 'too-large')
-      bytes = await retried(() => readFile(target.absolute), target.absolute, 'read')
+      handle = await retried(() => open(target.absolute, NOTE_READ), target.absolute, 'read')
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
       if (code === 'ENOENT' || code === 'EISDIR' || code === 'ENOTDIR') throw refused('not-found')
+      if (code === 'ELOOP') throw refused('failed')
       throw err
     }
-    return { text: bytes.toString('utf8'), version: version(bytes) }
+    try {
+      const info = await handle.stat()
+      if (!info.isFile()) throw refused('not-found')
+      if (info.size > readCap) throw refused('failed', 'too-large')
+      const bytes = await handle.readFile()
+      // A note that grew after the check is held to the same cap
+      if (bytes.length > readCap) throw refused('failed', 'too-large')
+      return { text: bytes.toString('utf8'), version: version(bytes) }
+    } finally {
+      await handle.close()
+    }
   }
 
   async function current(file: string): Promise<string | null> {
