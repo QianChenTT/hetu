@@ -87,6 +87,12 @@ describe('reading', () => {
     expect(await ask(made, 'luoshu.read', { path: 'missing.md' })).toEqual({ refused: { code: 'not-found' } })
     expect(await ask(made, 'luoshu.read', { path: 'journal' })).toEqual({ refused: { code: 'not-found' } })
   })
+
+  // A read opens the note once and checks it through that handle, without waiting for a FIFO's writer
+  it.skipIf(onWindows)('answers not-found at once for a FIFO under a note\'s name', async () => {
+    await run('mkfifo', [path.join(folder, 'pipe.md')])
+    expect(await ask(opened(), 'luoshu.read', { path: 'pipe.md' })).toEqual({ refused: { code: 'not-found' } })
+  }, 3000)
 })
 
 describe('writing', () => {
