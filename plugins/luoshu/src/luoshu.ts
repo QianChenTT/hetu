@@ -67,6 +67,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const preparedUnder = new Map<string, Opening>()
   // The hash of the bytes hetu itself last wrote to each key, so an event for its own write isn't taken for an outside one
   const own = new Map<string, string>()
+  // Each note's size and modified time as last seen, from a walk once the watch began. An event for a note that still
+  // matches, or for a path missing then and now, is no news: macOS hands a new watch changes from just before it began
+  let stamps: Promise<Map<string, string>> = Promise.resolve(new Map())
 
   async function lock(key: string, callId: string): Promise<void> {
     const before = tails.get(key) ?? Promise.resolve()
@@ -114,6 +117,24 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
   }
 
+  // A file's size and modified time to the nanosecond, null for no file
+  async function stampOf(file: string): Promise<string | null> {
+    try {
+      const found = await stat(file, { bigint: true })
+      return found.isFile() ? `${found.size}:${found.mtimeNs}` : null
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR') return null
+      throw err
+    }
+  }
+
+  async function stamped(relative: string, stamp: string | null): Promise<void> {
+    const known = await stamps
+    if (stamp === null) known.delete(fold(relative))
+    else known.set(fold(relative), stamp)
+  }
+
   // The version is checked under the lock. The bytes go to a temp file beside the note, synced, then a rename over it,
   // so a crash leaves the old note or the new one
   async function write(target: Canonical, text: string, baseVersion: string | undefined): Promise<unknown> {
@@ -138,15 +159,16 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     await syncDir(dir)
     const made = version(bytes)
     own.set(target.key, made)
+    await stamped(target.relative, await stampOf(target.absolute).catch(() => null))
     publish('changed', target.relative)
     return { version: made }
   }
 
-  // Every file under start in name order, past .git, temp files, links, junctions and hetu's own folders. readdir's
+  // Every file under start, relative to root, past .git, temp files, links, junctions and hetu's own folders. readdir's
   // entries name a link or junction as a link and never as a folder, so the walk can't follow one even without the check
-  async function list(root: string, start: string, after: string | undefined, canList: (path: string) => boolean): Promise<unknown> {
+  async function filesUnder(root: string, start: string, opened: Opening): Promise<string[]> {
     // Resolved as the walk is, so a link or another spelling of a folder still matches
-    const skip = await Promise.all([opening!.dataDir, opening!.installDir].map(folder => realpath(folder).catch(() => folder)))
+    const skip = await Promise.all([opened.dataDir, opened.installDir].map(folder => realpath(folder).catch(() => folder)))
     const found: string[] = []
     async function walk(dir: string): Promise<void> {
       let entries
@@ -169,6 +191,12 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       }
     }
     await walk(start)
+    return found
+  }
+
+  // Every file under start in name order, as filesUnder finds them
+  async function list(root: string, start: string, after: string | undefined, canList: (path: string) => boolean): Promise<unknown> {
+    const found = await filesUnder(root, start, opening!)
     found.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     // Only names the caller may list, so the page and next say nothing of the others. One more than a page tells
     // whether another page follows
@@ -240,12 +268,19 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     const target = await canonical(now.folder, relative, { dataDir: now.dataDir, installDir: now.installDir })
     if (!target.ok || opening !== now) return
     let made: string | null
+    let stamp: string | null
     try {
       made = await current(target.absolute)
+      stamp = await stampOf(target.absolute)
     } catch {
       return
     }
+    const known = await stamps
+    if (opening !== now) return
+    const before = known.get(fold(target.relative)) ?? null
+    await stamped(target.relative, stamp)
     if (made !== null && own.get(target.key) === made) return
+    if (before === stamp) return
     // The note no longer holds hetu's last write, so a later save of those same bytes is someone else's too
     own.delete(target.key)
     publish('outside', target.relative)
@@ -279,6 +314,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       stopWatching()
       opening = next.folder === null ? null : { ...next, folder: next.folder }
       own.clear()
+      stamps = Promise.resolve(new Map())
       if (opening === null) return
       const { folder } = opening
       try {
@@ -289,6 +325,16 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       } catch {
         watcher = null
       }
+      // Taken once the watch began, so a change in between is heard. Events wait for it before they settle
+      const now = opening
+      stamps = (async () => {
+        const known = new Map<string, string>()
+        for (const relative of await filesUnder(folder, folder, now)) {
+          const stamp = await stampOf(path.join(folder, relative)).catch(() => null)
+          if (stamp !== null) known.set(fold(relative), stamp)
+        }
+        return known
+      })().catch(() => new Map<string, string>())
     },
   }
 
