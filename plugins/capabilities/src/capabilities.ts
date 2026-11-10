@@ -57,7 +57,8 @@ const RUNS_OTHERS = new Set([
   'git', 'node', 'nodejs', 'deno', 'bun', 'npm', 'npx', 'pnpm', 'yarn', 'python', 'py', 'pip', 'pipx', 'uv', 'uvx', 'perl',
   'ruby', 'gem', 'php', 'lua', 'java', 'dotnet', 'go', 'cargo', 'make', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'cmd',
   'powershell', 'pwsh', 'wsl', 'cscript', 'wscript', 'mshta', 'rundll32', 'regsvr32', 'msiexec', 'curl', 'wget', 'ssh', 'env',
-  'xargs', 'find', 'sudo', 'doas', 'osascript', 'open', 'start',
+  'xargs', 'find', 'sudo', 'doas', 'osascript', 'open', 'start', 'pythonw', 'javaw', 'msbuild', 'forfiles', 'wmic', 'schtasks',
+  'docker', 'awk', 'gawk', 'sed', 'tar', 'busybox', 'nohup', 'timeout', 'at', 'cron', 'crontab', 'launchctl', 'systemctl',
 ])
 const PROGRAM_EXTENSION = /\.(exe|com|cmd|bat|ps1)$/
 

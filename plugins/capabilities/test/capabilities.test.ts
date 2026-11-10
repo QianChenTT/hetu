@@ -137,6 +137,7 @@ describe('the screen\'s line on programs that run other programs', () => {
   it.each([
     'bash', 'sh', 'zsh', 'cmd.exe', 'powershell.exe', 'pwsh', 'npm.cmd', 'npx', 'curl', 'wget', 'perl', 'ruby', 'deno', 'bun',
     'py', 'wsl', 'ssh', 'env', 'xargs', 'cscript', 'wscript', 'mshta', 'rundll32', 'java',
+    'pythonw.exe', 'javaw', 'msbuild', 'forfiles', 'wmic', 'schtasks', 'docker', 'awk', 'tar', 'busybox', 'nohup', 'timeout', 'gawk', 'sed',
   ])('counts %s', program => {
     expect(caps.screen({ granted: [exec([program, 'x'])], reachable: [], callers: [] })).toContain(line(program.replace(/\.\w+$/, '').toLowerCase()))
   })
