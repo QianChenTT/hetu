@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, GrantedItem, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, ExecGrant, ExecView, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -62,7 +62,9 @@ export type Failure =
 
 // The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
 // with #77
-const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({ gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu' })
+const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({
+  gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu', history: 'history', exec: 'exec',
+})
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -1374,9 +1376,12 @@ ${capabilityKey(change.capability)}`)
     // A security control with no role to play would refuse everything while reading as up, so it fails here
     const role = roleOf[k.id]
     if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
-    // The gate has the StateView before it answers anything and the luoshu its folder. A throw marks either failed
+    // The gate has the StateView before it answers anything, the luoshu and history their folder and exec its view
+    // of the grants. A throw marks that one failed
     if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
     if (k.id === 'luoshu' && k.from === 'install' && !this.openLuoshu(k)) return
+    if (k.id === 'history' && k.from === 'install' && !this.openHistory(k)) return
+    if (k.id === 'exec' && k.from === 'install' && !this.pushExec(k)) return
     k.state = 'ready'
     k.reason = null
     k.previousVersion = null
@@ -1628,9 +1633,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'luoshu.set': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
-        // A luoshu not ready yet takes the folder when it is
+        // A luoshu not ready yet takes the folder when it is, and so does history. exec gets it with the bump
         const luoshu = this.known.get('luoshu')
         if (luoshu?.from === 'install' && luoshu.state === 'ready') this.openLuoshu(luoshu)
+        const history = this.known.get('history')
+        if (history?.from === 'install' && history.state === 'ready') this.openHistory(history)
         return this.bump()
       }
       case 'item.on':
@@ -1728,11 +1735,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.replan()
   }
 
-  // One applied change: a new StateView pushed to the gate and the carrier told
+  // One applied change: a new StateView pushed to the gate, exec's view of the grants renewed with it and the carrier
+  // told
   private bump(): void {
     this.n++
     const gate = this.known.get('gate')
     if (gate !== undefined && gate.from === 'install' && gate.state === 'ready') this.pushTo(gate)
+    const exec = this.known.get('exec')
+    if (exec !== undefined && exec.from === 'install' && exec.state === 'ready') this.pushExec(exec)
     this.refresh()
   }
 
@@ -1783,14 +1793,58 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // The folder in the state and hetu's own folders, which the luoshu refuses to reach into
+  private opening(): Opening {
+    return { folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir }
+  }
+
   private openLuoshu(luoshu: Known): boolean {
     const target = luoshu.live?.exports?.luoshu
     if (target === undefined) return true
     try {
-      target.open({ folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir })
+      target.open(this.opening())
       return true
     } catch {
       this.die(luoshu, 'state-changed')
+      return false
+    }
+  }
+
+  // History reads the notes it commits from the same folder
+  private openHistory(history: Known): boolean {
+    const target = history.live?.exports?.history
+    if (target === undefined) return true
+    try {
+      target.open(this.opening())
+      return true
+    } catch {
+      this.die(history, 'state-changed')
+      return false
+    }
+  }
+
+  // What exec checks a command against on its own, read from the StateView: each plugin's exec items, whatever their
+  // switch, since the per-item switch is the gate's and lapses with the gate off while the declared list holds. With
+  // them the plugins the human let run any command and the folders no command may run code from. Read-only
+  private execView(): ExecView {
+    const plugins: Record<string, ExecGrant[]> = Object.create(null)
+    for (const [id, items] of Object.entries(this.stateView().plugins)) {
+      const held: ExecGrant[] = []
+      for (const { capability } of items) {
+        if (capability.type === 'exec') held.push({ commands: capability.commands.map(command => [...command]), env: [...capability.env] })
+      }
+      if (held.length > 0) plugins[id] = held
+    }
+    return frozen({ plugins, any: [...this.state.switches.execAnyCommand], opening: this.opening() })
+  }
+
+  private pushExec(exec: Known): boolean {
+    const target = exec.live?.exports?.exec
+    if (target === undefined) return true
+    try {
+      target.stateChanged(this.execView())
+      return true
+    } catch {
+      this.die(exec, 'state-changed')
       return false
     }
   }
