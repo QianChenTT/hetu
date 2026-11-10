@@ -1920,6 +1920,18 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
+    // What the human let this plugin do goes with it, so a plugin added later under the id asks again
+    const { switches } = this.state
+    const plugins = bare({ ...switches.limits.plugins })
+    delete plugins[id]
+    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins) {
+      await this.writeSwitches({
+        ...switches,
+        execAnyCommand: switches.execAnyCommand.filter(held => held !== id),
+        devMode: switches.devMode.filter(held => held !== id),
+        limits: { all: switches.limits.all, plugins },
+      })
+    }
     this.entryChecks.set(id, 'absent')
     k.entry = null
     k.held = { kind: 'held', state: 'stopped', reason: 'removed' }

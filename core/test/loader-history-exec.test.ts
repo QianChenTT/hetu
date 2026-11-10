@@ -150,6 +150,21 @@ describe('exec\'s view of the grants', () => {
     expect(reasonOf(none.loader, 'exec')).toBe('no-role')
   })
 
+  // A plugin added later under the same id must ask again, so nothing the human let the old one do carries over
+  it('forgets the any command switch, dev mode and raised limits of a plugin it removes', async () => {
+    const made = await started()
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
+    await made.loader.apply({ kind: 'devMode', plugin: 'git', on: true })
+    await made.loader.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'git' })
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'search', on: true })
+    await made.loader.apply({ kind: 'plugin.remove', plugin: 'git' })
+    const { switches } = (await made.store.load()).state
+    expect(switches.execAnyCommand).toEqual(['search'])
+    expect(switches.devMode).toEqual([])
+    expect(Object.keys(switches.limits.plugins)).toEqual([])
+    expect(made.exec.seen.at(-1)!.any).toEqual(['search'])
+  })
+
   it('marks exec failed when it throws on a later view', async () => {
     const exec = execRole()
     const made = await started(exec)

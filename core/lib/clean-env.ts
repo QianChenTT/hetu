@@ -71,6 +71,24 @@ export function nullDevice(platform: NodeJS.Platform = process.platform): string
 // Windows and macOS volumes compare names without case
 const foldsCase = (platform: NodeJS.Platform) => platform === 'win32' || platform === 'darwin'
 
+// A path the way Windows opens it: each name loses the dots and spaces at its end, so notes.\a.md opens notes\a.md.
+// Node's own lookups keep them. Elsewhere the path as it is
+export function asOpened(file: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return file
+  return file.split(/([\\/]+)/).map((part, i) => {
+    if (i % 2 === 1 || part === '.' || part === '..' || /^[A-Za-z]:$/.test(part)) return part
+    const trimmed = part.replace(/[. ]+$/, '')
+    // A name of dots and spaces alone names the folder it is in
+    return trimmed === '' && part !== '' ? '.' : trimmed
+  }).join('')
+}
+
+// A path that goes through a share: \\server\share, //server/share and the \\?\UNC and \\.\ forms. A share can lead
+// back to this machine's own disks (\\localhost\C$), and where one leads can't be told from its name
+export function throughShare(file: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === 'win32' && /^[\\/]{2}/.test(file) && !/^[\\/]{2}[?.][\\/][A-Za-z]:/.test(file)
+}
+
 // Whether target is the folder or lies under it. Both are real paths from the OS
 export function inside(folder: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
   const [outer, inner] = foldsCase(platform) ? [folder.toLowerCase(), target.toLowerCase()] : [folder, target]
@@ -154,6 +172,8 @@ export type Ran = { code: number | null, signal: string | null, stdout: Buffer, 
 
 // The longest delay a timer takes
 const MAX_TIMER_MS = 2 ** 31 - 1
+// How long output a program wrote before it ended may take to drain once it has
+const EXIT_GRACE_MS = 200
 
 // Runs a program by its path with the arguments as they are: no shell, no window, the environment exactly as given.
 // Rejects when the program can't start. A program ended at the deadline resolves with timedOut
@@ -190,18 +210,34 @@ export function runClean(program: string, args: readonly string[], options: RunO
       end()
     }, left)
     options.signal?.addEventListener('abort', end, { once: true })
+    let grace: NodeJS.Timeout | null = null
+    let settled = false
     const done = () => {
+      settled = true
       if (timer !== null) clearTimeout(timer)
+      if (grace !== null) clearTimeout(grace)
       options.signal?.removeEventListener('abort', end)
     }
+    const answer = (code: number | null, signal: string | null) => {
+      if (settled) return
+      done()
+      // A child of the program may still hold the pipes. What it writes later is the child's, not the program's
+      child.stdout.destroy()
+      child.stderr.destroy()
+      resolve({ code, signal, stdout: stdout(), stderr: stderr(), truncated, timedOut })
+    }
     child.on('error', err => {
+      if (settled) return
       done()
       reject(err)
     })
-    child.on('close', (code, signal) => {
-      done()
-      resolve({ code, signal, stdout: stdout(), stderr: stderr(), truncated, timedOut })
+    // The pipes close once every process holding them has ended, which a child the program left running can put off
+    // for as long as it likes. So the answer comes when the program itself has ended and its output drained, or a
+    // moment after it ended at the latest
+    child.on('exit', (code, signal) => {
+      grace = setTimeout(() => answer(code, signal), EXIT_GRACE_MS)
     })
+    child.on('close', (code, signal) => answer(code, signal))
     // A program that ends without reading its input closes the pipe under the write
     child.stdin.on('error', () => {})
     child.stdin.end(options.input ?? '')

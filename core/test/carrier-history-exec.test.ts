@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, AuditRecord, Call, Prepared, Provider } from '../api/slots.ts'
 import { auditFields } from '../backend/carrier/audit.ts'
@@ -199,5 +200,25 @@ describe('the audit fields of a command and an access', () => {
     expect((fields.command as string).length).toBeLessThanOrEqual(4096)
     expect((JSON.parse(fields.command as string) as string[]).length).toBeLessThan(64)
     expect(fields.commandArgs).toBe(64)
+  })
+
+  // Padding at the front must not push the argument that matters out of the record
+  it('keeps the program and the last arguments when it cuts, and a hash of the whole command to match it against a manifest', () => {
+    const command = ['node', ...Array.from({ length: 40 }, () => 'p'.repeat(200)), '--import', 'file:///C:/notes/x.js']
+    const fields = auditFields(record({ command }))
+    const kept = JSON.parse(fields.command as string) as string[]
+    expect(kept[0]).toBe('node')
+    expect(kept.slice(-2)).toEqual(['--import', 'file:///C:/notes/x.js'])
+    expect((fields.command as string).length).toBeLessThanOrEqual(4096)
+    expect(fields.commandArgs).toBe(43)
+    expect(fields.commandHash).toBe(createHash('sha256').update(JSON.stringify(command)).digest('hex'))
+  })
+
+  it('keeps both ends of one argument longer than the cap', () => {
+    const fields = auditFields(record({ command: ['node', '-e', `${'a'.repeat(9000)}MARK`] }))
+    const kept = JSON.parse(fields.command as string) as string[]
+    expect(kept.slice(0, 2)).toEqual(['node', '-e'])
+    expect(kept[2].endsWith('MARK')).toBe(true)
+    expect((fields.command as string).length).toBeLessThanOrEqual(4096)
   })
 })
