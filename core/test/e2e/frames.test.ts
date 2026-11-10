@@ -89,8 +89,12 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
 type Heard = { topic: string, instance?: string, data?: unknown }
 const heard = (worker: Worker) => worker.evaluate('globalThis.heard') as Promise<Heard[]>
 const messages = async (worker: Worker) => (await heard(worker)).filter(event => event.topic === 'view.message').map(event => event.data)
-const post = (worker: Worker, data: unknown) =>
-  worker.evaluate(`(async () => { const opened = globalThis.heard.find(e => e.topic === 'view.opened'); await globalThis.ctx.ui.views.post(opened.instance, ${JSON.stringify(data)}) })()`)
+// The data goes in as evaluate's argument, so no code is built from it
+const post = (worker: Worker, data: unknown) => worker.evaluate(async sent => {
+  const scope = globalThis as unknown as { heard: Heard[], ctx: { ui: { views: { post(instance: string, data: unknown): Promise<void> } } } }
+  const opened = scope.heard.find(event => event.topic === 'view.opened')!
+  await scope.ctx.ui.views.post(opened.instance!, sent)
+}, data)
 
 describe('view frames', () => {
   it('loads a frame from its token\'s path under its CSP, refuses loads from elsewhere and hands it a port with no preload', async () => {
