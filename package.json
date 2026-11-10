@@ -13,7 +13,9 @@
     "daemon",
     "editor",
     "plugins/capabilities",
+    "plugins/exec",
     "plugins/gate",
+    "plugins/history",
     "plugins/layout",
     "plugins/luoshu",
     "plugins/storage",
@@ -23,7 +25,7 @@
     "dev": "node scripts/dev.ts",
     "seed": "npm run seed -w daemon",
     "seed:fresh": "npm run seed -w daemon -- --fresh",
-    "test": "npm test -w core -w daemon -w plugins/capabilities -w plugins/gate -w plugins/layout -w plugins/luoshu -w plugins/storage -w plugins/search --if-present",
+    "test": "npm test -w core -w daemon -w plugins/capabilities -w plugins/exec -w plugins/gate -w plugins/history -w plugins/layout -w plugins/luoshu -w plugins/storage -w plugins/search --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build:main": "node core/build/main.ts",
     "test:e2e": "npm run build:main && npm run test:e2e -w hetu-core"

@@ -37,7 +37,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'gate', 'hidden-marks', 'layout', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'gate', 'hidden-marks', 'history', 'layout', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -94,6 +94,23 @@ describe('the main bundle', () => {
     expect([...imports].sort()).toEqual(['node:crypto', 'node:fs/promises', 'node:path'])
     const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
     expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
+  })
+
+  it.each([['history', 'open'], ['exec', 'stateChanged']])('writes %s into the install as a host half with its provider and its role, importing only the built-ins its manifest names', async (id, method) => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', id)
+    expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
+    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
+    const imports = [...new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))]
+    const named = (JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { node: string[] }).node
+    expect(imports.filter(name => !named.some(allowed => name === `node:${allowed}` || name.startsWith(`node:${allowed}/`)))).toEqual([])
+    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
+    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
+    expect(typeof (module[id] as Record<string, unknown>)[method]).toBe('function')
   })
 
   // The page compiles hidden marks in itself. The install's copy is what its switch and its hash cover

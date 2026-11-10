@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { envNameProblem } from './exec.ts'
 import { pluginId, qualifiedName } from './ids.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, scope } from './scope.ts'
@@ -15,6 +16,13 @@ export function screenText(max: number) {
 }
 
 export const text = screenText(MAX_TEXT_LENGTH)
+
+// A variable exec passes through from hetu's own environment, by name. Never a value, and never a name that makes a
+// program load code
+const envName = z.string().max(MAX_TEXT_LENGTH, { abort: true }).superRefine((value, ctx) => {
+  const problem = envNameProblem(value)
+  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
+})
 
 function scopes<T extends z.ZodType>(item: T) {
   return z.array(item).max(MAX_SCOPES_PER_TYPE)
@@ -40,11 +48,11 @@ export const capability = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('storage') }),
   // Paths too, so history reaches no note the plugin can't name
   z.strictObject({ type: z.literal('history'), access: z.enum(['read', 'commit']), paths: scopes(scope) }),
-  // Exact argument arrays, never a string a shell would split
+  // Exact argument arrays, never a string a shell would split. env names the variables a command gets
   z.strictObject({
     type: z.literal('exec'),
     commands: scopes(z.array(text).min(1).max(MAX_SCOPES_PER_TYPE)),
-    env: scopes(text),
+    env: scopes(envName),
   }),
   z.strictObject({ type: z.literal('plugin.call'), targets: scopes(pluginId) }),
   z.strictObject({ type: z.literal('guard.hook') }),

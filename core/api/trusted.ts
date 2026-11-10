@@ -23,7 +23,8 @@ export function capabilityText(granted: Capability): string {
     case 'events.subscribe':
       return `events.subscribe to ${granted.topics.join(', ')}`
     case 'exec':
-      return `exec of ${granted.commands.map(command => quoted(command.join(' '))).join(', ')}`
+      // Each command as its argument array, so two that run differently never read alike, then the variables it gets
+      return `exec of ${granted.commands.map(command => JSON.stringify(command)).join(', ')}${granted.env.length > 0 ? ` with ${granted.env.join(', ')} from your environment` : ''}`
     case 'plugin.call':
       return `plugin.call to ${granted.targets.join(', ')}`
     default:

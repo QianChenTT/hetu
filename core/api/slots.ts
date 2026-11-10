@@ -4,8 +4,16 @@ import { frozen } from './plain.ts'
 
 // What a call reaches as the gate and the guards judge it. paths are luoshu paths, the caller's own text at precheck and
 // canonical once the provider has prepared the call. target is the plugin a plugin call reaches. topics are the topics
-// a subscribe names that the gate holds, each already canonical as written
-export type Scope = { readonly paths?: readonly string[], readonly target?: string, readonly topics?: readonly string[] }
+// a subscribe names that the gate holds, each already canonical as written. access is what a history action does with
+// its paths, from core/api's action table and never from the caller or the provider. command is an exec call's whole
+// argument array, which is canonical as written
+export type Scope = {
+  readonly paths?: readonly string[]
+  readonly target?: string
+  readonly topics?: readonly string[]
+  readonly access?: 'read' | 'commit'
+  readonly command?: readonly string[]
+}
 
 // A call as the carrier hands it to a provider, a callee or a core action. callId is the carrier's own and deadline is
 // in ms since the epoch, never later than the parent's
@@ -57,11 +65,12 @@ export type GrantedItem = { readonly capability: Capability, readonly off: boole
 // What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
-// volume ignores case
+// volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists
 export type StateView = {
   readonly n: number
   readonly foldCase: boolean
   readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
+  readonly execAny: readonly string[]
 }
 
 export type Gate = {
@@ -104,6 +113,24 @@ export type Opening = { readonly folder: string | null, readonly dataDir: string
 // How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
 // the luoshu failed
 export type LuoshuRole = { open(opening: Opening): void }
+
+// How the loader hands history the notes folder: when the plugin is ready and each time luoshu.set applies. A throw
+// marks history failed
+export type HistoryRole = { open(opening: Opening): void }
+
+// One exec item a plugin holds: its exact commands and the variables they get by name
+export type ExecGrant = { readonly commands: readonly (readonly string[])[], readonly env: readonly string[] }
+
+// What exec checks a command against on its own, gate off included: each plugin's exec items, the plugins the human let
+// run any command and the folders no command may run code from. Read-only, renewed with every StateView
+export type ExecView = {
+  readonly plugins: Readonly<Record<string, readonly ExecGrant[]>>
+  readonly any: readonly string[]
+  readonly opening: Opening
+}
+
+// How the loader hands exec its view. A throw marks exec failed
+export type ExecRole = { stateChanged(view: ExecView): void }
 
 // A host guard answers from its own state and makes no calls
 export type Guard = { check(call: GuardCall): 'allow' | 'deny' }

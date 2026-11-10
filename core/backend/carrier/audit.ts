@@ -52,6 +52,12 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
     fields.paths = listed(scope.paths)
     fields.pathCount = scope.paths.length
   }
+  if (scope?.access !== undefined) fields.access = scope.access
+  // The command is what an exec call acted on, as a path is. commandArgs is how many arguments it had before the cut
+  if (scope?.command !== undefined) {
+    fields.command = listed(scope.command)
+    fields.commandArgs = scope.command.length
+  }
   if (scope?.target !== undefined) fields.target = cut(scope.target)
   if (scope?.topics !== undefined) {
     fields.topics = listed(scope.topics)

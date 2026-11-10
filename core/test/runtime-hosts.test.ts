@@ -61,6 +61,13 @@ describe('loading a host half', () => {
     expect(roles).toEqual({ provider, gate, luoshu })
   })
 
+  it('hands on the history and exec roles, which the loader gives the notes folder and the view of the grants', async () => {
+    const history = { open: () => {} }
+    const exec = { stateChanged: () => {} }
+    expect(await loadHost(start(), { freeze: () => {}, importer: async () => ({ default: plugin, history }) })).toEqual({ history })
+    expect(await loadHost(start(), { freeze: () => {}, importer: async () => ({ default: plugin, exec }) })).toEqual({ exec })
+  })
+
   it('refuses an entry the files don\'t hold, a module whose default isn\'t a plugin and a module that throws', async () => {
     const options = (module: unknown) => ({ freeze: () => {}, importer: async () => module })
     await expect(loadHost(start('missing.js', '', { files: [] }), options({ default: plugin }))).rejects.toThrow('missing.js')

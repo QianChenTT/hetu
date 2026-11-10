@@ -303,6 +303,16 @@ describe("the StateView's grants", () => {
     expect(Object.isFrozen(view.plugins.alpha[0].capability)).toBe(true)
   })
 
+  it('name the plugins the human let exec run any command for, from the switch on', async () => {
+    const made = await started()
+    expect(made.gate.seen[0].execAny).toEqual([])
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'alpha', on: true })
+    expect(made.gate.seen.at(-1)!.execAny).toEqual(['alpha'])
+    expect(Object.isFrozen(made.gate.seen.at(-1)!.execAny)).toBe(true)
+    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'alpha', on: false })
+    expect(made.gate.seen.at(-1)!.execAny).toEqual([])
+  })
+
   it("switch one item off with item.off, kept in the plugin's entry and in the next StateView, and back on with item.on", async () => {
     const made = await started()
     await made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: read })

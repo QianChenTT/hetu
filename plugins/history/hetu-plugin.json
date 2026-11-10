@@ -1,0 +1,9 @@
+{
+  "id": "history",
+  "name": "History",
+  "version": "0.1.0",
+  "api": "^2",
+  "entries": { "host": "dist/host.js" },
+  "requires": ["luoshu"],
+  "node": ["child_process", "crypto", "fs", "path"]
+}
