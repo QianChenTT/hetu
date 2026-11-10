@@ -4,7 +4,7 @@ import path from 'node:path'
 import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  cleanup, counting, editorPage, electronPath, env, events, exists, exited, launch, records, repo, sandboxArgs, temp, tick, until,
+  appCommand, cleanup, counting, editorPage, electronPath, env, events, exists, exited, launch, records, repo, sandboxArgs, temp, tick, until,
   visibleWindows,
 } from './helpers.ts'
 
@@ -73,7 +73,7 @@ describe('hetu as an Electron app', () => {
     const dataDir = await temp()
     const first = await launch(dataDir)
     await editorPage(first)
-    const second = spawn(electronPath, [...sandboxArgs, repo], { env: env({ HETU_DATA_DIR: dataDir }), stdio: 'ignore' })
+    const second = spawn(appCommand[0], [...sandboxArgs, ...appCommand[1]], { env: env({ HETU_DATA_DIR: dataDir }), stdio: 'ignore' })
     const code = await new Promise<number | null>(resolve => second.once('exit', resolve))
     expect(code).toBe(0)
     expect(first.process().exitCode).toBe(null)
@@ -156,12 +156,13 @@ describe('a packaged build started for debugging', () => {
     const { code, stderr } = await probe(`
       import { app, protocol } from 'electron'
       import { beforeReady } from '${beforeReadyPath}'
-      const packaged = {
-        isPackaged: true, commandLine: app.commandLine, setPath: (name, value) => app.setPath(name, value),
+      const locked = {
+        commandLine: app.commandLine, setPath: (name, value) => app.setPath(name, value),
         requestSingleInstanceLock: () => app.requestSingleInstanceLock(), enableSandbox: () => app.enableSandbox(),
         exit: code => app.exit(code),
       }
-      beforeReady(packaged, protocol, { env: process.env, platform: process.platform })
+      // Its own name alone as the arguments, so only Chromium's parse of the switch can refuse it
+      beforeReady(locked, protocol, { env: process.env, platform: process.platform, locked: true, argv: [process.argv[0]] })
       app.whenReady().then(() => { console.error('reached ready'); app.exit(0) })
     `, ['--remote-debugging-port=0'])
     expect(code).toBe(1)

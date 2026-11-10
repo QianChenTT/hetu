@@ -11,6 +11,8 @@ import type { CarrierLink, Runtime } from './loader/seams.ts'
 export type WireOptions = {
   booted: Booted
   installDir: string
+  // Where the install list is when it isn't in the install folder
+  listDir?: string
   runtime: Runtime
   // The guards expected on an action, the same list for the loader and the carrier. Defaults to core/api's
   guardsFor?: (action: GuardableAction) => readonly string[]
@@ -108,6 +110,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
   const loader = new Loader({
     booted: options.booted,
     installDir: options.installDir,
+    ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
     link,
     runtime: options.runtime,
     logWrites: () => options.booted.log.healthy,

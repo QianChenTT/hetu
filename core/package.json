@@ -13,7 +13,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p api && tsc --noEmit -p frontend",
     "test": "vitest run",
-    "test:e2e": "vitest run --config test/e2e/vitest.config.ts"
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
+    "test:packaged": "vitest run --config test/packaged/vitest.config.ts",
+    "test:installed": "vitest run --config test/installed/vitest.config.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

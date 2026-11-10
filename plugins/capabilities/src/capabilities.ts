@@ -9,7 +9,7 @@ const confined = (scope: string) => {
   return first !== '' && !/[*?[\]{}]/.test(first)
 }
 
-// One grant's class, from the table Han took on 2026-10-23. A subscription reaches nothing on its own, since an event
+// One grant's class, from the class table. A subscription reaches nothing on its own, since an event
 // carries a path only to a subscriber that may list it. The key stream holds what is typed, so it reads. A type this
 // plugin doesn't know is 4, so nothing new is ever class 0 and updates on its own by default
 function classOf(granted: Capability): number {
@@ -47,7 +47,7 @@ const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted
   || granted.type === 'luoshu.write' || (granted.type === 'history' && granted.access === 'read')
 const network = (granted: Capability) => granted.type === 'net.fetch'
 
-// Reading and network anywhere in what a plugin holds and reaches, which together could send notes out (Han)
+// Reading and network anywhere in what a plugin holds and reaches, which together could send notes out
 const paired = (all: readonly Capability[]) => all.some(reads) && all.some(network)
 
 // Programs that run another program or code they are handed: shells, interpreters, package runners, fetchers and the

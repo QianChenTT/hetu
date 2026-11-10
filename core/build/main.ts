@@ -42,7 +42,11 @@ export type Built = {
 // main.ts and everything it imports as one ES module, electron left to the runtime, with the install list, the
 // install plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
-export async function buildMain(outDir: string = path.join(core, 'dist')): Promise<Built> {
+// packaged and locked are fixed into main.js as the two constants of backend/runtime/packaged.ts. A run from the
+// source has neither
+export type BuildKind = { packaged?: boolean, locked?: boolean }
+
+export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
   await mkdir(outDir, { recursive: true })
   const main = await build({
     ...shared,
@@ -52,6 +56,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist')): Promi
     format: 'esm',
     target: NODE,
     external: ['electron'],
+    define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
   })
   // The install plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
   // before it starts the host half

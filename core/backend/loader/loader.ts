@@ -38,6 +38,9 @@ export type LoaderOptions = {
   // the data folder and the start markers it found
   booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir' | 'markers'>
   installDir: string
+  // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
+  // packaged build does inside app.asar
+  listDir?: string
   link: CarrierLink
   runtime: Runtime
   // The rules the install list's paths follow, the platform the install is on
@@ -219,6 +222,7 @@ export class Loader implements Seam {
   private readonly store: StateStore
   private readonly dataDir: string
   private readonly installDir: string
+  private readonly listDir: string
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly logWrites: () => boolean
@@ -266,6 +270,7 @@ export class Loader implements Seam {
     this.store = booted.store
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
+    this.listDir = options.listDir ?? options.installDir
     this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
@@ -764,7 +769,7 @@ ${capabilityKey(change.capability)}`)
   // ---- the install
 
   private async readInstall(): Promise<void> {
-    const file = path.join(this.installDir, INSTALL_LIST)
+    const file = path.join(this.listDir, INSTALL_LIST)
     let bytes: Buffer | null = null
     try {
       bytes = await retried(() => readFile(file), file, 'read')
@@ -2005,7 +2010,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    // Only a class 0 update loads on its own (Han), and only while the slot can say so, with no grant asked for that the
+    // Only a class 0 update loads on its own, and only while the slot can say so, with no grant asked for that the
     // entry doesn't hold. Its record lands first as any update's does
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
