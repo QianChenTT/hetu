@@ -311,7 +311,10 @@ describe('the limits on a run', () => {
     const slow = js('setTimeout(() => {}, 600)')
     const exec = await started(viewOf({ git: [{ commands: [slow], env: [] }], other: [{ commands: [slow], env: [] }] }), { running: 2 })
     const results = await Promise.all([run(exec, slow), run(exec, slow), run(exec, slow), run(exec, slow, other)])
-    expect(results.map(result => ('refused' in result ? (result.refused as { code: string }).code : result.code))).toEqual([0, 0, 'throttled', 0])
+    const codes = results.map(result => ('refused' in result ? (result.refused as { code: string }).code : result.code))
+    // Which of the three reaches the count third depends on how long each prepare takes
+    expect(codes.slice(0, 3).sort()).toEqual([0, 0, 'throttled'])
+    expect(codes[3]).toBe(0)
     expect(await run(exec, slow)).toMatchObject({ code: 0 })
   })
 

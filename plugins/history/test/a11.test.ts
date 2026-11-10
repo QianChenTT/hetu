@@ -88,6 +88,9 @@ describe('A-11, a program planted for git to run', () => {
     // A filter as well: a git over the outer folder hands its own -c settings down to the child, a filter isn't one
     await plain(sub, ['config', 'filter.plant.clean', fires('nested-filter')])
     await writeFile(path.join(sub, '.gitattributes'), '* filter=plant\n')
+    // Written again since the nested commit, so its time no longer matches the index and git hashes it again, running
+    // the filter. Untouched, git trusts the index and runs the filter only when the file's time ties the index's
+    await writeFile(path.join(sub, 'b.md'), 'note b')
     await plain(sub, ['status'])
     await plain(sub, ['add', '--dry-run', 'b.md'])
     expect(await fired()).toEqual(expect.arrayContaining(['nested-fsmonitor', 'nested-filter']))
