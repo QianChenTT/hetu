@@ -12,7 +12,7 @@ const quoted = (value: string) => JSON.stringify(value)
 
 // What each security control stops doing while off
 const whileOff: Readonly<Record<string, string>> = Object.freeze({
-  gate: 'Calls with power then pass unchecked. The per-item switches lapse too, since allowing all means all',
+  gate: 'Calls with power then pass unchecked. The per-item switches lapse too, since allowing all means all. Exec still refuses a command whose item is off',
   capabilities: 'Plugins then go unclassified and every item asks at its first use',
   watchdog: 'Nothing then stops or slows a plugin that misbehaves',
 })

@@ -132,11 +132,16 @@ describe('exec\'s view of the grants', () => {
     expect(made.exec.seen.length).toBeGreaterThanOrEqual(4)
   })
 
-  // The per-item switch is the gate's. With the gate off those switches lapse and the declared list is what holds
-  it('keeps an exec item the human switched off in the list, which the gate refuses while it is on', async () => {
+  // Exec keeps its own list with the gate off, so an item the human switched off leaves that list too. Otherwise the
+  // command would run again exactly when the gate isn't there to refuse it
+  it('drops an exec item the human switched off and takes it back when switched on again', async () => {
     const made = await started()
     await made.loader.apply({ kind: 'item.off', plugin: 'git', capability: status })
-    expect(made.exec.seen.at(-1)!.plugins.git.map(item => item.commands)).toEqual([[['git', 'status']], [['git', 'push'], ['git', 'fetch']]])
+    expect(made.exec.seen.at(-1)!.plugins.git.map(item => item.commands)).toEqual([[['git', 'push'], ['git', 'fetch']]])
+    await made.loader.apply({ kind: 'item.off', plugin: 'git', capability: push })
+    expect(made.exec.seen.at(-1)!.plugins).toEqual({})
+    await made.loader.apply({ kind: 'item.on', plugin: 'git', capability: status })
+    expect(made.exec.seen.at(-1)!.plugins.git.map(item => item.commands)).toEqual([[['git', 'status']]])
   })
 
   it('marks exec failed when it throws on a view, and when its module gives no exec role', async () => {
