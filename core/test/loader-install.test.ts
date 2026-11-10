@@ -8,7 +8,7 @@ import { Loader } from '../backend/loader/loader.ts'
 import { readInstalled, writeInstalled } from '../backend/loader/folders.ts'
 import type { Landing } from '../backend/loader/seams.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, until, workerManifest,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tempBase, until, workerManifest,
   type Listing,
 } from './loader-fakes.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, releaseAfter, releaseAll } from './hold.ts'
@@ -165,6 +165,26 @@ describe('install plugins', () => {
     await bad.loader.start()
     expect(bad.loader.slot('gate')).toBe('tampered')
     expect(bad.runtime.order()).toEqual([])
+  })
+
+  // A packaged build keeps the list inside app.asar and the plugins beside it, so a list planted beside the plugins is
+  // never the one read
+  it('reads the list from its own folder when it has one, never from the plugins\' folder', async () => {
+    const base = path.join(await tempBase(), 'list')
+    await mkdir(base, { recursive: true })
+    const made = await harness({ loader: { listDir: base } })
+    await made.loader.start()
+    expect(made.link.events('install.checked')).toEqual([{ result: 'absent' }])
+    expect(made.loader.slot('gate')).toBe('absent')
+    const moved = path.join(await tempBase(), 'list')
+    await mkdir(moved, { recursive: true })
+    const listed = await harness({ before: async ({ installDir }) => {
+      await writeFile(path.join(moved, INSTALL_LIST), await readFile(path.join(installDir, INSTALL_LIST)))
+      await writeFile(path.join(installDir, INSTALL_LIST), '{"format":1,"plugins":{}}')
+    }, loader: { listDir: moved } })
+    await listed.loader.start()
+    expect(listed.link.events('install.checked')).toEqual([{ result: 'ok' }])
+    expect(listed.loader.slot('gate')).toBe('on')
   })
 
   it('switched off by the human, reads off and starts nothing, even when its check failed too', async () => {
