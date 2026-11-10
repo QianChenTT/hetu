@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { baseEnv, findProgram, inside, nullDevice, runClean, withDeclared } from '../lib/clean-env.ts'
+import { asOpened, baseEnv, findProgram, inside, nullDevice, runClean, throughShare, withDeclared } from '../lib/clean-env.ts'
 
 const made: string[] = []
 afterEach(async () => {
@@ -264,5 +264,45 @@ describe('running a program', () => {
   it('rejects for a program that can\'t start', async () => {
     const cwd = await temp()
     await expect(runClean(path.join(cwd, win ? 'missing.exe' : 'missing'), [], { cwd, env: baseEnv(), maxOutput: 1024 })).rejects.toThrow()
+  })
+})
+
+describe('a program whose own child outlives it', () => {
+  // The child holds the program's stdout and stderr open for four seconds after the program has ended
+  const leaves = (more = '') => [
+    '-e', `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], { stdio: 'inherit', detached: true, cwd: require('node:os').tmpdir() }).unref(); process.stdout.write('done');${more}`,
+  ]
+
+  it('answers once the program ends, not once the child lets go of its output', async () => {
+    const cwd = await temp()
+    const began = Date.now()
+    const ran = await runClean(process.execPath, leaves(), { cwd, env: baseEnv(), maxOutput: 1024 })
+    expect(Date.now() - began).toBeLessThan(2500)
+    expect([ran.code, ran.stdout.toString('utf8'), ran.timedOut]).toEqual([0, 'done', false])
+  })
+
+  it('answers at the deadline for a program ended there, its child still running', async () => {
+    const cwd = await temp()
+    const began = Date.now()
+    const ran = await runClean(process.execPath, leaves(' setInterval(() => {}, 1000)'), { cwd, env: baseEnv(), maxOutput: 1024, deadline: Date.now() + 500 })
+    expect(Date.now() - began).toBeLessThan(2500)
+    expect(ran.timedOut).toBe(true)
+  })
+})
+
+describe('a path the way Windows opens it', () => {
+  it('drops the dots and spaces at the end of each name on Windows and keeps . and ..', () => {
+    expect(asOpened('C:\\notes.\\a.md. ', 'win32')).toBe('C:\\notes\\a.md')
+    expect(asOpened('..\\..\\storage. .\\x', 'win32')).toBe('..\\..\\storage\\x')
+    expect(asOpened('C:/a /b./c', 'win32')).toBe('C:/a/b/c')
+    expect(asOpened('/notes./a.md', 'linux')).toBe('/notes./a.md')
+  })
+
+  it('takes every share as one, the UNC forms included, and the local long forms as none', () => {
+    for (const file of ['\\\\localhost\\C$\\x', '//server/share/x', '\\\\?\\UNC\\server\\share', '\\\\.\\pipe\\x', '/\\server\\x']) {
+      expect(throughShare(file, 'win32'), file).toBe(true)
+    }
+    for (const file of ['C:\\x', '\\\\?\\C:\\x', '\\\\.\\C:\\x', '\\x', 'x']) expect(throughShare(file, 'win32'), file).toBe(false)
+    expect(throughShare('//server/share', 'linux')).toBe(false)
   })
 })

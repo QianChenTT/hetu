@@ -151,6 +151,12 @@ describe('any command, the human\'s switch for one plugin', () => {
     expect(await exists(marker)).toBe(false)
   })
 
+  it('gives nothing to a plugin whose exec items list no command, should one reach the view', async () => {
+    const exec = await started(viewOf({ git: [{ commands: [], env: [] }] }, { any: ['git'] }))
+    expect(await run(exec, marks())).toEqual(notGranted)
+    expect(await exists(marker)).toBe(false)
+  })
+
   it('keeps the rest of the rules: the folders a command may run nothing from', async () => {
     await writeFile(path.join(notes, 'x.js'), '')
     const exec = await started(viewOf({ git: [{ commands: [js('0')], env: [] }] }, { any: ['git'] }))
@@ -250,6 +256,41 @@ describe('write-then-run: no file from the notes folder or hetu\'s data as a pro
   it('refuses a file that isn\'t there yet under one of those folders', () => refuses(() => [node, '-e', '0', path.join(notes, 'new', 'out.js')]))
   it.runIf(onWindows)('refuses a path in another case, which Windows opens all the same', () => refuses(() => [node, noted().toUpperCase()]))
 
+  // Windows drops dots and spaces at the end of each name in a path, so notes.\x.js opens notes\x.js
+  it.runIf(onWindows)('refuses a folder name with a trailing dot or space, which Windows opens without it', async () => {
+    await refuses(() => [node, `${notes}.\\x.js`])
+    await refuses(() => [node, `${notes} \\x.js`])
+    await refuses(() => [node, `${notes}. .\\x.js`])
+    await refuses(() => [node, path.join('..', '..', '..', 'storage.', 'git', 'x.js')])
+  })
+
+  it('refuses a relative path into the data folder that names nothing yet when the call is prepared', async () => {
+    const late = path.join(dataDir, 'storage', 'git', 'late.js')
+    const command = [node, path.join('..', '..', '..', 'storage', 'git', 'late.js')]
+    const exec = await started(viewOf({ git: [{ commands: [command], env: [] }] }))
+    const call = callOf(command)
+    const prepared = await exec.provider.prepare(call)
+    await writeFile(late, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`)
+    if ('scope' in prepared) await exec.provider.perform(call, { scope: { ...prepared.scope, command } }).catch(() => {})
+    expect(prepared).toEqual({ code: 'not-granted' })
+    expect(await exists(marker)).toBe(false)
+  })
+
+  // A share can lead back to this machine's own disks, \\localhost\C$ among them, and exec can't tell where one leads
+  it.runIf(onWindows)('refuses a path through a share, the loopback admin share included, as an argument or a file URL', async () => {
+    const share = (file: string) => `\\\\localhost\\${file[0]}$${file.slice(2)}`
+    await refuses(() => [node, share(noted())])
+    await refuses(() => [node, share(noted()).split('\\').join('/')])
+    // A file URL drops localhost as its host, so the share is named by its address
+    await refuses(() => [node, '--import', `file://127.0.0.1/${noted()[0]}$${noted().slice(2).split('\\').join('/')}`])
+    await refuses(() => [node, '-e', '0', '\\\\server\\share\\x.js'])
+  })
+
+  it('refuses a file URL with space or control characters before it, which a URL parser drops', async () => {
+    await refuses(() => [node, '--import', ` ${pathToFileURL(noted()).href}`])
+    await refuses(() => [node, '--import', `\t\n${pathToFileURL(noted()).href}`])
+  })
+
   it('refuses a program that lies in the notes folder, by its path or found by its name', async () => {
     const planted = path.join(notes, 'bin')
     await mkdir(planted)
@@ -305,6 +346,17 @@ describe('the limits on a run', () => {
     expect(await run(exec, command, git, Date.now() + 400)).toEqual({ refused: { code: 'timeout' } })
     expect(Date.now() - began).toBeLessThan(5000)
     expect((await readdir(path.join(dataDir, 'host', 'exec'))).filter(name => name.startsWith('run-'))).toEqual([])
+  })
+
+  // The child holds the command's output open for four seconds, from a folder of its own so the run folder can go
+  it('answers at the deadline and frees the caller\'s room though the command left a child holding its output', async () => {
+    const command = js(`require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 4000)'], { stdio: 'inherit', detached: true, cwd: require('node:os').tmpdir() }).unref(); setInterval(() => {}, 1000)`)
+    const quick = js('process.exit(0)')
+    const exec = await started(viewOf({ git: [{ commands: [command, quick], env: [] }] }), { running: 1 })
+    const began = Date.now()
+    expect(await run(exec, command, git, Date.now() + 400)).toEqual({ refused: { code: 'timeout' } })
+    expect(Date.now() - began).toBeLessThan(2500)
+    expect(await run(exec, quick)).toMatchObject({ code: 0 })
   })
 
   it('runs so many commands at once for one caller and answers throttled past that, per caller', async () => {

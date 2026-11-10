@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto'
-import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises'
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { commandKey, envNameProblem, EXEC_OUTPUT_BYTES, EXEC_RUNNING } from 'hetu-core/api/exec.ts'
 import type { Call, ExecRole, ExecView, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { baseEnv, findProgram, inside, runClean, withDeclared } from 'hetu-core/lib/clean-env.ts'
+import { asOpened, baseEnv, findProgram, inside, runClean, throughShare, withDeclared } from 'hetu-core/lib/clean-env.ts'
 
 export type ExecOptions = {
   // The path programs are looked up on and the environment variables are passed through from, hetu's own but in tests
@@ -57,7 +57,7 @@ function indexed(view: ExecView): View {
       for (const name of item.env) all.add(name)
     }
     // A plugin whose items list no command holds nothing to run or to lift
-    if (items.length > 0) held.set(id, { commands, env: [...all] })
+    if (commands.size > 0) held.set(id, { commands, env: [...all] })
   }
   return { plugins: held, any: new Set(any), opening: { folder: opening.folder, dataDir: opening.dataDir, installDir: opening.installDir } }
 }
@@ -77,16 +77,19 @@ async function resolvedDeep(file: string): Promise<string> {
   }
 }
 
-// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path
+// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path.
+// A URL parser drops spaces and control characters before a URL, so they don't hide one. A file URL naming a host is
+// a share
 function namedBy(arg: string): string[] {
   const found = [arg]
   const equals = arg.indexOf('=')
   if (equals !== -1 && equals < arg.length - 1) found.push(arg.slice(equals + 1))
   for (const text of [...found]) {
-    if (!/^file:/i.test(text)) continue
+    if (!/^[\x00-\x20]*file:/i.test(text)) continue
     try {
       const url = new URL(text)
-      found.push(path.normalize(decodeURIComponent(process.platform === 'win32' ? url.pathname.replace(/^\/(?=[A-Za-z]:)/, '') : url.pathname)))
+      const local = decodeURIComponent(process.platform === 'win32' ? url.pathname.replace(/^\/(?=[A-Za-z]:)/, '') : url.pathname)
+      found.push(url.hostname === '' ? path.normalize(local) : `//${url.hostname}${url.pathname}`)
     } catch {}
   }
   return found
@@ -118,18 +121,23 @@ export function createExec(options: ExecOptions = {}): Exec {
     return real
   }
 
-  // Whether an argument names a file in one of those folders. An absolute path counts wherever it leads, by the real
-  // path of as much of it as exists. A relative one counts only when it names something that exists from the working
-  // folder, which is empty, so only one that climbs out of it can
+  // Whether an argument names a file in one of those folders, read the way Windows opens it. An absolute path counts
+  // wherever it leads, by the real path of as much of it as exists. A relative one names a file in the working folder,
+  // which is new and empty, unless it climbs out of it, and then it counts as an absolute one does, whether or not the
+  // file is there yet, since a plugin can write it between prepare and the run. A path through a share always counts
   async function reaches(arg: string, roots: readonly string[], cwd: string): Promise<boolean> {
-    for (const text of namedBy(arg)) {
-      if (text === '' || text.includes('\0')) continue
+    for (const named of namedBy(arg)) {
+      if (named === '' || named.includes('\0')) continue
+      if (throughShare(named)) return true
+      // A name of dots and spaces alone other than . and .. could climb any number of folders on some Windows paths
+      if (process.platform === 'win32' && named.split(/[\\/]/).some(part => /^[. ]+$/.test(part) && part !== '.' && part !== '..')) return true
+      const text = asOpened(named)
       let target: string
       if (path.isAbsolute(text)) {
         target = await resolvedDeep(path.resolve(text))
       } else {
         const joined = path.resolve(cwd, text)
-        if (!await lstat(joined).then(() => true, () => false)) continue
+        if (inside(cwd, joined)) continue
         target = await resolvedDeep(joined)
       }
       if (roots.some(root => inside(root, target))) return true
