@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
 import type { AuditRecord, LogSegment, LogVerification } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
@@ -38,6 +39,25 @@ function listed(items: readonly string[]): string {
   return JSON.stringify(items.slice(0, fitting))
 }
 
+// The longest argument a cut command keeps, its start and its end
+const MAX_ARG = 1024
+
+const bothEnds = (text: string) => (text.length > MAX_ARG ? `${text.slice(0, MAX_ARG / 2)}…${text.slice(-(MAX_ARG / 2 - 1))}` : text)
+
+// A command as a JSON list, whole when it fits. Past the cap the program and the last arguments that fit, each kept to
+// both its ends, since what a command acts on tends to come last and padding at the front must not push it out
+function commandListed(command: readonly string[]): string {
+  const whole = JSON.stringify(command)
+  if (whole.length <= MAX_VALUE) return whole
+  const [program, ...rest] = command.map(bothEnds)
+  const tail: string[] = []
+  for (let i = rest.length - 1; i >= 0; i--) {
+    if (JSON.stringify([program, rest[i], ...tail]).length > MAX_VALUE) break
+    tail.unshift(rest[i])
+  }
+  return JSON.stringify([program, ...tail])
+}
+
 // An audit record as the log's fields, every value within what the log takes. record is the queue's seq, which tells a
 // record written twice from two calls and shows the order within a run. at is the time the call started, which the
 // line's own at is not. The caller and root as text, the scope as JSON lists with how many there were. Never arguments
@@ -53,10 +73,12 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
     fields.pathCount = scope.paths.length
   }
   if (scope?.access !== undefined) fields.access = scope.access
-  // The command is what an exec call acted on, as a path is. commandArgs is how many arguments it had before the cut
+  // The command is what an exec call acted on, as a path is. commandArgs is how many arguments it had before the cut and
+  // commandHash the SHA-256 of the whole array as JSON, which matches it against the commands a manifest declares
   if (scope?.command !== undefined) {
-    fields.command = listed(scope.command)
+    fields.command = commandListed(scope.command)
     fields.commandArgs = scope.command.length
+    fields.commandHash = createHash('sha256').update(JSON.stringify(scope.command)).digest('hex')
   }
   if (scope?.target !== undefined) fields.target = cut(scope.target)
   if (scope?.topics !== undefined) {
