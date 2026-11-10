@@ -28,6 +28,19 @@ describe('view instances', () => {
     expect(list.list([]).map(view => view.owner)).toEqual(['kanban', 'kanban'])
   })
 
+  // On a busy machine a plugin's port can come before the page has read core.views
+  it('opens the first instances of an owner that connected before its views were declared, once they are', () => {
+    const told: Told[] = []
+    const list = new ViewList((owner, event) => void told.push([owner, event]))
+    list.connected('kanban', true)
+    expect(told).toEqual([])
+    list.declared([kanban, tree])
+    expect(told).toEqual([['kanban', { topic: 'view.opened', instance: 'v1', view: 'board' }], ['kanban', { topic: 'view.opened', instance: 'v2', view: 'count' }]])
+    // Declared again, it opens nothing twice, and a view declared later opens too
+    list.declared([{ ...kanban, views: { ...kanban.views, more: { title: 'More', kind: 'view' } } }, tree])
+    expect(told.slice(2)).toEqual([['kanban', { topic: 'view.opened', instance: 'v3', view: 'more' }]])
+  })
+
   it('opens more instances for their owner only, of views it declared', () => {
     const { list } = made()
     list.connected('kanban', true)

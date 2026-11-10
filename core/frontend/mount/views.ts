@@ -40,15 +40,23 @@ export class ViewList {
       if (spec === null) this.remove(held, true)
       else held.spec = spec
     }
+    // An owner whose port came before its views were known, or that declares a new one, gets its first instances now
+    for (const owner of this.up) this.openFirst(owner, true)
   }
 
   // The owner's port came. Without ui.view it draws no view
   connected(owner: string, canView: boolean): void {
     if (!canView) return
     this.up.add(owner)
+    this.openFirst(owner, false)
+  }
+
+  // The first instance of each view the owner declares, told to it. A port that came again hears of those it had too
+  private openFirst(owner: string, onlyNew: boolean): void {
     for (const view of Object.keys(this.declaredBy.get(owner)?.views ?? {})) {
       const spec = this.specOf(owner, view) as ViewSpec
       let held = [...this.instances.values()].find(each => each.owner === owner && each.view === view && each.first)
+      if (held !== undefined && onlyNew) continue
       if (held === undefined) {
         held = { instance: `v${++this.n}`, owner, view, first: true, spec, runtimeTitle: null, down: false, size: null }
         this.instances.set(held.instance, held)
