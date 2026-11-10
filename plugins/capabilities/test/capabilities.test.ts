@@ -122,3 +122,32 @@ describe('the screen under the core\'s words', () => {
     ])
   })
 })
+
+describe('the screen\'s line on programs that run other programs', () => {
+  const exec = (...commands: string[][]): Capability => ({ type: 'exec', commands, env: [] })
+  const line = (...programs: string[]) => `It can run programs that run other programs or code: ${programs.join(', ')}`
+
+  it('names each such program in an exec item by its base name, once, in the order first seen', () => {
+    const granted = [exec(['C:\\Program Files\\Git\\cmd\\git.exe', 'status'], ['/usr/bin/python3.12', '-V']), exec(['git', 'log'], ['NODE', '-v'])]
+    const lines = caps.screen({ granted, reachable: [], callers: [] })
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toBe(line('git', 'python', 'node'))
+  })
+
+  it.each([
+    'bash', 'sh', 'zsh', 'cmd.exe', 'powershell.exe', 'pwsh', 'npm.cmd', 'npx', 'curl', 'wget', 'perl', 'ruby', 'deno', 'bun',
+    'py', 'wsl', 'ssh', 'env', 'xargs', 'cscript', 'wscript', 'mshta', 'rundll32', 'java',
+  ])('counts %s', program => {
+    expect(caps.screen({ granted: [exec([program, 'x'])], reachable: [], callers: [] })).toContain(line(program.replace(/\.\w+$/, '').toLowerCase()))
+  })
+
+  it('adds no line for programs that run nothing else, nor for a name that only contains one', () => {
+    const lines = caps.screen({ granted: [exec(['pandoc', 'a.md'], ['/opt/gitk-viewer', 'x'], ['nodemon-like', 'y'])], reachable: [], callers: [] })
+    expect(lines).toHaveLength(1)
+  })
+
+  it('names a program reached through plugin.call too', () => {
+    const lines = caps.screen({ granted: [call], reachable: [exec(['bash', '-c', 'x'])], callers: [] })
+    expect(lines.at(-1)).toBe(line('bash'))
+  })
+})
