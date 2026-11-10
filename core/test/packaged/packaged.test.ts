@@ -84,7 +84,9 @@ describe('switches and arguments', () => {
   })
 })
 
-// Each control is shown to fire on a copy with that fuse on, so the test can tell the fuse from anything else
+// Each control is shown to fire on a copy with that fuse on, so the test can tell the fuse from anything else. Each
+// start gets a data folder of its own, since a start ends once its log holds core.ready and a log shared with the start
+// before already does, which ended a control before Node had read its options on a slower machine
 describe('the fuses hold', () => {
   async function withFuse(fuse: FuseName, on: boolean, name?: string): Promise<string> {
     const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
@@ -106,27 +108,26 @@ describe('the fuses hold', () => {
 
   it('runs no script as plain Node through ELECTRON_RUN_AS_NODE', async () => {
     const { script, marker } = await markerScript()
-    const { env } = await homeEnv({ ELECTRON_RUN_AS_NODE: '1' })
-    await start({ env, args: [script], ms: 15_000 })
+    const env = async () => (await homeEnv({ ELECTRON_RUN_AS_NODE: '1' })).env
+    await start({ env: await env(), args: [script], ms: 15_000 })
     expect(await exists(marker)).toBe(false)
-    await start({ env, args: [script], ms: 15_000, executable: await withFuse('RunAsNode', true) })
+    await start({ env: await env(), args: [script], ms: 15_000, executable: await withFuse('RunAsNode', true) })
     expect(await exists(marker)).toBe(true)
   })
 
   it('loads no code through NODE_OPTIONS, even in a copy named electron, which Electron itself takes for a run from the source', async () => {
     const { script, marker } = await markerScript()
-    const { env } = await homeEnv({ NODE_OPTIONS: `--require=${script}` })
+    const env = async () => (await homeEnv({ NODE_OPTIONS: `--require=${script}` })).env
     const name = process.platform === 'win32' ? 'electron.exe' : 'electron'
-    await start({ env, ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', false, name) })
+    await start({ env: await env(), ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', false, name) })
     expect(await exists(marker)).toBe(false)
-    const control = await start({ env, ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', true, name) })
+    const control = await start({ env: await env(), ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', true, name) })
     expect(await exists(marker), control.stderr).toBe(true)
   })
 
   it('opens no debugger for --inspect', async () => {
-    const { env } = await homeEnv()
-    expect((await start({ env, args: ['--inspect=0'], ms: 15_000 })).stderr).not.toContain('Debugger listening')
-    expect((await start({ env, args: ['--inspect=0'], ms: 15_000, executable: await withFuse('EnableNodeCliInspectArguments', true) })).stderr).toContain('Debugger listening')
+    expect((await start({ args: ['--inspect=0'], ms: 15_000 })).stderr).not.toContain('Debugger listening')
+    expect((await start({ args: ['--inspect=0'], ms: 15_000, executable: await withFuse('EnableNodeCliInspectArguments', true) })).stderr).toContain('Debugger listening')
   })
 
   it('never loads an app folder put where app.asar was', async () => {
