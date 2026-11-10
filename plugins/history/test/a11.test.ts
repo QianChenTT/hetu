@@ -127,9 +127,12 @@ describe('A-11, a program planted for git to run', () => {
   it('through hetu\'s own environment fires under plain git and never through history, whose environment starts empty', async () => {
     const home = path.join(where.base, 'home')
     await mkdir(home)
-    await writeFile(path.join(home, '.gitconfig'), `[core]\n\tfsmonitor = ${fires('home-gitconfig')}\n`)
+    // An fsmonitor runs only for a command that looks at a work tree, which history never runs, so each config also
+    // names a trace file, which every git command writes once it reads that config
+    const traced = (name: string) => path.join(where.base, `${name}-trace.txt`)
+    await writeFile(path.join(home, '.gitconfig'), `[core]\n\tfsmonitor = ${fires('home-gitconfig')}\n[trace2]\n\tnormalTarget = ${slashes(traced('home'))}\n`)
     const global = path.join(where.base, 'global.gitconfig')
-    await writeFile(global, `[core]\n\tfsmonitor = ${fires('global-config')}\n`)
+    await writeFile(global, `[core]\n\tfsmonitor = ${fires('global-config')}\n[trace2]\n\tnormalTarget = ${slashes(traced('global'))}\n`)
     const scratch = path.join(where.base, 'scratch')
     await mkdir(scratch)
     await plain(scratch, ['init', '-q'])
@@ -138,7 +141,9 @@ describe('A-11, a program planted for git to run', () => {
     await plain(scratch, ['status'], { ...process.env, GIT_CONFIG_GLOBAL: global })
     await plain(scratch, ['status'], { ...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_GLOBAL: path.join(home, '.gitconfig') })
     expect(await fired()).toEqual(expect.arrayContaining(['config-count', 'global-config', 'home-gitconfig']))
+    expect([await exists(traced('home')), await exists(traced('global'))]).toEqual([true, true])
     await rm(marker)
+    for (const name of ['home', 'global']) await rm(traced(name))
     // All of them at once in the environment hetu itself runs with
     setEnv({
       GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: fires('config-count'),
@@ -150,7 +155,7 @@ describe('A-11, a program planted for git to run', () => {
     })
     await useHistory()
     expect(await fired()).toEqual([])
-    for (const name of ['stolen-index', 'stolen-objects', 'trace.txt']) expect(await exists(path.join(where.base, name))).toBe(false)
+    for (const name of ['stolen-index', 'stolen-objects', 'trace.txt', 'home-trace.txt', 'global-trace.txt']) expect(await exists(path.join(where.base, name)), name).toBe(false)
     for (const name of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_TRACE']) delete process.env[name]
     // Nothing went to the repo the environment named either
     expect((await plain(scratch, ['rev-list', '--all', '--count'])).stdout.trim()).toBe('0')
@@ -176,6 +181,28 @@ describe('A-11, a program planted for git to run', () => {
     await writeFile(path.join(where.notes, 'a.md'), 'note a, edited')
     expect(await commitOf(history, ['a.md'], 'second')).toMatch(/^[0-9a-f]{40}$/)
     expect(await logOf(history, 'a.md')).toHaveLength(2)
+    expect(await fired()).toEqual([])
+    history.close()
+  })
+
+  // A promisor remote makes git fetch an object it lacks, which runs the remote's upload-pack or ssh command
+  it('in history\'s own repo, as a promisor remote, doesn\'t fire when a read names a commit that isn\'t there', async () => {
+    const history = await started(where)
+    await commitOf(history, ['a.md'], 'first')
+    const home = path.join(where.dataDir, 'host', 'history')
+    const key = (await readdir(home)).find(name => /^[0-9a-f]{16}$/.test(name))!
+    const repo = path.join(home, key, 'shadow.git')
+    const config = await readFile(path.join(repo, 'config'), 'utf8')
+    await writeFile(path.join(repo, 'config'), config.replace('repositoryformatversion = 0', 'repositoryformatversion = 1')
+      + `\n[core]\n\tsshCommand = ${fires('shadow-ssh')} #\n[extensions]\n\tpartialClone = origin\n`
+      + `[remote "origin"]\n\turl = ${slashes(repo)}\n\tpromisor = true\n\tuploadpack = ${fires('shadow-uploadpack')} #\n`
+      + `[remote "other"]\n\turl = ssh://example.invalid/x.git\n\tpromisor = true\n`)
+    const missing = '1234567890123456789012345678901234567890'
+    // The plant is real: plain git reading the missing object from this repo fetches it
+    await plain(where.base, ['--git-dir', repo, 'cat-file', '-p', missing])
+    expect(await fired()).toContain('shadow-uploadpack')
+    await rm(marker)
+    expect(await ask(history, 'history.read', { path: 'a.md', commit: missing })).toMatchObject({ refused: { code: 'not-found' } })
     expect(await fired()).toEqual([])
     history.close()
   })

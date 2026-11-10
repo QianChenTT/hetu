@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import { HISTORY_FILE_BYTES, LOG_PAGE } from 'hetu-core/api/exec.ts'
+import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE } from 'hetu-core/api/exec.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
@@ -14,6 +14,8 @@ export type HistoryOptions = {
   ambient?: Readonly<Record<string, string | undefined>>
   // The largest file a commit stores, HISTORY_FILE_BYTES but in tests
   fileBytes?: number
+  // The most one commit reads into memory, HISTORY_COMMIT_BYTES but in tests
+  commitBytes?: number
 }
 
 export type History = {
@@ -49,6 +51,7 @@ const callerName = (caller: Caller) => (caller.kind === 'plugin' ? caller.id : c
 // prepare canonicalises each path, so the gate decides on the name the note really has
 export function createHistory(options: HistoryOptions = {}): History {
   const fileBytes = options.fileBytes ?? HISTORY_FILE_BYTES
+  const commitBytes = options.commitBytes ?? HISTORY_COMMIT_BYTES
   const ambient = options.ambient ?? process.env
   const lookup = options.path ?? ambient.PATH ?? ambient.Path
   let home: string | null = null
@@ -88,6 +91,8 @@ export function createHistory(options: HistoryOptions = {}): History {
     env.GIT_ATTR_NOSYSTEM = '1'
     env.GIT_CONFIG_GLOBAL = nullDevice()
     env.GIT_TERMINAL_PROMPT = '0'
+    // A promisor remote edited into the repo would fetch a missing object through a program of its choosing
+    env.GIT_NO_LAZY_FETCH = '1'
     return env
   }
 
@@ -96,6 +101,8 @@ export function createHistory(options: HistoryOptions = {}): History {
     const fixed = more.bare === true ? [] : [
       `--git-dir=${repo.dir}`, '--literal-pathspecs', '--no-pager',
       '-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${nullDevice()}`, '-c', 'core.autocrlf=false', '-c', 'gc.auto=0',
+      // No transport at all: a remote, a submodule or a promisor named in an edited config can't run upload-pack or ssh
+      '-c', 'protocol.allow=never',
     ]
     return runClean(repo.git, [...fixed, ...args], {
       cwd: emptyDir(), env: more.env ?? repo.env, input: more.input, maxOutput: more.maxOutput ?? SMALL, signal: stopping.signal,
@@ -166,8 +173,19 @@ export function createHistory(options: HistoryOptions = {}): History {
     const { message } = call.args as { message: string }
     // Every note is read before git hears of any, so a file over the cap commits none of the call
     const notes: { path: string, bytes: Buffer | null }[] = []
-    for (const target of targets) notes.push({ path: target.relative, bytes: await bytesOf(target) })
+    let total = 0
+    for (const target of targets) {
+      const bytes = await bytesOf(target)
+      total += bytes?.length ?? 0
+      // All of a commit sits in memory at once, so the call as a whole has a cap too
+      if (total > commitBytes) throw refused('failed', 'too-large')
+      notes.push({ path: target.relative, bytes })
+    }
     const parent = await head(repo)
+    // Only history writes this repo and one call at a time, so a lock here was left by a git ended mid-write. The index
+    // starts as the last commit, so nothing an earlier git staged goes into this one
+    await rm(path.join(repo.dir, 'index.lock'), { force: true })
+    await git(repo, parent === null ? ['read-tree', '--empty'] : ['read-tree', parent])
     try {
       const entries: string[] = []
       // A note gone first, so a folder of its name can take its place in the same commit
@@ -206,7 +224,8 @@ export function createHistory(options: HistoryOptions = {}): History {
     if (await head(repo) === null) return { commits: [] }
     const limit = (call.args as { limit?: number }).limit ?? LOG_PAGE
     const format = ['%H', '%an', '%cn', '%aI', '%B'].join('%x1f')
-    const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--format=${format}%x1e`, BRANCH, '--', target.relative])
+    // A message of the longest kind is three bytes a character, with room for the names, the date and the id
+    const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: limit * (MAX_COMMIT_MESSAGE * 3 + 4096) })
     const commits: HistoryCommit[] = []
     for (const record of out.split(RECORD)) {
       // rev-list writes its own "commit <id>" line before each formatted one
@@ -221,7 +240,8 @@ export function createHistory(options: HistoryOptions = {}): History {
   async function read(repo: Repo, call: Call, target: Canonical): Promise<unknown> {
     const { commit: id } = call.args as { commit: string }
     if (!commitId.test(id)) throw refused('invalid')
-    const ran = await run(repo, ['cat-file', 'blob', `${id}:${target.relative}`], { maxOutput: fileBytes + 1 })
+    // Through ^{commit}, so the id of a tree or a blob names nothing
+    const ran = await run(repo, ['cat-file', 'blob', `${id}^{commit}:${target.relative}`], { maxOutput: fileBytes + 1 })
     if (ran.code !== 0) throw refused('not-found')
     if (ran.truncated || ran.stdout.length > fileBytes) throw refused('failed', 'too-large')
     let text: string
@@ -264,6 +284,9 @@ export function createHistory(options: HistoryOptions = {}): History {
       if (home === null || opening === null || under !== opening) throw refused('unavailable')
       if (targets === undefined || targets.length === 0) throw refused('failed')
       return inOrder(async () => {
+        // A call waits its turn behind the others, so what held at perform is asked again
+        if (Date.now() > call.deadline) throw refused('timeout')
+        if (home === null || opening !== under) throw refused('unavailable')
         const repo = await repoOf(under)
         if (call.action === 'history.commit') return commit(repo, call, targets)
         if (call.action === 'history.log') return log(repo, call, targets[0])

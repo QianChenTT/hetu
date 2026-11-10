@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { findProgram } from 'hetu-core/lib/clean-env.ts'
 import { createHistory } from '../src/history.ts'
@@ -120,6 +122,16 @@ describe('a commit', () => {
     expect(await ask(history, 'history.commit', { paths: ['a.md', 'big.md'], message: 'x' })).toEqual({ refused: { code: 'failed', reason: 'too-large' } })
     expect(await logOf(history, 'a.md')).toEqual([])
     expect(await commitOf(history, ['a.md'])).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  // Each note under the file cap, all of them together past the commit's
+  it('refuses a commit whose notes together are past the cap on one commit, and commits none of it', async () => {
+    const history = await started(where, { fileBytes: 64, commitBytes: 100 })
+    await note(where, 'one.md', 'x'.repeat(60))
+    await note(where, 'two.md', 'y'.repeat(60))
+    expect(await ask(history, 'history.commit', { paths: ['one.md', 'two.md'], message: 'x' })).toEqual({ refused: { code: 'failed', reason: 'too-large' } })
+    expect(await logOf(history, 'one.md')).toEqual([])
+    expect(await commitOf(history, ['one.md'])).toMatch(/^[0-9a-f]{40}$/)
   })
 
   it('matches a path as it is written, so a name with a bracket lists only its own commits', async () => {
@@ -321,6 +333,82 @@ describe('where the history lives', () => {
     history.close()
     expect(await ask(history, 'history.log', { path: 'a.md' })).toEqual({ refused: { code: 'unavailable' } })
   })
+
+  it('reads a note only at a commit, never through the id of a tree', async () => {
+    const history = await started(where)
+    await note(where, 'journal/a.md', 'the a in journal')
+    const commit = (await commitOf(history, ['a.md', 'journal/a.md']))!
+    const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => /^[0-9a-f]{16}$/.test(name))!, 'shadow.git')
+    const { stdout } = await promisify(execFile)('git', ['--git-dir', repo, 'rev-parse', `${commit}:journal`])
+    expect(await ask(history, 'history.read', { path: 'a.md', commit: stdout.trim() })).toEqual({ refused: { code: 'not-found' } })
+    expect(await ask(history, 'history.read', { path: 'a.md', commit })).toMatchObject({ text: 'note a' })
+  })
+})
+
+describe('what a stopped git leaves behind', () => {
+  async function repoDir(): Promise<string> {
+    const home = path.join(where.dataDir, 'host', 'history')
+    return path.join(home, (await readdir(home)).find(name => /^[0-9a-f]{16}$/.test(name))!, 'shadow.git')
+  }
+
+  it('commits through an index lock a git ended mid-write left, since history alone writes its repo', async () => {
+    const history = await started(where)
+    await commitOf(history, ['a.md'])
+    await writeFile(path.join(await repoDir(), 'index.lock'), '')
+    await note(where, 'a.md', 'note a, edited')
+    expect(await commitOf(history, ['a.md'])).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('commits only the notes a call names, whatever an earlier git left staged in the index', async () => {
+    const history = await started(where)
+    await commitOf(history, ['a.md'])
+    // A blob staged under another name, as a git ended between update-index and commit-tree would leave it
+    const repo = await repoDir()
+    const run = promisify(execFile)
+    const { stdout: blob } = await run('git', ['--git-dir', repo, 'hash-object', '-w', path.join(where.notes, 'a.md')])
+    await run('git', ['--git-dir', repo, 'update-index', '--add', '--cacheinfo', `100644,${blob.trim()},stray.md`])
+    await note(where, 'a.md', 'note a, edited')
+    const commit = (await commitOf(history, ['a.md']))!
+    const { stdout } = await run('git', ['--git-dir', repo, 'ls-tree', '--name-only', '-r', commit])
+    expect(stdout.trim().split('\n')).toEqual(['a.md'])
+  })
+})
+
+describe('a call that waits its turn', () => {
+  it('answers timeout for a call whose deadline passed before its turn, and commits nothing', async () => {
+    const history = await started(where)
+    const call = { ...callOf('history.commit', { paths: ['a.md'], message: 'late' }), deadline: Date.now() - 1 }
+    const prepared = await history.provider.prepare(call)
+    await expect(history.provider.perform(call, prepared as never)).rejects.toEqual({ code: 'timeout' })
+    expect(await logOf(history, 'a.md')).toEqual([])
+  })
+
+  it('ends a call queued behind another once a new folder is picked while it waits', async () => {
+    const history = await started(where)
+    const first = callOf('history.commit', { paths: ['a.md'], message: 'first' })
+    const second = callOf('history.commit', { paths: ['journal/b.md'], message: 'second' })
+    const [p1, p2] = [await history.provider.prepare(first), await history.provider.prepare(second)]
+    const running = history.provider.perform(first, p1 as never)
+    const waiting = history.provider.perform(second, p2 as never)
+    history.role.open({ folder: path.join(where.base, 'elsewhere'), dataDir: where.dataDir, installDir: where.installDir })
+    await running.catch(() => {})
+    await expect(waiting).rejects.toEqual({ code: 'unavailable' })
+  })
+})
+
+describe('a page of the log', () => {
+  // 90 messages of 4096 characters at three bytes each are past a megabyte
+  it('answers a large page of the longest messages', async () => {
+    const history = await started(where)
+    const message = '河'.repeat(4096)
+    for (let i = 0; i < 90; i++) {
+      await note(where, 'a.md', `version ${i}`)
+      await commitOf(history, ['a.md'], message)
+    }
+    const listed = await logOf(history, 'a.md', 200)
+    expect(listed).toHaveLength(90)
+    expect(listed[0].message).toBe(message)
+  }, 180000)
 })
 
 describe('whose call it is', () => {
