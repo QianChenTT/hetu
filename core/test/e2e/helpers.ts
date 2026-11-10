@@ -9,6 +9,10 @@ import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string
+// A packed build to drive in place of the source, packaged and not locked, from npm run test:e2e:packaged
+export const drivenApp = process.env.HETU_E2E_APP
+// How a test starts hetu itself: the packed build with nothing after its name, or electron with the repo
+export const appCommand: [string, string[]] = drivenApp === undefined ? [electronPath, [repo]] : [drivenApp, []]
 // Ubuntu 24.04 keeps unprivileged user namespaces from Chromium's sandbox, so a start on Linux goes without it, as
 // Playwright's own starts do there
 export const sandboxArgs = process.platform === 'linux' ? ['--no-sandbox'] : []
@@ -36,12 +40,15 @@ export function env(extra: Record<string, string>): Record<string, string> {
   return { ...Object.fromEntries(own), ...extra }
 }
 
-// The built app from the source, as `electron .` starts it, on its own data folder, its windows quiet so they take no
+// The built app from the source, as `electron .` starts it, or the packed build HETU_E2E_APP names, on its own data folder, its windows quiet so they take no
 // focus from the person at the machine. extra holds more environment, an
 // install folder of the test's own among it
 // switches are Chromium's, placed before the app
 export async function launch(dataDir: string, extra: Record<string, string> = {}, switches: string[] = []): Promise<ElectronApplication> {
-  const app = await electron.launch({ args: [...switches, repo], env: env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: '1', ...extra }) })
+  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: '1', ...extra })
+  const app = await (drivenApp === undefined
+    ? electron.launch({ args: [...switches, repo], env: environment })
+    : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))
   running.push(app)
   return app
 }
