@@ -6,3 +6,5 @@ dist/
 # Plan ledgers and review packages, local only
 /.superpowers/
 /.vscode/
+# What packaging makes: the stage, the packed folders and the installer
+/dist-package/
