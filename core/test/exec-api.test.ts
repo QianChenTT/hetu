@@ -25,6 +25,10 @@ describe('the names exec passes through', () => {
     'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB',
     'BASH_ENV', 'ENV', 'ELECTRON_RUN_AS_NODE', 'JAVA_TOOL_OPTIONS', 'DOTNET_STARTUP_HOOKS', 'LD_PRELOAD', 'LD_LIBRARY_PATH',
     'DYLD_INSERT_LIBRARIES', 'GIT_SSH_COMMAND', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_EXTERNAL_DIFF', 'GIT_DIR',
+    // Their kin the review found passing
+    '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'CLASSPATH', 'PERLLIB', 'PERL5DB', 'COR_ENABLE_PROFILING', 'COR_PROFILER', 'COR_PROFILER_PATH',
+    'CORECLR_PROFILER_PATH', 'DOTNET_ROOT', 'OPENSSL_CONF', 'OPENSSL_MODULES', 'npm_config_script_shell', 'NPM_CONFIG_USERCONFIG',
+    'LUA_INIT', 'LUA_PATH', 'PHPRC', 'PHP_INI_SCAN_DIR', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS', 'PYTHONUSERBASE', 'TCLLIBPATH',
   ])('refuses %s, which makes a program load code', name => {
     expect(loadsCode(name)).toBe(true)
     expect(envNameProblem(name)).not.toBeNull()

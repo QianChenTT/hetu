@@ -51,7 +51,7 @@ export const capability = z.discriminatedUnion('type', [
   // Exact argument arrays, never a string a shell would split. env names the variables a command gets
   z.strictObject({
     type: z.literal('exec'),
-    commands: scopes(z.array(text).min(1).max(MAX_SCOPES_PER_TYPE)),
+    commands: scopes(z.array(text).min(1).max(MAX_SCOPES_PER_TYPE)).min(1),
     env: scopes(envName),
   }),
   z.strictObject({ type: z.literal('plugin.call'), targets: scopes(pluginId) }),

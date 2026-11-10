@@ -12,6 +12,8 @@ export const LOG_PAGE = 50
 export const MAX_LOG_PAGE = 200
 // The largest file history stores: the result cap, since a larger one could never be read back
 export const HISTORY_FILE_BYTES = 16 * MiB
+// The most one history.commit reads into memory, all its notes together
+export const HISTORY_COMMIT_BYTES = 64 * MiB
 // What exec keeps of a command's stdout and of its stderr
 export const EXEC_OUTPUT_BYTES = MiB
 // Commands one caller runs at once
@@ -26,8 +28,12 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_()]{0,63}$/
 const CODE_LOADING = new Set([
   'NODE_OPTIONS', 'NODE_PATH', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONHOME', 'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB',
   'BASH_ENV', 'ENV', 'ELECTRON_RUN_AS_NODE', 'JAVA_TOOL_OPTIONS', 'DOTNET_STARTUP_HOOKS',
+  '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'CLASSPATH', 'PERLLIB', 'PERL5DB', 'OPENSSL_CONF', 'OPENSSL_MODULES', 'OPENSSL_ENGINES',
+  'LUA_INIT', 'LUA_PATH', 'LUA_CPATH', 'PHPRC', 'PHP_INI_SCAN_DIR', 'ZDOTDIR', 'SHELLOPTS', 'BASHOPTS', 'PYTHONUSERBASE',
+  'TCLLIBPATH',
 ])
-const CODE_LOADING_FAMILIES = ['LD_', 'DYLD_', 'GIT_']
+// The .NET profilers and runtime, npm's own config, which names a shell for scripts, and the families above
+const CODE_LOADING_FAMILIES = ['LD_', 'DYLD_', 'GIT_', 'COR_', 'CORECLR_', 'DOTNET_', 'NPM_CONFIG_']
 
 export function loadsCode(name: string): boolean {
   const upper = name.toUpperCase()
