@@ -13,6 +13,8 @@ import { appDir, cleanup, homeEnv, linkedCopy, repo, resourcesOf, start, temp } 
 afterEach(cleanup)
 
 const exists = (file: string) => readFile(file).then(() => true, () => false)
+// A copy whose fuses changed is signed again on macOS, where an executable with a broken ad hoc signature won't run
+const darwin = process.platform === 'darwin'
 
 describe('the packed folder', () => {
   it('has every fuse as the table sets it', async () => {
@@ -22,8 +24,10 @@ describe('the packed folder', () => {
     }
   })
 
+  // macOS keeps the app's icon there too, which Info.plist names
   it('holds app.asar and the install plugins in resources and nothing else', async () => {
-    expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', 'plugins'])
+    const icon = process.platform === 'darwin' ? ['electron.icns'] : []
+    expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', ...icon, 'plugins'].sort())
   })
 })
 
@@ -85,7 +89,7 @@ describe('the fuses hold', () => {
   async function withFuse(fuse: FuseName, on: boolean, name?: string): Promise<string> {
     const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
     const copy = await linkedCopy([executable])
-    await flipFuses(executableIn(copy), { version: FuseVersion.V1, [FuseV1Options[fuse]]: on })
+    await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options[fuse]]: on })
     if (name === undefined) return executableIn(copy)
     const named = path.join(path.dirname(executableIn(copy)), name)
     await rename(executableIn(copy), named)
@@ -115,8 +119,8 @@ describe('the fuses hold', () => {
     const name = process.platform === 'win32' ? 'electron.exe' : 'electron'
     await start({ env, ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', false, name) })
     expect(await exists(marker)).toBe(false)
-    await start({ env, ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', true, name) })
-    expect(await exists(marker)).toBe(true)
+    const control = await start({ env, ms: 20_000, executable: await withFuse('EnableNodeOptionsEnvironmentVariable', true, name) })
+    expect(await exists(marker), control.stderr).toBe(true)
   })
 
   it('opens no debugger for --inspect', async () => {
@@ -156,7 +160,7 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     expect(at).toBeGreaterThan(8)
     bytes[at] = bytes[at] === 0x61 ? 0x62 : 0x61
     await writeFile(file, bytes)
-    if (!fuseOn) await flipFuses(executableIn(copy), { version: FuseVersion.V1, [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false })
+    if (!fuseOn) await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false })
     return copy
   }
 
