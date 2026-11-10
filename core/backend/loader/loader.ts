@@ -1779,7 +1779,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    return frozen({ n: this.n, foldCase: false, plugins })
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand] })
   }
 
   // The folder in the state and hetu's own folders, which the luoshu refuses to reach into

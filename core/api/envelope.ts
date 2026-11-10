@@ -65,7 +65,7 @@ export const calleeRefusalCodes = frozen([
 ] as const satisfies readonly RefusalCode[])
 
 // Fixed, so a reason never carries another principal's id, path or lease (the A-05 lesson)
-export const reasonCodes = frozen(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id', 'quota'] as const)
+export const reasonCodes = frozen(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id', 'quota', 'not-text'] as const)
 export type ReasonCode = typeof reasonCodes[number]
 
 // action is the caller's own action, as far as the carrier could read one. request names the held security request
