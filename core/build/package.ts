@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { flipFuses } from '@electron/fuses'
 import { Arch, build, Platform, type Configuration } from 'electron-builder'
@@ -23,6 +23,28 @@ export type PackageKind = {
   // never made into an installer
   locked: boolean
   out: string
+}
+
+// electron-builder's own 256 pixel Electron icon, the one the executable shows until hetu has an icon of its own
+const ICON_PNG = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates', 'icons', 'electron-linux', '256x256.png')
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+// An ICO file holding one 256 pixel PNG, as Windows reads them since Vista. The MSI's Start menu shortcut names an icon
+// whether or not one is set, so the installer needs one
+export function icoFromPng(png: Buffer): Buffer {
+  if (!png.subarray(0, 8).equals(PNG_SIGNATURE)) throw new Error('not a PNG')
+  const header = Buffer.alloc(22)
+  header.writeUInt16LE(0, 0)
+  header.writeUInt16LE(1, 2)
+  header.writeUInt16LE(1, 4)
+  // Width and height 0 stand for 256, then no palette, the reserved byte, one plane and 32 bits a pixel
+  header.writeUInt8(0, 6)
+  header.writeUInt8(0, 7)
+  header.writeUInt16LE(1, 10)
+  header.writeUInt16LE(32, 12)
+  header.writeUInt32LE(png.length, 14)
+  header.writeUInt32LE(22, 18)
+  return Buffer.concat([header, png])
 }
 
 // The executable inside a packed folder
@@ -58,7 +80,7 @@ function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<Fuse
       await rm(path.join(resources, 'default_app.asar'), { force: true })
       await flipFuses(executableIn(context.appOutDir, context.electronPlatformName), fuseConfig(context.electronPlatformName, fuses))
     },
-    win: { target: kind.target === 'installer' ? ['msi'] : ['dir'] },
+    win: { target: kind.target === 'installer' ? ['msi'] : ['dir'], icon: path.join(stage, 'resources', 'icon.ico') },
     // Per machine into Program Files with one UAC prompt, no folder to pick, never started by the installer, so hetu
     // never runs elevated
     msi: {
@@ -82,6 +104,8 @@ export async function packageHetu(kind: PackageKind): Promise<{ appOutDir: strin
   const stage = path.join(kind.out, 'stage')
   await rm(kind.out, { recursive: true, force: true })
   await stageInstall(stage, { locked: kind.locked })
+  await mkdir(path.join(stage, 'resources'), { recursive: true })
+  await writeFile(path.join(stage, 'resources', 'icon.ico'), icoFromPng(await readFile(ICON_PNG)))
   const fuses = kind.locked ? FUSES : { ...FUSES, EnableNodeCliInspectArguments: true }
   const platform = process.platform === 'win32' ? Platform.WINDOWS : process.platform === 'darwin' ? Platform.MAC : Platform.LINUX
   const arch = process.platform === 'darwin' ? Arch.arm64 : Arch.x64
