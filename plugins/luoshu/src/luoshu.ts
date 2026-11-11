@@ -173,7 +173,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     await syncDir(dir)
     const made = version(bytes)
     own.set(target.key, made)
-    await stamped(target.relative, await stampOf(target.absolute).catch(() => null))
+    // Not awaited: the walk taken when the watch began can still be running on a large folder, and a save doesn't wait
+    // for it. The stamp still lands before any event for this write is judged, which waits on the same walk later
+    void stamped(target.relative, await stampOf(target.absolute).catch(() => null))
     publish('changed', target.relative)
     return { version: made }
   }
