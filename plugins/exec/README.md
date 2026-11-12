@@ -1,6 +1,6 @@
 Exec, an install plugin whose host half serves `exec.run`: one command, as its argument array, for a plugin that holds an `exec` item. A command runs as the user, outside every wall hetu has, so this is the one grant that leaves hetu's model. What exec holds a command to:
 
-- **the exact list.** The caller's whole argument array has to be one its `exec` items list, argument for argument. Nothing is matched by joining words and nothing is a pattern. The gate judges the same array when it is on. This check is exec's own, against a view of the grants the loader renews with every change, and it holds with the gate switched off
+- **the exact list.** The caller's whole argument array has to be one its `exec` items list, argument for argument. Nothing is matched by joining words and nothing is a pattern. The gate judges the same array when it is on. This check is exec's own, against a view of the grants the loader renews with every change, and it holds with the gate switched off. An item the human switched off isn't in that view, so a command only that item listed stays refused with the gate off too
 - **any command** is the human's switch for one plugin. It lifts the list for a plugin that holds an `exec` item and gives nothing to one that holds none
 - **only plugins.** A window and a content frame hold no `exec`
 - **no shell.** The program is found on hetu's PATH by a bare name or taken by an absolute path, then run by its real path with the arguments as they are. A `.cmd` or `.bat` file is never run, since a shell would read it

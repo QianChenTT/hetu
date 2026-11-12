@@ -1,1 +1,1 @@
-Runs in Chromium with no Node access. The core keeps three fixed pages here: the worker host page that starts plugin workers from verified bytes, the window shell (preload, port handoff, frame mount, bridge and banner) and the trusted page. Everything else in a window is a plugin
+Runs in Chromium with no Node access. The core keeps three fixed pages here: the worker host page that starts plugin workers from verified bytes, the drawer, the editor window's page (see `mount/README.md`) and the trusted page. Everything else in a window is a plugin
