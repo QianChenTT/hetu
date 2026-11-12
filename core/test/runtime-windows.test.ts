@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
@@ -79,6 +81,7 @@ describe('quiet windows for runs from the source', () => {
   it('opens as usual otherwise, and always in a packaged build', () => {
     expect(quietPlacement({ packaged: false, env: {}, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
     expect(quietPlacement({ packaged: true, env: { HETU_QUIET_WINDOWS: '1' }, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: '0' }, displays, cursorDisplay: 1 })).toEqual({ quiet: false })
   })
 
   it('shows a quiet editor without focus, where it was placed', () => {
@@ -99,6 +102,73 @@ describe('quiet windows for runs from the source', () => {
     openEditor(FakeWindow as unknown as typeof BrowserWindow, session, false)
     for (const { window } of made) window.emit('ready-to-show')
     expect(made.map(({ options, shown }) => [options.x, options.y, shown])).toEqual([[1960, 40, ['showInactive']], [undefined, undefined, ['show']]])
+  })
+
+  it('leaves opacity and focusable to Electron for a window that is not hidden', () => {
+    const made: Record<string, unknown>[] = []
+    class FakeWindow extends EventEmitter {
+      webContents = {}
+      constructor(options: Record<string, unknown>) {
+        super()
+        made.push(options)
+      }
+      show() {}
+      showInactive() {}
+      loadURL() { return Promise.resolve() }
+    }
+    for (const placement of [undefined, { quiet: false }, { quiet: true }, { quiet: true, at: { x: 1960, y: 40 } }]) {
+      openEditor(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+      openTrusted(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+    }
+    expect(made).toHaveLength(8)
+    for (const options of made) {
+      expect('opacity' in options).toBe(false)
+      expect('focusable' in options).toBe(false)
+    }
+  })
+
+  // The packaged build ignores the switch only if main passes its locked flag, which no test of quietPlacement alone sees
+  it('is placed from main with the locked flag as packaged', async () => {
+    const source = await readFile(path.join(import.meta.dirname, '..', 'backend', 'main.ts'), 'utf8')
+    const calls = [...source.matchAll(/quietPlacement\(\{\s*packaged:\s*(\w+),/g)].map(match => match[1])
+    expect(calls).toEqual(['LOCKED'])
+    expect(source.match(/quietPlacement\(/g)).toHaveLength(1)
+  })
+
+  it('opens off every display, see-through and unable to take focus when HETU_QUIET_WINDOWS is hidden', () => {
+    const hidden = { quiet: true, at: { x: -32000, y: -32000 }, hide: { opacity: 0, focusable: false } }
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: 'hidden' }, displays, cursorDisplay: 1, platform: 'win32' })).toEqual(hidden)
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: 'hidden' }, displays, cursorDisplay: 1, platform: 'darwin' })).toEqual(hidden)
+    // A window that can't take focus on Linux leaves the window manager and stays on top
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: 'hidden' }, displays, cursorDisplay: 1, platform: 'linux' }))
+      .toEqual({ quiet: true, at: { x: -32000, y: -32000 }, hide: { opacity: 0 } })
+  })
+
+  it('ignores hidden in a packaged build and any other value', () => {
+    expect(quietPlacement({ packaged: true, env: { HETU_QUIET_WINDOWS: 'hidden' }, displays, cursorDisplay: 1, platform: 'win32' })).toEqual({ quiet: false })
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: 'Hidden' }, displays, cursorDisplay: 1, platform: 'win32' })).toEqual({ quiet: false })
+    expect(quietPlacement({ packaged: false, env: { HETU_QUIET_WINDOWS: 'hidden ' }, displays, cursorDisplay: 1, platform: 'win32' })).toEqual({ quiet: false })
+  })
+
+  it('opens a hidden editor and trusted window with the hiding options, shown without focus', () => {
+    const made: { options: Record<string, unknown>, shown: string[], window: EventEmitter }[] = []
+    class FakeWindow extends EventEmitter {
+      shown: string[] = []
+      webContents = {}
+      constructor(options: Record<string, unknown>) {
+        super()
+        made.push({ options, shown: this.shown, window: this })
+      }
+      show() { this.shown.push('show') }
+      showInactive() { this.shown.push('showInactive') }
+      loadURL() { return Promise.resolve() }
+    }
+    const placement = { quiet: true, at: { x: -32000, y: -32000 }, hide: { opacity: 0, focusable: false } }
+    openEditor(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+    openTrusted(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+    for (const { window } of made) window.emit('ready-to-show')
+    expect(made.map(({ options, shown }) => [options.x, options.y, options.opacity, options.focusable, options.show, shown]))
+      .toEqual([[-32000, -32000, 0, false, false, ['showInactive']], [-32000, -32000, 0, false, false, ['showInactive']]])
   })
 })
 

@@ -41,11 +41,12 @@ export function env(extra: Record<string, string>): Record<string, string> {
 }
 
 // The built app from the source, as `electron .` starts it, or the packed build HETU_E2E_APP names, on its own data folder, its windows quiet so they take no
-// focus from the person at the machine. extra holds more environment, an
+// focus from the person at the machine: hidden off every display unless HETU_QUIET_WINDOWS is exactly 1, which shows
+// them on another display for a person who wants to watch. extra holds more environment, an
 // install folder of the test's own among it
 // switches are Chromium's, placed before the app
 export async function launch(dataDir: string, extra: Record<string, string> = {}, switches: string[] = []): Promise<ElectronApplication> {
-  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: '1', ...extra })
+  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: process.env.HETU_QUIET_WINDOWS === '1' ? '1' : 'hidden', ...extra })
   const app = await (drivenApp === undefined
     ? electron.launch({ args: [...switches, repo], env: environment })
     : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))
