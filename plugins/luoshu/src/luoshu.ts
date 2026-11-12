@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants, createReadStream, watch, type FSWatcher } from 'node:fs'
-import { mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
@@ -25,6 +25,8 @@ export type LuoshuOptions = {
   // The largest note a read answers, the floor's resultBytes but in tests. A larger one is refused from its size, before
   // main reads it
   readCap?: number
+  // Hands a note to the OS's bin, rejecting when the bin refuses it. With none a remove answers unavailable
+  trash?: (absolute: string) => Promise<void>
 }
 
 // A write's temp file sits beside the note, a dot file so Obsidian, ** grants and the listing pass it by
@@ -32,6 +34,10 @@ const TEMP = '.hetu-tmp'
 const isTemp = (name: string) => name.startsWith('.') && name.endsWith(TEMP)
 // Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
 const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+
+// What a volume with no hard links answers a link with, so a move falls back to a rename after its check
+const NO_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EINVAL'])
+const absent = (err: unknown) => ['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')
 
 const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
@@ -50,9 +56,18 @@ function hashFile(file: string): Promise<string> {
   })
 }
 
-// luoshu.read, luoshu.write and luoshu.list. prepare turns the path the caller wrote into the canonical one with the
-// canonicaliser and holds the lock on its key until perform or release, so no other hetu write to that name runs in
-// between. perform acts on the path prepare resolved, kept by callId
+// The to end of a move that only changes the spelling of its note's name: the folder the note is in, then the last name
+// as the caller wrote it. The one file keeps its one key
+function respelled(from: Canonical, input: string): Canonical {
+  const name = input.slice(input.lastIndexOf('/') + 1)
+  const folder = from.relative.slice(0, from.relative.lastIndexOf('/') + 1)
+  return { ...from, absolute: path.join(path.dirname(from.absolute), name), relative: folder + name }
+}
+
+// luoshu.read, luoshu.write, luoshu.remove, luoshu.move and luoshu.list. prepare turns each path the caller wrote into
+// the canonical one with the canonicaliser and holds the lock on its key until perform or release, so no other hetu
+// write to that name runs in between. A move holds the locks of both ends, taken in key order so two moves can't each
+// hold the lock the other waits on. perform acts on the paths prepare resolved, kept by callId
 export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const pageSize = options.pageSize ?? LIST_PAGE
   const publish = options.publish ?? (() => {})
@@ -61,10 +76,12 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   let watcher: FSWatcher | null = null
   const settling = new Map<string, ReturnType<typeof setTimeout>>()
   let opening: (Opening & { folder: string }) | null = null
-  // The tail of each key's queue and the release of each call holding one
+  // The tail of each key's queue and the releases of each call holding one or two
   const tails = new Map<string, Promise<void>>()
-  const holding = new Map<string, () => void>()
+  const holding = new Map<string, (() => void)[]>()
   const resolved = new Map<string, Canonical>()
+  // The to end of each move, beside its from end in resolved, and whether both ends are one file
+  const moving = new Map<string, { to: Canonical, same: boolean }>()
   // The folder each call was prepared under, so a call prepared before luoshu.set never acts on the folder after it
   const preparedUnder = new Map<string, Opening>()
   // The hash of the bytes hetu itself last wrote to each key, so an event for its own write isn't taken for an outside one
@@ -82,18 +99,21 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     const tail = before.then(() => mine)
     tails.set(key, tail)
     await before
-    holding.set(callId, () => {
+    const held = holding.get(callId) ?? []
+    held.push(() => {
       let_go()
       if (tails.get(key) === tail) tails.delete(key)
     })
+    holding.set(callId, held)
   }
 
   function unlock(callId: string): void {
     resolved.delete(callId)
+    moving.delete(callId)
     preparedUnder.delete(callId)
-    const free = holding.get(callId)
+    const held = holding.get(callId) ?? []
     holding.delete(callId)
-    free?.()
+    for (const free of held) free()
   }
 
   // The note is opened once and checked and read through that one handle, so what is answered is what was checked: a
@@ -180,6 +200,81 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     return { version: made }
   }
 
+  // The folder a name sits in, looked at again just before a remove or a move changes the disk. The canonical path was
+  // judged at prepare, and a folder on the way swapped for a link or a junction since would carry the change out of
+  // what was judged, so one that no longer resolves to itself is refused as canonical refuses a link out
+  async function unmoved(absolute: string): Promise<void> {
+    const dir = path.dirname(absolute)
+    if ((await realpath(dir).catch(() => null)) !== dir) throw refused('not-granted')
+  }
+
+  // A regular file at the name itself, never a link put there since prepare and never a folder
+  async function isNote(absolute: string): Promise<boolean> {
+    try {
+      return (await lstat(absolute)).isFile()
+    } catch (err) {
+      if (absent(err)) return false
+      throw err
+    }
+  }
+
+  // To the bin the runtime hands the luoshu, so a remove can be undone with hetu closed. A bin that refuses fails the
+  // remove and the note stays
+  async function remove(target: Canonical, baseVersion: string | undefined): Promise<null> {
+    if (options.trash === undefined) throw refused('unavailable')
+    await unmoved(target.absolute)
+    if (!(await isNote(target.absolute))) throw refused('not-found')
+    if (baseVersion !== undefined && (await current(target.absolute)) !== baseVersion) throw refused('stale')
+    await options.trash(target.absolute)
+    await syncDir(path.dirname(target.absolute))
+    own.delete(target.key)
+    void stamped(target.relative, null)
+    publish('changed', target.relative)
+    return null
+  }
+
+  // Never onto a name that exists: a hard link at to fails if anything is there, then from is unlinked. One file under a
+  // new spelling of its name is a rename in place. A volume with no hard links checks to under both locks and renames,
+  // which only a program outside hetu could race
+  async function move(from: Canonical, to: Canonical, same: boolean): Promise<null> {
+    await unmoved(from.absolute)
+    if (!(await isNote(from.absolute))) throw refused('not-found')
+    if (same) {
+      if (to.absolute !== from.absolute) await retried(() => rename(from.absolute, to.absolute), from.absolute)
+    } else {
+      await mkdir(path.dirname(to.absolute), { recursive: true })
+      await unmoved(to.absolute)
+      let linked = true
+      try {
+        await link(from.absolute, to.absolute)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code ?? ''
+        if (code === 'EEXIST') throw refused('stale')
+        if (!NO_LINKS.has(code)) throw err
+        if ((await lstat(to.absolute).catch(() => null)) !== null) throw refused('stale')
+        await retried(() => rename(from.absolute, to.absolute), to.absolute)
+        linked = false
+      }
+      if (linked) {
+        try {
+          await retried(() => unlink(from.absolute), from.absolute)
+        } catch (err) {
+          await unlink(to.absolute).catch(() => {})
+          throw err
+        }
+      }
+    }
+    await syncDir(path.dirname(from.absolute))
+    await syncDir(path.dirname(to.absolute))
+    own.delete(from.key)
+    // In this order, so a rename in place that only changed case ends stamped under its one folded name
+    void stamped(from.relative, null)
+    void stamped(to.relative, await stampOf(to.absolute).catch(() => null))
+    publish('changed', from.relative)
+    publish('changed', to.relative)
+    return null
+  }
+
   // Every file under start, relative to root, past .git, temp files, links, junctions and hetu's own folders. readdir's
   // entries name a link or junction as a link and never as a folder, so the walk can't follow one even without the check
   async function filesUnder(root: string, start: string, opened: Opening): Promise<string[]> {
@@ -232,7 +327,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       if (opening === null) return refused('unavailable')
       const { folder, dataDir, installDir } = opening
       preparedUnder.set(call.callId, opening)
-      const args = (call.args ?? {}) as { path?: unknown, folder?: unknown, baseVersion?: unknown }
+      const args = (call.args ?? {}) as { path?: unknown, folder?: unknown, baseVersion?: unknown, from?: unknown, to?: unknown }
       if (call.action === 'luoshu.list') {
         if (args.folder === undefined) return { scope: {} }
         if (typeof args.folder !== 'string') return refused('invalid')
@@ -240,6 +335,21 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         if (!target.ok) return refused(target.code)
         resolved.set(call.callId, target)
         return { scope: {} }
+      }
+      if (call.action === 'luoshu.move') {
+        const { from: fromText, to: toText } = args
+        if (typeof fromText !== 'string' || typeof toText !== 'string') return refused('invalid')
+        const from = await canonical(folder, fromText, { dataDir, installDir })
+        if (!from.ok) return refused(from.code)
+        const found = await canonical(folder, toText, { dataDir, installDir })
+        if (!found.ok) return refused(found.code)
+        // Both ends resolve to one file when the move only changes the spelling of its name
+        const same = found.absolute === from.absolute
+        const to = same ? respelled(from, toText) : found
+        for (const key of [...new Set([from.key, to.key])].sort()) await lock(key, call.callId)
+        resolved.set(call.callId, from)
+        moving.set(call.callId, { to, same })
+        return { scope: { paths: [from.relative, to.relative] } }
       }
       if (typeof args.path !== 'string') return refused('invalid')
       const target = await canonical(folder, args.path, { dataDir, installDir })
@@ -265,6 +375,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         if (target === undefined) throw refused('failed')
         if (call.action === 'luoshu.read') return await read(target)
         if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion)
+        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion)
+        const moved = moving.get(call.callId)
+        if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same)
         throw refused('invalid')
       } finally {
         unlock(call.callId)
