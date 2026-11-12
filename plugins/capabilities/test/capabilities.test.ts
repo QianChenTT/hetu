@@ -97,13 +97,19 @@ describe('the items that ask at first use', () => {
   it('are the plugin.call items that bring the network in, for a plugin with none of its own', () => {
     expect(caps.firstUse([read, call], [fetchOne])).toEqual([call])
   })
+
+  it('are the subscriptions that bring the network in too, for a plugin with none of its own', () => {
+    const hears: Capability = { type: 'events.subscribe', topics: ['sync.sent'] }
+    expect(caps.firstUse([read, call, hears], [fetchOne])).toEqual([call, hears])
+    expect(caps.firstUse([read, hears], [])).toEqual([])
+  })
 })
 
 describe('the screen under the core\'s words', () => {
   it('names the class and what the plugin reaches through plugin.call', () => {
     expect(caps.screen({ granted: [call], reachable: [write], callers: [] })).toEqual([
       'Class 2, Writer',
-      'Through plugin.call it is connected to: luoshu.write on "04 - Daily/**"',
+      'Through plugin.call or events it is connected to: luoshu.write on "04 - Daily/**"',
     ])
   })
 
@@ -111,7 +117,7 @@ describe('the screen under the core\'s words', () => {
     const callers = [{ id: 'notes-ai', granted: [read] }, { id: 'calc', granted: [{ type: 'storage' } as Capability] }, { id: 'search', granted: [list] }]
     expect(caps.screen({ granted: [fetchOne], reachable: [], callers })).toEqual([
       'Class 3, Network',
-      'Plugins that read and are connected to it through plugin.call: notes-ai, search',
+      'Plugins that read and are connected to it through plugin.call or events: notes-ai, search',
     ])
     expect(caps.screen({ granted: [write], reachable: [], callers })).toEqual(['Class 2, Writer'])
   })

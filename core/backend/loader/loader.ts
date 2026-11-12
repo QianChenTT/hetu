@@ -162,6 +162,9 @@ function carriedFirstUse(old: Plugin | null, asking: readonly Capability[], aske
 }
 
 const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
+// The plugins whose topics a grant hears, each topic published as <id>.<name> by that plugin alone
+const publishersOf = (granted: readonly Capability[]) =>
+  granted.flatMap(item => (item.type === 'events.subscribe' ? item.topics.map(topic => topic.slice(0, topic.indexOf('.'))) : []))
 
 function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
   const off = old?.off ?? []
@@ -549,15 +552,17 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
-  // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
-  // can pass notes out through it. granted is id's own, which may be a change not applied yet
+  // Every plugin connected to id through plugin.call or a subscription to another plugin's topics, either way round and
+  // followed in turn, with what each holds. A callee answers its caller, so data moves both ways along a call: a reader
+  // and a network plugin that share a callee can pass notes out through it. Publishing needs no grant, so a reader can
+  // signal a plugin that hears its topics by when it publishes. granted is id's own, which may be a change not applied
+  // yet
   private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
     const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
     const held = (other: string) => (other === id ? granted : this.grantsOf(other))
     const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
     for (const from of ids) {
-      for (const to of targetsOf(held(from))) {
+      for (const to of [...targetsOf(held(from)), ...publishersOf(held(from))]) {
         if (to === from) continue
         if (!links.has(to)) links.set(to, new Set())
         links.get(from)!.add(to)

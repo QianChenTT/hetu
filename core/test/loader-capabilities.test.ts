@@ -78,7 +78,7 @@ describe('a network plugin’s approval', () => {
     })
     await made.loader.start()
     const request = await approved(made, 'sync')
-    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: notes')
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: notes')
   })
 })
 
@@ -144,9 +144,53 @@ describe('the plugins connected through plugin.call', () => {
     await made.loader.start()
     const request = await approved(made, 'sender')
     expect((await made.store.load()).state.plugins.sender.class).toBe(4)
-    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: reader')
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: reader')
     await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.view' } })
     expect((await made.store.load()).state.plugins.bridge.class).toBe(4)
+  })
+})
+
+// Publishing needs no grant, so a reader can signal a plugin that hears its topics by when it publishes
+describe('the plugins linked by a subscription to another plugin\'s topics', () => {
+  it('count as connected, so a network plugin hearing a reader\'s topic is class 4 and names the reader', async () => {
+    const hears = { type: 'events.subscribe', topics: ['reader.done'] } as Capability
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, hears]) },
+      entries: { reader: root => entryFor(root, { granted: [read], class: 1 }) },
+    })
+    await made.loader.start()
+    const request = await approved(made, 'sender')
+    const entry = (await made.store.load()).state.plugins.sender
+    expect(entry.class).toBe(4)
+    expect(entry.firstUse).toEqual([fetchOne])
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: reader')
+  })
+
+  it('ask at the first use of the subscription that closes a reader\'s pair with no network of its own', async () => {
+    const hears = { type: 'events.subscribe', topics: ['sender.sent'] } as Capability
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { reader: worker('reader', [read, hears]), sender: worker('sender') },
+      entries: { sender: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
+    })
+    await made.loader.start()
+    await approved(made, 'reader')
+    const entry = (await made.store.load()).state.plugins.reader
+    expect(entry.class).toBe(4)
+    expect(entry.firstUse).toEqual([hears])
+  })
+
+  it('leave a plugin hearing only its own topics unlinked', async () => {
+    const own = { type: 'events.subscribe', topics: ['sender.sent'] } as Capability
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, own]) },
+      entries: { reader: root => entryFor(root, { granted: [read], class: 1 }) },
+    })
+    await made.loader.start()
+    await approved(made, 'sender')
+    expect((await made.store.load()).state.plugins.sender.class).toBe(3)
   })
 })
 

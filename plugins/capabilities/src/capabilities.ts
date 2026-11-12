@@ -86,14 +86,15 @@ export function createCapabilities(): Capabilities {
     classify,
 
     // The items whose own class is 4, and for a pair the items that close it: the plugin's network items, or with none of
-    // its own the plugin.call items that bring the network in
+    // its own the plugin.call and events.subscribe items that bring the network in
     firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[] {
       const pair = paired([...granted, ...reachable])
-      const closing = granted.some(network) ? network : (item: Capability) => item.type === 'plugin.call'
+      const closing = granted.some(network) ? network : (item: Capability) => item.type === 'plugin.call' || item.type === 'events.subscribe'
       return granted.filter(item => classOf(item) === 4 || (pair && closing(item)))
     },
 
-    // A plugin with network, its own or through the plugins it is connected to, names the connected plugins that read
+    // A plugin with network, its own or through the plugins it is connected to, names the connected plugins that read.
+    // Connected is through plugin.call or a subscription to another plugin's topics
     screen({ granted, reachable, callers }: ScreenSubject): string[] {
       const n = classify(granted, reachable)
       const readers = [...granted, ...reachable].some(network) ? callers.filter(caller => caller.granted.some(reads)).map(caller => caller.id) : []
@@ -101,8 +102,8 @@ export function createCapabilities(): Capabilities {
       if (n === 4 && paired([...granted, ...reachable])) head += ': it can read notes and reach the network, so it could send notes out'
       else if (n === 4) head += `: ${granted.filter(item => classOf(item) === 4).map(capabilityText).join(', ')}`
       const lines = [head]
-      if (reachable.length > 0) lines.push(`Through plugin.call it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
-      if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call: ${readers.join(', ')}`)
+      if (reachable.length > 0) lines.push(`Through plugin.call or events it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
+      if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call or events: ${readers.join(', ')}`)
       const runners = runsOthers([...granted, ...reachable])
       if (runners.length > 0) lines.push(`It can run programs that run other programs or code: ${runners.join(', ')}`)
       return lines

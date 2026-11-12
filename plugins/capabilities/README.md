@@ -1,8 +1,8 @@
 The capabilities slot's install plugin. Its host half classifies a plugin-folder plugin from 0 to 4, picks the items that ask at their first use and writes the lines the trusted window shows under the core's words. It answers from what the loader hands it and makes no calls
 
 - **a grant's class:** `ui.*` but `ui.keys`, `storage`, `events.subscribe` and `plugin.call` itself 0. `ui.keys`, `luoshu.read` and `luoshu.list` 1. `luoshu.write` 2, or 4 when its first path part holds a wildcard. `history` 2. `net.fetch` 3, or 4 with `*`. `exec`, `guard.hook` and `log.read` 4
-- **a plugin's class:** the highest of its grants and the grants it reaches through `plugin.call`. Reading and network anywhere in that set make it 4, since together they could send notes out. Reading here counts `luoshu.read`, `luoshu.list`, `ui.keys`, `luoshu.write` and `history` read
-- **first use:** the items whose own class is 4, and for a read plus network pair the items that close it
+- **a plugin's class:** the highest of its grants and the grants it reaches through `plugin.call` or a subscription to another plugin's topics, either way round, which the loader follows. Reading and network anywhere in that set make it 4, since together they could send notes out. Reading here counts `luoshu.read`, `luoshu.list`, `ui.keys`, `luoshu.write` and `history` read
+- **first use:** the items whose own class is 4, and for a read plus network pair the items that close it: the plugin's network items, or with none the `plugin.call` and `events.subscribe` items that bring the network in
 - **the screen:** the class and its name, what the plugin reaches and, for one with network, the plugins that read and can reach it, and a line naming the programs in its `exec` items that run other programs or code
 
 `src/capabilities.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin and the `capabilities` role
