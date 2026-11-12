@@ -12,7 +12,14 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `windows.ts`: what each window holds
 - `floor.ts`: the floor constants and the longest delay a timer takes, past which no time constant may be raised
 - `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema. `ActionArgs` and `ActionResults` type what the SDK's calls take and answer
-- `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states and the audit record
+- `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states, the audit record, the capabilities slot, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the loader calls
+- `editor.ts`: the editor bridge's verbs and what each needs, the mark and change shapes, key bindings, `parseBridgeCall`, replies and events
+- `ui.ts`: themes, the style list, the tree node and its operations (`applyOps`), the ui verbs (`uiCall`, `uiNeeds`), `parseDrawerCall`, `LayoutView`, `LayoutState` and `UiEvent`
+- `ui-limits.ts`: the caps on what plugins draw, apart from zod
+- `exec.ts`: the caps for `history.*` and `exec.run`, `envNameProblem`, `loadsCode` and `commandKey`, apart from zod
+- `storage.ts`: `quotas` and `spaceOf`
+- `measure.ts`: `measurePlain`, apart from zod
+- `rate.ts`: the per-way message counter, the text budget and `weigh`
 - `plain.ts`: the plain data check for values the core passes on unread
 - `frozen.ts`: the frozen tables with no prototype that the core looks keys up in, apart from zod so the floor constants load without it
 - `install.ts`: the install list the build writes, each install plugin with its path, version and hash and the bundled first-party copies marked, the version order and the signer first-party copies carry

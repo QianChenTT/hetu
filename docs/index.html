@@ -29,7 +29,7 @@
     </div>
   </header>
 
-  <p class="status"><strong>This is the design, not what runs today.</strong> The daemon, its MCP tools, leases, the commit per write, outside-write detection and a CodeMirror editor run today, without the plugin core. Everything else here is designed and being built.</p>
+  <p class="status"><strong>This is the design, not all of it runs today.</strong> The Electron app runs the core (boot, loader, carrier, runtime), the gate, capabilities, storage, luoshu, history and exec as host plugins, search and the layout as sandboxed plugins, the drawer with hidden marks and the trusted window. The http listener, OAuth, MCP, leases, the watchdog, net, git, the file explorer and artifacts are designed and not built. The older daemon runs apart from the core.</p>
 
   <div class="scen-bar" role="toolbar" aria-label="Scenarios">
     <span class="eyebrow lbl">Scenarios</span>
@@ -88,7 +88,7 @@
     <div class="notes">
       <div><strong>The core is four parts that can't be switched off.</strong> Boot sets up trust for one run. The loader checks every plugin's bytes before they run, places each plugin and gives it its identity. The carrier is the one path every call and event takes. The runtime keeps the isolated places plugins run in. Everything that decides is a plugin in a slot the carrier asks.</div>
       <div><strong>Plugins have no power of their own.</strong> A sandboxed plugin runs in a Chromium worker or frame and holds one channel, to the carrier. The carrier names the caller, checks the shape and the floor, asks the gate and routes. The gate decides and never routes. Host-level plugins hold real power in Electron's main process, so they come only from the install, stay minimal and are reviewed as core.</div>
-      <div><strong>Mechanism in the core, policy in plugins.</strong> The gate, the log, the watchdog and leases all follow this split: the carrier enforces, a plugin decides.</div>
+      <div><strong>Mechanism in the core, policy in plugins.</strong> The gate, capabilities, the watchdog and leases all follow this split: the carrier enforces, a plugin decides. The log is the core's own.</div>
       <div><strong>You can switch anything off, security included.</strong> Every switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. With the gate off, calls with power pass and are still logged. They need the log running, so a crashed log refuses them unless you switched the log off too. A gate or guard that is missing or crashed without you switching it off fails closed.</div>
       <div><strong>A program that targets hetu is out of scope.</strong> Plugins and MCP agents can't change the security state, since only hetu writes it and only after your Confirm click in the trusted window. A program running as you can edit the files. hetu checks each against the hash it recorded at its last write and a plugin or setting whose hash differs doesn't load. That catches careless edits but not a program that rewrites the hash too. hetu assumes the machine has no such program, which could already read and edit your notes directly.</div>
       <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>

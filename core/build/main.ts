@@ -74,7 +74,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   // The first-party plugins the install carries, each built the same way and listed as first-party, which the loader
-  // copies into the plugin folder. search waits for the luoshu until the luoshu is built
+  // copies into the plugin folder. Today these are search and the layout
   for (const id of FIRST_PARTY) {
     const source = path.join(core, '..', 'plugins', id)
     const root = path.join(outDir, 'plugins', id)
