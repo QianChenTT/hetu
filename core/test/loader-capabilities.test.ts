@@ -91,6 +91,11 @@ describe('a staged update', () => {
     return { made, outcome: await made.loader.update('calc', dir) }
   }
 
+  it('loads on its own for a class 0 plugin with views while the slot is on', async () => {
+    const { outcome } = await updating({ class: 0, granted: [{ type: 'ui.view' }] }, withCapabilities(), [{ type: 'ui.view' }])
+    expect(outcome).toEqual({ outcome: 'applied' })
+  })
+
   it('loads on its own for a class 0 plugin while the slot is on, its record first', async () => {
     const { made, outcome } = await updating({ class: 0 })
     expect(outcome).toEqual({ outcome: 'applied' })
@@ -103,6 +108,8 @@ describe('a staged update', () => {
     ['a null class, which counts as 4', { class: null }, withCapabilities(), []],
     ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, withCapabilities(), [{ type: 'storage' }]],
     ['the slot down', { class: 0 }, coreInstall(), []],
+    // A layout draws the whole window, so a new one never takes its place unasked
+    ['a class 0 plugin holding ui.layout', { class: 0, granted: [{ type: 'ui.layout' }] }, withCapabilities(), [{ type: 'ui.layout' }]],
   ] as [string, object, ReturnType<typeof withCapabilities>, Capability[]][])('waits for the Confirm with %s', async (_name, entry, install, next) => {
     const { made, outcome } = await updating(entry, install, next)
     expect(outcome).toMatchObject({ outcome: 'confirm' })

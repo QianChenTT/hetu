@@ -17,7 +17,7 @@ import {
 import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
-import { capabilityKey, type Capability } from '../../api/capabilities.ts'
+import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { Capabilities, ExecGrant, ExecView, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -2028,10 +2028,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
     // Only a class 0 update loads on its own, and only while the slot can say so, with no grant asked for that the
-    // entry doesn't hold. Its record lands first as any update's does
+    // entry doesn't hold and none that always asks. Its record lands first as any update's does
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
-    if (k.entry.class === 0 && asksNothingNew && this.capabilities() !== null && this.classed(id, k.entry.granted).class === 0) {
+    const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
+    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && this.capabilities() !== null && this.classed(id, k.entry.granted).class === 0) {
       await this.applyStaged(id)
       return { outcome: 'applied' }
     }

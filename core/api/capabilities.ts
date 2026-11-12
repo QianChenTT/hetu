@@ -35,6 +35,10 @@ export const capabilityTypes = frozen([
   'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
 ] as const)
 
+// An update of a plugin holding one of these waits for the human's Confirm whatever its class: a layout draws the whole
+// window, so a new one never takes the old one's place unasked
+export const askOnUpdateTypes = frozen(['ui.layout'] as const)
+
 // Guards load only from the install, so a plugin-folder manifest asking for one of these is refused and allow all
 // never covers them
 export const installOnlyTypes = frozen(['guard.hook'] as const)
