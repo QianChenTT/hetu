@@ -4,7 +4,7 @@ import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink }
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
-import type { Call, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
+import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
@@ -25,8 +25,6 @@ export type LuoshuOptions = {
   // The largest note a read answers, the floor's resultBytes but in tests. A larger one is refused from its size, before
   // main reads it
   readCap?: number
-  // Hands a note to the OS's bin, rejecting when the bin refuses it. With none a remove answers unavailable
-  trash?: (absolute: string) => Promise<void>
 }
 
 // A write's temp file sits beside the note, a dot file so Obsidian, ** grants and the listing pass it by
@@ -75,7 +73,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const readCap = options.readCap ?? floorConstants.resultBytes
   let watcher: FSWatcher | null = null
   const settling = new Map<string, ReturnType<typeof setTimeout>>()
-  let opening: (Opening & { folder: string }) | null = null
+  let opening: (LuoshuOpening & { folder: string }) | null = null
   // The tail of each key's queue and the releases of each call holding one or two
   const tails = new Map<string, Promise<void>>()
   const holding = new Map<string, (() => void)[]>()
@@ -218,14 +216,14 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
   }
 
-  // To the bin the runtime hands the luoshu, so a remove can be undone with hetu closed. A bin that refuses fails the
-  // remove and the note stays
-  async function remove(target: Canonical, baseVersion: string | undefined): Promise<null> {
-    if (options.trash === undefined) throw refused('unavailable')
+  // To the bin the runtime hands the luoshu with its folder, so a remove can be undone with hetu closed. A bin that
+  // refuses fails the remove and the note stays
+  async function remove(target: Canonical, baseVersion: string | undefined, trash: LuoshuOpening['trash']): Promise<null> {
+    if (trash === undefined) throw refused('unavailable')
     await unmoved(target.absolute)
     if (!(await isNote(target.absolute))) throw refused('not-found')
     if (baseVersion !== undefined && (await current(target.absolute)) !== baseVersion) throw refused('stale')
-    await options.trash(target.absolute)
+    await trash(target.absolute)
     await syncDir(path.dirname(target.absolute))
     own.delete(target.key)
     void stamped(target.relative, null)
@@ -375,7 +373,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         if (target === undefined) throw refused('failed')
         if (call.action === 'luoshu.read') return await read(target)
         if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion)
-        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion)
+        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash)
         const moved = moving.get(call.callId)
         if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same)
         throw refused('invalid')
@@ -439,7 +437,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   const role: LuoshuRole = {
-    open(next: Opening): void {
+    open(next: LuoshuOpening): void {
       stopWatching()
       opening = next.folder === null ? null : { ...next, folder: next.folder }
       own.clear()

@@ -27,6 +27,8 @@ export type WireOptions = {
   onFailure?: (failure: Failure) => void
   // How long a request must be first in line before its Confirm counts, the input delay unless a test names another
   confirmDelayMs?: number
+  // The OS's bin, for the luoshu's remove
+  trash?: (absolute: string) => Promise<void>
 }
 
 // The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
@@ -117,6 +119,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     ...(options.onFailure !== undefined ? { onFailure: options.onFailure } : {}),
     ...(options.confirmDelayMs !== undefined ? { confirmDelayMs: options.confirmDelayMs } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
+    ...(options.trash !== undefined ? { trash: options.trash } : {}),
   })
   const { windows } = options
   const carrier = new Carrier(carrierOptions(loader, {

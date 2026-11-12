@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
@@ -20,7 +20,7 @@ type Reply = { id?: number, ok?: boolean, result?: unknown, refusal?: { code: st
 
 // The joined core over a real boot, with the gate and the luoshu plugins as they ship and the folder picked. Calls come
 // from the editor window, each reply handed back the moment the carrier sends it
-async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor'>, install?: object } = {}) {
+async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor' | 'trash'>, install?: object } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
@@ -112,6 +112,32 @@ describe('the guard step', () => {
     expect((await ask('luoshu.move', { from: 'free.md', to: 'kept.md' })).ok).toBe(true)
     expect(await readFile(path.join(folder, 'kept.md'), 'utf8')).toBe('free')
     expect(asked).toEqual([['held.md', 'moved.md'], ['free.md', 'held.md'], ['held.md'], ['free.md', 'kept.md']])
+  })
+})
+
+// main hands the bin it builds on shell.trashItem through the wiring, and the luoshu removes nothing itself
+describe('a remove through the bin main hands the core', () => {
+  it('hands the bin the absolute path of the note and answers null', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'a.md'), 'to the bin')
+    const binned: string[] = []
+    const bin = path.join(path.dirname(folder), 'bin')
+    await mkdir(bin)
+    const { ask } = await joined(folder, { wire: { trash: async absolute => {
+      binned.push(absolute)
+      await rename(absolute, path.join(bin, path.basename(absolute)))
+    } } })
+    expect(await ask('luoshu.remove', { path: 'a.md' })).toMatchObject({ ok: true, result: null })
+    expect(binned).toEqual([path.join(await realpath(folder), 'a.md')])
+    expect(await readFile(path.join(bin, 'a.md'), 'utf8')).toBe('to the bin')
+  })
+
+  it('fails the remove when the bin refuses and leaves the note', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'a.md'), 'stays')
+    const { ask } = await joined(folder, { wire: { trash: async () => { throw new Error('the bin refused') } } })
+    expect((await ask('luoshu.remove', { path: 'a.md' })).refusal?.code).toBe('failed')
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('stays')
   })
 })
 

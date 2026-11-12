@@ -110,9 +110,13 @@ export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Pro
 // The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
 export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
 
+// What the luoshu alone is handed beside its folder: the OS's bin the runtime gives, which rejects when the bin refuses
+// a file. None in a core with no bin, where a remove answers unavailable
+export type LuoshuOpening = Opening & { readonly trash?: (absolute: string) => Promise<void> }
+
 // How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
 // the luoshu failed
-export type LuoshuRole = { open(opening: Opening): void }
+export type LuoshuRole = { open(opening: LuoshuOpening): void }
 
 // How the loader hands history the notes folder: when the plugin is ready and each time luoshu.set applies. A throw
 // marks history failed

@@ -56,6 +56,8 @@ export type LoaderOptions = {
   confirmDelayMs?: number
   // How long a Confirm waits for its record to land, 10 s unless a test names another
   confirmRecordMs?: number
+  // The OS's bin the runtime gives, handed to the luoshu alone
+  trash?: (absolute: string) => Promise<void>
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -256,6 +258,7 @@ export class Loader implements Seam {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
   private readonly onFailure: LoaderOptions['onFailure']
+  private readonly trash: LoaderOptions['trash']
   // controls while only the security controls may start, all once they are up, stopped once one failed
   private phase: 'controls' | 'all' | 'stopped' = 'controls'
   private stoppedMode: StoppedMode | null = null
@@ -277,6 +280,7 @@ export class Loader implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
+    this.trash = options.trash
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -1813,7 +1817,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const target = luoshu.live?.exports?.luoshu
     if (target === undefined) return true
     try {
-      target.open(this.opening())
+      target.open(this.trash === undefined ? this.opening() : { ...this.opening(), trash: this.trash })
       return true
     } catch {
       this.die(luoshu, 'state-changed')

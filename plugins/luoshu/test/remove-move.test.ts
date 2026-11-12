@@ -34,20 +34,19 @@ afterEach(async () => {
 })
 
 type Opened = Luoshu & { heard: [string, string][], binned: string[] }
+type Bin = (absolute: string) => Promise<void>
 
-// A bin that moves what it is handed out of the notes folder, as the OS's recycle bin does
-function opened(options: LuoshuOptions = {}): Opened {
+// Opened with a bin that moves what it is handed out of the notes folder, as the OS's recycle bin does, unless a test
+// hands another
+function opened(options: LuoshuOptions = {}, trash?: Bin): Opened {
   const heard: [string, string][] = []
   const binned: string[] = []
-  const made = createLuoshu({
-    publish: (topic, at) => heard.push([topic, at]),
-    trash: async absolute => {
-      binned.push(absolute)
-      await rename(absolute, path.join(bin, `${binned.length}-${path.basename(absolute)}`))
-    },
-    ...options,
+  const made = createLuoshu({ publish: (topic, at) => heard.push([topic, at]), ...options })
+  const given: Bin = trash ?? (async absolute => {
+    binned.push(absolute)
+    await rename(absolute, path.join(bin, `${binned.length}-${path.basename(absolute)}`))
   })
-  made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+  made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install'), trash: given })
   return Object.assign(made, { heard, binned })
 }
 
@@ -134,7 +133,7 @@ describe('removing', () => {
   })
 
   it('answers failed when the bin refuses, and removes nothing', async () => {
-    const made = opened({ trash: async () => { throw new Error('the bin is full') } })
+    const made = opened({}, async () => { throw new Error('the bin is full') })
     expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toEqual({ refused: new Error('the bin is full') })
     expect(await exists('a.md')).toBe(true)
     expect(made.heard).toEqual([])
