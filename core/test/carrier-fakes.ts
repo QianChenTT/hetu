@@ -69,7 +69,7 @@ export class FakeLoader implements Loader {
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list' || item.type === 'ui.edit') {
       const paths = access.scope.paths ?? []
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
@@ -134,7 +134,9 @@ export class FakeGate implements Gate {
   // The ui items in the plugin's grant table, for the editor window only
   verbs(plugin: string, window: string): string[] {
     if (window !== 'editor') return []
-    return [...new Set((this.grants[plugin] ?? []).filter(granted => granted.type.startsWith('ui.')).map(granted => granted.type))]
+    // A ui item scoped by paths reaches only the notes it names, so it is never a verb held whole
+    const whole = (granted: Capability) => granted.type.startsWith('ui.') && !('paths' in granted)
+    return [...new Set((this.grants[plugin] ?? []).filter(whole).map(granted => granted.type))]
   }
 
   stateChanged(): void {}

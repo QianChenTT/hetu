@@ -34,6 +34,9 @@ describe('the class of one grant', () => {
     ['luoshu.write on a wildcard top folder', { type: 'luoshu.write', paths: ['*/journal/**'] }, 4],
     ['luoshu.write on two named folders', { type: 'luoshu.write', paths: ['notes/**', '04 - Daily/**'] }, 2],
     ['luoshu.write on one named note', { type: 'luoshu.write', paths: ['inbox.md'] }, 2],
+    // The human sees each edit and saves it, so ui.edit stays a scoped writer on every note too
+    ['ui.edit on a named folder', { type: 'ui.edit', paths: ['notes/**'] }, 2],
+    ['ui.edit on every note', { type: 'ui.edit', paths: ['**'] }, 2],
     ['exec', { type: 'exec', commands: [['git', 'status']], env: [] }, 4],
     ['guard.hook', { type: 'guard.hook' }, 4],
     ['log.read', { type: 'log.read' }, 4],
@@ -70,6 +73,15 @@ describe('a plugin\'s class', () => {
 
   it('stays 3 for network beside a commit, which reads nothing', () => {
     expect(caps.classify([{ type: 'history', access: 'commit', paths: ['**'] }, fetchOne], [])).toBe(3)
+  })
+
+  // An edit is served only beside a read, which the pair rule counts
+  it('stays 3 for network beside ui.edit, which reads nothing, and asks at no first use of it', () => {
+    const edits: Capability = { type: 'ui.edit', paths: ['**'] }
+    expect(caps.classify([edits, fetchOne], [])).toBe(3)
+    expect(caps.classify([call], [edits, fetchOne])).toBe(3)
+    expect(caps.firstUse([edits], [])).toEqual([])
+    expect(caps.screen({ granted: [edits], reachable: [], callers: [] })).toEqual(['Class 2, Writer'])
   })
 
   it('counts a type it doesn’t know as 4, so nothing new is ever class 0 by default', () => {

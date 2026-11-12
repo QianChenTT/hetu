@@ -238,7 +238,7 @@ describe('the fake core\'s gate', () => {
 
 describe('the fake drawer', () => {
   const drawn = (over: object = {}) => manifest({
-    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
+    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
     views: { board: { title: 'Board', kind: 'view' } },
     ...over,
   })
@@ -290,6 +290,21 @@ describe('the fake drawer', () => {
     await ctx.editor.open('notes/b.md')
     await expect(ctx.editor.open('secret/b.md')).rejects.toMatchObject({ code: 'not-granted' })
     expect(drawer.opened).toEqual(['notes/b.md'])
+  })
+
+  // As hetu's drawer does: luoshu.write reaches the disk and never the editor, and ui.edit reaches only the notes it names
+  it.each([
+    ['luoshu.write on every note', [{ type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }]],
+    ['ui.edit on another folder', [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['other/**'] }]],
+  ])('refuses editor.edit with %s', async (_name, capabilities) => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn({ capabilities }), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    await expect((given as unknown as PluginContext).editor.edit(instance, 0, [5, [0, '!']])).rejects.toMatchObject({ code: 'not-granted' })
+    expect(drawer.text(instance)).toBe('hello')
   })
 
   it('hands events from the test to the plugin\'s handlers', async () => {

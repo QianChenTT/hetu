@@ -211,6 +211,30 @@ describe('a move, judged on both its ends', () => {
   })
 })
 
+// Changing an open note through the editor, which the human then saves. It reaches the disk through no action
+describe('ui.edit', () => {
+  const edits = { alpha: [item({ type: 'ui.edit', paths: ['notes/**'] }), item({ type: 'luoshu.read', paths: ['**'] })] }
+
+  it('covers the paths it names and no other', () => {
+    const gate = gateOn(edits)
+    expect(gate.decide(access(alpha, 'ui.edit', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'ui.edit', { paths: ['journal/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+  })
+
+  it('serves no action that changes the disk, whatever its scope', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.edit', paths: ['**'] })] })
+    for (const action of ['luoshu.write', 'luoshu.remove', 'luoshu.move', 'leases.acquire']) {
+      const asked = { ...access(alpha, 'luoshu.write', { paths: ['notes/a.md'] }), action }
+      expect(gate.decide(asked)).toMatchObject({ allow: false, code: 'not-granted' })
+    }
+  })
+
+  it('is no verb the editor serves on holding alone, since it reaches only the notes it names', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.edit', paths: ['**'] }), item({ type: 'ui.decoration' })] })
+    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.decoration'])
+  })
+})
+
 describe('windows', () => {
   it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })

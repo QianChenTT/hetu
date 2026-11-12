@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
-import { capabilityTypes, type CapabilityType } from '../../api/capabilities.ts'
+import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
@@ -935,8 +935,8 @@ export class Carrier {
     if (state === 'off') {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
-      const verbs = capabilityTypes.filter(type => type.startsWith('ui.'))
-      return { ok: true, result: { read: path !== undefined, write: path !== undefined, list: path !== undefined, verbs } }
+      const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
+      return { ok: true, result: { read: path !== undefined, edit: path !== undefined, list: path !== undefined, verbs } }
     }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -944,14 +944,15 @@ export class Carrier {
     try {
       const held = gate.verbs(plugin, 'editor')
       const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-      if (path === undefined) return { ok: true, result: { read: false, write: false, list: false, verbs } }
+      if (path === undefined) return { ok: true, result: { read: false, edit: false, list: false, verbs } }
       const read = gate.canRead(caller, path) === true
       const list = gate.canList(caller, path) === true
+      // An edit through the editor needs ui.edit on the note, never luoshu.write
       const decision = gate.decide(frozen({
-        stage: 'canonical', caller, action: 'luoshu.write', capability: 'luoshu.write', scope: frozen({ paths: [path] }),
+        stage: 'canonical', caller, action: 'editor.edit', capability: 'ui.edit', scope: frozen({ paths: [path] }),
       }))
-      const write = 'allow' in decision && decision.allow === true
-      return { ok: true, result: { read, write, list, verbs } }
+      const edit = 'allow' in decision && decision.allow === true
+      return { ok: true, result: { read, edit, list, verbs } }
     } catch {
       this.fault('gate', 'reach')
       return no('policy-down')

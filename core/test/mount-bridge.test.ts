@@ -7,7 +7,8 @@ import { CoreLink } from '../frontend/mount/link.ts'
 import { Versions } from '../frontend/mount/versions.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
 
-type Reach = { read?: string[], write?: string[], verbs?: string[] }
+// write is what the core no longer answers, kept so a test shows the drawer never edits on it
+type Reach = { read?: string[], write?: string[], edit?: string[], verbs?: string[] }
 
 // An open note as the drawer sees it, on a real text and real versions
 function note(id: string, path: string, text: string) {
@@ -81,6 +82,7 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
         result: {
           read: path !== undefined && (held.read ?? []).includes(path),
           write: path !== undefined && (held.write ?? []).includes(path),
+          edit: path !== undefined && (held.edit ?? []).includes(path),
           verbs: held.verbs ?? [],
         },
       }
@@ -125,7 +127,9 @@ describe("the bridge's drawer end", () => {
     ['editor.read', { instance: 'n1' }, { verbs: ['ui.decoration'] }],
     ['editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] }, { read: ['a.md'] }],
     ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'] }],
-    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { write: ['a.md'] }],
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { edit: ['a.md'] }],
+    // A plugin that writes the note on disk still edits it in the editor only with ui.edit
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], write: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
     ['editor.keys', { on: true }, { read: ['a.md'], verbs: ['ui.command'] }],
   ])('refuses %s %j without what it needs', async (verb, args, held) => {
@@ -137,7 +141,7 @@ describe("the bridge's drawer end", () => {
 
   it.each([
     ['editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
-    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], write: ['a.md'] }],
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], edit: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { verbs: ['ui.command'] }],
     ['editor.keys', { on: true }, { verbs: ['ui.keys'] }],
   ])('answers %s with what it needs', async (verb, args, held) => {
@@ -199,7 +203,7 @@ describe("the bridge's drawer end", () => {
 
   it('rebases an edit, refuses one touching changed text as stale and names the plugin as its author', async () => {
     const made = note('n1', 'a.md', 'first line')
-    const { drawer, edited } = started({ alpha: { read: ['a.md'], write: ['a.md'] } }, [made])
+    const { drawer, edited } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } }, [made])
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     made.type(10, '!')
@@ -216,7 +220,7 @@ describe("the bridge's drawer end", () => {
   })
 
   it('refuses an edit made against another length as stale', async () => {
-    const { drawer } = started({ alpha: { read: ['a.md'], write: ['a.md'] } })
+    const { drawer } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [[0, 'a', 'b'], 999] }))
@@ -228,7 +232,7 @@ describe("the bridge's drawer end", () => {
     made.instance.apply = () => {
       throw new Error('broken')
     }
-    const { drawer } = started({ alpha: { read: ['a.md'], write: ['a.md'] } }, [made])
+    const { drawer } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } }, [made])
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [3, [0, '!']] }))

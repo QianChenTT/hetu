@@ -48,8 +48,8 @@ export const RESERVED_KEYS: readonly string[] = Object.freeze([
   ...CORE_KEYS, 'Mod-Shift-/', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a',
 ])
 
-type Reach = { read: boolean, write: boolean, list: boolean, verbs: readonly string[] }
-const none: Reach = Object.freeze({ read: false, write: false, list: false, verbs: Object.freeze([]) })
+type Reach = { read: boolean, edit: boolean, list: boolean, verbs: readonly string[] }
+const none: Reach = Object.freeze({ read: false, edit: false, list: false, verbs: Object.freeze([]) })
 
 // The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
 export const NODES_PER_SECOND = 200_000
@@ -263,8 +263,8 @@ export class Drawer {
     if (asked === undefined) {
       asked = this.link.call('editor.reach', path === undefined ? { plugin } : { plugin, path }).then(got => {
         if (!got.ok) return none
-        const { read, write, list, verbs } = got.result as Reach
-        return { read: read === true, write: write === true, list: list === true, verbs: Array.isArray(verbs) ? verbs : [] }
+        const { read, edit, list, verbs } = got.result as Reach
+        return { read: read === true, edit: edit === true, list: list === true, verbs: Array.isArray(verbs) ? verbs : [] }
       }, () => none)
       this.reaches.set(key, asked)
     }
@@ -338,13 +338,13 @@ export class Drawer {
         return { instances: listed }
       }
       case 'editor.read': {
-        const instance = await this.reached(plugin, call.args.instance, needs.write)
+        const instance = await this.reached(plugin, call.args.instance, needs.edit)
         const text = instance.text()
         this.spend(conn, 0, text.length)
         return { text, version: instance.versions.version, selection: instance.selection() }
       }
       case 'editor.decorate': {
-        const instance = await this.reached(plugin, call.args.instance, needs.write)
+        const instance = await this.reached(plugin, call.args.instance, needs.edit)
         const { set, marks } = call.args
         // The plugin's sets on this note with this one replaced, held to the caps across sets
         const sets = new Map(conn.sets.get(instance.id) ?? [])
@@ -362,7 +362,7 @@ export class Drawer {
         return { version: instance.versions.version }
       }
       case 'editor.edit': {
-        const instance = await this.reached(plugin, call.args.instance, needs.write)
+        const instance = await this.reached(plugin, call.args.instance, needs.edit)
         let changes: ChangeSet
         try {
           changes = ChangeSet.fromJSON(call.args.changes)
@@ -399,12 +399,12 @@ export class Drawer {
     conn.spent.chars += chars
   }
 
-  // The open instance, once the plugin reads its note and, for an edit, writes it
-  private async reached(plugin: string, id: string, write: boolean): Promise<Instance> {
+  // The open instance, once the plugin reads its note and, for an edit, holds ui.edit on it
+  private async reached(plugin: string, id: string, edit: boolean): Promise<Instance> {
     const instance = this.find(id)
     if (instance === undefined) throw new Refusal('not-found')
     const reach = await this.reachOf(plugin, instance.path)
-    if (!reach.read || (write && !reach.write)) throw new Refusal('not-granted')
+    if (!reach.read || (edit && !reach.edit)) throw new Refusal('not-granted')
     // The note may have closed while the core answered
     if (this.find(id) !== instance) throw new Refusal('not-found')
     return instance

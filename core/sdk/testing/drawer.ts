@@ -169,7 +169,7 @@ export class FakeDrawer {
       }
       case 'editor.edit': {
         const held = note(call.args.instance)
-        if (!holds(this.granted, { capability: 'luoshu.write', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
+        if (!holds(this.granted, { capability: 'ui.edit', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
         if (call.args.version !== held.version) throw new Refusal('stale')
         let changes: ChangeSet
         try {

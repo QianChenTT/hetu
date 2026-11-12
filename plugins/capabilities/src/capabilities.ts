@@ -28,6 +28,8 @@ function classOf(granted: Capability): number {
       return 1
     case 'luoshu.write':
       return granted.paths.every(confined) ? 2 : 4
+    // Each edit waits in the editor for the human's save, so every scope is a writer's, ** included
+    case 'ui.edit':
     case 'history':
       return 2
     case 'net.fetch':
