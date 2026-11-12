@@ -1,3 +1,4 @@
+import { API_VERSION } from '../api/manifest.ts'
 import { createCapabilities } from '../../plugins/capabilities/src/capabilities.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -270,7 +271,7 @@ export function allowAll(): Gate & { views: number[], seen: StateView[], throws:
   return gate
 }
 
-export const manifest = (id: string, extra: object = {}) => ({ id, name: id, version: '1.0.0', api: '^2', ...extra })
+export const manifest = (id: string, extra: object = {}) => ({ id, name: id, version: '1.0.0', api: `^${API_VERSION}`, ...extra })
 export const hostManifest = (id: string, extra: object = {}) => manifest(id, { entries: { host: 'host.js' }, ...extra })
 export const workerManifest = (id: string, extra: object = {}) => manifest(id, { entries: { worker: 'worker.js' }, ...extra })
 

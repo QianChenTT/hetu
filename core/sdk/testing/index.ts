@@ -3,7 +3,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
 import { type FloorConstant, floorConstants } from '../../api/floor.ts'
 import { dependencyReason } from '../../api/lifecycle.ts'
-import { API_VERSION, folderManifest, installManifest, type ViewSpec } from '../../api/manifest.ts'
+import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
 import type { PluginState, SlotState } from '../../api/slots.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
@@ -33,6 +33,7 @@ export type FakeCoreOptions = {
 
 type Manifest = {
   id: string
+  api: string
   views?: Record<string, ViewSpec>
   entries: Record<string, unknown>
   requires?: string[]
@@ -44,16 +45,23 @@ type Manifest = {
 const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
 const TESTER = 'tester'
 
-// A manifest with a host or page entry is an install plugin's, checked as one
+// A manifest with a host or page entry is an install plugin's, checked as one. An api range this core leaves out
+// throws, as the loader refuses it with api
 function manifestOf(input: unknown): Manifest {
+  let parsed: Manifest
   if (typeof input === 'string') {
     const bytes = readFileSync(input)
     const install = /"(host|page)"\s*:/.test(bytes.toString('utf8'))
-    return parseStrict(bytes, install ? installManifest : folderManifest) as Manifest
+    parsed = parseStrict(bytes, install ? installManifest : folderManifest) as Manifest
+  } else {
+    const entries = (input as { entries?: Record<string, unknown> } | null)?.entries ?? {}
+    const install = 'host' in entries || 'page' in entries
+    parsed = (install ? installManifest : folderManifest).parse(input) as Manifest
   }
-  const entries = (input as { entries?: Record<string, unknown> } | null)?.entries ?? {}
-  const install = 'host' in entries || 'page' in entries
-  return (install ? installManifest : folderManifest).parse(input) as Manifest
+  if (!supportsApi(parsed.api, (parsed.capabilities ?? []).map(granted => granted.type))) {
+    throw new Error(`api ${parsed.api} leaves out this core's API, version ${API_VERSION}`)
+  }
+  return parsed
 }
 
 // A way in for a caller the fake core plays, with its replies matched by id

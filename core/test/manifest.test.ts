@@ -52,10 +52,10 @@ describe('a manifest', () => {
   })
 
   it('parses an api range outside this core, which the loader refuses with api', () => {
-    expect(API_VERSION).toBe(2)
-    expect(supportsApi('^2')).toBe(true)
+    expect(API_VERSION).toBe(3)
+    expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
-    expect(supportsApi('^3')).toBe(false)
+    expect(supportsApi('^4')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
@@ -104,6 +104,16 @@ describe('a manifest', () => {
       expect(apiChanges[2].actionsChanged).toBe(true)
       expect(supportsApi('^1')).toBe(false)
       expect(supportsApi(`^${API_VERSION}`, ['luoshu.read'])).toBe(true)
+    })
+
+    // Version 3 added ui.edit, ui.read, luoshu.remove and luoshu.move. editor.edit and editor.open only ask for more,
+    // which an older plugin meets as a refusal
+    it('keeps version 2 under version 3, which only added, unless the manifest names a type version 3 added', () => {
+      expect(apiChanges[3]).toEqual({ added: ['ui.edit', 'ui.read'], removed: [], reshaped: [], actionsChanged: false })
+      expect(supportsApi('^2', ['luoshu.read', 'luoshu.write', 'ui.view'])).toBe(true)
+      expect(supportsApi('^2', ['luoshu.read', 'ui.edit'])).toBe(false)
+      expect(supportsApi('^2', ['ui.read'])).toBe(false)
+      expect(supportsApi('^3', ['ui.edit', 'ui.read'])).toBe(true)
     })
   })
 

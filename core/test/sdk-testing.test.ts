@@ -23,7 +23,7 @@ const manifest = (over: object = {}) => ({
   id: 'reader',
   name: 'Reader',
   version: '1.0.0',
-  api: '^2',
+  api: '^3',
   entries: { worker: 'dist/worker.js' },
   provides: { actions: { read: {}, list: {} } },
   capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }],
@@ -97,6 +97,35 @@ describe('the fake core', () => {
 
   it('refuses a manifest outside the schema', () => {
     expect(() => fakeCore({ manifest: manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })).toThrow()
+  })
+
+  // As the loader refuses it with api, so a plugin's own tests fail where hetu would
+  it('refuses a manifest whose api range leaves out this core, and takes an older one this core only added to', () => {
+    expect(() => fakeCore({ manifest: manifest({ api: '^1' }) })).toThrow(/api/)
+    expect(() => fakeCore({ manifest: manifest({ api: '^2', capabilities: [{ type: 'ui.edit', paths: ['**'] }] }) })).toThrow(/api/)
+    cores.push(fakeCore({ manifest: manifest({ api: '^2' }) }))
+  })
+
+  // The fake luoshu serves both actions and the carrier judges them as hetu's does: write on both ends of a move and
+  // read on the end it leaves
+  it('serves luoshu.remove and luoshu.move, a move judged on both ends and on read where it leaves', async () => {
+    const fake = core(undefined, {
+      capabilities: [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['notes/**'] }],
+    })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    const ctx = box.ctx!
+    await expect(ctx.luoshu.move({ from: 'secret/b.md', to: 'notes/b.md' })).rejects.toMatchObject({ code: 'not-granted' })
+    expect(fake.luoshu.read('secret/b.md')).toBe('b')
+    await fake.luoshu.write('notes/c.md', 'c')
+    await expect(ctx.luoshu.move({ from: 'notes/a.md', to: 'notes/c.md' })).rejects.toMatchObject({ code: 'stale' })
+    expect(await ctx.luoshu.move({ from: 'notes/a.md', to: 'notes/old/a.md' })).toBe(null)
+    expect(fake.luoshu.read('notes/old/a.md')).toBe('a')
+    expect(fake.luoshu.read('notes/a.md')).toBeUndefined()
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'stale' })
+    expect(await ctx.luoshu.remove({ path: 'notes/c.md' })).toBe(null)
+    expect(fake.luoshu.read('notes/c.md')).toBeUndefined()
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md' })).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('publishes luoshu.changed for a note the test writes, luoshu.outside for one written outside', async () => {
