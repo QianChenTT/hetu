@@ -54,11 +54,20 @@ export function executableIn(appOutDir: string, platform: string = process.platf
   return path.join(appOutDir, 'hetu')
 }
 
+// Where an extracted Electron keeps its resources. On macOS the bundle still has Electron's own name then, which
+// electron-builder renames to hetu.app later
+async function resourcesIn(appOutDir: string, platform: string): Promise<string> {
+  if (platform !== 'darwin') return path.join(appOutDir, 'resources')
+  const bundles = (await readdir(appOutDir)).filter(name => name.endsWith('.app'))
+  if (bundles.length !== 1) throw new Error(`expected one app bundle in ${appOutDir}, found ${bundles.length}`)
+  return path.join(appOutDir, bundles[0]!, 'Contents', 'Resources')
+}
+
 // The MSI's file name as electron-builder's template. No space, since a GitHub release changes one in an asset's name
 // and the name would no longer match its line in SHA256SUMS
 export const MSI_NAME = 'hetu-${version}-x64.${ext}'
 
-function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<FuseName, boolean>>): Configuration {
+export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<FuseName, boolean>>): Configuration {
   return {
     appId: 'app.hetu',
     productName: 'hetu',
@@ -77,11 +86,14 @@ function configFor(stage: string, kind: PackageKind, fuses: Readonly<Record<Fuse
     buildDependenciesFromSource: false,
     includePdb: false,
     publish: null,
-    // Electron's own default app goes, so resources holds app.asar and the plugins alone. Then one place flips the fuses,
-    // after the integrity of app.asar is in the executable
+    // Electron's own default app goes once Electron is extracted, so resources holds app.asar and the plugins alone. It
+    // goes before electron-builder lists the archives in resources for the integrity it writes into the executable,
+    // which comes after afterExtract and before afterPack, so the list names no file the package doesn't hold
+    afterExtract: async context => {
+      await rm(path.join(await resourcesIn(context.appOutDir, context.electronPlatformName), 'default_app.asar'), { force: true })
+    },
+    // One place flips the fuses, after the integrity of app.asar is in the executable
     afterPack: async context => {
-      const resources = context.electronPlatformName === 'darwin' ? path.join(context.appOutDir, 'hetu.app', 'Contents', 'Resources') : path.join(context.appOutDir, 'resources')
-      await rm(path.join(resources, 'default_app.asar'), { force: true })
       await flipFuses(executableIn(context.appOutDir, context.electronPlatformName), fuseConfig(context.electronPlatformName, fuses))
     },
     win: { target: kind.target === 'installer' ? ['msi'] : ['dir'], icon: path.join(stage, 'resources', 'icon.ico') },
