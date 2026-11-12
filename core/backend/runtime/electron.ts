@@ -72,5 +72,10 @@ export function electronRuntime(
     terminate(id, incarnation) {
       workers.terminate(id, incarnation)
     },
+    // No utility process starts here yet, so a utility half reads crashed with start-failed
+    startUtility() {
+      throw new Error('no utility runtime')
+    },
+    kill() {},
   }
 }

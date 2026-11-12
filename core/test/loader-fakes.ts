@@ -13,7 +13,7 @@ import { defaultSwitches, StateStore, type Plugin, type Switches } from '../back
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
 import { Loader, type LoaderOptions } from '../backend/loader/loader.ts'
-import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, WorkerStart } from '../backend/loader/seams.ts'
+import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/loader/seams.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
@@ -176,8 +176,11 @@ export class Half {
 }
 
 export class FakeRuntime implements Runtime {
-  readonly started: { id: string, incarnation: number, half: 'worker' | 'host', code: string | null }[] = []
+  readonly started: { id: string, incarnation: number, half: 'worker' | 'host' | 'utility', code: string | null }[] = []
   readonly terminated: { id: string, incarnation: number }[] = []
+  // The utility processes the loader asked to end, and every utility start as the loader made it
+  readonly killed: { id: string, incarnation: number }[] = []
+  readonly utilityStarts: UtilityStart[] = []
   // The workers started with a port to the drawer
   readonly drawers: string[] = []
   // Every worker start as the loader made it
@@ -196,7 +199,7 @@ export class FakeRuntime implements Runtime {
     return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
   }
 
-  half(id: string, incarnation = 1, half: 'worker' | 'host' = 'worker'): Half {
+  half(id: string, incarnation = 1, half: 'worker' | 'host' | 'utility' = 'worker'): Half {
     const found = this.halves.get(`${id}:${incarnation}:${half}`)
     if (found === undefined) throw new Error(`no ${half} for ${id} ${incarnation}`)
     return found
@@ -249,6 +252,29 @@ export class FakeRuntime implements Runtime {
 
   terminate(id: string, incarnation: number): void {
     this.terminated.push({ id, incarnation })
+  }
+
+  // A utility half on its port, as a worker's. Its process ending is told through the start's exited, which exit calls
+  startUtility(start: UtilityStart): void {
+    this.started.push({ id: start.id, incarnation: start.incarnation, half: 'utility', code: start.code.toString() })
+    this.utilityStarts.push(start)
+    if (this.of(start.id).throws) throw new Error('the fork failed')
+    const port = start.port as MessagePort
+    const half = new Half(message => port.postMessage(message), () => port.close())
+    port.on('message', message => this.answer(half, start.id, message as Message))
+    port.on('close', () => {
+      half.closed = true
+    })
+    this.halves.set(`${start.id}:${start.incarnation}:utility`, half)
+  }
+
+  kill(id: string, incarnation: number): void {
+    this.killed.push({ id, incarnation })
+  }
+
+  // The utility process of one incarnation ends, killed by the runtime or by itself
+  exit(id: string, incarnation: number, killed: boolean): void {
+    this.utilityStarts.find(start => start.id === id && start.incarnation === incarnation)!.exited({ killed })
   }
 }
 

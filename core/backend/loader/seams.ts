@@ -74,6 +74,11 @@ export type WorkerStart = {
 }
 export type HostStart = { id: string, incarnation: number, root: string, files: readonly PluginFile[], entry: string, link: HostLink }
 
+// A host entry that runs in a utility process: its verified bytes and the plugin's end of a new channel. exited is how
+// the runtime tells the loader the process ended, with killed true when the runtime itself ended it. The exit code is
+// never passed on: a kill exits 0 on Windows, so it can't tell a kill from a clean exit
+export type UtilityStart = { id: string, incarnation: number, code: Buffer, port: unknown, exited: (how: { killed: boolean }) => void }
+
 // What the loader needs from the runtime, the only part that touches Electron, faked in the loader's tests
 export type Runtime = {
   // Both ends of a new channel for plugin id: core for the carrier and plugin for the half's code. MessageChannelMain in
@@ -88,4 +93,9 @@ export type Runtime = {
   startHost(start: HostStart): Promise<HostExports>
   // Ends a worker with terminate(). Ending one already dead decides nothing
   terminate(id: string, incarnation: number): void
+  // Forks a utility process that imports the verified bytes and runs the plugin on the port. A throw means it couldn't
+  // start
+  startUtility(start: UtilityStart): void
+  // Ends a utility process. Ending one already dead decides nothing
+  kill(id: string, incarnation: number): void
 }

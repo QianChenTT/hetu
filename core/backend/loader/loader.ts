@@ -8,7 +8,7 @@ import { VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
   firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
-  securityControls, slotIds,
+  securityControls, slotIds, utilityIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import {
@@ -233,10 +233,12 @@ function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capabil
 const ok: Status = { kind: 'ok' }
 const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
-function placeOf(read: Read, from: 'install' | 'folder'): PluginInfo['place'] {
+// Where the core runs a plugin, never what its manifest asks for: an install plugin core/api names runs its host entry
+// in a utility process
+function placeOf(id: string, read: Read, from: 'install' | 'folder'): PluginInfo['place'] {
   const entries = read.manifest?.entries
   if (entries === undefined) return from === 'install' ? 'host' : 'sandboxed'
-  if (entries.host !== undefined) return 'host'
+  if (entries.host !== undefined) return from === 'install' && isOne(utilityIds, id) ? 'utility' : 'host'
   if (entries.worker === undefined && entries.page !== undefined) return 'page'
   return 'sandboxed'
 }
@@ -472,7 +474,7 @@ ${capabilityKey(change.capability)}`)
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
         if (k === undefined) throw { code: 'not-found' }
-        if (k.place !== 'sandboxed') throw { code: 'not-granted' }
+        if (k.place !== 'sandboxed' && k.place !== 'utility') throw { code: 'not-granted' }
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
         if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
@@ -1285,7 +1287,7 @@ ${capabilityKey(change.capability)}`)
 
   private know(id: string, from: 'install' | 'folder', root: string, read: Read, listed: Listed | null, entry: Plugin | null): Known {
     const k: Known = {
-      id, from, root, listed, entry, read, place: placeOf(read, from), state: 'found', reason: null, held: null,
+      id, from, root, listed, entry, read, place: placeOf(id, read, from), state: 'found', reason: null, held: null,
       live: null, incarnations: 0, ran: false, lastStop: null, previousVersion: this.versions.get(id) ?? null,
       updated: null,
     }
@@ -1352,6 +1354,8 @@ ${capabilityKey(change.capability)}`)
     const manifest = k.read.manifest!
     if (!loose && manifest.version !== listed.version) return refused('invalid')
     if (this.needsHost(k.id) && manifest.entries.host === undefined) return refused('place')
+    // Runs only as its host entry in a utility process, never as a worker in its place
+    if (isOne(utilityIds, k.id) && manifest.entries.host === undefined) return refused('place')
     if (this.requiresProblem(k)) return refused('requires')
     return k.held ?? ok
   }
@@ -1647,7 +1651,17 @@ ${capabilityKey(change.capability)}`)
     live.readyTimer.unref?.()
     const caller = (half: HalfName): Caller => frozen({ kind: 'plugin', id: k.id, half, incarnation: live.n })
 
-    if (host !== undefined) {
+    if (host !== undefined && k.place === 'utility') {
+      // Its own process on its own port, registered for its host half as a worker's is. Nothing of its module comes back
+      // to main, so it holds no role
+      const run: Run = { caller: caller('host'), ready: false, stopped: false }
+      const { core, plugin } = this.runtime.channel(k.id)
+      this.link.register(core, run.caller)
+      live.halves.set('host', run)
+      live.imported = true
+      const code = k.read.files.find(file => file.path === host)!.bytes
+      this.runtime.startUtility({ id: k.id, incarnation: live.n, code, port: plugin, exited: how => this.exited(k, live, how.killed) })
+    } else if (host !== undefined) {
       const run: Run = { caller: caller('host'), ready: false, stopped: false }
       const box = mailbox()
       const way = this.link.handle(run.caller, message => box.put(message))
@@ -1685,9 +1699,9 @@ ${capabilityKey(change.capability)}`)
       previousVersion: k.previousVersion,
     }
     // An install host half runs in main with Node, so the data folder is no secret from it: storage keeps its spaces
-    // there and later host plugins their working folders. A worker never hears it
+    // there and later host plugins their working folders. A worker and a utility half never hear it
     for (const [half, run] of live.halves) {
-      const own = half === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
+      const own = half === 'host' && k.place === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
       this.link.send(run.caller, own)
     }
     // A plugin with no half to start, frames or a page only, is ready once checked
@@ -1794,24 +1808,36 @@ ${capabilityKey(change.capability)}`)
     if (k.from === 'install' && isSecurityControl(k.id)) this.controlFailed(k.id, reason)
   }
 
-  // A ping down the worker's port every heartbeatMs. heartbeatMisses unanswered in a row read unresponsive: calls to it
-  // time out at once and its dependents keep running, nothing is closed. It reads ready again once it answers. Stopping
-  // it is the watchdog's or the human's call. Host halves get none, a host half that hangs holds main itself
+  // A utility process ended. During a planned stop that is the stop ending. Otherwise it crashed, killed when the
+  // runtime ended it and exited when it ended by itself, whatever its exit code said. An incarnation that is over
+  // decides nothing
+  private exited(k: Known, live: Live, killed: boolean): void {
+    if (live.over || k.live !== live) return
+    if (live.stop !== null) return this.finished(k, live)
+    this.die(k, killed ? 'killed' : 'exited')
+  }
+
+  // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
+  // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
+  // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
+  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Host halves in main
+  // get none, a host half that hangs holds main itself
   private beat(k: Known, live: Live): void {
-    const worker = live.halves.get('worker')
-    if (worker === undefined) return
+    const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
+    if (pinged === undefined) return
     const misses = this.limitOf(k.id, 'heartbeatMisses')
     const timer = setInterval(() => {
       const beat = live.beat
       if (beat === null || live.over) return
       if (beat.waiting) beat.misses++
+      if (beat.misses >= misses && k.place === 'utility' && live.stop === null) return this.die(k, 'unresponsive')
       if (beat.misses >= misses && k.state === 'ready' && live.stop === null) {
         k.state = 'unresponsive'
         this.note('plugin.unresponsive', { plugin: k.id, incarnation: live.n })
         this.refresh()
       }
       beat.waiting = true
-      this.link.send(worker.caller, { v: VERSION, kind: 'ping' })
+      this.link.send(pinged.caller, { v: VERSION, kind: 'ping' })
     }, this.limitOf(k.id, 'heartbeatMs'))
     timer.unref?.()
     live.beat = { timer, misses: 0, waiting: false }
@@ -1840,6 +1866,11 @@ ${capabilityKey(change.capability)}`)
         this.runtime.terminate(k.id, live.n)
       } catch {}
     }
+    if (k.place === 'utility' && live.halves.has('host')) {
+      try {
+        this.runtime.kill(k.id, live.n)
+      } catch {}
+    }
   }
 
   // ---- stops and restarts the watchdog or the human asked for
@@ -1854,7 +1885,7 @@ ${capabilityKey(change.capability)}`)
   }
 
   // A new incarnation from the bytes already verified. A running one stops first with its dependents, which start again
-  // once it is ready. Only a sandboxed plugin restarts within a run
+  // once it is ready. Only a sandboxed plugin or a utility half restarts within a run
   async restart(id: string, by: 'watchdog' | 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
@@ -2406,7 +2437,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
     k.entry = entry
     k.read = read
-    k.place = placeOf(read, 'folder')
+    k.place = placeOf(k.id, read, 'folder')
     if (k.held?.reason === 'update') k.held = null
     this.bump()
     this.replan()
