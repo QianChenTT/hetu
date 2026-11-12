@@ -768,6 +768,7 @@ describe('editor.reach', () => {
       { type: 'luoshu.read', paths: ['notes/**'] },
       { type: 'luoshu.write', paths: ['notes/own/**'] },
       { type: 'ui.edit', paths: ['notes/edit/**'] },
+      { type: 'ui.read', paths: ['shown/**'] },
       { type: 'ui.decoration' },
       { type: 'ui.command' },
     ]
@@ -781,12 +782,15 @@ describe('editor.reach', () => {
     const { way } = made()
     const reach = async (args: unknown) => (await way.ask('editor', 'editor.reach', args)).result
     const verbs = ['ui.decoration', 'ui.command']
-    expect(await reach({ plugin: 'alpha', path: 'notes/edit/a.md' })).toEqual({ read: true, edit: true, list: true, verbs })
-    expect(await reach({ plugin: 'alpha', path: 'notes/own/a.md' })).toEqual({ read: true, edit: false, list: true, verbs })
-    expect(await reach({ plugin: 'alpha', path: 'notes/b.md' })).toEqual({ read: true, edit: false, list: true, verbs })
-    expect(await reach({ plugin: 'alpha', path: 'other.md' })).toEqual({ read: false, edit: false, list: false, verbs })
-    expect(await reach({ plugin: 'alpha' })).toEqual({ read: false, edit: false, list: false, verbs })
-    expect(await reach({ plugin: 'beta', path: 'notes/b.md' })).toEqual({ read: false, edit: false, list: false, verbs: [] })
+    const no = { read: false, edit: false, uiRead: false, list: false }
+    expect(await reach({ plugin: 'alpha', path: 'notes/edit/a.md' })).toEqual({ ...no, read: true, edit: true, list: true, verbs })
+    expect(await reach({ plugin: 'alpha', path: 'notes/own/a.md' })).toEqual({ ...no, read: true, list: true, verbs })
+    expect(await reach({ plugin: 'alpha', path: 'notes/b.md' })).toEqual({ ...no, read: true, list: true, verbs })
+    // ui.read is no luoshu read and lists nothing: the drawer serves it for a note the human opened
+    expect(await reach({ plugin: 'alpha', path: 'shown/a.md' })).toEqual({ ...no, uiRead: true, verbs })
+    expect(await reach({ plugin: 'alpha', path: 'other.md' })).toEqual({ ...no, verbs })
+    expect(await reach({ plugin: 'alpha' })).toEqual({ ...no, verbs })
+    expect(await reach({ plugin: 'beta', path: 'notes/b.md' })).toEqual({ ...no, verbs: [] })
   })
 
   it("answers list from what the plugin may list, names it can't read included", async () => {
@@ -799,9 +803,10 @@ describe('editor.reach', () => {
     const { way, gate } = made()
     await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })
     expect(gate.reads.at(-1)?.caller).toMatchObject({ kind: 'plugin', id: 'alpha' })
-    expect(gate.asked.at(-1)).toMatchObject({
-      stage: 'canonical', caller: { kind: 'plugin', id: 'alpha' }, action: 'editor.edit', capability: 'ui.edit', scope: { paths: ['notes/edit/a.md'] },
-    })
+    expect(gate.asked.slice(-2)).toMatchObject([
+      { stage: 'canonical', caller: { kind: 'plugin', id: 'alpha' }, action: 'editor.edit', capability: 'ui.edit', scope: { paths: ['notes/edit/a.md'] } },
+      { stage: 'canonical', caller: { kind: 'plugin', id: 'alpha' }, action: 'editor.read', capability: 'ui.read', scope: { paths: ['notes/edit/a.md'] } },
+    ])
   })
 
   it('counts an edit that would ask at first use as no edit', async () => {
@@ -814,7 +819,7 @@ describe('editor.reach', () => {
     const { way, loader } = made()
     loader.slots.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
-      .toEqual({ read: true, edit: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
+      .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['starting', 'failed', 'absent'] as const) {
       loader.slots.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')

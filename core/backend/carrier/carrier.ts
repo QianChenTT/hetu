@@ -936,7 +936,8 @@ export class Carrier {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
       const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
-      return { ok: true, result: { read: path !== undefined, edit: path !== undefined, list: path !== undefined, verbs } }
+      const any = path !== undefined
+      return { ok: true, result: { read: any, edit: any, uiRead: any, list: any, verbs } }
     }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -944,15 +945,18 @@ export class Carrier {
     try {
       const held = gate.verbs(plugin, 'editor')
       const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-      if (path === undefined) return { ok: true, result: { read: false, edit: false, list: false, verbs } }
+      if (path === undefined) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
       const read = gate.canRead(caller, path) === true
       const list = gate.canList(caller, path) === true
-      // An edit through the editor needs ui.edit on the note, never luoshu.write
-      const decision = gate.decide(frozen({
-        stage: 'canonical', caller, action: 'editor.edit', capability: 'ui.edit', scope: frozen({ paths: [path] }),
-      }))
-      const edit = 'allow' in decision && decision.allow === true
-      return { ok: true, result: { read, edit, list, verbs } }
+      // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
+      // only for a note the human opened
+      const allows = (action: string, capability: 'ui.edit' | 'ui.read') => {
+        const decision = gate.decide(frozen({ stage: 'canonical', caller, action, capability, scope: frozen({ paths: [path] }) }))
+        return 'allow' in decision && decision.allow === true
+      }
+      const edit = allows('editor.edit', 'ui.edit')
+      const uiRead = allows('editor.read', 'ui.read')
+      return { ok: true, result: { read, edit, uiRead, list, verbs } }
     } catch {
       this.fault('gate', 'reach')
       return no('policy-down')

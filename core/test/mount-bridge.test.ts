@@ -8,7 +8,7 @@ import { Versions } from '../frontend/mount/versions.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
 
 // write is what the core no longer answers, kept so a test shows the drawer never edits on it
-type Reach = { read?: string[], write?: string[], edit?: string[], verbs?: string[] }
+type Reach = { read?: string[], write?: string[], edit?: string[], uiRead?: string[], list?: string[], verbs?: string[] }
 
 // An open note as the drawer sees it, on a real text and real versions
 function note(id: string, path: string, text: string) {
@@ -83,6 +83,8 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
           read: path !== undefined && (held.read ?? []).includes(path),
           write: path !== undefined && (held.write ?? []).includes(path),
           edit: path !== undefined && (held.edit ?? []).includes(path),
+          uiRead: path !== undefined && (held.uiRead ?? []).includes(path),
+          list: path !== undefined && (held.list ?? []).includes(path),
           verbs: held.verbs ?? [],
         },
       }
@@ -97,6 +99,54 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
 }
 
 const reader: Reach = { read: ['a.md'], verbs: ['ui.decoration'] }
+
+// The read twin of ui.edit: a note the human opened, through the bridge alone. A note a plugin opened isn't counted,
+// and neither is one opened from a plugin's node naming a note that plugin can't reach itself
+describe('ui.read', () => {
+  const shown: Reach = { uiRead: ['a.md'], verbs: ['ui.decoration'] }
+
+  it('reaches a note the human opened through the bridge alone, with its events', async () => {
+    const { drawer, notes } = started({ alpha: shown })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await drawer.humanOpened(notes[0].instance)
+    await settle()
+    expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }])
+    expect(await alpha.call('editor.instances')).toMatchObject({ ok: true, result: { instances: [{ instance: 'n1', path: 'a.md' }] } })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true, result: { text: 'hello world' } })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] })).toMatchObject({ ok: true })
+  })
+
+  it('reaches no note the human didn\'t open, one a plugin opened included', async () => {
+    const { drawer } = started({ alpha: shown })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await settle()
+    expect(alpha.events()).toEqual([])
+    expect(await alpha.call('editor.instances')).toMatchObject({ ok: true, result: { instances: [] } })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
+  it('counts a note opened from a plugin\'s node as the human\'s only when that plugin reads or lists it itself', async () => {
+    const { drawer, notes } = started({ alpha: shown, lure: { uiRead: ['a.md'] }, explorer: { list: ['a.md'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await drawer.humanOpened(notes[0].instance, 'lure')
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    await drawer.humanOpened(notes[0].instance, 'explorer')
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
+  })
+
+  it('edits a note the human opened on ui.read and ui.edit, holding no luoshu grant', async () => {
+    const { drawer, notes } = started({ alpha: { uiRead: ['a.md'], edit: ['a.md'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    await drawer.humanOpened(notes[0].instance)
+    expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: true })
+    expect(notes[0].text()).toBe('hello world!')
+  })
+})
 
 describe("the bridge's drawer end", () => {
   it('answers a call on the plugin\'s own port only', async () => {

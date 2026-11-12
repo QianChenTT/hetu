@@ -307,6 +307,21 @@ describe('the fake drawer', () => {
     expect(drawer.text(instance)).toBe('hello')
   })
 
+  // A note the test opens is the human's. editor.open needs a real read, as hetu's drawer does
+  it('serves editor.read on ui.read for a note the test opened, and editor.open on luoshu.read alone', async () => {
+    const drawer = new FakeDrawer()
+    const capabilities = [{ type: 'ui.read', paths: ['**'] }, { type: 'luoshu.list', paths: ['**'] }, { type: 'ui.view' }]
+    const made = fakeCore({ manifest: drawn({ capabilities }), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const ctx = given as unknown as PluginContext
+    const instance = drawer.openNote('secret/a.md', 'hello')
+    expect(await ctx.editor.read(instance)).toMatchObject({ text: 'hello' })
+    await expect(ctx.editor.open('secret/b.md')).rejects.toMatchObject({ code: 'not-granted' })
+    expect(drawer.opened).toEqual([])
+  })
+
   it('hands events from the test to the plugin\'s handlers', async () => {
     const drawer = new FakeDrawer()
     const made = fakeCore({ manifest: drawn(), drawer })

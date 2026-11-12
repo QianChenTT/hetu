@@ -334,7 +334,7 @@ export type ActionResults = {
   'luoshu.move': null
   'luoshu.list': { paths: string[], next: string | null }
   'core.pickFolder': string | null
-  'editor.reach': { read: boolean, edit: boolean, list: boolean, verbs: string[] }
+  'editor.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null

@@ -37,6 +37,8 @@ describe('the class of one grant', () => {
     // The human sees each edit and saves it, so ui.edit stays a scoped writer on every note too
     ['ui.edit on a named folder', { type: 'ui.edit', paths: ['notes/**'] }, 2],
     ['ui.edit on every note', { type: 'ui.edit', paths: ['**'] }, 2],
+    // It reads what the human opened, so it is a reader
+    ['ui.read on every note', { type: 'ui.read', paths: ['**'] }, 1],
     ['exec', { type: 'exec', commands: [['git', 'status']], env: [] }, 4],
     ['guard.hook', { type: 'guard.hook' }, 4],
     ['log.read', { type: 'log.read' }, 4],
@@ -63,6 +65,8 @@ describe('a plugin\'s class', () => {
     ['luoshu.read', [read, fetchOne], []],
     ['luoshu.list', [list, fetchOne], []],
     ['ui.keys', [{ type: 'ui.keys' }, fetchOne], []],
+    ['ui.read', [{ type: 'ui.read', paths: ['**'] }, fetchOne], []],
+    ['ui.read here and network reached', [{ type: 'ui.read', paths: ['**'] }, call], [fetchOne]],
     ['history read', [{ type: 'history', access: 'read', paths: ['**'] }, fetchOne], []],
     ['reading here and network reached', [read, call], [fetchOne]],
     ['network here and reading reached', [fetchOne, call], [list]],

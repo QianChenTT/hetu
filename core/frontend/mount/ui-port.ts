@@ -180,7 +180,8 @@ export class UiPort {
       case 'editor.open': {
         // Asked before anything is read, so opening never tells a plugin whether a note it can't name exists
         const reach = await this.options.reach(owner, call.args.path)
-        if (!reach.read && !reach.list) throw new UiRefusal('not-granted')
+        // A real read only, so a note a plugin opens is never one ui.read reaches through a list grant or its own
+        if (!reach.read) throw new UiRefusal('not-granted')
         await this.options.hooks.open(call.args.path)
         return null
       }

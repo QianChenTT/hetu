@@ -30,10 +30,11 @@ function scopes<T extends z.ZodType>(item: T) {
 
 // The fixed list. A new type needs a new core API version and a plugin can't invent one. Version 2 put ui.view, a view
 // of either kind, and ui.layout, the right to be picked as the layout, in place of ui.panel and ui.statusBar. ui.edit
-// is the right to change an open note through the editor, which the human then saves
+// is the right to change an open note through the editor, which the human then saves, and ui.read its twin, the right
+// to read through the editor a note the human opened
 export const capabilityTypes = frozen([
   'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
-  'ui.edit', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
+  'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
 ] as const)
 
 // An update of a plugin holding one of these waits for the human's Confirm whatever its class: a layout draws the whole
@@ -41,7 +42,7 @@ export const capabilityTypes = frozen([
 export const askOnUpdateTypes = frozen(['ui.layout'] as const)
 
 // The ui items scoped by paths, which reach only the notes they name and so are never a verb held whole
-export const scopedUiTypes = frozen(['ui.edit'] as const)
+export const scopedUiTypes = frozen(['ui.edit', 'ui.read'] as const)
 
 // Guards load only from the install, so a plugin-folder manifest asking for one of these is refused and allow all
 // never covers them
@@ -50,8 +51,9 @@ export const installOnlyTypes = frozen(['guard.hook'] as const)
 export const capability = z.discriminatedUnion('type', [
   // luoshu.list reaches the names alone, so a file tree shows notes it can't read. luoshu.read lists what it reads too
   z.strictObject({ type: z.literal(['luoshu.read', 'luoshu.write', 'luoshu.list']), paths: scopes(scope) }),
-  // The notes the editor serves the plugin's edits on. No action reaches the disk on it
-  z.strictObject({ type: z.literal('ui.edit'), paths: scopes(scope) }),
+  // The notes the editor serves the plugin's edits on, and the ones it reads once the human opened them. No action
+  // reaches the luoshu on either
+  z.strictObject({ type: z.literal(['ui.edit', 'ui.read']), paths: scopes(scope) }),
   z.strictObject({ type: z.literal('net.fetch'), hosts: scopes(text) }),
   z.strictObject({ type: z.literal(['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys']) }),
   z.strictObject({ type: z.literal('events.subscribe'), topics: scopes(qualifiedName) }),

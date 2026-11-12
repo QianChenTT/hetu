@@ -6,7 +6,7 @@ import { CoreLink } from '../frontend/mount/link.ts'
 import type { SettingsValue } from '../frontend/mount/settings.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
 
-type Reach = { read?: string[], list?: string[], verbs?: string[] }
+type Reach = { read?: string[], list?: string[], uiRead?: string[], verbs?: string[] }
 
 function port() {
   const sent: Record<string, unknown>[] = []
@@ -46,7 +46,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
       const held = reach[plugin]
       if (held === undefined) return { ok: false, refusal: { code: 'policy-down' } }
       const has = (list?: string[]) => path !== undefined && (list ?? []).includes(path)
-      return { ok: true, result: { read: has(held.read), write: false, list: has(held.list) || has(held.read), verbs: held.verbs ?? [] } }
+      return { ok: true, result: { read: has(held.read), edit: false, uiRead: has(held.uiRead), list: has(held.list) || has(held.read), verbs: held.verbs ?? [] } }
     },
   })
   const link = new CoreLink(core.bridge)
@@ -305,13 +305,15 @@ describe('events from the human, by owner', () => {
 })
 
 describe('editor.open', () => {
-  it('opens a note inside the plugin\'s read or list scope and refuses one outside before anything is read', async () => {
-    const { drawer, opened, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'], list: ['names/b.md'] } })
+  // A real read only: a note a plugin opens is never the human's, so it can't hand ui.read a note to read
+  it('opens a note inside the plugin\'s read scope and refuses one it only lists or reaches on ui.read, before anything is read', async () => {
+    const { drawer, opened, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'], list: ['names/b.md'], uiRead: ['shown/c.md'] } })
     const board = await connected(drawer, 'kanban')
     expect(await board.call('editor.open', { path: 'a.md' })).toMatchObject({ ok: true })
-    expect(await board.call('editor.open', { path: 'names/b.md' })).toMatchObject({ ok: true })
+    expect(await board.call('editor.open', { path: 'names/b.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await board.call('editor.open', { path: 'shown/c.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     expect(await board.call('editor.open', { path: 'secret.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
-    expect(opened).toEqual(['a.md', 'names/b.md'])
+    expect(opened).toEqual(['a.md'])
     expect(core.calls('luoshu.read')).toEqual([])
   })
 })

@@ -23,6 +23,7 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   'ui.layout': 'held',
   'ui.keys': 'held',
   'ui.edit': 'paths',
+  'ui.read': 'paths',
   storage: 'held',
   'guard.hook': 'held',
   // Scope holds no host yet

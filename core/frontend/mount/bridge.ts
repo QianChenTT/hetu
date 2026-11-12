@@ -48,8 +48,9 @@ export const RESERVED_KEYS: readonly string[] = Object.freeze([
   ...CORE_KEYS, 'Mod-Shift-/', 'Mod-c', 'Mod-x', 'Mod-v', 'Mod-z', 'Mod-y', 'Mod-Shift-z', 'Mod-a',
 ])
 
-type Reach = { read: boolean, edit: boolean, list: boolean, verbs: readonly string[] }
-const none: Reach = Object.freeze({ read: false, edit: false, list: false, verbs: Object.freeze([]) })
+// read is the plugin's luoshu.read and uiRead its ui.read, which counts only for a note the human opened
+type Reach = { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: readonly string[] }
+const none: Reach = Object.freeze({ read: false, edit: false, uiRead: false, list: false, verbs: Object.freeze([]) })
 
 // The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
 export const NODES_PER_SECOND = 200_000
@@ -67,6 +68,8 @@ type Connection = {
   readonly marked: Set<string>
   // How many marks each of its sets holds, by instance
   readonly sets: Map<string, Map<string, number>>
+  // The instances it was told opened, so one the human opens after it connected is told once
+  readonly told: Set<string>
   // What it had the drawer do in the second that started at start
   spent: { start: number, marks: number, chars: number, nodes: number }
 }
@@ -85,6 +88,8 @@ export class Drawer {
   private readonly edited: (instance: string, plugin: string) => void
   private readonly connections = new Map<string, Connection>()
   private reaches = new Map<string, Promise<Reach>>()
+  // The instances the human opened, the only ones ui.read reaches
+  private readonly human = new Set<string>()
   private readonly mac: boolean
   private readonly clock: () => number
   private readonly settings: () => SettingsValue
@@ -128,7 +133,7 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(),
+      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(), told: new Set(),
       spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
@@ -152,7 +157,24 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
   }
 
+  // The human opened the instance, from hetu's own palette or, with via, from a node of that plugin naming the note.
+  // A note a plugin opened isn't the human's, and neither is one opened from a node of a plugin that can't read or list
+  // the note itself, or a plugin could draw a button naming any note and read it through ui.read once clicked. Plugins
+  // that read it only through ui.read hear of it now
+  async humanOpened(instance: Instance, via?: string): Promise<void> {
+    if (this.human.has(instance.id)) return
+    if (via !== undefined) {
+      const named = await this.reachOf(via, instance.path)
+      if (!named.read && !named.list) return
+    }
+    if (this.find(instance.id) !== instance || this.human.has(instance.id)) return
+    this.human.add(instance.id)
+    for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
+  }
+
   closed(instance: string): void {
+    this.human.delete(instance)
+    for (const conn of this.connections.values()) conn.told.delete(instance)
     for (const conn of this.connections.values()) {
       if (!conn.marked.delete(instance)) continue
       conn.port.postMessage(JSON.stringify(event({ topic: 'editor.closed', instance })))
@@ -183,7 +205,7 @@ export class Drawer {
       const command = conn.bindings.get(key) as string
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
-        const named = reach.read && open !== undefined ? open.id : null
+        const named = open !== undefined && this.readsWith(reach, open) ? open.id : null
         if (this.live(conn)) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.command', command, instance: named })))
       })
       return true
@@ -192,7 +214,7 @@ export class Drawer {
     for (const conn of this.connections.values()) {
       if (!conn.keys) continue
       void this.reachOf(conn.plugin, open.path).then(reach => {
-        if (this.live(conn) && reach.read && reach.verbs.includes('ui.keys')) {
+        if (this.live(conn) && this.readsWith(reach, open) && reach.verbs.includes('ui.keys')) {
           conn.port.postMessage(JSON.stringify(event({ topic: 'editor.key', instance: open.id, key })))
         }
       })
@@ -230,7 +252,7 @@ export class Drawer {
     for (const id of [...conn.marked]) {
       const instance = this.find(id)
       const reach = instance === undefined ? none : await this.reachOf(conn.plugin, instance.path)
-      if (!this.live(conn) || (reach.read && reach.verbs.includes('ui.decoration'))) continue
+      if (!this.live(conn) || (instance !== undefined && this.readsWith(reach, instance) && reach.verbs.includes('ui.decoration'))) continue
       instance?.clearMarks(conn.plugin)
       conn.marked.delete(id)
       conn.sets.delete(id)
@@ -263,18 +285,31 @@ export class Drawer {
     if (asked === undefined) {
       asked = this.link.call('editor.reach', path === undefined ? { plugin } : { plugin, path }).then(got => {
         if (!got.ok) return none
-        const { read, edit, list, verbs } = got.result as Reach
-        return { read: read === true, edit: edit === true, list: list === true, verbs: Array.isArray(verbs) ? verbs : [] }
+        const { read, edit, uiRead, list, verbs } = got.result as Reach
+        return {
+          read: read === true, edit: edit === true, uiRead: uiRead === true, list: list === true, verbs: Array.isArray(verbs) ? verbs : [],
+        }
       }, () => none)
       this.reaches.set(key, asked)
     }
     return asked
   }
 
+  // Whether a plugin with this reach reads the instance: its luoshu.read on the note, or its ui.read on a note the human
+  // opened
+  private readsWith(reach: Reach, instance: Instance): boolean {
+    return reach.read || (reach.uiRead && this.human.has(instance.id))
+  }
+
   // An event about an instance, to the plugin only when it reads the note
   private async tell(conn: Connection, instance: Instance, body: EventBody): Promise<void> {
     const reach = await this.reachOf(conn.plugin, instance.path)
-    if (this.live(conn) && reach.read) conn.port.postMessage(JSON.stringify(event(body)))
+    if (!this.live(conn) || !this.readsWith(reach, instance)) return
+    if (body.topic === 'editor.opened') {
+      if (conn.told.has(instance.id)) return
+      conn.told.add(instance.id)
+    }
+    conn.port.postMessage(JSON.stringify(event(body)))
   }
 
   // A ui event to an owner's live port
@@ -333,7 +368,7 @@ export class Drawer {
       case 'editor.instances': {
         const listed: { instance: string, path: string, version: number }[] = []
         for (const instance of this.instances()) {
-          if ((await this.reachOf(plugin, instance.path)).read) listed.push({ instance: instance.id, path: instance.path, version: instance.versions.version })
+          if (this.readsWith(await this.reachOf(plugin, instance.path), instance)) listed.push({ instance: instance.id, path: instance.path, version: instance.versions.version })
         }
         return { instances: listed }
       }
@@ -404,7 +439,7 @@ export class Drawer {
     const instance = this.find(id)
     if (instance === undefined) throw new Refusal('not-found')
     const reach = await this.reachOf(plugin, instance.path)
-    if (!reach.read || (edit && !reach.edit)) throw new Refusal('not-granted')
+    if (!this.readsWith(reach, instance) || (edit && !reach.edit)) throw new Refusal('not-granted')
     // The note may have closed while the core answered
     if (this.find(id) !== instance) throw new Refusal('not-found')
     return instance

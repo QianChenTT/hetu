@@ -235,6 +235,19 @@ describe('ui.edit', () => {
   })
 })
 
+// The read twin of ui.edit. The drawer serves it for notes the human opened, and no provider action or event takes it
+describe('ui.read', () => {
+  it('covers the paths it names and serves no read, listing or event of the luoshu', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.read', paths: ['**'] }), item({ type: 'ui.decoration' })] })
+    expect(gate.decide(access(alpha, 'ui.read', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'luoshu.list', { paths: ['notes/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.canRead(alpha, 'notes/a.md')).toBe(false)
+    expect(gate.canList(alpha, 'notes/a.md')).toBe(false)
+    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.decoration'])
+  })
+})
+
 describe('windows', () => {
   it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })
