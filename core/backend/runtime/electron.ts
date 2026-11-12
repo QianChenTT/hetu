@@ -1,6 +1,7 @@
 import type { MessagePortMain } from 'electron'
 import type { FloorConstant } from '../../api/floor.ts'
-import { messageCap } from '../../api/rate.ts'
+import { measurePlain } from '../../api/measure.ts'
+import { messageCap, newBudget, spend } from '../../api/rate.ts'
 import type { Port } from '../carrier/seams.ts'
 import type { Runtime, WorkerStart } from '../loader/seams.ts'
 import { type HostLoading, loadHost } from './hosts.ts'
@@ -8,9 +9,13 @@ import { type HostLoading, loadHost } from './hosts.ts'
 // A MessagePortMain as the carrier reads a port. A worker's messages reach main only through the relay in the worker
 // host page, which forwards nothing but text within the plugin's cap, so the port reads only that and parses it.
 // Anything else is read as a message it can't read, its ports closed, so a half holds no channel but its own. What the
-// carrier sends goes as text too
-function asPort(port: MessagePortMain, cap: () => number): Port {
+// carrier sends goes as text too. bytesPerSecond is for a utility half's port, which no relay stands in front of: each
+// message is weighed as the relay weighs one, the larger of its length and what the carrier measures of it, and one
+// over the budget is read as a message it can't read, which the carrier still counts against the rate and drops. The
+// message has reached main whole by then, as every message does before it can be measured
+function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() => number) | null = null): Port {
   const unreadable: ((value: unknown) => void)[] = []
+  const budget = newBudget()
   const refuse = () => {
     for (const told of unreadable) told(undefined)
   }
@@ -33,6 +38,11 @@ function asPort(port: MessagePortMain, cap: () => number): Port {
           } catch {
             return refuse()
           }
+          if (bytesPerSecond !== null) {
+            const measured = measurePlain(value, cap())
+            if (!measured.ok) return refuse()
+            if (!spend(budget, performance.now(), Math.max(measured.bytes, data.length), bytesPerSecond(), cap())) return refuse()
+          }
           listener(value)
         })
       }
@@ -41,13 +51,14 @@ function asPort(port: MessagePortMain, cap: () => number): Port {
 }
 
 // The loader's runtime on Electron. Workers start and end in the hidden renderer. A host half loads from the bytes the
-// loader hashed, the built-ins frozen once before the first one. limit is the carrier's: a floor constant as it applies
-// to one plugin
+// loader hashed, the built-ins frozen once before the first one. A utility half forks through the utility runtime.
+// limit is the carrier's: a floor constant as it applies to one plugin
 export function electronRuntime(
   channel: () => { port1: MessagePortMain, port2: MessagePortMain },
   workers: Pick<Runtime, 'terminate'> & { start(start: WorkerStart): void },
   limit: (plugin: string, name: FloorConstant) => number,
   hosts: HostLoading,
+  utility: Pick<Runtime, 'startUtility' | 'kill'>,
 ): Runtime {
   let frozen = false
   const loading: HostLoading = {
@@ -59,9 +70,10 @@ export function electronRuntime(
     importer: hosts.importer,
   }
   return {
-    channel(id) {
+    channel(id, counted = false) {
       const { port1, port2 } = channel()
-      return { core: asPort(port1, () => messageCap(name => limit(id, name))), plugin: port2 }
+      const bytes = counted ? () => limit(id, 'bytesPerSecond') : null
+      return { core: asPort(port1, () => messageCap(name => limit(id, name)), bytes), plugin: port2 }
     },
     startWorker(start) {
       workers.start(start)
@@ -72,10 +84,11 @@ export function electronRuntime(
     terminate(id, incarnation) {
       workers.terminate(id, incarnation)
     },
-    // No utility process starts here yet, so a utility half reads crashed with start-failed
-    startUtility() {
-      throw new Error('no utility runtime')
+    startUtility(start) {
+      utility.startUtility(start)
     },
-    kill() {},
+    kill(id, incarnation) {
+      utility.kill(id, incarnation)
+    },
   }
 }

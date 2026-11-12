@@ -46,7 +46,7 @@ describe('the stage the package is built from', () => {
     await stageInstall(stage, { locked: true })
     expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])
     const app = await files(path.join(stage, 'app'))
-    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([INSTALL_LIST, 'main.js', 'mount-preload.js', 'package.json', 'workers-preload.js'])
+    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([INSTALL_LIST, 'main.js', 'mount-preload.js', 'package.json', 'utility.js', 'workers-preload.js'])
     expect(app.filter(file => file.startsWith('frontend/')).every(file => /^frontend\/(mount|trusted|workers)\/[\w.-]+\.(html|css|js)$/.test(file))).toBe(true)
     expect((await readdir(path.join(stage, 'plugins'))).sort()).toEqual(INSTALL_PLUGINS)
     const all = [...app, ...await files(path.join(stage, 'plugins'))]

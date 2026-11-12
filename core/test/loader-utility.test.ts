@@ -28,6 +28,8 @@ describe('a utility half', () => {
       { id: 'http', incarnation: 1, half: 'utility', code: '// http host.js 1.0.0\n' },
     ])
     expect(made.link.registered).toContainEqual(utilityCaller())
+    // Main counts the bytes on its port, since no relay page sits in front of it. A worker's it leaves to the relay
+    expect(made.runtime.channels).toEqual([{ id: 'http', counted: true }])
     // Every host plugin starts before it, as a sandboxed plugin's does
     expect(made.runtime.order()).toEqual(['gate', 'storage', 'http'])
   })

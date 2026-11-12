@@ -209,7 +209,11 @@ export class FakeRuntime implements Runtime {
     return this.started.map(start => start.id)
   }
 
-  channel(): { core: Port, plugin: unknown } {
+  // Each channel asked for, with whether main is to count its bytes
+  readonly channels: { id: string, counted: boolean }[] = []
+
+  channel(id = '', counted = false): { core: Port, plugin: unknown } {
+    this.channels.push({ id, counted })
     const { port1, port2 } = new MessageChannel()
     this.ports.push(port1, port2)
     return { core: port1, plugin: port2 }

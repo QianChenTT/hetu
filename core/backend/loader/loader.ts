@@ -1655,7 +1655,7 @@ ${capabilityKey(change.capability)}`)
       // Its own process on its own port, registered for its host half as a worker's is. Nothing of its module comes back
       // to main, so it holds no role
       const run: Run = { caller: caller('host'), ready: false, stopped: false }
-      const { core, plugin } = this.runtime.channel(k.id)
+      const { core, plugin } = this.runtime.channel(k.id, true)
       this.link.register(core, run.caller)
       live.halves.set('host', run)
       live.imported = true

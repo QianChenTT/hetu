@@ -82,8 +82,9 @@ export type UtilityStart = { id: string, incarnation: number, code: Buffer, port
 // What the loader needs from the runtime, the only part that touches Electron, faked in the loader's tests
 export type Runtime = {
   // Both ends of a new channel for plugin id: core for the carrier and plugin for the half's code. MessageChannelMain in
-  // Electron, whose core end reads only text within the plugin's cap
-  channel(id: string): { core: Port, plugin: unknown }
+  // Electron, whose core end reads only text within the plugin's cap. counted has main weigh each message against the
+  // plugin's bytesPerSecond as well, for a port with no relay page in front of it
+  channel(id: string, counted?: boolean): { core: Port, plugin: unknown }
   // Starts a worker from the verified bytes. The worker host page gets { id, incarnation, code } and the port. A throw
   // means it couldn't start
   startWorker(start: WorkerStart): void
