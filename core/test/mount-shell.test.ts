@@ -16,6 +16,7 @@ const calm: CoreStatus = {
   page: [],
   pending: [],
   stopped: null,
+  suspect: [],
 }
 
 describe('the banner', () => {
@@ -36,7 +37,9 @@ describe('the banner', () => {
       page: [],
       pending: [],
       stopped: null,
+      suspect: ['switches', 'plugins'],
     })).toEqual([
+      'state files that failed their check at start: switches, plugins',
       'gate: off', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
       'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',
     ])

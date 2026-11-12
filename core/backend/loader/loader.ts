@@ -1,6 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StoppedMode } from '../../api/actions.ts'
+import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
 import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
@@ -228,6 +228,8 @@ export class Loader implements Seam {
   private readonly logWrites: () => boolean
   private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
+  // The kinds of state file that failed their check at boot, for the banner
+  private readonly suspect: StateKind[]
   private readonly known = new Map<string, Known>()
   // Folder plugins and entries under ids no folder plugin may hold, kept apart so they never touch the install's own
   private readonly strays = new Map<string, string>()
@@ -281,6 +283,10 @@ export class Loader implements Seam {
     for (const check of booted.checks) {
       if (check.check === 'plugin-entry' && check.id !== undefined) this.entryChecks.set(check.id, check.result as FileResult)
     }
+    // A file in a later format is read no further but is no sign of tampering, as boot reads it
+    const failed = new Set(booted.checks.filter(c => !['ok', 'absent', 'newer'].includes(c.result)).map(c => c.check))
+    this.suspect = (['switches', 'luoshu', 'plugin-entry'] as const).filter(kind => failed.has(kind))
+      .map(kind => (kind === 'plugin-entry' ? 'plugins' : kind))
     this.requests = new Requests({
       effect: change => changeEffect(change),
       fingerprint: change => this.store.fingerprint('plugin' in change ? change.plugin : null),
@@ -628,6 +634,7 @@ ${capabilityKey(change.capability)}`)
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
       pending: this.pending(),
       stopped: this.stoppedMode,
+      suspect: this.suspect,
     }
   }
 

@@ -288,7 +288,12 @@ export type CoreStatus = {
   page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null
+  // The kinds of state file that failed their check at this start or went missing after an earlier run, never a path.
+  // Empty once a start finds them all as written
+  suspect: StateKind[]
 }
+
+export type StateKind = 'switches' | 'luoshu' | 'plugins'
 
 // What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
