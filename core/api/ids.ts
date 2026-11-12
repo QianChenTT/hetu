@@ -49,13 +49,15 @@ export const providers = table({
 // Served by the carrier, the loader and the runtime, never by a plugin. log.* reads the event log the core writes
 export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
-// The actions a guard may hook
-export const guardableActions = frozen(['luoshu.write'] as const)
+// The actions a guard may hook: each one that changes a note
+export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)
 export type GuardableAction = typeof guardableActions[number]
 
 // The guards expected on each guardable action, in the order they answer. Empty until leases ships with #77, since an
 // expected guard that isn't running refuses every write
-export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({ 'luoshu.write': [] })
+export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({
+  'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
+})
 
 // The security controls: the slot holders and every guard core/api expects. One that is on and fails stops hetu. The
 // log is the core's own and the providers serve powers without limiting anyone, so neither is one

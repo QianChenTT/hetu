@@ -57,17 +57,23 @@ export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
 // leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
-// scope comes from. access is what a history action does with its paths, which the carrier puts in the scope itself.
-// A write stays one audit record and reads are coalesced. filter list keeps only the result's paths the gate's canList
-// allows
+// scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
+// which the carrier puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
+// like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
+// filter list keeps only the result's paths the gate's canList allows
 export type ProviderAction = {
   readonly capability: CapabilityType | null
   readonly args: z.ZodType
-  readonly scope: 'path' | 'paths' | 'command' | null
+  readonly scope: 'path' | 'paths' | 'ends' | 'command' | null
   readonly access?: 'read' | 'commit'
+  readonly also?: { readonly capability: CapabilityType, readonly ends: readonly End[] }
   readonly write: boolean
   readonly filter?: 'list'
 }
+
+// A move's two ends, in the order its raw and canonical scopes hold them
+export const ends = frozen(['from', 'to'] as const)
+export type End = typeof ends[number]
 
 // The most names one luoshu.list call looks at, so no listing costs the gate and main more than this
 export const LIST_PAGE = 1000
@@ -171,6 +177,20 @@ const providerTable = {
     capability: 'luoshu.write',
     args: z.strictObject({ path, text: z.string(), baseVersion: sha256.optional() }),
     scope: 'path',
+    write: true,
+  },
+  // To the OS's bin. baseVersion, when given, is the hash of the bytes the remover read, and a note that moved on
+  // since answers stale
+  'luoshu.remove': {
+    capability: 'luoshu.write', args: z.strictObject({ path, baseVersion: sha256.optional() }), scope: 'path', write: true,
+  },
+  // Never onto a note that exists. Write on both ends and read on the one it leaves, or a plugin that writes everywhere
+  // could carry a note it can't read into a folder it reads
+  'luoshu.move': {
+    capability: 'luoshu.write',
+    args: z.strictObject({ from: path, to: path }),
+    scope: 'ends',
+    also: { capability: 'luoshu.read', ends: ['from'] },
     write: true,
   },
   'leases.acquire': {
@@ -310,6 +330,8 @@ export type ActionResults = {
   'events.publish': null
   'luoshu.read': { text: string, version: string }
   'luoshu.write': { version: string }
+  'luoshu.remove': null
+  'luoshu.move': null
   'luoshu.list': { paths: string[], next: string | null }
   'core.pickFolder': string | null
   'editor.reach': { read: boolean, write: boolean, list: boolean, verbs: string[] }

@@ -159,6 +159,8 @@ describe('the provider actions', () => {
     expect(Object.fromEntries(Object.entries(providerActions).map(([action, spec]) => [action, spec.capability]))).toEqual({
       'luoshu.read': 'luoshu.read',
       'luoshu.write': 'luoshu.write',
+      'luoshu.remove': 'luoshu.write',
+      'luoshu.move': 'luoshu.write',
       // Free at the gate's decide step: the carrier keeps only the names the gate's canList allows
       'luoshu.list': null,
       'leases.acquire': 'luoshu.write',
@@ -185,7 +187,7 @@ describe('the provider actions', () => {
   it('keeps writes one audit record each and the guardable action among them', () => {
     const writes = Object.entries(providerActions).filter(([, spec]) => spec.write).map(([action]) => action)
     expect(writes).toEqual([
-      'luoshu.write', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete',
+      'luoshu.write', 'luoshu.remove', 'luoshu.move', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete',
       'history.commit', 'exec.run',
     ])
     for (const action of guardableActions) expect(providerActions[action].write).toBe(true)
@@ -205,6 +207,13 @@ describe('the provider actions', () => {
     expect(providerActions['leases.list'].scope).toBeNull()
     expect(providerActions['history.commit'].scope).toBe('paths')
     expect(providerActions['exec.run'].scope).toBe('command')
+    expect(providerActions['luoshu.remove'].scope).toBe('path')
+    expect(providerActions['luoshu.move'].scope).toBe('ends')
+  })
+
+  it('asks a second requirement of a move alone: read on the end it leaves', () => {
+    const second = Object.entries(providerActions).filter(([, spec]) => spec.also !== undefined).map(([action, spec]) => [action, spec.also])
+    expect(second).toEqual([['luoshu.move', { capability: 'luoshu.read', ends: ['from'] }]])
   })
 
   it.each([
@@ -230,6 +239,17 @@ describe('the provider actions', () => {
     ['luoshu.write', { path: 'a.md' }, false],
     ['luoshu.write', { path: 'a.md', text: 42 }, false],
     ['luoshu.write', { path: 'notes\\a.md', text: 'x' }, false],
+    ['luoshu.remove', { path: 'a.md' }, true],
+    ['luoshu.remove', { path: 'a.md', baseVersion: 'f'.repeat(64) }, true],
+    ['luoshu.remove', { path: 'a.md', baseVersion: 'F'.repeat(64) }, false],
+    ['luoshu.remove', { path: 'notes\\a.md' }, false],
+    ['luoshu.remove', { path: 'a.md', text: 'x' }, false],
+    ['luoshu.move', { from: 'a.md', to: 'b/a.md' }, true],
+    ['luoshu.move', { from: 'a.md' }, false],
+    ['luoshu.move', { from: 'a.md', to: '../a.md' }, false],
+    ['luoshu.move', { from: 'notes/../a.md', to: 'a.md' }, false],
+    ['luoshu.move', { from: 'a.md', to: 'b.md', overwrite: true }, false],
+    ['luoshu.move', { from: 'a.md', to: 'b.md', baseVersion: 'f'.repeat(64) }, false],
     ['luoshu.list', {}, true],
     ['luoshu.list', undefined, false],
     ['luoshu.list', { folder: 'notes' }, true],

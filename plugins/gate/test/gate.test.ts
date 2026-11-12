@@ -276,6 +276,8 @@ describe('coverage', () => {
     expect(rows).toEqual([
       ['luoshu.read', 'luoshu.read', 'path', 'paths'],
       ['luoshu.write', 'luoshu.write', 'path', 'paths'],
+      ['luoshu.remove', 'luoshu.write', 'path', 'paths'],
+      ['luoshu.move', 'luoshu.write', 'ends', 'paths'],
       ['leases.acquire', 'luoshu.write', 'paths', 'paths'],
       ['history.commit', 'history', 'paths', 'access'],
       ['history.log', 'history', 'path', 'access'],
@@ -286,7 +288,11 @@ describe('coverage', () => {
       expect(rule).not.toBe('none')
       // Paths are judged by the paths rule or, with an access beside them, by history's. A command by exec's
       expect(rule === 'command').toBe(scope === 'command')
-      expect(rule === 'paths' || rule === 'access').toBe(scope === 'path' || scope === 'paths')
+      expect(rule === 'paths' || rule === 'access').toBe(scope === 'path' || scope === 'paths' || scope === 'ends')
+    }
+    // A second requirement is judged on paths too
+    for (const [, action] of Object.entries(providerActions)) {
+      if (action.also !== undefined) expect(scopeRules[action.also.capability]).toBe('paths')
     }
     // A history action names its access in core/api, which the carrier puts in the scope
     for (const [name, capability] of rows) expect('access' in providerActions[name as string]).toBe(capability === 'history')

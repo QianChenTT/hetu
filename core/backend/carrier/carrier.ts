@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { coreActions, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
+import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import { capabilityTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
@@ -89,9 +89,10 @@ type Target =
   | { kind: 'provider', provider: string, spec: ProviderAction }
   | { kind: 'plugin', target: string, name: string }
 
+// also is a provider action's second requirement: its capability over the paths at these places in the scope
 type Kind =
   | { kind: 'core' | 'served' | 'free' }
-  | { kind: 'power', capability: CapabilityType, scope: Scope }
+  | { kind: 'power', capability: CapabilityType, scope: Scope, also?: { capability: CapabilityType, at: readonly number[] } }
 
 type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
 type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
@@ -677,15 +678,18 @@ export class Carrier {
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }
     if (target.kind === 'provider') {
-      const { capability, scope, access } = target.spec
+      const { capability, scope, access, also } = target.spec
       if (capability === null) return { kind: 'free' }
-      const paths = scope === 'path' ? [field(args, 'path') as string] : scope === 'paths' ? [...field(args, 'paths') as string[]] : undefined
+      const paths = scope === 'path'
+        ? [field(args, 'path') as string]
+        : scope === 'paths' ? [...field(args, 'paths') as string[]] : scope === 'ends' ? ends.map(end => field(args, end) as string) : undefined
       // A command is canonical as written. access is the action's own, from core/api's table
       const command = scope === 'command' ? [...field(args, 'command') as string[]] : undefined
       return {
         kind: 'power',
         capability,
         scope: frozen({ ...(paths !== undefined ? { paths } : {}), ...(access !== undefined ? { access } : {}), ...(command !== undefined ? { command } : {}) }),
+        ...(also !== undefined ? { also: frozen({ capability: also.capability, at: also.ends.map(end => ends.indexOf(end)) }) } : {}),
       }
     }
     // A plugin's own halves call each other freely
@@ -803,7 +807,7 @@ export class Carrier {
     if (target.kind === 'events') return this.events(pending, args, kind)
     // 5 precheck, for calls with power only
     if (kind.kind === 'power') {
-      const refused = this.judge(pending, 'raw', kind.capability, kind.scope)
+      const refused = this.judgeAll(pending, 'raw', kind, kind.scope)
       if (refused !== null) return this.finish(pending, { ok: false, ...refused })
     }
     // 6 route, then 7 to 10 by the route
@@ -830,6 +834,16 @@ export class Carrier {
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
     if (stage === 'raw') pending.gate = this.slot('gate')
     return this.decideFor(pending, stage, capability, scope, true)
+  }
+
+  // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
+  // scope that lacks one of those places fails, since the second requirement would judge nothing
+  private judgeAll(pending: Pending, stage: Access['stage'], kind: Extract<Kind, { kind: 'power' }>, scope: Scope): No | null {
+    const refused = this.judge(pending, stage, kind.capability, scope)
+    if (refused !== null || kind.also === undefined) return refused
+    const paths = kind.also.at.map(at => scope.paths?.[at])
+    if (paths.length === 0 || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
+    return this.judge(pending, stage, kind.also.capability, frozen({ paths }))
   }
 
   // The gate's answer for a call or for a subscription the bus asks about again. prompt is false for the bus, where an
@@ -1135,7 +1149,9 @@ export class Carrier {
     // Nothing awaits from here to perform, and perform gets the frozen copy the gate and the guards judge, never the
     // object prepare gave, which could answer another path when read again
     if (kind.kind === 'power') {
-      const refused = this.judge(pending, 'canonical', kind.capability, prepared.scope)
+      // Each end the caller named stays one end, so the second requirement judges the end it was asked about
+      const reshaped = kind.also !== undefined && prepared.scope.paths?.length !== kind.scope.paths?.length
+      const refused = reshaped ? { code: 'failed' as const } : this.judgeAll(pending, 'canonical', kind, prepared.scope)
       if (refused !== null) {
         release()
         return this.finish(pending, { ok: false, ...refused })
