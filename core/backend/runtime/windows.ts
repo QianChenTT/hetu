@@ -33,7 +33,7 @@ export function webPreferences(session: Session, packaged: boolean): WebPreferen
   }
 }
 
-// How a window a human sees opens: as usual, or quiet, without taking focus and at a place of its own, and hidden as
+// How a window a human sees opens: as usual, or quiet, without taking focus and at a place of its own and hidden as
 // well when hide holds the options that keep it from sight
 export type Placement = { quiet: boolean, at?: { x: number, y: number }, hide?: { opacity: number, focusable?: boolean } }
 

@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { BrowserWindow, Session, WebContents } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietPlacement, TRUSTED_URL, webPreferences } from '../backend/runtime/windows.ts'
@@ -100,6 +102,37 @@ describe('quiet windows for runs from the source', () => {
     openEditor(FakeWindow as unknown as typeof BrowserWindow, session, false)
     for (const { window } of made) window.emit('ready-to-show')
     expect(made.map(({ options, shown }) => [options.x, options.y, shown])).toEqual([[1960, 40, ['showInactive']], [undefined, undefined, ['show']]])
+  })
+
+  it('leaves opacity and focusable to Electron for a window that is not hidden', () => {
+    const made: Record<string, unknown>[] = []
+    class FakeWindow extends EventEmitter {
+      webContents = {}
+      constructor(options: Record<string, unknown>) {
+        super()
+        made.push(options)
+      }
+      show() {}
+      showInactive() {}
+      loadURL() { return Promise.resolve() }
+    }
+    for (const placement of [undefined, { quiet: false }, { quiet: true }, { quiet: true, at: { x: 1960, y: 40 } }]) {
+      openEditor(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+      openTrusted(FakeWindow as unknown as typeof BrowserWindow, {} as Session, false, placement)
+    }
+    expect(made).toHaveLength(8)
+    for (const options of made) {
+      expect('opacity' in options).toBe(false)
+      expect('focusable' in options).toBe(false)
+    }
+  })
+
+  // The packaged build ignores the switch only if main passes its locked flag, which no test of quietPlacement alone sees
+  it('is placed from main with the locked flag as packaged', async () => {
+    const source = await readFile(path.join(import.meta.dirname, '..', 'backend', 'main.ts'), 'utf8')
+    const calls = [...source.matchAll(/quietPlacement\(\{\s*packaged:\s*(\w+),/g)].map(match => match[1])
+    expect(calls).toEqual(['LOCKED'])
+    expect(source.match(/quietPlacement\(/g)).toHaveLength(1)
   })
 
   it('opens off every display, see-through and unable to take focus when HETU_QUIET_WINDOWS is hidden', () => {
