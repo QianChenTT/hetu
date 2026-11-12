@@ -90,7 +90,15 @@ describe('the stage the package is built from', () => {
     const stage = path.join(await temp(), 'stage')
     await stageInstall(stage, { locked: true })
     expect(JSON.parse(await readFile(path.join(stage, 'app', 'package.json'), 'utf8'))).toEqual(STAGED_APP)
-    expect(STAGED_APP).toMatchObject({ name: 'hetu', version: '0.4.0', main: 'main.js', type: 'module' })
+    expect(STAGED_APP).toMatchObject({ name: 'hetu', version: '0.5.0', main: 'main.js', type: 'module' })
+  })
+
+  // The Release workflow names the release from the root package.json and looks for the MSI this version names
+  it('takes the version the root package.json and its lock file hold', async () => {
+    const root = path.join(import.meta.dirname, '..', '..')
+    const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')) as { version: string }
+    const lock = JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8')) as { version: string, packages: Record<string, { version?: string }> }
+    expect([manifest.version, lock.version, lock.packages['']?.version]).toEqual([STAGED_APP.version, STAGED_APP.version, STAGED_APP.version])
   })
 
   it('starts from an empty folder, so nothing left from an earlier build ships', async () => {

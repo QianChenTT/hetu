@@ -9,8 +9,8 @@ import { FUSES } from '../build/fuses.ts'
 // A release asset's name is changed where it holds a space, so a name with one wouldn't match its line in SHA256SUMS
 describe('the MSI\'s file name', () => {
   it('holds the version and the architecture and no space', () => {
-    const name = MSI_NAME.replace('${version}', '0.4.0').replace('${ext}', 'msi')
-    expect(name).toBe('hetu-0.4.0-x64.msi')
+    const name = MSI_NAME.replace('${version}', '0.5.0').replace('${ext}', 'msi')
+    expect(name).toBe('hetu-0.5.0-x64.msi')
     expect(MSI_NAME).not.toMatch(/\s/)
   })
 })
