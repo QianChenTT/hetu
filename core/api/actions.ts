@@ -250,12 +250,13 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // it didn't restart a second time
 export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
 
-// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs, its state and
-// why, whether it is a security control, the human's switch and, for a plugin-folder plugin, each item it was granted
+// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs (in main, in a
+// utility process, in a sandboxed worker or in the editor page), its state and why, whether it is a security control,
+// the human's switch and, for a plugin-folder plugin, each item it was granted
 export type ListedPlugin = {
   id: string
   from: 'install' | 'folder'
-  place: 'host' | 'sandboxed' | 'page'
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
   state: PluginState
   reason: string | null
   security: boolean

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   coreNamespaces, firstPartyIds, guardableActions, guards, installIds, isReservedId, localName, MAX_ID_LENGTH,
-  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, slotIds,
+  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, slotIds, utilityIds,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -93,6 +93,17 @@ describe('slots, providers and guards', () => {
     ])
   })
 
+  // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
+  it('runs http alone in a utility process, an install plugin that holds no slot, guard or provider role', () => {
+    expect(utilityIds).toEqual(['http'])
+    for (const id of utilityIds) {
+      expect(installIds).toContain(id)
+      expect(slotIds).not.toContain(id)
+      expect(Object.values(providers)).not.toContain(id)
+      expect(Object.values(guards).flat()).not.toContain(id)
+    }
+  })
+
   it('serves every provider and fills every slot from the install', () => {
     for (const id of [...slotIds, ...Object.values(providers)]) expect(installIds).toContain(id)
   })
@@ -147,6 +158,7 @@ describe('the tables', () => {
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
     expect(() => (installIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (utilityIds as unknown as string[]).push('mine')).toThrow()
     expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()
     expect(() => { (guards['luoshu.write'] as string[]).push('mine') }).toThrow()
     expect(isReservedId('mine')).toBe(false)

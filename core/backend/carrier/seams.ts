@@ -20,7 +20,7 @@ export type Port = {
 // answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
 export type PluginInfo = {
   state: PluginState
-  place: 'host' | 'sandboxed' | 'page'
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
   incarnation: number
   serves: string
   actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
