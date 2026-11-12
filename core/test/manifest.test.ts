@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { API_VERSION, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi } from '../api/manifest.ts'
+import { API_VERSION, apiChanges, folderManifest, installManifest, MAX_LIST, MAX_MANIFEST_BYTES, supportsApi } from '../api/manifest.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const many = (n: number, make: (i: number) => string) => Array.from({ length: n }, (_, i) => make(i))
@@ -62,6 +62,49 @@ describe('a manifest', () => {
     expect(supportsApi('^12')).toBe(false)
     expect(folderManifest.safeParse({ ...minimal, api: '^1' }).success).toBe(true)
     expect(folderManifest.safeParse({ ...minimal, api: '^999999' }).success).toBe(true)
+  })
+
+  describe('an older major', () => {
+    // Version 2 changed the ui verbs, version 3 only added ui.edit, version 4 reshaped history and dropped log.read
+    const changes = {
+      2: { added: ['ui.view'], removed: ['ui.panel'], reshaped: [], actionsChanged: true },
+      3: { added: ['ui.edit'], removed: [], reshaped: [], actionsChanged: false },
+      4: { added: [], removed: ['log.read'], reshaped: ['history'], actionsChanged: false },
+    }
+
+    it('loads when every major since only added, naming only types it had', () => {
+      expect(supportsApi('^2', ['luoshu.read', 'storage'], 3, changes)).toBe(true)
+      expect(supportsApi('^3', ['luoshu.read', 'ui.edit'], 3, changes)).toBe(true)
+    })
+
+    it('is refused naming a type a later major added, which needs that major', () => {
+      expect(supportsApi('^2', ['luoshu.read', 'ui.edit'], 3, changes)).toBe(false)
+    })
+
+    it('is refused naming a type a later major removed or reshaped, and loads without it', () => {
+      expect(supportsApi('^3', ['history'], 4, changes)).toBe(false)
+      expect(supportsApi('^3', ['log.read'], 4, changes)).toBe(false)
+      expect(supportsApi('^2', ['history'], 4, changes)).toBe(false)
+      expect(supportsApi('^3', ['luoshu.read'], 4, changes)).toBe(true)
+      expect(supportsApi('^2', ['luoshu.read'], 4, changes)).toBe(true)
+    })
+
+    it('is refused once a later major changed an action, a verb or an event, whatever it names', () => {
+      expect(supportsApi('^1', [], 3, changes)).toBe(false)
+      expect(supportsApi('^1', [], 2, changes)).toBe(false)
+    })
+
+    it('is refused past a major with no record, newer than the core, or 0', () => {
+      expect(supportsApi('^2', [], 3, { 2: changes[2] })).toBe(false)
+      expect(supportsApi('^4', [], 3, changes)).toBe(false)
+      expect(supportsApi('^0', [], 3, changes)).toBe(false)
+    })
+
+    it('ends at version 1 in the record core/api keeps, since version 2 changed the ui verbs', () => {
+      expect(apiChanges[2].actionsChanged).toBe(true)
+      expect(supportsApi('^1')).toBe(false)
+      expect(supportsApi(`^${API_VERSION}`, ['luoshu.read'])).toBe(true)
+    })
   })
 
   const refused: [string, object][] = [

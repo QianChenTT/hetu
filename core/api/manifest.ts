@@ -1,20 +1,46 @@
 import { z } from 'zod'
 import { capabilities, folderCapabilities, screenText, text } from './capabilities.ts'
 import { guardableActions, localName, MAX_NAME_LENGTH, pluginId } from './ids.ts'
-import { plain } from './plain.ts'
+import { plain, table } from './plain.ts'
 import { pathProblem } from './scope.ts'
 import { themeSpec } from './ui.ts'
 
 // The core API's major version. A manifest whose api range leaves this version out still parses and is refused with
 // api, not invalid. Version 2 renamed the ui items to ui.view and ui.layout and added views and themes
 export const API_VERSION = 2
+
+// What each major did to the one before it: the capability types it added, removed and reshaped, and whether a core
+// action, a bridge verb or an event lost or changed a field. A narrower rule on who may call what is no change here,
+// since an older plugin then meets a refusal and never a wider reach. A new major gets its record here
+export type ApiChange = {
+  readonly added: readonly string[]
+  readonly removed: readonly string[]
+  readonly reshaped: readonly string[]
+  readonly actionsChanged: boolean
+}
+
+export const apiChanges: Readonly<Record<number, ApiChange>> = table({
+  2: { added: ['ui.view', 'ui.layout'], removed: ['ui.panel', 'ui.statusBar'], reshaped: [], actionsChanged: true },
+})
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024
 // Entries in any other list or map of a manifest
 export const MAX_LIST = 64
 
-export function supportsApi(range: string): boolean {
-  return range === `^${API_VERSION}`
+// This major, or an older one every major since only added to. named is the capability types the manifest asks for:
+// one a later major added needs that major, and one a later major removed or reshaped would be read under a meaning
+// its author never saw, so either refuses
+export function supportsApi(range: string, named: readonly string[] = [], current = API_VERSION, changes = apiChanges): boolean {
+  if (!/^\^(?:0|[1-9][0-9]*)$/.test(range)) return false
+  const major = Number(range.slice(1))
+  if (major === current) return true
+  if (major < 1 || major > current) return false
+  for (let next = major + 1; next <= current; next++) {
+    const change = Object.hasOwn(changes, next) ? changes[next] : undefined
+    if (change === undefined || change.actionsChanged) return false
+    if (named.some(type => [change.added, change.removed, change.reshaped].some(listed => listed.includes(type)))) return false
+  }
+  return true
 }
 
 // A file in the plugin's own folder, resolved only against the hashed file map
