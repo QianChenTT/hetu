@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
+import type { GuardCall } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
@@ -87,6 +88,30 @@ describe('the guard step', () => {
     expect((await ask('luoshu.write', { path: 'a.md', text: 'changed', baseVersion: version })).refusal?.code).toBe('guard-refused')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('as it was')
     expect((await ask('luoshu.read', { path: 'a.md' })).result).toEqual({ text: 'as it was', version })
+  })
+
+  it('refuses a move a guard denies on either end and the remove of a guarded note, leaving every note, then moves past it', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'held.md'), 'held')
+    await writeFile(path.join(folder, 'free.md'), 'free')
+    const asked: string[][] = []
+    const { ask } = await joined(folder, {
+      install: { leases: { files: filesFor(hostManifest('leases')) } },
+      behave: { leases: { exports: { guard: { check: (call: GuardCall) => {
+        const paths = call.scope.paths ?? []
+        asked.push([...paths])
+        return paths.includes('held.md') ? 'deny' : 'allow'
+      } } } } },
+      wire: { guardsFor: () => ['leases'] },
+    })
+    expect((await ask('luoshu.move', { from: 'held.md', to: 'moved.md' })).refusal?.code).toBe('guard-refused')
+    expect((await ask('luoshu.move', { from: 'free.md', to: 'held.md' })).refusal?.code).toBe('guard-refused')
+    expect((await ask('luoshu.remove', { path: 'held.md' })).refusal?.code).toBe('guard-refused')
+    expect(await readFile(path.join(folder, 'held.md'), 'utf8')).toBe('held')
+    expect(await readFile(path.join(folder, 'free.md'), 'utf8')).toBe('free')
+    expect((await ask('luoshu.move', { from: 'free.md', to: 'kept.md' })).ok).toBe(true)
+    expect(await readFile(path.join(folder, 'kept.md'), 'utf8')).toBe('free')
+    expect(asked).toEqual([['held.md', 'moved.md'], ['free.md', 'held.md'], ['held.md'], ['free.md', 'kept.md']])
   })
 })
 

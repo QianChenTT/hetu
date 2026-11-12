@@ -188,6 +188,29 @@ describe('deciding', () => {
   })
 })
 
+// The carrier hands a move's write as both ends in one scope and its read as the from end alone
+describe('a move, judged on both its ends', () => {
+  const sorter = { alpha: [item({ type: 'luoshu.write', paths: ['public/**'] }), item({ type: 'luoshu.read', paths: ['**'] })] }
+  const move = (paths: string[], stage: Access['stage']): Access => ({ ...access(alpha, 'luoshu.write', { paths }, stage), action: 'luoshu.move' })
+
+  it.each(['raw', 'canonical'] as const)('refuses a move granted on one end only, whichever end that is, at the %s stage', stage => {
+    const gate = gateOn(sorter)
+    expect(gate.decide(move(['public/a.md', 'private/a.md'], stage))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(move(['private/a.md', 'public/a.md'], stage))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(move(['public/a.md', 'public/old/a.md'], stage))).toMatchObject({ allow: true })
+  })
+
+  it('refuses a move with one end inside an item switched off and asks for one whose first use asks on either end', () => {
+    const write = (more: Partial<GrantedItem>) => item({ type: 'luoshu.write', paths: ['private/**'] }, more)
+    const off = gateOn({ alpha: [...sorter.alpha, write({ off: true })] })
+    expect(off.decide(move(['private/a.md', 'public/a.md'], 'canonical'))).toMatchObject({ allow: false, code: 'switched-off' })
+    expect(off.decide(move(['public/a.md', 'private/a.md'], 'canonical'))).toMatchObject({ allow: false, code: 'switched-off' })
+    const asking = gateOn({ alpha: [...sorter.alpha, write({ firstUse: true })] })
+    expect(asking.decide(move(['public/a.md', 'private/a.md'], 'canonical'))).toEqual({ ask: expect.any(String), view: 1 })
+    expect(asking.decide(move(['private/a.md', 'public/a.md'], 'canonical'))).toEqual({ ask: expect.any(String), view: 1 })
+  })
+})
+
 describe('windows', () => {
   it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })

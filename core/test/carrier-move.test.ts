@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, code, harness, worker } from './carrier-fakes.ts'
+import { cleanup, code, FakeGuard, harness, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -137,5 +137,58 @@ describe('a remove', () => {
     luoshu.files.set('a.md', 'a')
     expect((await connect(worker('cleaner')).ask('luoshu.remove', { path: 'a.md', baseVersion: hash })).ok).toBe(true)
     expect(luoshu.performed[0].prepared).toEqual({ scope: { paths: ['a.md'] }, baseVersion: hash })
+  })
+})
+
+// A guard in the guard slot that refuses anything touching locked/x.md, as a lease holder's would
+describe('the guards over a move and a remove', () => {
+  const guarded = () => {
+    const parts = harness({ guardsFor: () => ['leases'] })
+    parts.loader.slots.leases = 'on'
+    parts.guards.leases = new FakeGuard()
+    parts.guards.leases.answer = call => (call.scope.paths?.includes('locked/x.md') ? 'deny' : 'allow')
+    parts.gate.grants.sorter = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
+    parts.luoshu.files.set('locked/x.md', 'held')
+    parts.luoshu.files.set('free/y.md', 'free')
+    return parts
+  }
+  const scopes = (guard: FakeGuard) => guard.calls.map(call => call.scope.paths)
+
+  it('refuses a move the guard denies on its from end and leaves the note', async () => {
+    const { connect, guards, luoshu } = guarded()
+    expect(code(await connect(worker('sorter')).ask('luoshu.move', { from: 'locked/x.md', to: 'free/x.md' }))).toBe('guard-refused')
+    expect(scopes(guards.leases)).toEqual([['locked/x.md', 'free/x.md']])
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.released).toHaveLength(1)
+    expect(luoshu.files.get('locked/x.md')).toBe('held')
+  })
+
+  it('refuses a move the guard denies on its to end, judged on the canonical end a short name resolves to', async () => {
+    const { connect, guards, luoshu } = guarded()
+    luoshu.short.set('LOCKED~1', 'locked')
+    const sorter = connect(worker('sorter'))
+    expect(code(await sorter.ask('luoshu.move', { from: 'free/y.md', to: 'locked/x.md' }))).toBe('guard-refused')
+    expect(code(await sorter.ask('luoshu.move', { from: 'free/y.md', to: 'LOCKED~1/x.md' }))).toBe('guard-refused')
+    expect(scopes(guards.leases)).toEqual([['free/y.md', 'locked/x.md'], ['free/y.md', 'locked/x.md']])
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.files.get('free/y.md')).toBe('free')
+  })
+
+  it('moves when the guard allows both ends', async () => {
+    const { connect, guards, luoshu } = guarded()
+    expect((await connect(worker('sorter')).ask('luoshu.move', { from: 'free/y.md', to: 'free/z.md' })).ok).toBe(true)
+    expect(scopes(guards.leases)).toEqual([['free/y.md', 'free/z.md']])
+    expect(luoshu.files.get('free/z.md')).toBe('free')
+  })
+
+  it('refuses the remove of a guarded note, handing the guard the version, and removes one it allows', async () => {
+    const hash = 'b'.repeat(64)
+    const { connect, guards, luoshu } = guarded()
+    const sorter = connect(worker('sorter'))
+    expect(code(await sorter.ask('luoshu.remove', { path: 'locked/x.md', baseVersion: hash }))).toBe('guard-refused')
+    expect(luoshu.files.get('locked/x.md')).toBe('held')
+    expect(guards.leases.calls[0]).toMatchObject({ action: 'luoshu.remove', scope: { paths: ['locked/x.md'] }, baseVersion: hash })
+    expect((await sorter.ask('luoshu.remove', { path: 'free/y.md' })).ok).toBe(true)
+    expect(luoshu.files.has('free/y.md')).toBe(false)
   })
 })
