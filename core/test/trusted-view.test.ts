@@ -93,6 +93,10 @@ describe('what the trusted window draws', () => {
     ])
   })
 
+  it('says the macOS install is not protected from programs running as the human', () => {
+    expect(screen(calm()).install).toBe('On macOS, programs running as you can change hetu’s install')
+  })
+
   it('names the notes folder, or says none is picked', () => {
     expect(screen(calm()).luoshu).toBe('Notes folder: none picked')
     expect(screen(calm({ luoshu: '/Users/someone/notes' })).luoshu).toBe('Notes folder: /Users/someone/notes')
