@@ -74,6 +74,19 @@ describe("hetu's layout", () => {
     await until(() => (nodes(drawer.tree('layout')).find(node => node.id === 'columns') as { sizes?: number[] } | undefined)?.sizes?.[0] === 300)
   })
 
+  it('keeps a resize the human made right before a stop, on storage slow to write', async () => {
+    const drawer = new FakeDrawer()
+    const core = fakeCore({ manifest, drawer, latencyMs: 600 })
+    cores.push(core)
+    await started(drawer, core)
+    drawer.emit({ topic: 'layout.state', state: state() })
+    await until(() => drawer.tree('layout') !== null)
+    drawer.emit({ topic: 'layout.resized', node: 'columns', sizes: [300, 860, 240] })
+    await until(() => (nodes(drawer.tree('layout')).find(node => node.id === 'columns') as { sizes?: number[] } | undefined)?.sizes?.[0] === 300)
+    await core.stop()
+    expect((core.stored('storage', 'arrangement') as { widths?: { left: number } } | undefined)?.widths?.left).toBe(300)
+  })
+
   it('reads the arrangement back when it starts again', async () => {
     const drawer = new FakeDrawer()
     const core = fakeCore({ manifest, drawer })
