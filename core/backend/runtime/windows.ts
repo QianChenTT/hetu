@@ -33,21 +33,33 @@ export function webPreferences(session: Session, packaged: boolean): WebPreferen
   }
 }
 
-// How a window a human sees opens: as usual, or quiet, without taking focus and at a place of its own
-export type Placement = { quiet: boolean, at?: { x: number, y: number } }
+// How a window a human sees opens: as usual, or quiet, without taking focus and at a place of its own, and hidden as
+// well when hide holds the options that keep it from sight
+export type Placement = { quiet: boolean, at?: { x: number, y: number }, hide?: { opacity: number, focusable?: boolean } }
 
 type Display = { id: number, workArea: { x: number, y: number } }
 
-// A run from the source with HETU_QUIET_WINDOWS set to 1, as the tests run it, opens its windows without taking focus,
-// on a display other than the one under the cursor when there is one, so the person at the machine can keep working. A
-// packaged build ignores it
+// Past every display Windows allows and see-through where a system keeps a window on a display, as macOS does
+const OFF_SCREEN = { x: -32000, y: -32000 }
+
+// A run from the source with HETU_QUIET_WINDOWS set to 1 opens its windows without taking focus, on a display other
+// than the one under the cursor when there is one, so the person at the machine can keep working and watch. Set to
+// hidden, as the tests run it, the windows still open and draw for Playwright and captures but off every display, at
+// zero opacity and unable to take focus, so a later focus() can't take the foreground either. A packaged build ignores
+// both
 export function quietPlacement(options: {
   packaged: boolean
   env: Record<string, string | undefined>
   displays: readonly Display[]
   cursorDisplay: number
+  platform?: string
 }): Placement {
-  if (options.packaged || options.env.HETU_QUIET_WINDOWS !== '1') return { quiet: false }
+  if (options.packaged) return { quiet: false }
+  // On Linux a window that can't take focus leaves the window manager and stays on top of every other
+  if (options.env.HETU_QUIET_WINDOWS === 'hidden') {
+    return { quiet: true, at: OFF_SCREEN, hide: (options.platform ?? process.platform) === 'linux' ? { opacity: 0 } : { opacity: 0, focusable: false } }
+  }
+  if (options.env.HETU_QUIET_WINDOWS !== '1') return { quiet: false }
   const other = options.displays.find(display => display.id !== options.cursorDisplay)
   return other === undefined ? { quiet: true } : { quiet: true, at: { x: other.workArea.x + 40, y: other.workArea.y + 40 } }
 }
@@ -61,7 +73,7 @@ export function openEditor(
   preload?: string,
 ): BrowserWindow {
   const preferences = preload === undefined ? webPreferences(session, packaged) : { ...webPreferences(session, packaged), preload }
-  const window = new Window({ width: 1100, height: 760, show: false, title: 'hetu', webPreferences: preferences, ...placement.at })
+  const window = new Window({ width: 1100, height: 760, show: false, title: 'hetu', webPreferences: preferences, ...placement.at, ...placement.hide })
   window.once('ready-to-show', () => (placement.quiet ? window.showInactive() : window.show()))
   window.loadURL(EDITOR_URL).catch((err: unknown) => console.error(`the editor page didn't load: ${String(err)}`))
   return window
@@ -85,7 +97,7 @@ export function openTrusted(
   preload?: string,
 ): BrowserWindow {
   const preferences = preload === undefined ? webPreferences(session, packaged) : { ...webPreferences(session, packaged), preload }
-  const window = new Window({ width: 640, height: 720, show: false, title: 'hetu: security', webPreferences: preferences, ...placement.at })
+  const window = new Window({ width: 640, height: 720, show: false, title: 'hetu: security', webPreferences: preferences, ...placement.at, ...placement.hide })
   window.once('ready-to-show', () => (placement.quiet ? window.showInactive() : window.show()))
   window.loadURL(TRUSTED_URL).catch((err: unknown) => console.error(`the trusted page didn't load: ${String(err)}`))
   return window
