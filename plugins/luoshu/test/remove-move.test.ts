@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Caller } from 'hetu-core/api/envelope.ts'
 import type { Call, Prepared } from 'hetu-core/api/slots.ts'
@@ -11,12 +13,15 @@ const onWindows = process.platform === 'win32'
 const foldsCase = onWindows || process.platform === 'darwin'
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 const tick = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const run = promisify(execFile)
 const caller: Caller = { kind: 'window', role: 'editor', n: 0 }
 
 let base: string
 let folder: string
 let bin: string
 let n = 0
+// Each luoshu a test opened, whose watch ends before its folder goes
+const live: Luoshu[] = []
 
 beforeEach(async () => {
   base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-move-')))
@@ -30,6 +35,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const made of live.splice(0)) made.close()
   await rm(base, { recursive: true, force: true })
 })
 
@@ -42,6 +48,7 @@ function opened(options: LuoshuOptions = {}, trash?: Bin): Opened {
   const heard: [string, string][] = []
   const binned: string[] = []
   const made = createLuoshu({ publish: (topic, at) => heard.push([topic, at]), ...options })
+  live.push(made)
   const given: Bin = trash ?? (async absolute => {
     binned.push(absolute)
     await rename(absolute, path.join(bin, `${binned.length}-${path.basename(absolute)}`))
@@ -256,6 +263,150 @@ describe('the spellings threat-model row 3 found, on both ends', () => {
     made.role.open({ folder, dataDir: path.join(folder, 'data'), installDir: path.join(base, 'install') })
     expect(await ask(made, 'luoshu.move', { from: 'a.md', to: 'data/a.md' })).toEqual({ refused: { code: 'not-granted' } })
     expect(await exists('a.md')).toBe(true)
+  })
+})
+
+// The luoshu is the one check left with the gate off by the human, so each refusal here comes from canonical alone
+describe('the dot rule on both ends of a move and on a remove', () => {
+  const notGranted = { refused: { code: 'not-granted' } }
+  let before: string[]
+
+  // Every name under the notes folder, dot names and the folders a refused call might have made included
+  async function tree(dir = folder, prefix = ''): Promise<string[]> {
+    const found: string[] = []
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const name = prefix + entry.name
+      found.push(name)
+      if (entry.isDirectory()) found.push(...await tree(path.join(dir, entry.name), `${name}/`))
+    }
+    return found.sort()
+  }
+
+  beforeEach(async () => {
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'journal', '.hidden.md'), 'hidden')
+    before = await tree()
+  })
+
+  async function untouched(made: Opened): Promise<void> {
+    expect(await tree()).toEqual(before)
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await readFile(path.join(folder, 'journal', '.hidden.md'), 'utf8')).toBe('hidden')
+    expect(made.heard).toEqual([])
+    expect(made.binned).toEqual([])
+  }
+
+  it.each([
+    ['in a dot folder', '.obsidian/plugins/x/main.js'],
+    ['in a dot folder spelled in another case', '.OBSIDIAN/plugins/x/main.js'],
+    ['that is a dot file', 'journal/.hidden.md'],
+  ])('refuses a from end %s', async (_name, from) => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from, to: 'stolen.md' })).toEqual(notGranted)
+    expect(await ask(made, 'luoshu.move', { from, to: 'journal/stolen.md' })).toEqual(notGranted)
+    await untouched(made)
+  })
+
+  it.each([
+    ['a dot folder that exists', '.obsidian/a.md'],
+    ['a folder inside a dot folder', '.obsidian/plugins/x/a.js'],
+    ['a new folder inside a dot folder', '.obsidian/plugins/y/main.js'],
+    ['a dot folder spelled in another case', '.OBSIDIAN/a.md'],
+    ['a new dot folder', '.github/workflows/x.yml'],
+    ['a new dot folder below a plain one', 'journal/.config/a.md'],
+    ['a new dot folder deep in new folders', 'journal/deeper/.config/x/a.md'],
+    ['a dot folder behind a code point HFS+ skips', '\u200c.obsidian/a.md'],
+  ])('refuses a to end in %s, leaving the note where it was', async (_name, to) => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to })).toEqual(notGranted)
+    expect(await ask(made, 'luoshu.move', { from: 'journal/b.md', to })).toEqual(notGranted)
+    await untouched(made)
+  })
+
+  it.each([
+    ['at the top', '.a.md'],
+    ['in a folder', 'journal/.a.md'],
+    ['with two dots', 'journal/..a.md'],
+    ['that exists', 'journal/.hidden.md'],
+    ['behind a code point HFS+ skips', 'journal/\ufeff.a.md'],
+  ])('refuses a to end that is a dot file %s', async (_name, to) => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to })).toEqual(notGranted)
+    await untouched(made)
+  })
+
+  it('refuses a to end through a junction into a dot folder, and a junction named with a dot', async () => {
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
+    await symlink(path.join(folder, 'journal'), path.join(folder, '.shown'), 'junction')
+    before = await tree()
+    const made = opened()
+    for (const to of ['cfg/a.md', 'cfg/plugins/x/a.js', 'cfg/plugins/y/main.js', '.shown/a.md']) {
+      expect(await ask(made, 'luoshu.move', { from: 'a.md', to }), to).toEqual(notGranted)
+    }
+    // The from end through either junction too
+    expect(await ask(made, 'luoshu.move', { from: 'cfg/plugins/x/main.js', to: 'stolen.js' })).toEqual(notGranted)
+    expect(await ask(made, 'luoshu.move', { from: '.shown/b.md', to: 'b.md' })).toEqual(notGranted)
+    await untouched(made)
+  })
+
+  // prepare judged a plain folder. A folder on the way swapped for a junction into a dot folder by perform would land
+  // the note there
+  it('refuses a move whose to folder became a junction into a dot folder after prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-old'))
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'journal'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+    expect(await readdir(path.join(folder, '.obsidian'))).toEqual(['plugins'])
+    expect(await exists('a.md')).toBe(true)
+  })
+
+  it.each([
+    ['at the top', 'a.md', '.a.md'],
+    ['in a folder', 'journal/b.md', 'journal/.b.md'],
+    ['that also changes case', 'a.md', '.A.md'],
+  ])('refuses a rename in place to a dot name %s', async (_name, from, to) => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from, to })).toEqual(notGranted)
+    await untouched(made)
+  })
+
+  it('refuses a remove in a dot folder, of a dot file and through a junction into a dot folder', async () => {
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
+    before = await tree()
+    const made = opened()
+    for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js', 'journal/.hidden.md', 'cfg/plugins/x/main.js']) {
+      expect(await ask(made, 'luoshu.remove', { path: where }), where).toEqual(notGranted)
+    }
+    await untouched(made)
+  })
+
+  // The 8.3 short name Windows made for a name in a folder, as dir /x shows it. null when the volume makes none
+  async function shortName(dir: string, name: string): Promise<string | null> {
+    const { stdout } = await run('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: dir })
+    for (const line of stdout.split(/\r?\n/).map(l => l.trimEnd())) {
+      if (!line.endsWith(` ${name}`)) continue
+      const short = line.slice(0, -name.length).trimEnd().split(/\s+/).at(-1)
+      if (short?.includes('~')) return short
+    }
+    return null
+  }
+
+  it.runIf(onWindows)('refuses a to end named by the 8.3 short name of a dot folder', async ({ skip }) => {
+    const short = await shortName(folder, '.obsidian')
+    if (short === null) {
+      if (process.env.CI) throw new Error('no 8.3 short names on this CI volume, the dot folder\'s short name unproven')
+      return skip('this volume makes no 8.3 short names')
+    }
+    expect(short.startsWith('.')).toBe(false)
+    expect(await readFile(path.join(folder, short, 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to: `${short}/a.md` })).toEqual(notGranted)
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to: `${short}/plugins/x/a.js` })).toEqual(notGranted)
+    expect(await ask(made, 'luoshu.move', { from: `${short}/plugins/x/main.js`, to: 'stolen.js' })).toEqual(notGranted)
+    await untouched(made)
   })
 })
 

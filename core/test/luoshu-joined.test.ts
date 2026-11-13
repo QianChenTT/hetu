@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
@@ -20,14 +20,15 @@ type Reply = { id?: number, ok?: boolean, result?: unknown, refusal?: { code: st
 
 // The joined core over a real boot, with the gate and the luoshu plugins as they ship and the folder picked. Calls come
 // from the editor window, each reply handed back the moment the carrier sends it
-async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor' | 'trash'>, install?: object } = {}) {
+async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor' | 'trash'>, install?: object, gate?: 'off' } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
   await writeInstall(installDir, { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, ...options.install })
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  // The gate switched off by the human, as the trusted window does
+  await store.writeSwitches(options.gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
   await store.writeLuoshu({ folder })
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
@@ -138,6 +139,47 @@ describe('a remove through the bin main hands the core', () => {
     const { ask } = await joined(folder, { wire: { trash: async () => { throw new Error('the bin refused') } } })
     expect((await ask('luoshu.remove', { path: 'a.md' })).refusal?.code).toBe('failed')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('stays')
+  })
+})
+
+// With the gate off by the human the carrier asks no one about a path, so the luoshu's canonical is the one check left
+describe('the dot rule with the gate off by the human', () => {
+  // A gate that throws at every question, so a call it would have to answer fails if the carrier asks it
+  const asked = () => {
+    throw new Error('the gate was asked')
+  }
+  const unasked = { gate: { exports: { gate: { decide: asked, canRead: asked, canList: asked, verbs: asked, stateChanged: asked } } } }
+
+  async function dotted() {
+    const folder = await notes()
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await mkdir(path.join(folder, 'journal'))
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'journal', '.hidden.md'), 'hidden')
+    await writeFile(path.join(folder, 'a.md'), 'note a')
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
+    // A remove past canonical would answer failed here, so not-granted shows canonical refused it
+    const { ask } = await joined(folder, { gate: 'off', behave: unasked, wire: { trash: async () => { throw new Error('nothing goes to the bin') } } })
+    return { folder, ask }
+  }
+
+  it('refuses either end of a move and a remove that names a dot folder or a dot file, a junction into one too', async () => {
+    const { folder, ask } = await dotted()
+    for (const to of ['.obsidian/a.md', '.obsidian/plugins/x/a.js', '.github/workflows/x.yml', 'journal/.config/a.md', 'journal/.a.md', '.a.md', 'cfg/a.md']) {
+      expect((await ask('luoshu.move', { from: 'a.md', to })).refusal?.code, to).toBe('not-granted')
+    }
+    for (const from of ['.obsidian/plugins/x/main.js', 'journal/.hidden.md', 'cfg/plugins/x/main.js']) {
+      expect((await ask('luoshu.move', { from, to: 'stolen.md' })).refusal?.code, from).toBe('not-granted')
+      expect((await ask('luoshu.remove', { path: from })).refusal?.code, from).toBe('not-granted')
+    }
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await readFile(path.join(folder, 'journal', '.hidden.md'), 'utf8')).toBe('hidden')
+    expect(await readdir(path.join(folder, '.obsidian'))).toEqual(['plugins'])
+    expect(await readdir(path.join(folder, 'journal'))).toEqual(['.hidden.md'])
+    expect((await readdir(folder)).sort()).toEqual(['.obsidian', 'a.md', 'cfg', 'journal'])
+    // A plain move goes through with the gate never asked
+    expect((await ask('luoshu.move', { from: 'a.md', to: 'journal/a.md' })).ok).toBe(true)
+    expect(await readFile(path.join(folder, 'journal', 'a.md'), 'utf8')).toBe('note a')
   })
 })
 
