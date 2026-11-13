@@ -490,6 +490,37 @@ describe('a page of the log', () => {
     expect(listed).toHaveLength(90)
     expect(listed[0].message).toBe(message)
   }, 180000)
+
+  // A build from before dot names were refused could have committed one. Nothing reads it back, but the log of a folder
+  // would name the commit with its author, date and message
+  it('leaves out of a folder\'s log a commit that changed only dot files under it, a page at a time', async () => {
+    const history = await started(where)
+    const plain = await commitOf(history, ['journal/b.md'], 'plain')
+    const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => name !== 'empty')!, 'shadow.git')
+    const env = { ...process.env, GIT_DIR: repo, GIT_INDEX_FILE: path.join(where.base, 'index'), GIT_AUTHOR_NAME: 'old', GIT_AUTHOR_EMAIL: 'old@hetu.invalid', GIT_COMMITTER_NAME: 'old', GIT_COMMITTER_EMAIL: 'old@hetu.invalid' }
+    const gitIn = async (args: string[], input?: string) => {
+      const running = promisify(execFile)('git', args, { env, cwd: where.base })
+      if (input !== undefined) running.child.stdin!.end(input)
+      return (await running).stdout.trim()
+    }
+    // One commit on top of the last, as an older build would have made it, with the paths given
+    const planted = async (paths: string[], message: string) => {
+      const blob = await gitIn(['hash-object', '-w', '--stdin'], `${message} bytes`)
+      await gitIn(['read-tree', 'refs/heads/main'])
+      for (const at of paths) await gitIn(['update-index', '--add', '--cacheinfo', `100644,${blob},${at}`])
+      const made = await gitIn(['commit-tree', await gitIn(['write-tree']), '-p', 'refs/heads/main', '-m', message])
+      await gitIn(['update-ref', 'refs/heads/main', made])
+      return made
+    }
+    const mixed = await planted(['journal/.hidden.md', 'journal/c.md'], 'mixed')
+    await planted(['journal/.hidden.md'], 'dot file')
+    await planted(['journal/.config/x.md', 'journal/deep/.obsidian/app.json', 'journal/\u200c.cfg'], 'dot folders')
+    await planted(['.obsidian/app.json'], 'outside the folder')
+    expect((await logOf(history, 'journal')).map(listed => listed.message)).toEqual(['mixed', 'plain'])
+    expect((await logOf(history, 'journal', 1)).map(listed => listed.commit)).toEqual([mixed])
+    expect((await logOf(history, 'journal/b.md')).map(listed => listed.commit)).toEqual([plain])
+    expect(await ask(history, 'history.log', { path: 'journal/.hidden.md' })).toEqual({ refused: { code: 'not-granted' } })
+  })
 })
 
 describe('whose call it is', () => {

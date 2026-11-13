@@ -4,7 +4,8 @@ import { mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE } from 'hetu-core/api/exec.ts'
+import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS } from 'hetu-core/api/exec.ts'
+import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, folderState, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
@@ -233,21 +234,45 @@ export function createHistory(options: HistoryOptions = {}): History {
     }
   }
 
+  // The commits of a page that changed a path with no dot segment under the folder or note logged. A build from before
+  // dot names were refused could have committed one. A commit that changed nothing else would show its author, date
+  // and message in a folder's log. diff-tree names the changed paths of each commit in the order given
+  async function plainOf(repo: Repo, ids: readonly string[], relative: string): Promise<Set<string>> {
+    const out = await git(repo, ['diff-tree', '--stdin', '-r', '-z', '--name-only', '--root', '--no-renames', '--', relative], {
+      input: ids.map(id => `${id}\n`).join(''), maxOutput: ids.length * MAX_COMMIT_PATHS * (MAX_SCOPE_LENGTH * 3 + 1) + SMALL,
+    })
+    const plain = new Set<string>()
+    let at = -1
+    for (const item of out.split('\0')) {
+      if (ids[at + 1] === item) at++
+      else if (at >= 0 && item !== '' && !item.split('/').some(isDotName)) plain.add(ids[at])
+    }
+    return plain
+  }
+
   async function log(repo: Repo, call: Call, target: Canonical): Promise<unknown> {
     if (await head(repo) === null) return { commits: [] }
     const limit = (call.args as { limit?: number }).limit ?? LOG_PAGE
     const format = ['%H', '%an', '%cn', '%aI', '%B'].join('%x1f')
-    // A message of the longest kind is three bytes a character, with room for the names, the date and the id
-    const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: limit * (MAX_COMMIT_MESSAGE * 3 + 4096) })
     const commits: HistoryCommit[] = []
-    for (const record of out.split(RECORD)) {
-      // rev-list writes its own "commit <id>" line before each formatted one
-      const fields = record.replace(/^\s*commit [0-9a-f]+\n/, '').split(FIELD)
-      if (fields.length !== 5 || !commitId.test(fields[0])) continue
-      const [id, author, committer, date, message] = fields
-      commits.push({ commit: id, author, committer, date, message: message.replace(/\n+$/, '') })
+    // A page at a time until the commits kept fill one, since a page can lose some
+    for (let skip = 0; commits.length < limit; skip += limit) {
+      // A message of the longest kind is three bytes a character, with room for the names, the date and the id
+      const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--skip=${skip}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: limit * (MAX_COMMIT_MESSAGE * 3 + 4096) })
+      const page: HistoryCommit[] = []
+      for (const record of out.split(RECORD)) {
+        // rev-list writes its own "commit <id>" line before each formatted one
+        const fields = record.replace(/^\s*commit [0-9a-f]+\n/, '').split(FIELD)
+        if (fields.length !== 5 || !commitId.test(fields[0])) continue
+        const [id, author, committer, date, message] = fields
+        page.push({ commit: id, author, committer, date, message: message.replace(/\n+$/, '') })
+      }
+      if (page.length === 0) break
+      const plain = await plainOf(repo, page.map(listed => listed.commit), target.relative)
+      commits.push(...page.filter(listed => plain.has(listed.commit)))
+      if (page.length < limit) break
     }
-    return { commits }
+    return { commits: commits.slice(0, limit) }
   }
 
   async function read(repo: Repo, call: Call, target: Canonical): Promise<unknown> {
