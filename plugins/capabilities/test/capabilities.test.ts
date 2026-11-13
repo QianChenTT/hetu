@@ -229,3 +229,27 @@ describe('the screen\'s line on programs that run other programs', () => {
     expect(lines.at(-1)).toBe(line('bash'))
   })
 })
+
+// The loader hands every plugin a change moves to another class, with the class stored and the one the change gives
+describe('the classes a change moves', () => {
+  it('shows each move up by the plugin with both classes, into 4 and below it', () => {
+    expect(caps.moves!([
+      { id: 'sync', from: 3, to: 4 },
+      { id: 'calc', from: 0, to: 2 },
+      { id: 'notes', from: 1, to: 3 },
+    ])).toEqual([
+      'Raises sync from class 3, Network to class 4, Powerful',
+      'Raises calc from class 0, Contained to class 2, Writer',
+      'Raises notes from class 1, Reader to class 3, Network',
+    ])
+  })
+
+  it('shows no move down', () => {
+    expect(caps.moves!([{ id: 'sync', from: 4, to: 3 }, { id: 'calc', from: 2, to: 0 }])).toEqual([])
+  })
+
+  it('counts a class not known as 4, so a move from one is never up and a move to one is', () => {
+    expect(caps.moves!([{ id: 'sync', from: null, to: 4 }, { id: 'calc', from: null, to: 1 }])).toEqual([])
+    expect(caps.moves!([{ id: 'sync', from: 3, to: null }])).toEqual(['Raises sync from class 3, Network to a class not known, counted as 4'])
+  })
+})

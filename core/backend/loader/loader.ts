@@ -134,6 +134,13 @@ type Known = {
 
 type Staged = { dir: string, read: Read }
 
+// A change to one plugin not applied yet: what that plugin would hold, null once it is gone
+type Pending = { readonly id: string, readonly granted: readonly Capability[] | null }
+
+// Another plugin a change classes again: the class its entry holds, the entry it takes and whether that entry raises
+// the class or adds an item that asks, a class not known counting as 4
+type Moved = { readonly id: string, readonly from: number | null, readonly entry: Plugin, readonly rises: boolean }
+
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
@@ -513,7 +520,8 @@ ${capabilityKey(change.capability)}`)
   }
 
   // What an approval or an update would load, from the one read it was found or staged with: the version and every
-  // grant an approval takes from the manifest, the versions an update goes from and to
+  // grant an approval takes from the manifest, the versions an update goes from and to. A change to what one plugin
+  // holds adds the other plugins whose classes it moves, from the state the change asks for
   private what(change: Change): string[] {
     if (change.kind === 'plugin.approve') {
       const manifest = this.known.get(change.plugin)?.read.manifest
@@ -521,7 +529,7 @@ ${capabilityKey(change.capability)}`)
       const asks = manifest.capabilities ?? []
       return [
         `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
-        ...this.screen(change.plugin, asks),
+        ...this.screen(change.plugin, asks), ...this.shownMoves({ id: change.plugin, granted: asks }),
       ]
     }
     if (change.kind === 'plugin.update') {
@@ -530,8 +538,16 @@ ${capabilityKey(change.capability)}`)
       return to === undefined || entry === undefined || entry === null ? [] : [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted)]
     }
     if (change.kind === 'grant.widen') {
-      const granted = this.known.get(change.plugin)?.entry?.granted ?? []
-      return this.screen(change.plugin, [...granted, change.capability])
+      const granted = [...this.known.get(change.plugin)?.entry?.granted ?? [], change.capability]
+      return [...this.screen(change.plugin, granted), ...this.shownMoves({ id: change.plugin, granted })]
+    }
+    if (change.kind === 'plugin.restore') {
+      const granted = this.bundled.get(change.plugin)?.manifest?.capabilities
+      return granted === undefined ? [] : this.shownMoves({ id: change.plugin, granted })
+    }
+    if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
+      const k = this.known.get(change.plugin)
+      return k?.from === 'folder' && k.entry !== null ? this.shownMoves({ id: change.plugin, granted: null }) : []
     }
     return []
   }
@@ -566,17 +582,23 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // Every plugin the loader knows and what each holds, id's own being granted, which may be a change not applied yet
-  private holders(id: string, granted: readonly Capability[]) {
-    const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
-    return { ids, held: (other: string) => (other === id ? granted : this.grantsOf(other)) }
+  // Every plugin the loader knows and what each holds, id's own being granted, which may be a change not applied yet,
+  // and another plugin's as a pending change to it would leave it
+  private holders(id: string, granted: readonly Capability[], pending?: Pending) {
+    const gone = pending?.granted === null ? pending.id : null
+    const ids = [...new Set([
+      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id,
+      ...(pending === undefined ? [] : [pending.id]),
+    ])].filter(other => other === id || other !== gone)
+    const held = (other: string) => (other === id ? granted : other === pending?.id ? pending.granted ?? [] : this.grantsOf(other))
+    return { ids, held }
   }
 
   // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
   // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
   // can pass notes out through it
-  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
-    const { ids, held } = this.holders(id, granted)
+  private connected(id: string, granted: readonly Capability[], pending?: Pending): { id: string, granted: readonly Capability[] }[] {
+    const { ids, held } = this.holders(id, granted, pending)
     const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
     for (const from of ids) {
       for (const to of targetsOf(held(from))) {
@@ -593,8 +615,8 @@ ${capabilityKey(change.capability)}`)
   // another plugin's topics from the plugin that owns the topic to id, never back. Publishing needs no grant, so a
   // plugin can signal every plugin that hears its topics by what and when it publishes, while a plugin that hears
   // another passes it nothing. Two plugins hearing one topic share nothing through it
-  private flow(id: string, granted: readonly Capability[]): Flow {
-    const { ids, held } = this.holders(id, granted)
+  private flow(id: string, granted: readonly Capability[], pending?: Pending): Flow {
+    const { ids, held } = this.holders(id, granted, pending)
     const out = new Map<string, Set<string>>()
     const into = new Map<string, Set<string>>()
     const link = (from: string, to: string) => {
@@ -622,18 +644,75 @@ ${capabilityKey(change.capability)}`)
     return { upstream: peers(followed(into, [id], id)), downstream: peers(followed(out, [id], id)), heard }
   }
 
-  private reachable(id: string, granted: readonly Capability[]): Capability[] {
-    return this.connected(id, granted).flatMap(other => [...other.granted])
+  private reachable(id: string, granted: readonly Capability[], pending?: Pending): Capability[] {
+    return this.connected(id, granted, pending).flatMap(other => [...other.granted])
+  }
+
+  // What a plugin's class rests on past its own grants: what it reaches through plugin.call and where data moves to and
+  // from it
+  private links(id: string, granted: readonly Capability[], pending?: Pending): string {
+    return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
+  }
+
+  // Every other plugin-folder plugin whose links a pending change moves, classed again as the change would leave it.
+  // One whose class and first-use list come out as its entry holds them isn't named, so its entry is never written.
+  // An item the human confirmed under the links before stays confirmed and one that asks only under the new links asks
+  private moved(pending: Pending): Moved[] {
+    const moved: Moved[] = []
+    for (const [id, entry] of Object.entries(this.state.plugins)) {
+      if (id === pending.id || this.known.get(id)?.from === 'install') continue
+      if (this.links(id, entry.granted) === this.links(id, entry.granted, pending)) continue
+      const classed = this.classed(id, entry.granted, pending)
+      const firstUse = carriedFirstUse(entry, classed.firstUse, this.askingFor(id, entry.granted))
+      const before = new Set((entry.firstUse ?? []).map(capabilityKey))
+      const added = firstUse.some(item => !before.has(capabilityKey(item)))
+      if (classed.class === entry.class && !added && firstUse.length === before.size) continue
+      const next: Plugin = { ...entry, class: classed.class }
+      delete next.firstUse
+      if (firstUse.length > 0) next.firstUse = firstUse
+      moved.push({ id, from: entry.class, entry: next, rises: added || (classed.class ?? 4) > (entry.class ?? 4) })
+    }
+    return moved
+  }
+
+  // Writes the entries of the plugins a change moves: those that rise before the change's own write and the rest after
+  // it, so a write that fails between them leaves a class too high or an item asking, never a class too low. A write
+  // after the change that fails leaves that entry as it was, higher
+  private async settle(moved: readonly Moved[], rises: boolean): Promise<void> {
+    for (const move of moved) {
+      if (move.rises !== rises) continue
+      const written = this.store.writePlugin(move.id, move.entry)
+      if (rises) await written
+      else if (!await written.then(() => true, () => false)) {
+        this.note('fault', { plugin: move.id, step: 'reclass' })
+        continue
+      }
+      this.putEntry(move.id, move.entry)
+    }
+  }
+
+  // The lines a request's Confirm shows for the classes its change moves, from the slot. With the slot down nothing
+  // moves to a known class, which the screen's own line says
+  private shownMoves(pending: Pending): string[] {
+    const slot = this.capabilities()
+    if (slot === null || typeof slot.moves !== 'function') return []
+    try {
+      const moves = this.moved(pending).filter(move => move.entry.class !== move.from)
+      const lines = slot.moves(moves.map(move => ({ id: move.id, from: move.from, to: move.entry.class })))
+      if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
+    } catch {}
+    this.note('fault', { plugin: 'capabilities', step: 'moves' })
+    return []
   }
 
   // A plugin's class and the items that ask at first use, from the slot. With the slot down the class is null, which
   // counts as 4, and every item asks
-  private classed(id: string, granted: readonly Capability[]): { class: number | null, firstUse: Capability[] } {
+  private classed(id: string, granted: readonly Capability[], pending?: Pending): { class: number | null, firstUse: Capability[] } {
     const slot = this.capabilities()
     if (slot !== null) {
       try {
-        const reachable = this.reachable(id, granted)
-        const flow = this.flow(id, granted)
+        const reachable = this.reachable(id, granted, pending)
+        const flow = this.flow(id, granted, pending)
         const n = slot.classify(granted, reachable, flow)
         const asking = slot.firstUse(granted, reachable, flow)
         if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
@@ -965,8 +1044,11 @@ ${capabilityKey(change.capability)}`)
       ...(off.length > 0 ? { off } : {}),
       ...(firstUse.length > 0 ? { firstUse } : {}),
     }
+    const moved = this.moved({ id, granted })
+    await this.settle(moved, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.settle(moved, false)
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
     this.bump()
     return true
@@ -1733,8 +1815,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     delete next.firstUse
     if (asking.length > 0) next.firstUse = asking
     if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
+    const moved = this.moved({ id, granted })
+    await this.settle(moved, true)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
+    await this.settle(moved, false)
     this.bump()
   }
 
@@ -1778,8 +1863,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
       }
       if (k.from === 'folder' && k.entry !== null) {
+        const moved = this.moved({ id, granted: null })
+        await this.settle(moved, true)
         await this.store.removePlugin(id)
         delete this.state.plugins[id]
+        await this.settle(moved, false)
         this.entryChecks.set(id, 'absent')
         k.entry = null
         this.bump()
@@ -1968,8 +2056,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       version: manifest.version, contentHash: k.read.hash!, signer: null, granted, class: classed.class, enabled: true,
       ...(classed.firstUse.length > 0 ? { firstUse: classed.firstUse } : {}),
     }
+    const moved = this.moved({ id, granted })
+    await this.settle(moved, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.settle(moved, false)
     this.bump()
     this.replan()
   }
@@ -1979,11 +2070,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async remove(id: string): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
+    const moved = this.moved({ id, granted: null })
+    await this.settle(moved, true)
     if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
       await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
     }
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
+    await this.settle(moved, false)
     // What the human let this plugin do goes with it, so a plugin added later under the id asks again
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })

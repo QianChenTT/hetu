@@ -1,5 +1,5 @@
 import { capabilityKey, type Capability } from 'hetu-core/api/capabilities.ts'
-import { classNames, type Capabilities, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
+import { classNames, type Capabilities, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
 import { capabilityText } from 'hetu-core/api/trusted.ts'
 
 // A scope stays inside one place when its first part is a plain folder or note name. One with a wildcard there, **
@@ -131,6 +131,13 @@ export function createCapabilities(): Capabilities {
       const runners = runsOthers([...granted, ...reachable])
       if (runners.length > 0) lines.push(`It can run programs that run other programs or code: ${runners.join(', ')}`)
       return lines
+    },
+
+    // Each move up, named with the class the plugin held and the one it moves to. A move down asks nothing new, so it
+    // shows nothing. A class not known counts as 4
+    moves(moves: readonly ClassMove[]): string[] {
+      const named = (n: number | null) => (n === null ? 'a class not known, counted as 4' : `class ${n}, ${classNames[n]}`)
+      return moves.filter(move => (move.to ?? 4) > (move.from ?? 4)).map(move => `Raises ${move.id} from ${named(move.from)} to ${named(move.to)}`)
     },
   }
 }

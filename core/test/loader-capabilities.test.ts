@@ -1,10 +1,12 @@
+import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { HeldRequest, SecurityList } from '../api/actions.ts'
-import type { Capability } from '../api/capabilities.ts'
+import { capabilityKey, type Capability } from '../api/capabilities.ts'
+import type { Change } from '../api/changes.ts'
 import type { Caller } from '../api/envelope.ts'
 import path from 'node:path'
 import {
-  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
 } from './loader-fakes.ts'
 
 afterEach(cleanup)
@@ -361,5 +363,162 @@ describe('a new copy of a first-party plugin', () => {
     await first.loader.shutdown()
     const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
     expect((await second.store.load()).state.plugins.git.firstUse).toBeUndefined()
+  })
+})
+
+// After a change to one plugin every other plugin whose links it changes is classed again and its entry takes the new
+// class and first-use list. A move up is named on the Confirm of the request that causes it, a move down is stored
+// without a word
+describe('a class another plugin\'s change moves', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
+  const commit: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
+  const entryFile = (made: Made, id: string) => readFile(path.join(made.dataDir, 'state', 'plugins', `${id}.json`))
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]
+
+  // The notes on the Confirm of a window's request for change, the change applied after
+  async function confirmed(made: Made, change: Change): Promise<string[]> {
+    await made.loader.request(change, editor)
+    const request = (await listed(made)).requests.find(held => held.kind === change.kind && held.plugin === ('plugin' in change ? change.plugin : null))!
+    await made.loader.apply(change)
+    return request.notes
+  }
+
+  // Two plugins calling each other's way along a chain, each with what it holds and its stored class
+  async function plugins(entries: Record<string, [Capability[], number]>): Promise<Made> {
+    const made = await harness({
+      install: withCapabilities(),
+      folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
+      entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
+    })
+    await made.loader.start()
+    return made
+  }
+
+  // A network plugin hearing a reader's topic, approved while the reader isn't installed, beside the reader's folder
+  async function listening(gate = allowAll()): Promise<Made> {
+    const made = await harness({
+      install: withCapabilities(),
+      behave: { gate: { exports: { gate } } },
+      folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]) },
+    })
+    await made.loader.start()
+    await approved(made, 'listener')
+    return made
+  }
+
+  it('raises a network listener approved before the reader it hears to 4, named on the reader\'s Confirm, its fetch and subscription asking', async () => {
+    const gate = allowAll()
+    const made = await listening(gate)
+    expect((await stored(made, 'listener')).class).toBe(3)
+    expect((await stored(made, 'listener')).firstUse).toBeUndefined()
+    const request = await approved(made, 'reader')
+    expect(request.notes).toContain('Raises listener from class 3, Network to class 4, Powerful')
+    const entry = await stored(made, 'listener')
+    expect(entry.class).toBe(4)
+    expect(entry.firstUse).toEqual([fetchOne, hears('reader.done')])
+    expect(gate.seen.at(-1)!.plugins.listener.map(item => item.firstUse)).toEqual([true, true])
+    const asked = made.loader.asks.raise(capabilityKey(fetchOne), {
+      stage: 'canonical', caller: { kind: 'plugin', id: 'listener', half: 'worker', incarnation: 1 }, action: 'net.fetch',
+      capability: 'net.fetch', scope: {},
+    })
+    expect(typeof asked).toBe('string')
+  })
+
+  it('names on a widen\'s Confirm the caller the widened grant lifts, with both classes and stores its new class', async () => {
+    const made = await plugins({ a: [[read, calls('b')], 1], b: [[{ type: 'storage' }], 0] })
+    const notes = await confirmed(made, { kind: 'grant.widen', plugin: 'b', capability: fetchOne })
+    expect(notes).toContain('Raises a from class 1, Reader to class 4, Powerful')
+    expect(await stored(made, 'a')).toMatchObject({ class: 4, firstUse: [calls('b')] })
+  })
+
+  it('names a move up below 4 and adds no item that asks at first use', async () => {
+    const made = await plugins({ a: [[commit, calls('b')], 2], b: [[{ type: 'storage' }], 0] })
+    const notes = await confirmed(made, { kind: 'grant.widen', plugin: 'b', capability: fetchOne })
+    expect(notes).toContain('Raises a from class 2, Writer to class 3, Network')
+    const entry = await stored(made, 'a')
+    expect(entry.class).toBe(3)
+    expect(entry.firstUse).toBeUndefined()
+  })
+
+  it('names a move out of 0, after which that plugin\'s update waits for the Confirm', async () => {
+    const made = await plugins({ a: [[{ type: 'ui.view' }, calls('b')], 0], b: [[{ type: 'storage' }], 0] })
+    const notes = await confirmed(made, { kind: 'grant.widen', plugin: 'b', capability: commit })
+    expect(notes).toContain('Raises a from class 0, Contained to class 2, Writer')
+    expect((await stored(made, 'a')).class).toBe(2)
+    const dir = path.join(made.dataDir, 'staging', 'a-next')
+    await writeFolder(dir, filesFor(workerManifest('a', { version: '1.1.0', capabilities: [{ type: 'ui.view' }, calls('b')] })))
+    expect(await made.loader.update('a', dir)).toMatchObject({ outcome: 'confirm' })
+  })
+
+  it('stores a move down without a word once the plugin that lifted it goes and the list shrinks', async () => {
+    const made = await listening()
+    await approved(made, 'reader')
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
+    const notes = await confirmed(made, { kind: 'plugin.remove', plugin: 'reader' })
+    expect(notes.filter(line => line.includes('listener'))).toEqual([])
+    const entry = await stored(made, 'listener')
+    expect(entry.class).toBe(3)
+    expect(entry.firstUse).toBeUndefined()
+  })
+
+  it('stores a move down once the grant that lifted it is narrowed', async () => {
+    const made = await plugins({ a: [[read, calls('b')], 1], b: [[{ type: 'storage' }], 0] })
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'b', capability: fetchOne })
+    expect(await stored(made, 'a')).toMatchObject({ class: 4, firstUse: [calls('b')] })
+    await made.loader.apply({ kind: 'grant.narrow', plugin: 'b', capability: fetchOne })
+    const entry = await stored(made, 'a')
+    expect(entry.class).toBe(1)
+    expect(entry.firstUse).toBeUndefined()
+  })
+
+  it('follows the chain, so a plugin two links away moves too', async () => {
+    const made = await plugins({ a: [[read, calls('b')], 1], b: [[calls('c')], 1], c: [[{ type: 'storage' }], 1] })
+    const notes = await confirmed(made, { kind: 'grant.widen', plugin: 'c', capability: fetchOne })
+    expect(notes).toContain('Raises a from class 1, Reader to class 4, Powerful')
+    expect(notes).toContain('Raises b from class 1, Reader to class 4, Powerful')
+    expect(await stored(made, 'a')).toMatchObject({ class: 4, firstUse: [calls('b')] })
+    expect(await stored(made, 'b')).toMatchObject({ class: 4, firstUse: [calls('c')] })
+  })
+
+  it('leaves the entry of a plugin whose links didn\'t change byte for byte, even one whose stored class is out of date', async () => {
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]), lone: worker('lone') },
+      entries: { lone: root => entryFor(root, { granted: [read, calls('far')], class: 2, firstUse: [read] }) },
+    })
+    await made.loader.start()
+    const before = await entryFile(made, 'lone')
+    await approved(made, 'listener')
+    await approved(made, 'reader')
+    expect((await stored(made, 'listener')).class).toBe(4)
+    expect((await entryFile(made, 'lone')).equals(before)).toBe(true)
+  })
+
+  it('writes a raised class before the change and a lowered one after, so a change whose own write fails leaves the class high', async () => {
+    const made = await listening()
+    const write = made.store.writePlugin.bind(made.store)
+    made.store.writePlugin = async (id, entry) => (id === 'reader' ? Promise.reject(new Error('disk full')) : write(id, entry))
+    await expect(made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })).rejects.toThrow('disk full')
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
+    made.store.writePlugin = write
+    await made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })
+    const remove = made.store.removePlugin.bind(made.store)
+    made.store.removePlugin = async () => Promise.reject(new Error('disk full'))
+    await expect(made.loader.apply({ kind: 'plugin.remove', plugin: 'reader' })).rejects.toThrow('disk full')
+    made.store.removePlugin = remove
+    expect((await stored(made, 'listener')).class).toBe(4)
+  })
+
+  it('replaces the class and the list with no Confirm on screen, for a first-party copy at start', async () => {
+    const made = await harness({
+      install: { ...withCapabilities(), git: { files: worker('git', [fetchOne]), firstParty: true } },
+      folder: { notes: worker('notes') },
+      entries: { notes: root => entryFor(root, { granted: [read, calls('git')], class: 1 }) },
+    })
+    await made.loader.start()
+    expect((await stored(made, 'git')).class).toBe(4)
+    expect(await stored(made, 'notes')).toMatchObject({ class: 4, firstUse: [calls('git')] })
   })
 })

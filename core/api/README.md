@@ -12,7 +12,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `windows.ts`: what each window holds
 - `floor.ts`: the floor constants and the longest delay a timer takes, past which no time constant may be raised
 - `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema. `ActionArgs` and `ActionResults` type what the SDK's calls take and answer
-- `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states, the audit record, the capabilities slot and the `Flow` it is handed, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the loader calls
+- `slots.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the slot and plugin states, the audit record, the capabilities slot with the `Flow` it is handed and the `ClassMove` it names on a Confirm, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the loader calls
 - `editor.ts`: the editor bridge's verbs and what each needs, the mark and change shapes, key bindings, `parseBridgeCall`, replies and events
 - `ui.ts`: themes, the style list, the tree node and its operations (`applyOps`), the ui verbs (`uiCall`, `uiNeeds`), `parseDrawerCall`, `LayoutView`, `LayoutState` and `UiEvent`
 - `ui-limits.ts`: the caps on what plugins draw, apart from zod

@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, records, temp, until, workersPage } from './helpers.ts'
+import { entryFor, filesFor, hashOf, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -215,5 +215,59 @@ describe('ui.edit and ui.read in the app', () => {
     expect(seen.direct).toBe('not-granted')
     // A plugin holding ui.read alone opens nothing itself
     expect(await drive(reader, async scope => scope.ctx.editor.open('b.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('not-granted')
+  })
+})
+
+describe('a class another plugin\'s approval moves', () => {
+  // The input delay and a little more, so a click after it lands
+  const PAST_DELAY = 1300
+  const fetchOne: Capability = { type: 'net.fetch', hosts: ['example.com'] }
+  const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
+  // A worker speaking the lifecycle as text on the port its page hands it, doing nothing else
+  const idle = `
+self.onmessage = event => {
+  const port = event.ports[0]
+  self.onmessage = null
+  const send = message => port.postMessage(JSON.stringify(message))
+  port.onmessage = ({ data }) => {
+    const message = JSON.parse(data)
+    if (message.kind === 'init') send({ v: 1, kind: 'ready' })
+    else if (message.kind === 'ping') send({ v: 1, kind: 'pong' })
+    else if (message.kind === 'stop') send({ v: 1, kind: 'stopped' })
+  }
+}
+`
+
+  // The listener holds network and hears the reader's topic. It was approved while the reader wasn't installed, so its
+  // entry holds class 3 and nothing asking
+  it('names the network listener with 3 and 4 on the reader\'s Confirm, then stores 4 with its fetch asking at first use', async () => {
+    const dataDir = await temp()
+    const store = new StateStore(dataDir)
+    const listener = path.join(dataDir, 'plugins', 'listener')
+    await writeFolder(listener, filesFor(workerManifest('listener', { capabilities: [fetchOne, hears] }), { 'worker.js': idle }))
+    await store.writePlugin('listener', await entryFor(listener, { granted: [fetchOne, hears], class: 3 }))
+    const reader = path.join(dataDir, 'plugins', 'reader')
+    await writeFolder(reader, filesFor(workerManifest('reader', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': idle }))
+    // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
+    await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(reader)] })
+    await store.writeLuoshu({ folder: await temp() })
+    const app = await launch(dataDir)
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await pageAt(app, 'hetu://trusted/')
+    await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
+    const row = (id: string) => page.locator('.plugin', { hasText: `${id} ·` })
+    await until(async () => (await row('listener').innerText()).includes('class 3'))
+    await tick(PAST_DELAY)
+    await row('reader').getByRole('button', { name: 'Approve' }).click()
+    await until(async () => (await page.locator('#root').innerText()).includes('Raises listener from class 3, Network to class 4, Powerful'))
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await until(async () => (await row('listener').innerText()).includes('net.fetch to "example.com" · asks at first use'))
+    expect(await row('listener').innerText()).toContain('class 4')
+    const entry = (await new StateStore(dataDir).load()).state.plugins.listener
+    expect(entry).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
   })
 })
