@@ -207,6 +207,26 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     if ((await realpath(dir).catch(() => null)) !== dir) throw refused('not-granted')
   }
 
+  // Anything at the name, a link included, which lstat never follows
+  async function present(absolute: string): Promise<boolean> {
+    try {
+      await lstat(absolute)
+      return true
+    } catch (err) {
+      if (absent(err)) return false
+      throw err
+    }
+  }
+
+  // The folders a move's to end names, made only below the deepest one that exists once that one still resolves to
+  // itself, so a folder swapped for a link or a junction since prepare gets no new folder made through it
+  async function madeUnder(dir: string): Promise<void> {
+    let existing = dir
+    while (!(await present(existing)) && path.dirname(existing) !== existing) existing = path.dirname(existing)
+    if ((await realpath(existing).catch(() => null)) !== existing) throw refused('not-granted')
+    await mkdir(dir, { recursive: true })
+  }
+
   // A regular file at the name itself, never a link put there since prepare and never a folder
   async function isNote(absolute: string): Promise<boolean> {
     try {
@@ -242,7 +262,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     if (same) {
       if (to.absolute !== from.absolute) await retried(() => rename(from.absolute, to.absolute), from.absolute)
     } else {
-      await mkdir(path.dirname(to.absolute), { recursive: true })
+      await madeUnder(path.dirname(to.absolute))
       await unmoved(to.absolute)
       let linked = true
       try {

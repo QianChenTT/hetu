@@ -254,6 +254,25 @@ describe('moving', () => {
     expect(await readdir(path.join(base, 'outside'))).toEqual([])
     expect(await exists('a.md')).toBe(true)
   })
+
+  // The folders a to end names below the swapped one would be made outside before the check refused the move
+  it('makes no folder outside the luoshu for a to end below a folder that became a junction out after prepare', async () => {
+    await mkdir(path.join(base, 'outside'))
+    const made = opened()
+    const call = callOf('luoshu.move', { from: 'a.md', to: 'journal/new/deeper/a.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-old'))
+    await symlink(path.join(base, 'outside'), path.join(folder, 'journal'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+    expect(await readdir(path.join(base, 'outside'), { recursive: true })).toEqual([])
+    expect(await exists('a.md')).toBe(true)
+  })
+
+  it('makes the folders a to end names below one that is still itself', async () => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.move', { from: 'a.md', to: 'journal/new/deeper/a.md' })).toBeNull()
+    expect(await readFile(path.join(folder, 'journal', 'new', 'deeper', 'a.md'), 'utf8')).toBe('note a')
+  })
 })
 
 describe('the spellings threat-model row 3 found, on both ends', () => {
@@ -374,6 +393,17 @@ describe('the dot rule on both ends of a move and on a remove', () => {
   it('refuses a move whose to folder became a junction into a dot folder after prepare', async () => {
     const made = opened()
     const call = callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-old'))
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'journal'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+    expect(await readdir(path.join(folder, '.obsidian'))).toEqual(['plugins'])
+    expect(await exists('a.md')).toBe(true)
+  })
+
+  it('makes no folder in a dot folder for a to end below a folder that became a junction into it after prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.move', { from: 'a.md', to: 'journal/new/a.md' })
     const prepared = await made.provider.prepare(call) as Prepared
     await rename(path.join(folder, 'journal'), path.join(folder, 'journal-old'))
     await symlink(path.join(folder, '.obsidian'), path.join(folder, 'journal'), 'junction')
