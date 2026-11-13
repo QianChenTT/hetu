@@ -40,6 +40,10 @@ function constant(main: string, name: 'PACKAGED' | 'LOCKED'): boolean {
 
 const INSTALL_PLUGINS =['capabilities', 'exec', 'gate', 'hidden-marks', 'history', 'layout', 'luoshu', 'search', 'storage']
 
+// The time each stage built in a test may take. A stage builds main.js, the bootstraps, the frontend and every install
+// plugin, which took about 5 s on a shared macOS runner against vitest's 5 s, so each gets four times that
+const STAGE_MS = 20_000
+
 describe('the stage the package is built from', () => {
   it('holds the app for app.asar and the install plugins beside it, and nothing else', async () => {
     const stage = path.join(await temp(), 'stage')
@@ -51,7 +55,7 @@ describe('the stage the package is built from', () => {
     expect((await readdir(path.join(stage, 'plugins'))).sort()).toEqual(INSTALL_PLUGINS)
     const all = [...app, ...await files(path.join(stage, 'plugins'))]
     expect(all.filter(file => /node_modules|\.map$|\.ts$|(^|\/)log\//.test(file))).toEqual([])
-  })
+  }, STAGE_MS)
 
   it('lists each plugin beside app.asar with the hash of its folder, the list inside the app', async () => {
     const stage = path.join(await temp(), 'stage')
@@ -62,7 +66,7 @@ describe('the stage the package is built from', () => {
       expect(listed.path).toBe(`plugins/${id}`)
       expect(listed.hash, id).toBe(hashFiles(await readFiles(path.join(stage, listed.path))))
     }
-  })
+  }, STAGE_MS)
 
   it('fixes the build into main.js: packaged always, locked for the shipped build and not for the driven one', async () => {
     const shipped = path.join(await temp(), 'stage')
@@ -74,7 +78,7 @@ describe('the stage the package is built from', () => {
     const driven = await readFile(path.join(await stagedApp({ locked: false }), 'main.js'), 'utf8')
     expect(constant(driven, 'PACKAGED')).toBe(true)
     expect(constant(driven, 'LOCKED')).toBe(false)
-  })
+  }, 2 * STAGE_MS)
 
   it('reads a constant as the build left it, whatever shape esbuild wrote it in', () => {
     // The shapes esbuild writes for the shipped and the driven build. The condition is true in both, so text matching
@@ -91,7 +95,7 @@ describe('the stage the package is built from', () => {
     await stageInstall(stage, { locked: true })
     expect(JSON.parse(await readFile(path.join(stage, 'app', 'package.json'), 'utf8'))).toEqual(STAGED_APP)
     expect(STAGED_APP).toMatchObject({ name: 'hetu', version: '0.5.0', main: 'main.js', type: 'module' })
-  })
+  }, STAGE_MS)
 
   // The Release workflow names the release from the root package.json and looks for the MSI this version names
   it('takes the version the root package.json and its lock file hold', async () => {
@@ -109,5 +113,5 @@ describe('the stage the package is built from', () => {
     await stageInstall(stage, { locked: true })
     expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])
     expect((await readdir(path.join(stage, 'plugins'))).includes('log')).toBe(false)
-  })
+  }, STAGE_MS)
 })
