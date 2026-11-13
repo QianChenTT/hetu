@@ -1872,14 +1872,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return
     const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
-    // The class follows, and a new item asks at first use when the slot says so or can't say
-    const classed = this.classed(id, granted)
-    const asking = (entry.firstUse ?? []).filter(item => capabilityKey(item) !== key)
-    if (add && classed.firstUse.some(item => capabilityKey(item) === key)) asking.push(capability)
-    const next: Plugin = { ...entry, granted, class: classed.class }
-    delete next.firstUse
-    if (asking.length > 0) next.firstUse = asking
-    if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
+    const changed: Plugin = { ...entry, granted }
+    if (entry.off !== undefined) changed.off = entry.off.filter(item => capabilityKey(item) !== key)
+    // Classed whole as any other entry is, since one item's ask rests on every item and every link: a widened read makes
+    // the plugin's own network ask. An item that asked under the grants held and that the entry no longer lists stays
+    // confirmed
+    const next = this.reclassed(id, changed, this.askingFor(id, entry.granted))?.entry ?? changed
     const moved = this.moved({ id, granted })
     await this.settle(moved, true)
     await this.store.writePlugin(id, next)

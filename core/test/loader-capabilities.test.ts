@@ -251,6 +251,120 @@ describe('a widened or narrowed grant', () => {
   })
 })
 
+// The changed plugin's own list is classed as an approval of the same grants would class it, less the items the human
+// confirmed under the grants it held: an item's ask rests on every item the plugin holds and on its links
+describe('a widened or narrowed grant\'s own first-use list', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  type Seeded = Record<string, [Capability[], number | null, Capability[]?]>
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
+  const fetchTwo: Capability = { type: 'net.fetch', hosts: ['example.org'] }
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]
+  const shape = (entry: { class: number | null, firstUse?: Capability[] }) => ({ class: entry.class, firstUse: entry.firstUse ?? [] })
+  const asking = (gate: ReturnType<typeof allowAll>, id: string) =>
+    gate.seen.at(-1)!.plugins[id].filter(item => item.firstUse).map(item => item.capability)
+
+  // Plugin-folder plugins each stored with what it holds, its class and its list, started with the slot on unless down
+  async function seeded(entries: Seeded, gate = allowAll(), down = false): Promise<Made> {
+    const made = await harness({
+      install: down ? coreInstall() : withCapabilities(),
+      behave: { gate: { exports: { gate } } },
+      folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
+      entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n, firstUse]]) =>
+        [id, (root: string) => entryFor(root, { granted, class: n, ...(firstUse === undefined ? {} : { firstUse }) })])),
+    })
+    await made.loader.start()
+    return made
+  }
+
+  // The entry an approval of granted writes for id beside the other plugins as stored
+  async function approvalOf(others: Seeded, id: string, granted: Capability[]) {
+    const made = await harness({
+      install: withCapabilities(),
+      folder: { ...Object.fromEntries(Object.keys(others).map(other => [other, worker(other)])), [id]: worker(id, granted) },
+      entries: Object.fromEntries(Object.entries(others).map(([other, [held, n]]) => [other, (root: string) => entryFor(root, { granted: held, class: n })])),
+    })
+    await made.loader.start()
+    await approved(made, id)
+    return await stored(made, id)
+  }
+
+  it.each([
+    ['a read', {}, read, [fetchOne]],
+    ['a plugin.call to a reader', { reader: [[read], 1] }, calls('reader'), [fetchOne]],
+    ['a subscription to a reader\'s topic', { reader: [[read], 1] }, hears('reader.done'), [fetchOne, hears('reader.done')]],
+  ] as [string, Seeded, Capability, Capability[]][])('makes the plugin\'s own fetch ask once a widened %s closes the pair, as an approval lists it', async (_name, others, capability, expected) => {
+    const gate = allowAll()
+    const made = await seeded({ ...others, sync: [[fetchOne], 3] }, gate)
+    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability }, editor)
+    const request = (await listed(made)).requests.find(held => held.kind === 'grant.widen')!
+    expect(request.notes).toContain('Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability })
+    const entry = await stored(made, 'sync')
+    expect(shape(entry)).toEqual({ class: 4, firstUse: expected })
+    expect(asking(gate, 'sync')).toEqual(expected)
+    expect(shape(entry)).toEqual(shape(await approvalOf(others, 'sync', [fetchOne, capability])))
+  })
+
+  it('adds a widened fetch that closes the pair on a plugin that already reads', async () => {
+    const made = await seeded({ tool: [[read], 1] })
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: fetchOne })
+    expect(shape(await stored(made, 'tool'))).toEqual({ class: 4, firstUse: [fetchOne] })
+  })
+
+  it('keeps a fetch the human confirmed from asking again when a widen adds another that asks', async () => {
+    const gate = allowAll()
+    const made = await seeded({ sync: [[read, fetchOne], 4, [fetchOne]] }, gate)
+    await made.loader.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: fetchTwo })
+    expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [fetchTwo] })
+    expect(asking(gate, 'sync')).toEqual([fetchTwo])
+  })
+
+  it('takes off a subscription a widened read makes stop asking and keeps the confirmed fetch confirmed', async () => {
+    const made = await seeded({ reader: [[read], 4], sync: [[fetchOne, hears('reader.done')], 4, [fetchOne, hears('reader.done')]] })
+    await made.loader.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
+    expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [] })
+  })
+
+  it('makes the plugin.call that still brings the network in ask once the plugin\'s own fetch is narrowed', async () => {
+    const gate = allowAll()
+    const made = await seeded({ sender: [[fetchTwo], 3], tool: [[read, fetchOne, calls('sender')], 4, [fetchOne]] }, gate)
+    await made.loader.apply({ kind: 'grant.narrow', plugin: 'tool', capability: fetchOne })
+    expect(shape(await stored(made, 'tool'))).toEqual({ class: 4, firstUse: [calls('sender')] })
+    expect(asking(gate, 'tool')).toEqual([calls('sender')])
+  })
+
+  it('stops the fetch asking once the read that paired it is narrowed, with no word', async () => {
+    const gate = allowAll()
+    const made = await seeded({ tool: [[read, fetchOne], 4, [fetchOne]] }, gate)
+    await made.loader.apply({ kind: 'grant.narrow', plugin: 'tool', capability: read })
+    const entry = await stored(made, 'tool')
+    expect(entry.class).toBe(3)
+    expect(entry.firstUse).toBeUndefined()
+    expect(asking(gate, 'tool')).toEqual([])
+  })
+
+  it('makes every item ask with the slot down, as an approval and a copy do then', async () => {
+    const made = await seeded({ tool: [[read], null, []] }, allowAll(), true)
+    expect(made.loader.slot('capabilities')).toBe('absent')
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
+    expect(shape(await stored(made, 'tool'))).toEqual({ class: null, firstUse: [read, { type: 'storage' }] })
+  })
+
+  // An update keeps the grants, so under the same links the same items ask and a confirmed one stays confirmed
+  it('keeps the list through an update, an item asking and a confirmed one confirmed', async () => {
+    const made = await seeded({ tool: [[read, fetchOne, exec], 4, [fetchOne, exec]] })
+    await made.loader.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
+    const dir = path.join(made.dataDir, 'staging', 'tool-next')
+    await writeFolder(dir, filesFor(workerManifest('tool', { version: '1.1.0', capabilities: [read, fetchOne, exec] })))
+    expect(await made.loader.update('tool', dir)).toMatchObject({ outcome: 'confirm' })
+    await made.loader.apply({ kind: 'plugin.update', plugin: 'tool' })
+    expect(await stored(made, 'tool')).toMatchObject({ version: '1.1.0', class: 4, firstUse: [fetchOne] })
+  })
+})
+
 describe('the plugin list', () => {
   // With the slot down the start classes nothing again, so each stored class stands
   it('shows each plugin-folder plugin\'s class, null for none known', async () => {
