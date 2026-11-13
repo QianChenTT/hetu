@@ -110,8 +110,8 @@ export type ScreenSubject = {
   readonly flow?: Flow
 }
 
-// A plugin whose class a change to another plugin moves: the class its entry holds and the one the change gives it,
-// null for a class not known
+// A plugin whose class a change to another plugin moves, or the plugin a widen changes: the class its entry holds and
+// the one the change gives it, null for a class not known
 export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
 
 // The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks

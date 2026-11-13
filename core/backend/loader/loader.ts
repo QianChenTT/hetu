@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -539,7 +539,7 @@ ${capabilityKey(change.capability)}`)
     }
     if (change.kind === 'grant.widen') {
       const granted = [...this.known.get(change.plugin)?.entry?.granted ?? [], change.capability]
-      return [...this.screen(change.plugin, granted), ...this.shownMoves({ id: change.plugin, granted })]
+      return [...this.screen(change.plugin, granted), ...this.shownMoves({ id: change.plugin, granted }, true)]
     }
     if (change.kind === 'plugin.restore') {
       const granted = this.bundled.get(change.plugin)?.manifest?.capabilities
@@ -741,14 +741,19 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // The lines a request's Confirm shows for the classes its change moves, from the slot. With the slot down nothing
-  // moves to a known class, which the screen's own line says
-  private shownMoves(pending: Pending): string[] {
+  // The lines a request's Confirm shows for the classes its change moves, from the slot. With own the changed plugin's
+  // move comes first, from its entry's class to the one the grants asked for give it, which moved never names. With the
+  // slot down nothing moves to a known class, which the screen's own line says
+  private shownMoves(pending: Pending, own = false): string[] {
     const slot = this.capabilities()
     if (slot === null || typeof slot.moves !== 'function') return []
     try {
-      const moves = this.moved(pending).filter(move => move.entry.class !== move.from)
-      const lines = slot.moves(moves.map(move => ({ id: move.id, from: move.from, to: move.entry.class })))
+      const k = this.known.get(pending.id)
+      const entry = k?.from === 'folder' ? k.entry : null
+      const self: ClassMove[] = !own || entry === null || pending.granted === null
+        ? [] : [{ id: pending.id, from: entry.class, to: this.classed(pending.id, pending.granted).class }]
+      const others = this.moved(pending).map(move => ({ id: move.id, from: move.from, to: move.entry.class }))
+      const lines = slot.moves([...self, ...others].filter(move => move.to !== move.from))
       if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
     } catch {}
     this.note('fault', { plugin: 'capabilities', step: 'moves' })

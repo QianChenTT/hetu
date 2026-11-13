@@ -363,6 +363,89 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     await made.loader.apply({ kind: 'plugin.update', plugin: 'tool' })
     expect(await stored(made, 'tool')).toMatchObject({ version: '1.1.0', class: 4, firstUse: [fetchOne] })
   })
+
+  // The widened plugin's own move is named with the line every other plugin a change moves gets, first, from the grants
+  // the widen asks for and never twice. A move down and a class not known, counted as 4, show no line
+  describe('the widened plugin\'s own move on the Confirm', () => {
+    const raises = (notes: string[]) => notes.filter(line => line.startsWith('Raises'))
+    const commit: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
+
+    // The notes on the Confirm of a widen the editor window asks for, the change not applied
+    async function widening(made: Made, plugin: string, capability: Capability): Promise<string[]> {
+      await made.loader.request({ kind: 'grant.widen', plugin, capability }, editor)
+      return (await listed(made)).requests.find(held => held.kind === 'grant.widen' && held.plugin === plugin)!.notes
+    }
+
+    // tool stored with what it holds and a class the start can't correct, since its entry can't be written then
+    async function stuck(granted: Capability[], n: number | null): Promise<Made> {
+      const made = await harness({
+        install: withCapabilities(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted, class: n }) },
+      })
+      const write = made.store.writePlugin.bind(made.store)
+      made.store.writePlugin = async (id, entry) => (id === 'tool' ? Promise.reject(new Error('disk full')) : write(id, entry))
+      await made.loader.start()
+      made.store.writePlugin = write
+      expect((await stored(made, 'tool')).class).toBe(n)
+      return made
+    }
+
+    it.each([
+      ['a read', {}, read, []],
+      ['a plugin.call to a reader', { reader: [[read], 1] }, calls('reader'), ['Raises reader from class 1, Reader to class 4, Powerful']],
+      ['a subscription to a reader\'s topic', { reader: [[read], 1] }, hears('reader.done'), ['Raises reader from class 1, Reader to class 4, Powerful']],
+    ] as [string, Seeded, Capability, string[]][])('names the plugin\'s own move into 4 once, before the others, when a widened %s closes the pair', async (_name, others, capability, theirs) => {
+      const made = await seeded({ ...others, sync: [[fetchOne], 3] })
+      const notes = await widening(made, 'sync', capability)
+      expect(raises(notes)).toEqual(['Raises sync from class 3, Network to class 4, Powerful', ...theirs])
+      expect((await stored(made, 'sync')).class).toBe(3)
+    })
+
+    it('names a move up below 4 and adds no item that asks at first use', async () => {
+      const made = await seeded({ tool: [[read], 1] })
+      expect(raises(await widening(made, 'tool', commit))).toEqual(['Raises tool from class 1, Reader to class 2, Writer'])
+      await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: commit })
+      expect(shape(await stored(made, 'tool'))).toEqual({ class: 2, firstUse: [] })
+    })
+
+    it('names nothing for a widen that leaves the class where it is', async () => {
+      const made = await seeded({ sync: [[read, fetchOne], 4, [fetchOne]] })
+      expect(raises(await widening(made, 'sync', fetchTwo))).toEqual([])
+    })
+
+    it('names nothing for a widen that leaves the class below the one its entry holds and stores the lower one', async () => {
+      const made = await stuck([read, commit], 4)
+      expect(raises(await widening(made, 'tool', { type: 'storage' }))).toEqual([])
+      await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
+      expect((await stored(made, 'tool')).class).toBe(2)
+    })
+
+    it('names nothing for a plugin whose entry holds a class not known, counted as 4', async () => {
+      const made = await stuck([read], null)
+      expect(raises(await widening(made, 'tool', fetchOne))).toEqual([])
+    })
+
+    it('names nothing with the slot down, whose own line stands for every class', async () => {
+      const made = await seeded({ sync: [[fetchOne], null] }, allowAll(), true)
+      const notes = await widening(made, 'sync', read)
+      expect(raises(notes)).toEqual([])
+      expect(notes).toContain('The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use')
+    })
+
+    it('applies a narrow with no Confirm, so its move down is named nowhere', async () => {
+      const made = await seeded({ sync: [[read, fetchOne], 4, [fetchOne]] })
+      expect(await made.loader.request({ kind: 'grant.narrow', plugin: 'sync', capability: read }, editor)).toEqual({ applied: true })
+      expect((await listed(made)).requests).toEqual([])
+      expect((await stored(made, 'sync')).class).toBe(3)
+    })
+
+    it('names no own move on a first approval, which has no class before it', async () => {
+      const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync', [read, fetchOne]) } })
+      await made.loader.start()
+      const request = await approved(made, 'sync')
+      expect(raises(request.notes)).toEqual([])
+      expect((await stored(made, 'sync')).class).toBe(4)
+    })
+  })
 })
 
 describe('the plugin list', () => {
