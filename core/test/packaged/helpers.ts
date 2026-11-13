@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
+import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FuseState, FuseV1Options, pathToFuseFile } from '@electron/fuses'
@@ -108,6 +108,13 @@ export function electronCopyIn(appOutDir: string, platform: string = process.pla
 // framework inside the bundle on macOS
 export function fuseFileIn(appOutDir: string, platform: string = process.platform): string {
   return pathToFuseFile(executableIn(appOutDir, platform))
+}
+
+// The fuse file's path inside a packed folder with every link in the folder followed, in the form linkedCopy takes. A
+// copy that flips a fuse names it, since flipping writes into the file in place and through a hard link would change
+// the original and every copy made after it
+export async function fuseFileOf(appOutDir: string, platform: string = process.platform): Promise<string> {
+  return path.relative(await realpath(appOutDir), await realpath(fuseFileIn(appOutDir, platform))).split(path.sep).join('/')
 }
 
 // A fuse's state as its byte in a wire getCurrentFuseWire read

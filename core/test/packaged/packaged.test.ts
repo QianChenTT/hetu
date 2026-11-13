@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, asarHeader, cleanup, electronCopyIn, exitText, fuseFileIn, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
+import { appDir, asarHeader, cleanup, electronCopyIn, exitText, fuseFileIn, fuseFileOf, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -90,9 +90,10 @@ describe('switches and arguments', () => {
 // start gets a data folder of its own, since a start ends once its log holds core.ready and a log shared with the start
 // before already does, which ended a control before Node had read its options on a slower machine
 describe('the fuses hold', () => {
+  // The copy holds its own fuse file, the Electron framework on macOS, so the fuse flipped leaves the packed folder as built
   async function withFuse(fuse: FuseName, on: boolean, name?: string): Promise<string> {
     const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
-    const copy = await linkedCopy([executable])
+    const copy = await linkedCopy([executable, await fuseFileOf(appDir)])
     await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options[fuse]]: on })
     if (name === undefined) return executableIn(copy)
     const named = path.join(path.dirname(executableIn(copy)), name)
@@ -157,9 +158,10 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   type Change = { copy: string, at: number, fuses: string }
 
   // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts.
-  // fuses is the fuse file as the copy's start meets it
+  // The copy holds its own fuse file, the Electron framework on macOS, so a fuse turned off in one copy stays on in the
+  // next. fuses is the fuse file as the copy's start meets it
   async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<Change> {
-    const copy = await linkedCopy([asar, executable])
+    const copy = await linkedCopy([asar, executable, await fuseFileOf(appDir)])
     const file = path.join(copy, asar)
     const bytes = await readFile(file)
     const at = where === 'content' ? bytes.indexOf('hetu could not start') : bytes.indexOf('"hash":"') + 8

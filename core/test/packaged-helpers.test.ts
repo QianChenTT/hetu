@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FuseState, FuseV1Options } from '@electron/fuses'
-import { describe, expect, it } from 'vitest'
-import { asarHeader, electronCopyIn, exitText, fuseFileIn, fuseText, plistAsarHash } from './packaged/helpers.ts'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { asarHeader, electronCopyIn, exitText, fuseFileIn, fuseFileOf, fuseText, plistAsarHash } from './packaged/helpers.ts'
 
 // The packaged suite's helpers that need no packed build and no Electron
 
@@ -91,6 +91,29 @@ describe('the file that holds the fuses', () => {
     ['darwin', ['hetu.app', 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework']],
   ] as const)('on %s', (platform, inside) => {
     expect(fuseFileIn(base, platform)).toBe(path.join(base, ...inside))
+  })
+
+  // The form linkedCopy takes, so a copy holds that file of its own
+  describe('inside a packed folder', () => {
+    let dir = ''
+    beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'hetu-fuse-file-')) })
+    afterEach(() => rm(dir, { recursive: true, force: true }))
+
+    it('is the executable on Windows', async () => {
+      await writeFile(path.join(dir, 'hetu.exe'), '')
+      expect(await fuseFileOf(dir, 'win32')).toBe('hetu.exe')
+    })
+
+    // The framework's top names its binary through links, which a copy makes again as links. Windows makes no file
+    // link without a privilege
+    it.skipIf(process.platform === 'win32')('is the framework binary the links lead to on macOS', async () => {
+      const framework = path.join(dir, 'hetu.app', 'Contents', 'Frameworks', 'Electron Framework.framework')
+      await mkdir(path.join(framework, 'Versions', 'A'), { recursive: true })
+      await writeFile(path.join(framework, 'Versions', 'A', 'Electron Framework'), '')
+      await symlink('A', path.join(framework, 'Versions', 'Current'))
+      await symlink(path.join('Versions', 'Current', 'Electron Framework'), path.join(framework, 'Electron Framework'))
+      expect(await fuseFileOf(dir, 'darwin')).toBe('hetu.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework')
+    })
   })
 })
 
