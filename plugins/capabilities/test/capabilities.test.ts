@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from 'hetu-core/api/capabilities.ts'
+import type { Flow } from 'hetu-core/api/slots.ts'
 import { createCapabilities } from '../src/capabilities.ts'
 
 const caps = createCapabilities()
@@ -114,10 +115,64 @@ describe('the items that ask at first use', () => {
     expect(caps.firstUse([read, call], [fetchOne])).toEqual([call])
   })
 
-  it('are the subscriptions that bring the network in too, for a plugin with none of its own', () => {
-    const hears: Capability = { type: 'events.subscribe', topics: ['sync.sent'] }
-    expect(caps.firstUse([read, call, hears], [fetchOne])).toEqual([call, hears])
-    expect(caps.firstUse([read, hears], [])).toEqual([])
+})
+
+// Data moves along plugin.call both ways and along a subscription from the plugin that owns the topic to the one that
+// hears it. The loader hands what lies upstream and downstream that way, and the class reached stays plugin.call's
+describe('the pair rule over where data moves', () => {
+  const hears: Capability = { type: 'events.subscribe', topics: ['notes.done'] }
+  const hearsMore: Capability = { type: 'events.subscribe', topics: ['luoshu.changed'] }
+  const flow = (part: Partial<Flow>): Flow => ({ upstream: [], downstream: [], heard: [], ...part })
+  const reader = { id: 'notes', granted: [read] }
+  const sender = { id: 'sync', granted: [fetchOne] }
+
+  it('is 4 for a read upstream and network here, and for a read here and network downstream', () => {
+    expect(caps.classify([fetchOne, hears], [], flow({ upstream: [reader] }))).toBe(4)
+    expect(caps.classify([read], [], flow({ downstream: [sender] }))).toBe(4)
+    expect(caps.classify([hears], [], flow({ upstream: [reader], downstream: [sender] }))).toBe(4)
+  })
+
+  it('keeps each plugin\'s own class for network upstream and a read downstream, which carries nothing out', () => {
+    expect(caps.classify([read, hears], [], flow({ upstream: [sender] }))).toBe(1)
+    expect(caps.classify([fetchOne], [], flow({ downstream: [reader] }))).toBe(3)
+  })
+
+  it('takes no class from what lies upstream or downstream, only from what plugin.call reaches', () => {
+    const writer = { id: 'writer', granted: [writeAll] }
+    expect(caps.classify([{ type: 'ui.view' }, hears], [], flow({ upstream: [writer], downstream: [writer] }))).toBe(0)
+  })
+
+  it('asks at the subscriptions that bring a read in, beside the network items, for a plugin reading nothing itself', () => {
+    const heard = [{ item: hears, upstream: [read] }, { item: hearsMore, upstream: [] }]
+    expect(caps.firstUse([fetchOne, hears, hearsMore], [], flow({ upstream: [reader], heard }))).toEqual([fetchOne, hears])
+    expect(caps.firstUse([hears], [], flow({ upstream: [reader], downstream: [sender], heard }))).toEqual([hears])
+  })
+
+  it('asks at no subscription for a plugin that reads itself, nor for one that isn\'t paired', () => {
+    const heard = [{ item: hears, upstream: [list] }]
+    expect(caps.firstUse([read, fetchOne, hears], [], flow({ upstream: [reader], heard }))).toEqual([fetchOne])
+    expect(caps.firstUse([hears], [], flow({ upstream: [reader], heard }))).toEqual([])
+  })
+
+  it('names the readers upstream of a plugin with network and the network plugins downstream of one that reads', () => {
+    expect(caps.screen({ granted: [fetchOne, hears], reachable: [], callers: [], flow: flow({ upstream: [reader] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Plugins that read and can reach it through events: notes',
+    ])
+    expect(caps.screen({ granted: [read], reachable: [], callers: [], flow: flow({ downstream: [sender] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Plugins with network it can reach through events: sync',
+    ])
+    expect(caps.screen({ granted: [read, hears], reachable: [], callers: [], flow: flow({ upstream: [sender] }) })).toEqual(['Class 1, Reader'])
+  })
+
+  it('names in those lines no plugin plugin.call already connects', () => {
+    const callers = [reader]
+    expect(caps.screen({ granted: [fetchOne, call], reachable: [read], callers, flow: flow({ upstream: [reader], downstream: [reader] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Through plugin.call it is connected to: luoshu.read on "notes/**"',
+      'Plugins that read and are connected to it through plugin.call: notes',
+    ])
   })
 })
 
@@ -125,7 +180,7 @@ describe('the screen under the core\'s words', () => {
   it('names the class and what the plugin reaches through plugin.call', () => {
     expect(caps.screen({ granted: [call], reachable: [write], callers: [] })).toEqual([
       'Class 2, Writer',
-      'Through plugin.call or events it is connected to: luoshu.write on "04 - Daily/**"',
+      'Through plugin.call it is connected to: luoshu.write on "04 - Daily/**"',
     ])
   })
 
@@ -133,7 +188,7 @@ describe('the screen under the core\'s words', () => {
     const callers = [{ id: 'notes-ai', granted: [read] }, { id: 'calc', granted: [{ type: 'storage' } as Capability] }, { id: 'search', granted: [list] }]
     expect(caps.screen({ granted: [fetchOne], reachable: [], callers })).toEqual([
       'Class 3, Network',
-      'Plugins that read and are connected to it through plugin.call or events: notes-ai, search',
+      'Plugins that read and are connected to it through plugin.call: notes-ai, search',
     ])
     expect(caps.screen({ granted: [write], reachable: [], callers })).toEqual(['Class 2, Writer'])
   })

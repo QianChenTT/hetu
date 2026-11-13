@@ -346,7 +346,7 @@ describe('a plugin’s class', () => {
     await tick(PAST_DELAY)
     await page.locator('.plugin', { hasText: 'writer ·' }).getByRole('button', { name: 'Approve' }).click()
     await showing(page, 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
-    await showing(page, 'Through plugin.call or events it is connected to: net.fetch to "example.com"')
+    await showing(page, 'Through plugin.call it is connected to: net.fetch to "example.com"')
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Confirm' }).click()
     await showing(page, 'class 4')

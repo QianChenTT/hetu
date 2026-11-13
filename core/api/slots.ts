@@ -86,20 +86,36 @@ export type Gate = {
 // The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
 export const classNames = frozen(['Contained', 'Reader', 'Writer', 'Network', 'Powerful'] as const)
 
+// A plugin with what it holds
+export type Peer = { readonly id: string, readonly granted: readonly Capability[] }
+
+// Where data can move to and from a plugin, followed in turn: along plugin.call both ways, since a callee answers its
+// caller, and along a subscription from the plugin that owns the topic to the plugin that hears it, never back. Hearing
+// a plugin gives the listener none of its grants, so this feeds the pair rule alone. heard is each of the plugin's
+// subscriptions to another plugin's topics with what every plugin upstream through it holds. With no flow given the
+// links are plugin.call's alone, so upstream and downstream are both what plugin.call reaches
+export type Flow = {
+  readonly upstream: readonly Peer[]
+  readonly downstream: readonly Peer[]
+  readonly heard: readonly { readonly item: Capability, readonly upstream: readonly Capability[] }[]
+}
+
 // What the trusted window shows under the core's words is made from: what the plugin asks for, what it reaches through
-// plugin.call followed in turn, and every plugin that can reach it with what each holds. Which of those read is policy
+// plugin.call followed in turn, every plugin connected to it that way with what each holds and where data moves to and
+// from it. Which of those read is policy
 export type ScreenSubject = {
   readonly granted: readonly Capability[]
   readonly reachable: readonly Capability[]
-  readonly callers: readonly { readonly id: string, readonly granted: readonly Capability[] }[]
+  readonly callers: readonly Peer[]
+  readonly flow?: Flow
 }
 
 // The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
 // it at an approval, a first-party copy, an update and a widened grant. A throw counts as the slot down, which leaves a
 // class null, counted as 4
 export type Capabilities = {
-  classify(granted: readonly Capability[], reachable: readonly Capability[]): number
-  firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[]
+  classify(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number
+  firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[]
   screen(subject: ScreenSubject): string[]
 }
 

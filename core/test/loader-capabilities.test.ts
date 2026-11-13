@@ -78,7 +78,7 @@ describe('a network plugin’s approval', () => {
     })
     await made.loader.start()
     const request = await approved(made, 'sync')
-    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: notes')
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: notes')
   })
 })
 
@@ -151,53 +151,86 @@ describe('the plugins connected through plugin.call', () => {
     await made.loader.start()
     const request = await approved(made, 'sender')
     expect((await made.store.load()).state.plugins.sender.class).toBe(4)
-    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: reader')
+    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: reader')
     await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.view' } })
     expect((await made.store.load()).state.plugins.bridge.class).toBe(4)
   })
 })
 
-// Publishing needs no grant, so a reader can signal a plugin that hears its topics by when it publishes
-describe('the plugins linked by a subscription to another plugin\'s topics', () => {
-  it('count as connected, so a network plugin hearing a reader\'s topic is class 4 and names the reader', async () => {
-    const hears = { type: 'events.subscribe', topics: ['reader.done'] } as Capability
+// Publishing needs no grant, so a plugin can signal every plugin that hears its topics by what and when it publishes.
+// Data moves one way along a subscription: from the plugin that owns the topic to the plugin that hears it
+describe('a subscription to another plugin\'s topics', () => {
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const writeAll: Capability = { type: 'luoshu.write', paths: ['**'] }
+  const calls: Capability = { type: 'plugin.call', targets: ['reader'] }
+
+  // What id's approval writes and shows, every other plugin approved before it with what it holds, beside a luoshu
+  async function approval(plugins: Record<string, Capability[]>, id: string) {
     const made = await harness({
-      install: withCapabilities(),
-      folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, hears]) },
-      entries: { reader: root => entryFor(root, { granted: [read], class: 1 }) },
+      install: { ...withCapabilities(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      folder: Object.fromEntries(Object.entries(plugins).map(([other, granted]) => [other, worker(other, granted)])),
+      entries: Object.fromEntries(Object.entries(plugins).filter(([other]) => other !== id)
+        .map(([other, granted]) => [other, (root: string) => entryFor(root, { granted, class: 0 })])),
     })
     await made.loader.start()
-    const request = await approved(made, 'sender')
-    const entry = (await made.store.load()).state.plugins.sender
-    expect(entry.class).toBe(4)
-    expect(entry.firstUse).toEqual([fetchOne])
-    expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call or events: reader')
+    const request = await approved(made, id)
+    const entry = (await made.store.load()).state.plugins[id]
+    return { class: entry.class, firstUse: entry.firstUse ?? [], notes: request.notes }
+  }
+
+  it('pairs a reader that speaks with a network plugin that hears it, both class 4, the subscription asking at first use', async () => {
+    const plugins = { reader: [read], sender: [fetchOne, hears('reader.done'), hears('luoshu.changed')] }
+    const sender = await approval(plugins, 'sender')
+    expect(sender.class).toBe(4)
+    expect(sender.firstUse).toEqual([fetchOne, hears('reader.done')])
+    expect(sender.notes).toContain('Plugins that read and can reach it through events: reader')
+    const reader = await approval(plugins, 'reader')
+    expect(reader.class).toBe(4)
+    expect(reader.firstUse).toEqual([])
+    expect(reader.notes).toContain('Plugins with network it can reach through events: sender')
   })
 
-  it('ask at the first use of the subscription that closes a reader\'s pair with no network of its own', async () => {
-    const hears = { type: 'events.subscribe', topics: ['sender.sent'] } as Capability
-    const made = await harness({
-      install: withCapabilities(),
-      folder: { reader: worker('reader', [read, hears]), sender: worker('sender') },
-      entries: { sender: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
-    })
-    await made.loader.start()
-    await approved(made, 'reader')
-    const entry = (await made.store.load()).state.plugins.reader
-    expect(entry.class).toBe(4)
-    expect(entry.firstUse).toEqual([hears])
+  it('leaves a network plugin that speaks and a reader that hears it at their own classes, since nothing moves back', async () => {
+    const plugins = { sender: [fetchOne], reader: [read, hears('sender.sent')] }
+    const reader = await approval(plugins, 'reader')
+    expect(reader.class).toBe(1)
+    expect(reader.firstUse).toEqual([])
+    expect(reader.notes.filter(line => line.includes('through events'))).toEqual([])
+    expect((await approval(plugins, 'sender')).class).toBe(3)
   })
 
-  it('leave a plugin hearing only its own topics unlinked', async () => {
-    const own = { type: 'events.subscribe', topics: ['sender.sent'] } as Capability
-    const made = await harness({
-      install: withCapabilities(),
-      folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, own]) },
-      entries: { reader: root => entryFor(root, { granted: [read], class: 1 }) },
-    })
-    await made.loader.start()
-    await approved(made, 'sender')
-    expect((await made.store.load()).state.plugins.sender.class).toBe(3)
+  it('gives the listener none of the speaker\'s grants, so a plugin with views hearing a class 4 plugin stays class 0', async () => {
+    const viewer = await approval({ writer: [writeAll], viewer: [{ type: 'ui.view' }, hears('writer.saved')] }, 'viewer')
+    expect(viewer.class).toBe(0)
+    expect(viewer.firstUse).toEqual([])
+  })
+
+  it('leaves two plugins hearing one speaker that holds nothing, a reader and a network plugin hearing the luoshu, unpaired', async () => {
+    const plugins = { reader: [read, hears('luoshu.changed')], sender: [fetchOne, hears('luoshu.changed')] }
+    expect((await approval(plugins, 'reader')).class).toBe(1)
+    expect((await approval(plugins, 'sender')).class).toBe(3)
+  })
+
+  it('is followed in turn, so a reader, a plugin hearing it that speaks on and a network plugin hearing that are class 4', async () => {
+    const plugins = { reader: [read], middle: [hears('reader.done')], sender: [fetchOne, hears('middle.done')] }
+    expect(await approval(plugins, 'reader')).toMatchObject({ class: 4, firstUse: [] })
+    expect(await approval(plugins, 'middle')).toMatchObject({ class: 4, firstUse: [hears('reader.done')] })
+    const sender = await approval(plugins, 'sender')
+    expect(sender).toMatchObject({ class: 4, firstUse: [fetchOne, hears('middle.done')] })
+    expect(sender.notes).toContain('Plugins that read and can reach it through events: reader')
+  })
+
+  it('is followed with plugin.call, so a network plugin hearing a reader\'s caller is class 4, the caller and the reader too', async () => {
+    const plugins = { reader: [read], middle: [calls], sender: [fetchOne, hears('middle.done')] }
+    expect(await approval(plugins, 'sender')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('middle.done')] })
+    expect(await approval(plugins, 'middle')).toMatchObject({ class: 4, firstUse: [calls] })
+    expect(await approval(plugins, 'reader')).toMatchObject({ class: 4, firstUse: [] })
+  })
+
+  it('links nothing for a plugin hearing only its own topics', async () => {
+    const sender = await approval({ reader: [read], sender: [fetchOne, hears('sender.sent')] }, 'sender')
+    expect(sender.class).toBe(3)
+    expect(sender.firstUse).toEqual([])
   })
 })
 

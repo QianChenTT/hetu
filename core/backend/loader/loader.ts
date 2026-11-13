@@ -18,7 +18,7 @@ import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, ExecGrant, ExecView, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { Capabilities, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -165,6 +165,20 @@ const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (i
 // The plugins whose topics a grant hears, each topic published as <id>.<name> by that plugin alone
 const publishersOf = (granted: readonly Capability[]) =>
   granted.flatMap(item => (item.type === 'events.subscribe' ? item.topics.map(topic => topic.slice(0, topic.indexOf('.'))) : []))
+
+// Every plugin the links lead to from the plugins in start, followed in turn and never through the one asking
+function followed(links: ReadonlyMap<string, ReadonlySet<string>>, start: readonly string[], asking: string): Set<string> {
+  const seen = new Set<string>([asking])
+  const queue = start.flatMap(from => [...(links.get(from) ?? [])])
+  while (queue.length > 0) {
+    const other = queue.shift()!
+    if (seen.has(other)) continue
+    seen.add(other)
+    queue.push(...(links.get(other) ?? []))
+  }
+  seen.delete(asking)
+  return seen
+}
 
 function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
   const off = old?.off ?? []
@@ -552,33 +566,60 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // Every plugin connected to id through plugin.call or a subscription to another plugin's topics, either way round and
-  // followed in turn, with what each holds. A callee answers its caller, so data moves both ways along a call: a reader
-  // and a network plugin that share a callee can pass notes out through it. Publishing needs no grant, so a reader can
-  // signal a plugin that hears its topics by when it publishes. granted is id's own, which may be a change not applied
-  // yet
-  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
+  // Every plugin the loader knows and what each holds, id's own being granted, which may be a change not applied yet
+  private holders(id: string, granted: readonly Capability[]) {
     const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
-    const held = (other: string) => (other === id ? granted : this.grantsOf(other))
+    return { ids, held: (other: string) => (other === id ? granted : this.grantsOf(other)) }
+  }
+
+  // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
+  // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
+  // can pass notes out through it
+  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
+    const { ids, held } = this.holders(id, granted)
     const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
     for (const from of ids) {
-      for (const to of [...targetsOf(held(from)), ...publishersOf(held(from))]) {
+      for (const to of targetsOf(held(from))) {
         if (to === from) continue
         if (!links.has(to)) links.set(to, new Set())
         links.get(from)!.add(to)
         links.get(to)!.add(from)
       }
     }
-    const seen = new Set<string>([id])
-    const queue = [...links.get(id)!]
-    while (queue.length > 0) {
-      const other = queue.shift()!
-      if (seen.has(other)) continue
-      seen.add(other)
-      queue.push(...links.get(other)!)
+    return [...followed(links, [id], id)].sort().map(other => ({ id: other, granted: held(other) }))
+  }
+
+  // Where data can move to and from id, for the pair rule: along plugin.call both ways, and along a subscription to
+  // another plugin's topics from the plugin that owns the topic to id, never back. Publishing needs no grant, so a
+  // plugin can signal every plugin that hears its topics by what and when it publishes, while a plugin that hears
+  // another passes it nothing. Two plugins hearing one topic share nothing through it
+  private flow(id: string, granted: readonly Capability[]): Flow {
+    const { ids, held } = this.holders(id, granted)
+    const out = new Map<string, Set<string>>()
+    const into = new Map<string, Set<string>>()
+    const link = (from: string, to: string) => {
+      if (from === to) return
+      if (!out.has(from)) out.set(from, new Set())
+      if (!into.has(to)) into.set(to, new Set())
+      out.get(from)!.add(to)
+      into.get(to)!.add(from)
     }
-    seen.delete(id)
-    return [...seen].sort().map(other => ({ id: other, granted: held(other) }))
+    for (const from of ids) {
+      for (const to of targetsOf(held(from))) {
+        link(from, to)
+        link(to, from)
+      }
+      for (const owner of publishersOf(held(from))) link(owner, from)
+    }
+    const peers = (others: Set<string>) => [...others].sort().map(other => ({ id: other, granted: held(other) }))
+    const heard = granted.flatMap(item => {
+      const owners = publishersOf([item]).filter(owner => owner !== id)
+      if (owners.length === 0) return []
+      const upstream = new Set([...owners, ...followed(into, owners, id)])
+      upstream.delete(id)
+      return [{ item, upstream: peers(upstream).flatMap(peer => [...peer.granted]) }]
+    })
+    return { upstream: peers(followed(into, [id], id)), downstream: peers(followed(out, [id], id)), heard }
   }
 
   private reachable(id: string, granted: readonly Capability[]): Capability[] {
@@ -592,8 +633,9 @@ ${capabilityKey(change.capability)}`)
     if (slot !== null) {
       try {
         const reachable = this.reachable(id, granted)
-        const n = slot.classify(granted, reachable)
-        const asking = slot.firstUse(granted, reachable)
+        const flow = this.flow(id, granted)
+        const n = slot.classify(granted, reachable, flow)
+        const asking = slot.firstUse(granted, reachable, flow)
         if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
       } catch {}
       this.note('fault', { plugin: 'capabilities', step: 'classify' })
@@ -606,7 +648,7 @@ ${capabilityKey(change.capability)}`)
     const slot = this.capabilities()
     if (slot === null) return null
     try {
-      const asking = slot.firstUse(granted, this.reachable(id, granted))
+      const asking = slot.firstUse(granted, this.reachable(id, granted), this.flow(id, granted))
       return Array.isArray(asking) ? asking : null
     } catch {
       return null
@@ -619,7 +661,7 @@ ${capabilityKey(change.capability)}`)
     if (slot !== null) {
       try {
         const connected = this.connected(id, granted)
-        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected })
+        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
         if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
       } catch {}
       this.note('fault', { plugin: 'capabilities', step: 'screen' })
