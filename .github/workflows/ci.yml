@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+        os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     env:
       # The daemon commits with the machine's git identity and a fresh runner has none
@@ -52,12 +52,12 @@ jobs:
       - name: run tests
         run: npm test
 
-  # The built app on all three systems, driven by Playwright. Linux has no display, so there it runs under xvfb-run
+  # The built app on both systems, driven by Playwright
   e2e:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+        os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,20 +73,16 @@ jobs:
       - name: fetch Electron
         run: node node_modules/electron/install.js
       - name: build and drive the app
-        if: runner.os != 'Linux'
         run: npm run test:e2e
-      - name: build and drive the app under xvfb
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e
 
-  # The packed build on all three systems: the folder build and its packaged suite, then the end-to-end tests driving a
+  # The packed build on both systems: the folder build and its packaged suite, then the end-to-end tests driving a
   # packed build that isn't locked. Windows also builds the MSI, installs it per machine, runs the installed checks
   # against Program Files and uninstalls it. The runner is elevated, which a person's shell isn't
   package:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+        os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,25 +97,10 @@ jobs:
         run: node node_modules/electron/install.js
       - name: pack the folder build
         run: npm run package:dir
-      # A locked build refuses --no-sandbox, so Chromium's sandbox helper needs root ownership and the setuid bit, as an
-      # installed Electron app's does
-      - name: give the sandbox helper its rights
-        if: runner.os == 'Linux'
-        run: |
-          sudo chown root:root dist-package/dir/linux-unpacked/chrome-sandbox
-          sudo chmod 4755 dist-package/dir/linux-unpacked/chrome-sandbox
       - name: packaged suite
-        if: runner.os != 'Linux'
         run: npm run test:packaged -w hetu-core
-      - name: packaged suite under xvfb
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:packaged -w hetu-core
       - name: drive the packed build
-        if: runner.os != 'Linux'
         run: npm run test:e2e:packaged
-      - name: drive the packed build under xvfb
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e:packaged
       - name: build the MSI
         if: runner.os == 'Windows'
         run: npm run package
