@@ -278,8 +278,13 @@ export function createHistory(options: HistoryOptions = {}): History {
       if (!Array.isArray(named) || named.length === 0 || !named.every(item => typeof item === 'string')) return refused('invalid')
       const targets: Canonical[] = []
       for (const item of named as string[]) {
-        const target = await canonical(under.folder, item, { dataDir: under.dataDir, installDir: under.installDir })
-        if (!target.ok) return refused(target.code)
+        const found = await canonical(under.folder, item, { dataDir: under.dataDir, installDir: under.installDir })
+        // A name spelled with no dot that leads to a dot name is taken as the same name missing, at a path no file has,
+        // so its commit, log and read answer as a missing note's do. History writes nothing in the notes folder
+        let target: Canonical
+        if (found.ok) target = found
+        else if (found.code === 'not-granted' && found.absent !== undefined) target = found.absent
+        else return refused(found.code)
         if (!targets.some(known => known.relative === target.relative)) targets.push(target)
       }
       resolved.set(call.callId, targets)

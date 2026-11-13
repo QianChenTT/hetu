@@ -312,7 +312,8 @@ describe('the spellings threat-model row 3 found', () => {
     expect(await ask(made, 'luoshu.read', { path: 'install/install.json' })).toEqual({ refused: { code: 'not-granted' } })
   })
 
-  it.runIf(onWindows)('refuses .git through its 8.3 short name', async ({ skip }) => {
+  // Spelled with no dot, so it answers as a missing note, which aliases.test.ts compares action by action
+  it.runIf(onWindows)('answers .git through its 8.3 short name as a missing note', async ({ skip }) => {
     const { stdout } = await run('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: folder })
     const line = stdout.split(/\r?\n/).map(l => l.trimEnd()).find(l => l.endsWith(' .git'))
     const short = line?.slice(0, -' .git'.length).trimEnd().split(/\s+/).at(-1)
@@ -321,6 +322,8 @@ describe('the spellings threat-model row 3 found', () => {
       return skip('this volume makes no 8.3 short names')
     }
     expect(await readFile(path.join(folder, short, 'config'), 'utf8')).toBe('[core]\n')
-    expect(await ask(opened(), 'luoshu.read', { path: `${short}/config` })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await ask(opened(), 'luoshu.read', { path: `${short}/config` })).toEqual({ refused: { code: 'not-found' } })
+    expect(await ask(opened(), 'luoshu.write', { path: `${short}/config`, text: 'x' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readFile(path.join(folder, '.git', 'config'), 'utf8')).toBe('[core]\n')
   })
 })

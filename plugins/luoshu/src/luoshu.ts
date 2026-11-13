@@ -6,7 +6,7 @@ import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
 import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, type Canonical, type NotCanonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
 export type Luoshu = {
@@ -83,6 +83,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const moving = new Map<string, { to: Canonical, same: boolean }>()
   // The folder each call was prepared under, so a call prepared before luoshu.set never acts on the folder after it
   const preparedUnder = new Map<string, Opening>()
+  // The paths that stand for a name spelled with no dot that leads to a dot name, which no write lands on
+  const nowhere = new WeakSet<Canonical>()
   // The hash of the bytes hetu itself last wrote to each key, so an event for its own write isn't taken for an outside one
   const own = new Map<string, string>()
   // Each note's size and modified time as last seen, from a walk once the watch began. An event for a note that still
@@ -172,6 +174,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // so a crash leaves the old note or the new one
   async function write(target: Canonical, text: string, baseVersion: string | undefined): Promise<unknown> {
     if ((await current(target.absolute)) !== (baseVersion ?? null)) throw refused('stale')
+    if (nowhere.has(target)) throw refused('not-granted')
     const bytes = Buffer.from(text, 'utf8')
     const dir = path.dirname(target.absolute)
     await mkdir(dir, { recursive: true })
@@ -259,6 +262,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   async function move(from: Canonical, to: Canonical, same: boolean): Promise<null> {
     await unmoved(from.absolute)
     if (!(await isNote(from.absolute))) throw refused('not-found')
+    if (nowhere.has(to)) throw refused('not-granted')
     if (same) {
       if (to.absolute !== from.absolute) await retried(() => rename(from.absolute, to.absolute), from.absolute)
     } else {
@@ -344,6 +348,17 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     return { paths, next: kept.length > pageSize ? paths.at(-1)! : null }
   }
 
+  // What a call acts on. For a name spelled with no dot that leads to a dot name, canonical's same name as if nothing
+  // were there: a read, a listing, a remove and the from end of a move meet a missing name, and a write or the to end of
+  // a move is refused at perform as the dot name is, after the gate judged the name a missing one gives it. So a caller
+  // with no grant learns no more than a missing name tells and one with a grant learns it only from a write
+  function usable(found: Canonical | NotCanonical): Canonical | ProviderRefusal {
+    if (found.ok) return found
+    if (found.code !== 'not-granted' || found.absent === undefined) return refused(found.code)
+    nowhere.add(found.absent)
+    return found.absent
+  }
+
   const provider: Provider = {
     async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
       if (opening === null) return refused('unavailable')
@@ -353,18 +368,18 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       if (call.action === 'luoshu.list') {
         if (args.folder === undefined) return { scope: {} }
         if (typeof args.folder !== 'string') return refused('invalid')
-        const target = await canonical(folder, args.folder, { dataDir, installDir })
-        if (!target.ok) return refused(target.code)
+        const target = usable(await canonical(folder, args.folder, { dataDir, installDir }))
+        if (!('ok' in target)) return target
         resolved.set(call.callId, target)
         return { scope: {} }
       }
       if (call.action === 'luoshu.move') {
         const { from: fromText, to: toText } = args
         if (typeof fromText !== 'string' || typeof toText !== 'string') return refused('invalid')
-        const from = await canonical(folder, fromText, { dataDir, installDir })
-        if (!from.ok) return refused(from.code)
-        const found = await canonical(folder, toText, { dataDir, installDir })
-        if (!found.ok) return refused(found.code)
+        const from = usable(await canonical(folder, fromText, { dataDir, installDir }))
+        if (!('ok' in from)) return from
+        const found = usable(await canonical(folder, toText, { dataDir, installDir }))
+        if (!('ok' in found)) return found
         // Both ends resolve to one file when the move only changes the spelling of its name
         const same = found.absolute === from.absolute
         const to = same ? respelled(from, toText) : found
@@ -374,8 +389,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         return { scope: { paths: [from.relative, to.relative] } }
       }
       if (typeof args.path !== 'string') return refused('invalid')
-      const target = await canonical(folder, args.path, { dataDir, installDir })
-      if (!target.ok) return refused(target.code)
+      const target = usable(await canonical(folder, args.path, { dataDir, installDir }))
+      if (!('ok' in target)) return target
       await lock(target.key, call.callId)
       resolved.set(call.callId, target)
       const scope = { paths: [target.relative] }

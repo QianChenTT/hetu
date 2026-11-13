@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/slots.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
@@ -602,13 +604,14 @@ describe('dot folders through the joined core', () => {
     await mkdir(path.join(folder, 'notes'), { recursive: true })
     await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
     await writeFile(path.join(folder, 'notes', 'a.md'), 'a note')
+    await writeFile(path.join(folder, '.env'), 'secret')
     await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
     open.push(() => rm(path.dirname(folder), { recursive: true, force: true }))
     const luoshu = createLuoshu()
     open.push(async () => luoshu.close())
     const parts = await joined({
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
-      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: granted })) },
+      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: granted })), zero: filesFor(workerManifest('zero')) },
       entries: { alpha: { granted } },
       behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } } },
       prepare: dataDir => new StateStore(dataDir).writeLuoshu({ folder }),
@@ -616,26 +619,68 @@ describe('dot folders through the joined core', () => {
     })
     await parts.loader.start()
     await parts.loader.settled()
-    return { ...parts, folder, alpha: parts.runtime.half('alpha') }
+    return { ...parts, folder, alpha: parts.runtime.half('alpha'), zero: parts.runtime.half('zero') }
   }
 
-  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, a link into one too', async gate => {
+  // The 8.3 short names Windows made in a folder, as dir /x shows them, none on another system or a volume that makes none
+  async function shortNames(folder: string, names: string[]): Promise<string[]> {
+    if (process.platform !== 'win32') return []
+    const { stdout } = await promisify(execFile)('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: folder })
+    const lines = stdout.split(/\r?\n/).map(line => line.trimEnd())
+    return names.flatMap(name => {
+      const line = lines.find(found => found.endsWith(` ${name}`))
+      const short = line?.slice(0, -name.length).trimEnd().split(/\s+/).at(-1)
+      return short?.includes('~') ? [short] : []
+    })
+  }
+
+  // What a reply tells its caller, without the ids that differ between calls
+  const told = (reply: Message | null) => (reply === null ? null : reply.ok ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal })
+
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, and answers a link into one as a missing name', async gate => {
     const { alpha, folder } = await dotted(gate)
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
-    for (const where of ['.obsidian/plugins/x/main.js', 'cfg/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
+    for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
       expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('not-granted')
       expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('not-granted')
     }
+    expect(code((await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))!)).toBe('not-found')
+    expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
     expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('not-granted')
     expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/y/main.js', text: 'planted' }))!)).toBe('not-granted')
     // A vault in a subfolder has its own .obsidian
     expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
     expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
-    expect(code((await alpha.ask('luoshu.list', { folder: 'cfg' }))!)).toBe('not-granted')
+    expect(told(await alpha.ask('luoshu.list', { folder: 'cfg' }))).toEqual({ ok: true, result: { paths: [], next: null } })
     expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
     expect(await exists(path.join(folder, '.github'))).toBe(false)
     expect(await exists(path.join(folder, '.obsidian', 'plugins', 'y'))).toBe(false)
     expect(await exists(path.join(folder, 'notes', '.obsidian'))).toBe(false)
+  })
+
+  // luoshu.list needs no grant, so a refusal for a name spelled with no dot would tell which dot names exist
+  it.each(['on', 'off'] as const)('answers a plugin with no grant a listing of a link into a dot folder or a short name of a dot name as one of a missing folder, gate %s', async gate => {
+    const { zero, alpha, carrier, dataDir, folder } = await dotted(gate)
+    const missing = told(await zero.ask('luoshu.list', { folder: 'nothing-here' }))
+    expect(missing).toMatchObject({ ok: true, result: { paths: [] } })
+    const aliases = ['cfg', 'cfg/plugins', ...await shortNames(folder, ['.obsidian', '.env'])]
+    if (process.platform === 'win32') expect(aliases).toHaveLength(4)
+    for (const alias of aliases) expect(told(await zero.ask('luoshu.list', { folder: alias })), alias).toEqual(missing)
+    expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    // A granted read answers as for a missing note, and the event log keeps the same record of both
+    expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
+    await carrier.flush()
+    // A record of either kind may stand for several calls through its count
+    const kept = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && String(record.action).startsWith('luoshu.'))
+    const shapes = (action: string, code: string | null) => {
+      const found = kept.filter(record => record.action === action && record.code === code)
+      const shape = (record: Record<string, unknown>) => JSON.stringify([record.caller, record.gate, Object.keys(record.scope ?? {})])
+      return { calls: found.reduce((sum, record) => sum + (record.count as number), 0), shapes: new Set(found.map(shape)).size }
+    }
+    expect(shapes('luoshu.list', null)).toEqual({ calls: aliases.length + 1, shapes: 1 })
+    expect(shapes('luoshu.list', 'not-granted')).toEqual({ calls: 1, shapes: 1 })
+    expect(shapes('luoshu.read', 'not-found')).toEqual({ calls: 2, shapes: 1 })
+    expect(kept.filter(record => record.action === 'luoshu.read' && record.code !== 'not-found')).toEqual([])
   })
 
   it('lists no dot file to a plugin granted the dot folders by name while the gate is on', async () => {

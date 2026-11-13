@@ -282,6 +282,58 @@ describe('the paths it takes', () => {
   })
 })
 
+describe('a name spelled with no dot that leads to a dot name', () => {
+  // The 8.3 short name Windows made for a name in a folder, as dir /x shows it. null when the volume makes none
+  async function shortName(dir: string, name: string): Promise<string | null> {
+    const { stdout } = await promisify(execFile)('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: dir })
+    for (const line of stdout.split(/\r?\n/).map(l => l.trimEnd())) {
+      if (!line.endsWith(` ${name}`)) continue
+      const short = line.slice(0, -name.length).trimEnd().split(/\s+/).at(-1)
+      if (short?.includes('~')) return short
+    }
+    return null
+  }
+
+  // A second notes folder with the same plain notes and nothing else, where each name below is missing. Each call
+  // answers in where what it answers there, the scope the gate judges included, and the commit made first in each
+  // stands for the other
+  it('answers commit, log and read as for a missing name, through a junction and an 8.3 short name', async () => {
+    const bare = await place()
+    await mkdir(path.join(bare.notes, 'journal'))
+    await note(bare, 'a.md', 'note a')
+    await note(bare, 'journal/b.md', 'note b')
+    await mkdir(path.join(where.notes, '.obsidian'))
+    await note(where, '.obsidian/app.json', 'DOT JSON')
+    await mkdir(path.join(where.notes, '.git'))
+    await note(where, '.git/config', '[core]\n')
+    await symlink(path.join(where.notes, '.obsidian'), path.join(where.notes, 'cfg'), 'junction')
+    await symlink(path.join(where.notes, '.git'), path.join(where.notes, 'repo'), 'junction')
+    const spellings = ['cfg', 'cfg/app.json', 'repo', 'repo/config']
+    if (onWindows) {
+      const short = await shortName(where.notes, '.obsidian')
+      if (short !== null) spellings.push(short, `${short}/app.json`)
+    }
+    const inDotted = await started(where)
+    const inBare = await started(bare)
+    const commits = new Map([[inDotted, await commitOf(inDotted, ['a.md'])], [inBare, await commitOf(inBare, ['a.md'])]])
+    const both = async (action: string, args: (history: typeof inDotted) => unknown) => {
+      const [mine, theirs] = await Promise.all([inDotted, inBare].map(history => ask(history, action, args(history))))
+      expect(mine, `${action} ${JSON.stringify(args(inBare))}`).toEqual(theirs)
+    }
+    for (const spelled of spellings) {
+      const call = callOf('history.log', { path: spelled })
+      expect(await inDotted.provider.prepare(call), spelled).toEqual(await inBare.provider.prepare(callOf('history.log', { path: spelled })))
+      inDotted.provider.release?.(call, { scope: {} })
+      await both('history.commit', () => ({ paths: [spelled], message: 'x' }))
+      await both('history.log', () => ({ path: spelled }))
+      await both('history.read', history => ({ path: spelled, commit: commits.get(history) }))
+    }
+    const mixed = await commitOf(inDotted, ['journal/b.md', 'cfg/app.json'])
+    expect(await ask(inDotted, 'history.read', { path: 'cfg/app.json', commit: mixed })).toEqual({ refused: { code: 'not-found' } })
+    expect(await logOf(inDotted, 'cfg')).toEqual([])
+  })
+})
+
 describe('where the history lives', () => {
   it('keeps a repo of its own under the data folder, with no hooks folder, and puts nothing in the notes folder', async () => {
     const history = await started(where)
