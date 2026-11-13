@@ -3,8 +3,9 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { FuseState, FuseV1Options } from '@electron/fuses'
 import { describe, expect, it } from 'vitest'
-import { asarHeader, electronCopyIn, exitText, plistAsarHash } from './packaged/helpers.ts'
+import { asarHeader, electronCopyIn, exitText, fuseFileIn, fuseText, plistAsarHash } from './packaged/helpers.ts'
 
 // The packaged suite's helpers that need no packed build and no Electron
 
@@ -78,6 +79,32 @@ describe('the header of an archive', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('the file that holds the fuses', () => {
+  const base = path.resolve('app')
+
+  it.each([
+    ['win32', ['hetu.exe']],
+    ['linux', ['hetu']],
+    ['darwin', ['hetu.app', 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework']],
+  ] as const)('on %s', (platform, inside) => {
+    expect(fuseFileIn(base, platform)).toBe(path.join(base, ...inside))
+  })
+})
+
+describe('the state of a fuse', () => {
+  const wire = { [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: FuseState.ENABLE, [FuseV1Options.OnlyLoadAppFromAsar]: FuseState.DISABLE, [FuseV1Options.RunAsNode]: FuseState.REMOVED }
+
+  it('is on or off as its byte in the wire reads', () => {
+    expect(fuseText(wire, 'EnableEmbeddedAsarIntegrityValidation')).toBe('EnableEmbeddedAsarIntegrityValidation on')
+    expect(fuseText(wire, 'OnlyLoadAppFromAsar')).toBe('OnlyLoadAppFromAsar off')
+  })
+
+  it('names any other byte', () => {
+    expect(fuseText(wire, 'RunAsNode')).toBe(`RunAsNode byte ${FuseState.REMOVED}`)
+    expect(fuseText(wire, 'WasmTrapHandlers')).toBe('WasmTrapHandlers byte undefined')
   })
 })
 

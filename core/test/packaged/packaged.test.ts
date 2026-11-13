@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, asarHeader, cleanup, electronCopyIn, exitText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
+import { appDir, asarHeader, cleanup, electronCopyIn, exitText, fuseFileIn, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -154,9 +154,10 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   const asar = path.relative(appDir, path.join(resourcesOf(appDir), 'app.asar')).split(path.sep).join('/')
   const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
 
-  type Change = { copy: string, at: number }
+  type Change = { copy: string, at: number, fuses: string }
 
-  // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts
+  // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts.
+  // fuses is the fuse file as the copy's start meets it
   async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<Change> {
     const copy = await linkedCopy([asar, executable])
     const file = path.join(copy, asar)
@@ -166,7 +167,7 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     bytes[at] = bytes[at] === 0x61 ? 0x62 : 0x61
     await writeFile(file, bytes)
     if (!fuseOn) await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false })
-    return { copy, at }
+    return { copy, at, fuses: await fuseLine(copy) }
   }
 
   const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
@@ -181,9 +182,25 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     return plutil.status === 0 ? plutil.stdout : readFile(file, 'utf8')
   }
 
+  // The integrity fuse as a copy's own fuse file holds it just before a start, beside the original's, and whether the
+  // two are one file
+  async function fuseLine(copy: string): Promise<string> {
+    const state = async (dir: string) => {
+      const wire = await getCurrentFuseWire(executableIn(dir)) as unknown as Record<number, number>
+      return `${fuseText(wire, 'EnableEmbeddedAsarIntegrityValidation')}, ${fuseText(wire, 'OnlyLoadAppFromAsar')}`
+    }
+    const [copyState, originalState] = await Promise.all([state(copy), state(appDir)])
+    const [copyStat, originalStat] = await Promise.all([stat(fuseFileIn(copy), { bigint: true }), stat(fuseFileIn(appDir), { bigint: true })])
+    const same = copyStat.ino === originalStat.ino && copyStat.dev === originalStat.dev
+    return [
+      `copy's fuse file ${await realpath(fuseFileIn(copy))}: ${copyState}, inode ${copyStat.ino} links ${copyStat.nlink}`,
+      `original's fuse file: ${originalState}, inode ${originalStat.ino} links ${originalStat.nlink}, one file with the copy's ${same}`,
+    ].join('\n  ')
+  }
+
   // What tells how a changed archive got past the header check or was stopped: where the byte changed against the
   // header's bounds, the header's hash before and after against the one Info.plist records, whether the copy's archive
-  // is a file of its own and how each start ended
+  // is a file of its own, the integrity fuse each start met and how each start ended
   async function report(where: string, refusing: Change, refusedStart: Started, off: Change, offStart: Started): Promise<string> {
     const original = await readFile(path.join(appDir, asar))
     const copied = await readFile(path.join(refusing.copy, asar))
@@ -201,7 +218,9 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
       `header sha256 as changed ${sha256(headerOf(copied))}`,
       `Info.plist ElectronAsarIntegrity Resources/app.asar ${recorded}`,
       `original app.asar inode ${originalStat.ino} links ${originalStat.nlink}, copy's app.asar inode ${copyStat.ino} links ${copyStat.nlink}, separate file ${originalStat.ino !== copyStat.ino || originalStat.dev !== copyStat.dev}`,
+      `before the start with the check on:\n  ${refusing.fuses}`,
       `start with the check on: ${integrityMessage(refusedStart)}, ${exitText(refusedStart)}`,
+      `before the start with the check off:\n  ${off.fuses}`,
       `start with the check off (offset ${off.at}): ${integrityMessage(offStart)}, ${exitText(offStart)}`,
       '=== end of asar integrity report ===',
     ].join('\n')

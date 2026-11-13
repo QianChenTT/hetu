@@ -2,7 +2,9 @@ import { spawn, spawnSync } from 'node:child_process'
 import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { FuseState, FuseV1Options, pathToFuseFile } from '@electron/fuses'
 import { stateDir } from '../../backend/boot/state.ts'
+import type { FuseName } from '../../build/fuses.ts'
 import { executableIn } from '../../build/package.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
@@ -100,6 +102,18 @@ export function exitText(started: Started): string {
 // finds the Electron framework as a real copy of the app would have it
 export function electronCopyIn(appOutDir: string, platform: string = process.platform): string {
   return path.join(path.dirname(executableIn(appOutDir, platform)), platform === 'win32' ? 'electron.exe' : 'electron')
+}
+
+// The file that holds Electron's fuses, as @electron/fuses finds it: the executable on Windows and Linux, the Electron
+// framework inside the bundle on macOS
+export function fuseFileIn(appOutDir: string, platform: string = process.platform): string {
+  return pathToFuseFile(executableIn(appOutDir, platform))
+}
+
+// A fuse's state as its byte in a wire getCurrentFuseWire read
+export function fuseText(wire: Readonly<Record<number, number>>, fuse: FuseName): string {
+  const byte = wire[FuseV1Options[fuse]]
+  return `${fuse} ${byte === FuseState.ENABLE ? 'on' : byte === FuseState.DISABLE ? 'off' : `byte ${byte}`}`
 }
 
 // The header's JSON text in an archive's bytes: a pickled size, then a pickle holding the text's length and the text.
