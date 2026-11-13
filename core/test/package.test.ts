@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -53,8 +53,19 @@ describe('the integrity list in the executable', () => {
   const { computeData } = createRequire(path.join(builder, 'package.json'))('app-builder-lib/out/asar/integrity') as {
     computeData(options: { resourcesPath: string, resourcesRelativePath: string, resourcesDestinationPath: string }): Promise<Record<string, unknown>>
   }
-  // Electron's own default app, a real archive, stands in for app.asar as well
-  const electronAsar = path.join(path.dirname(require.resolve('electron/package.json')), 'dist', 'resources', 'default_app.asar')
+  // A small archive in asar's layout stands in for Electron's default app and for app.asar, so the test needs no
+  // Electron binary, which the unit tests' install never fetches: a pickled size, then a pickled JSON header
+  const archive = (file: string) => {
+    const json = Buffer.from(JSON.stringify({ files: { 'index.js': { size: 0, offset: '0' } } }))
+    const padded = Math.ceil(json.length / 4) * 4
+    const head = Buffer.alloc(16 + padded)
+    head.writeUInt32LE(4, 0)
+    head.writeUInt32LE(8 + padded, 4)
+    head.writeUInt32LE(4 + padded, 8)
+    head.writeUInt32LE(json.length, 12)
+    json.copy(head, 16)
+    return writeFile(file, head)
+  }
 
   for (const [platform, inside] of [['win32', ['resources']], ['linux', ['resources']], ['darwin', ['Electron.app', 'Contents', 'Resources']]] as const) {
     it(`names app.asar alone once Electron is extracted, on ${platform}`, async () => {
@@ -62,11 +73,11 @@ describe('the integrity list in the executable', () => {
       try {
         const resources = path.join(appOutDir, ...inside)
         await mkdir(resources, { recursive: true })
-        await copyFile(electronAsar, path.join(resources, 'default_app.asar'))
+        await archive(path.join(resources, 'default_app.asar'))
         const config = configFor(appOutDir, { target: 'dir', locked: true, out: appOutDir }, FUSES)
         const afterExtract = config.afterExtract as ((context: { appOutDir: string, electronPlatformName: string }) => Promise<void>) | undefined
         await afterExtract?.({ appOutDir, electronPlatformName: platform })
-        await copyFile(electronAsar, path.join(resources, 'app.asar'))
+        await archive(path.join(resources, 'app.asar'))
         const relative = platform === 'darwin' ? 'Resources' : 'resources'
         const list = await computeData({ resourcesPath: resources, resourcesRelativePath: relative, resourcesDestinationPath: resources })
         expect(Object.keys(list)).toEqual([path.join(relative, 'app.asar')])
