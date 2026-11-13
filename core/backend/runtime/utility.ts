@@ -26,13 +26,14 @@ export type UtilityOptions = {
   limits: (id: string) => RelayLimits
 }
 
-type Child = { child: UtilityChild, cwd: string, killed: boolean, over: boolean }
+type Child = { id: string, child: UtilityChild, cwd: string, killed: boolean, over: boolean }
 
 // The utility halves' runtime: each a utilityProcess forked from the core's bootstrap, with an environment built from
 // empty, a new empty working folder in the system's temp folder and its first message the verified bytes, its limits and
 // the plugin's end of its channel. It records each kill it makes, so an exit reads killed from that record and never from
-// the exit code, which a kill sets to 0 on Windows
-export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUtility' | 'kill'> {
+// the exit code, which a kill sets to 0 on Windows. limited sends each running child of a plugin its limits as they are
+// now, on the child's parent port, which only main writes to
+export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUtility' | 'kill'> & { limited(id: string): void } {
   const running = new Map<string, Child>()
   const key = (id: string, incarnation: number) => `${id}#${incarnation}`
   return {
@@ -50,7 +51,7 @@ export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUti
         rmdirSync(cwd)
         throw err
       }
-      const own: Child = { child, cwd, killed: false, over: false }
+      const own: Child = { id: start.id, child, cwd, killed: false, over: false }
       running.set(key(start.id, start.incarnation), own)
       child.once('exit', () => {
         if (own.over) return
@@ -64,6 +65,14 @@ export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUti
         start.exited({ killed: own.killed })
       })
       child.postMessage({ v: VERSION, kind: 'start', code: start.code.toString('base64'), limits: options.limits(start.id) }, [start.port])
+    },
+    limited(id) {
+      for (const own of running.values()) {
+        if (own.id !== id || own.over) continue
+        try {
+          own.child.postMessage({ v: VERSION, kind: 'limits', limits: options.limits(id) })
+        } catch {}
+      }
     },
     kill(id, incarnation) {
       const own = running.get(key(id, incarnation))

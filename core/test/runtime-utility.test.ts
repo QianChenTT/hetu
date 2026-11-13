@@ -147,6 +147,47 @@ describe('the utility runtime', () => {
     expect(await readdir(written)).toEqual(['left.txt'])
   })
 
+  it('sends each running child of the plugin its limits as they are when limited is called, on its parent port', () => {
+    let current: RelayLimits = limits
+    const forks: FakeChild[] = []
+    const runtime = utilityRuntime({
+      fork: (_modulePath, _args, forkOptions) => {
+        made.push(forkOptions.cwd)
+        const child = new FakeChild()
+        forks.push(child)
+        return child
+      },
+      bootstrap: 'utility.js',
+      locked: true,
+      limits: () => current,
+    })
+    const start = (id: string, incarnation: number): UtilityStart => ({ id, incarnation, code: Buffer.from(''), port: {}, exited: () => {} })
+    runtime.startUtility(start('http', 1))
+    runtime.startUtility(start('other', 1))
+    current = { ...limits, messagesPerSecond: 20 }
+    runtime.limited('http')
+    expect(forks[0].posted.slice(1)).toEqual([{ message: { v: 1, kind: 'limits', limits: current }, transfer: [] }])
+    expect(forks[1].posted).toHaveLength(1)
+    // A raise goes out the same way
+    current = { ...limits, messagesPerSecond: 400 }
+    runtime.limited('http')
+    expect(forks[0].posted.at(-1)).toEqual({ message: { v: 1, kind: 'limits', limits: current }, transfer: [] })
+  })
+
+  it('sends nothing to a child that exited, to a plugin with none running and survives a post that throws', () => {
+    const { runtime, forks, start } = fake()
+    runtime.startUtility(start('http', 1))
+    forks[0].child.exits(1)
+    runtime.limited('http')
+    runtime.limited('nobody')
+    expect(forks[0].child.posted).toHaveLength(1)
+    runtime.startUtility(start('http', 2))
+    forks[1].child.postMessage = () => {
+      throw new Error('gone')
+    }
+    expect(() => runtime.limited('http')).not.toThrow()
+  })
+
   it('throws when the fork throws, so the loader reads start-failed', () => {
     const runtime = utilityRuntime({ fork: () => { throw new Error('no fork') }, bootstrap: 'utility.js', locked: true, limits: () => limits })
     expect(() => runtime.startUtility({ id: 'http', incarnation: 1, code: Buffer.from(''), port: null, exited: () => {} })).toThrow('no fork')

@@ -41,7 +41,7 @@ async function joined(options: {
   before?: (booted: Booted) => void
   // Runs on the data folder before boot reads it
   prepare?: (dataDir: string) => Promise<void>
-  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure'>
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure' | 'limited'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -121,6 +121,16 @@ describe('wiring the core', () => {
     await started
     await carrier.flush()
     expect(await floorEvents(dataDir)).not.toContain('core.ready')
+  })
+
+  it('hands the runtime a limit the human set once it is written, so each running half gets it', async () => {
+    const heard: [string, number][] = []
+    const parts: { carrier: { limit(plugin: string, name: 'messagesPerSecond'): number } | null } = { carrier: null }
+    const { loader, carrier } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.carrier!.limit(plugin, 'messagesPerSecond')]) } })
+    parts.carrier = carrier
+    await loader.start()
+    await loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
+    expect(heard).toEqual([['gate', 20]])
   })
 
   it('refuses a link call made before the carrier exists', () => {

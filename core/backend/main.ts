@@ -182,7 +182,11 @@ async function start(): Promise<void> {
       installDir,
       listDir,
       runtime,
-      limited: plugin => renderer.limited(plugin),
+      // A plugin's running workers and utility halves get its limits again after each change
+      limited: plugin => {
+        renderer.limited(plugin)
+        utility.limited(plugin)
+      },
       onFailure,
       // A removed note goes to the OS's bin, so it can be put back with hetu closed. A bin that refuses rejects
       trash: absolute => shell.trashItem(absolute),

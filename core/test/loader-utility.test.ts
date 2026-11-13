@@ -188,3 +188,39 @@ describe('stops and restarts of a utility half', () => {
     expect(stateOf(made.loader, 'http')).toBe('ready')
   })
 })
+
+describe('limits the human sets', () => {
+  // The runtime hears each change once it landed and reads the values as the carrier holds them at that moment
+  async function listening() {
+    const heard: [string, number][] = []
+    const holder: { made: Awaited<ReturnType<typeof harness>> | null } = { made: null }
+    holder.made = await harness({
+      install: install(),
+      loader: { limited: plugin => void heard.push([plugin, holder.made!.carrier.limit(plugin, 'messagesPerSecond')]) },
+    })
+    await holder.made.loader.start()
+    return { made: holder.made, heard }
+  }
+
+  it('reach the runtime for the plugin named once the new value is written, a raise as well as a lowering', async () => {
+    const { made, heard } = await listening()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'http' })
+    expect(heard).toEqual([['http', 20]])
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 300, plugin: 'http' })
+    expect(heard).toEqual([['http', 20], ['http', 300]])
+  })
+
+  it('reach the runtime for every plugin when set for all', async () => {
+    const { made, heard } = await listening()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 30, plugin: null })
+    expect(heard.map(([plugin]) => plugin).sort()).toEqual(['gate', 'http', 'storage'])
+    expect(heard.find(([plugin]) => plugin === 'http')).toEqual(['http', 30])
+  })
+
+  it('apply even when the runtime throws as it hears one', async () => {
+    const made = await harness({ install: install(), loader: { limited: () => { throw new Error('no child') } } })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'http' })
+    expect(made.carrier.limit('http', 'messagesPerSecond')).toBe(20)
+  })
+})

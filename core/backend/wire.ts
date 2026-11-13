@@ -18,7 +18,7 @@ export type WireOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
-  // watchdog.limit lowered one of this plugin's constants, for the runtime to pass on
+  // watchdog.limit lowered one of this plugin's constants or the human set one, for the runtime to pass on
   limited?: (plugin: string) => void
   // The windows' own actions the runtime serves, opening the trusted window, Quit and Restart hetu, and whether the
   // trusted window is past its input delay
@@ -120,6 +120,7 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     ...(options.confirmDelayMs !== undefined ? { confirmDelayMs: options.confirmDelayMs } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
+    ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
   const { windows } = options
   const carrier = new Carrier(carrierOptions(loader, {

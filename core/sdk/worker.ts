@@ -25,6 +25,17 @@ type Held = { text: string, weight: number }
 // counts, so a backlog never leaves in a burst the relay would drop. A pong goes out at once, ahead of what waits, from
 // the 10% kept back, so a busy plugin never reads as unresponsive. Lower limits the page sends down apply from then on
 export function portTransport(port: WorkerPort, given: WorkerLimits, clock: () => number = () => performance.now()): Transport {
+  return pacedTransport(port, given, clock, true)
+}
+
+// The worker's transport with limit, which takes new limits from then on and sends what waits as far as they allow.
+// fromPort says whether a message on the port that is not text may carry them, as the worker host page's does
+export function pacedTransport(
+  port: WorkerPort,
+  given: WorkerLimits,
+  clock: () => number,
+  fromPort: boolean,
+): Transport & { limit(limits: WorkerLimits): void } {
   let limits = given
   const capOf = () => messageCap(name => limits[name as keyof WorkerLimits])
   const budget = newBudget()
@@ -51,6 +62,11 @@ export function portTransport(port: WorkerPort, given: WorkerLimits, clock: () =
   }
   return {
     paces: true,
+    limit(next) {
+      limits = next
+      if (timer !== null) clearTimeout(timer)
+      flush()
+    },
     post(message) {
       const text = JSON.stringify(message)
       if (typeof text !== 'string') throw new Error('invalid: the message is not JSON')
@@ -66,6 +82,7 @@ export function portTransport(port: WorkerPort, given: WorkerLimits, clock: () =
     listen(listener) {
       port.onmessage = ({ data }) => {
         if (typeof data !== 'string') {
+          if (!fromPort) return
           // The page's only message of its own: the plugin's limits, lowered
           const sent = data as { v?: unknown, kind?: unknown, limits?: unknown } | null
           const lowered = relayLimitsOf(sent?.limits)

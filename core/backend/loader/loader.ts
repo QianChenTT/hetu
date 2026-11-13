@@ -58,6 +58,9 @@ export type LoaderOptions = {
   confirmRecordMs?: number
   // The OS's bin the runtime gives, handed to the luoshu alone
   trash?: (absolute: string) => Promise<void>
+  // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
+  // the plugin's limits as they are now to its running halves
+  limited?: (plugin: string) => void
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -317,6 +320,7 @@ export class Loader implements Seam {
   private readonly requests: Requests
   private readonly onFailure: LoaderOptions['onFailure']
   private readonly trash: LoaderOptions['trash']
+  private readonly limited: LoaderOptions['limited']
   // controls while only the security controls may start, all once they are up, stopped once one failed
   private phase: 'controls' | 'all' | 'stopped' = 'controls'
   private stoppedMode: StoppedMode | null = null
@@ -341,6 +345,7 @@ export class Loader implements Seam {
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
     this.trash = options.trash
+    this.limited = options.limited
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -1990,7 +1995,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         const plugins = bare({ ...limits.plugins })
         if (change.plugin === null) all[change.constant] = change.value
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
-        return this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
+        await this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
+        // A raise as well as a lowering, so a half paces itself to what the carrier now counts it against
+        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) {
+          try {
+            this.limited?.(id)
+          } catch {}
+        }
+        return
       }
       case 'luoshu.set': {
         await this.store.writeLuoshu({ folder: change.folder })

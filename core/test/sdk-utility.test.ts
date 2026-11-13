@@ -66,6 +66,41 @@ describe('the SDK\'s utility transport', () => {
     expect(port.posted.map(text => Object.keys(JSON.parse(text as string))[0])).toEqual(['a', 'b', 'c'])
   })
 
+  it('paces to limits main sends from then on, lower or higher, and never holds a pong back', () => {
+    vi.useFakeTimers()
+    let now = 0
+    const port = new FakePortMain()
+    const roomy = { ...limits, bytesPerSecond: 1_000_000 }
+    const transport = utilityTransport(port, roomy, () => now)
+    // 1000 a second, so ten go at once
+    for (let i = 0; i < 10; i++) transport.post({ n: i })
+    expect(port.posted).toHaveLength(10)
+    // Lowered to 10 a second, 9 kept for the plugin, and the last ten went within this second
+    transport.limit({ ...roomy, messagesPerSecond: 10 })
+    now = 1000
+    for (let i = 10; i < 30; i++) transport.post({ n: i })
+    expect(port.posted).toHaveLength(19)
+    transport.post({ v: 1, kind: 'pong' })
+    expect(port.posted.at(-1)).toBe('{"v":1,"kind":"pong"}')
+    now = 2000
+    vi.advanceTimersByTime(1000)
+    expect(port.posted).toHaveLength(29)
+    // Raised again, the rest go at once
+    transport.limit(roomy)
+    vi.advanceTimersByTime(10)
+    expect(port.posted).toHaveLength(31)
+  })
+
+  it('takes no limits from its channel, where only main\'s text arrives', () => {
+    vi.useFakeTimers()
+    const port = new FakePortMain()
+    const transport = utilityTransport(port, { ...limits, bytesPerSecond: 1_000_000, messagesPerSecond: 10 }, () => 0)
+    transport.listen(() => {})
+    port.gets({ v: 1, kind: 'limits', limits: { ...limits, bytesPerSecond: 1_000_000, messagesPerSecond: 1000 } })
+    for (let i = 0; i < 20; i++) transport.post({ n: i })
+    expect(port.posted).toHaveLength(9)
+  })
+
   it('refuses a message past the cap by throwing, so a reply fails on its own', () => {
     const transport = utilityTransport(new FakePortMain(), limits)
     expect(() => transport.post({ v: 1, kind: 'reply', id: 1, result: 'x'.repeat(200_000) })).toThrow(/too-large/)
@@ -82,6 +117,13 @@ describe('a plugin started in a utility process', () => {
     expect(started).toBe(true)
     port.gets('{"v":1,"kind":"ping"}')
     await vi.waitFor(() => expect(port.posted).toContain('{"v":1,"kind":"pong"}'))
+  })
+
+  it('gives back a way to hand the transport new limits', async () => {
+    const port = new FakePortMain()
+    const limit = runInUtility(definePlugin({ start() {} }), port, limits)
+    expect(typeof limit).toBe('function')
+    expect(() => limit({ ...limits, messagesPerSecond: 20 })).not.toThrow()
   })
 
   it('reads its context as a host half with no data folder', async () => {
