@@ -73,7 +73,7 @@ jobs:
             echo "::error::v$VERSION is already tagged. Raise the version in package.json first"
             exit 1
           fi
-      # What ships is what CI passed: the tests, the end-to-end runs, the packaged suites and the scans, on all three
+      # What ships is what CI passed: the tests, the end-to-end runs, the packaged suites and the scans, on both
       # systems, for this exact commit on main
       - name: require this commit's CI on main to have passed
         shell: bash
