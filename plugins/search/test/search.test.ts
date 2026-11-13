@@ -197,7 +197,7 @@ describe('the index', () => {
     expect(index.search('hello')).toEqual(['b.md'])
   })
 
-  // A build from before dot names were refused could have indexed one with the gate off, and nothing reads it again
+  // A build from before dot names were refused could have indexed one with the gate off. Nothing reads it again
   it('leaves out every path with a dot segment when it loads a saved index', () => {
     const index = Index.from({ v: 1, notes: {
       'notes/a.md': ['fox'], '.env': ['fox', 'hunter2'], '.obsidian/plugins/x/data.json': ['fox', 'apikey'],

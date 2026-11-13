@@ -295,7 +295,7 @@ describe('a name spelled with no dot that leads to a dot name', () => {
   }
 
   // A second notes folder with the same plain notes and nothing else, where each name below is missing. Each call
-  // answers in where what it answers there, the scope the gate judges included, and the commit made first in each
+  // answers in where what it answers there, the scope the gate judges included. The commit made first in each
   // stands for the other
   it('answers commit, log and read as for a missing name, through a junction and an 8.3 short name', async () => {
     const bare = await place()
@@ -337,7 +337,7 @@ describe('a name spelled with no dot that leads to a dot name', () => {
 describe('a folder swapped after prepare', () => {
   // prepare judged a plain folder. One swapped for a junction into a dot folder by perform would put the dot file's
   // bytes in the repo under the plain name
-  it('refuses a commit whose folder became a junction into a dot folder after prepare, and commits nothing', async () => {
+  it('refuses a commit whose folder became a junction into a dot folder after prepare and commits nothing', async () => {
     await mkdir(path.join(where.notes, '.obsidian'))
     await note(where, '.obsidian/b.md', 'DOT B')
     const history = await started(where)

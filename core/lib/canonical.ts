@@ -14,7 +14,7 @@ export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'dot' | 'data
 // absent is there when the caller spelled no dot segment and a name on the way leads to a dot name through a link, a
 // junction or an 8.3 short name: the same input as if nothing were there from that name on. Its relative and key are
 // what a missing name gets and its absolute a path no file has. A provider that only reads may act on it, so the
-// caller learns no more than a missing name tells, and one that writes refuses it as it would the dot name
+// caller learns no more than a missing name tells. One that writes refuses it as it would the dot name
 export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'invalid'>, rule: StringRule }
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule, absent?: Canonical }
@@ -80,7 +80,7 @@ const within = (folder: string, target: string) => target === folder || target.s
 // The real path of the deepest part that exists and the names under that part, which don't exist yet, each part
 // resolved from the luoshu down. null when something on the way exists and can't be resolved: a link to nowhere, a
 // loop, a folder that can't be read. A part that resolves to a dot name inside base ends the walk as a missing part
-// would, so nothing past it is looked at, and hidden names the rule that name breaks
+// would, so nothing past it is looked at. hidden names the rule that name breaks
 async function deepest(base: string, names: string[]): Promise<{ real: string, rest: string[], hidden: 'git' | 'dot' | null } | null> {
   let real = base
   for (let i = 0; i < names.length; i++) {
@@ -113,7 +113,7 @@ async function deepest(base: string, names: string[]): Promise<{ real: string, r
 
 // The folder of a path canonical gave, looked at again just before a provider acts on the path: held when it still
 // resolves to itself, missing when it is gone and the deepest folder on the way that is there still resolves to
-// itself, moved otherwise. prepare judged the path, and a folder on the way swapped for a link or a junction since would
+// itself, moved otherwise. prepare judged the path. A folder on the way swapped for a link or a junction since would
 // carry the act out of what was judged, so a provider refuses moved as canonical refuses a link out. What is left is
 // the time between this look and the act
 export async function folderState(absolute: string): Promise<'held' | 'moved' | 'missing'> {

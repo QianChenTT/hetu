@@ -50,7 +50,7 @@ export class Index {
   }
 
   // A saved index in this shape, or an empty one for anything else: an older version, a wiped cache or bad data. A path
-  // with a dot segment is left out: a build from before dot names were refused could have indexed one, and no event or
+  // with a dot segment is left out: a build from before dot names were refused could have indexed one. No event or
   // resync reads it again, so its words would answer a query for good
   static from(saved: unknown): Index {
     const index = new Index()

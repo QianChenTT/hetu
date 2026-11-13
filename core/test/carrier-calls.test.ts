@@ -542,7 +542,7 @@ describe('filterReadable', () => {
   })
 
   // A saved index or another store from a build before dot names were refused could still hold one
-  it('gives back no path with a dot segment whatever the gate says, with the gate on and off, and asks it nothing about one', async () => {
+  it('gives back no path with a dot segment whatever the gate says with the gate on or off and asks it nothing about one', async () => {
     const { search, got, loader, gate } = await incoming()
     gate.readable = () => true
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']

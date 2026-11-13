@@ -354,8 +354,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   // What a call acts on. For a name spelled with no dot that leads to a dot name, canonical's same name as if nothing
-  // were there: a read, a listing, a remove and the from end of a move meet a missing name, and a write or the to end of
-  // a move is refused at perform as the dot name is, after the gate judged the name a missing one gives it. So a caller
+  // were there: a read, a listing, a remove and the from end of a move meet a missing name. A write or the to end of a
+  // move is refused at perform as the dot name is, after the gate judged the name a missing one gives it. So a caller
   // with no grant learns no more than a missing name tells and one with a grant learns it only from a write
   function usable(found: Canonical | NotCanonical): Canonical | ProviderRefusal {
     if (found.ok) return found

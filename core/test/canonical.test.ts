@@ -39,7 +39,7 @@ const notGranted = (rule: DiskRule): NotCanonical => ({ ok: false, code: 'not-gr
 
 // A name spelled with no dot segment that leads to a dot name: refused as that name, with the name as if nothing were
 // there beside it. Its relative and key are what the same spelling gets in a luoshu with the same plain folders and no
-// dot name or link at all, and its path is that missing name's path with one name swapped for one no file has
+// dot name or link at all. Its path is that missing name's path with one name swapped for one no file has
 async function expectAbsent(input: string, rule: 'dot' | 'git'): Promise<void> {
   const bare = path.join(base, 'bare')
   await mkdir(path.join(bare, 'notes'), { recursive: true })
@@ -644,7 +644,7 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
     await expectAbsent(`${short}/plugins/x/main.js`, 'dot')
     await expectAbsent(`${short}/plugins/y/main.js`, 'dot')
     await expectAbsent(short, 'dot')
-    // A dot folder deeper in the path, named by its short name, and a dot file
+    // A dot folder deeper in the path named by its short name, then a dot file
     await mkdir(path.join(luoshu, 'notes', '.config long'))
     await writeFile(path.join(luoshu, 'notes', '.config long', 'x.md'), 'x')
     const deeper = await shortName(path.join(luoshu, 'notes'), '.config long')

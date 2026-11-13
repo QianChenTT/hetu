@@ -637,7 +637,7 @@ describe('dot folders through the joined core', () => {
   // What a reply tells its caller, without the ids that differ between calls
   const told = (reply: Message | null) => (reply === null ? null : reply.ok ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal })
 
-  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, and answers a link into one as a missing name', async gate => {
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s and answers a link into one as a missing name', async gate => {
     const { alpha, folder } = await dotted(gate)
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
@@ -667,7 +667,7 @@ describe('dot folders through the joined core', () => {
     if (process.platform === 'win32') expect(aliases).toHaveLength(4)
     for (const alias of aliases) expect(told(await zero.ask('luoshu.list', { folder: alias })), alias).toEqual(missing)
     expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
-    // A granted read answers as for a missing note, and the event log keeps the same record of both
+    // A granted read answers as for a missing note. The event log keeps the same record of both
     expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
     await carrier.flush()
     // A record of either kind may stand for several calls through its count
