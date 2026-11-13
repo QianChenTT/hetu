@@ -662,17 +662,67 @@ ${capabilityKey(change.capability)}`)
     for (const [id, entry] of Object.entries(this.state.plugins)) {
       if (id === pending.id || this.known.get(id)?.from === 'install') continue
       if (this.links(id, entry.granted) === this.links(id, entry.granted, pending)) continue
-      const classed = this.classed(id, entry.granted, pending)
-      const firstUse = carriedFirstUse(entry, classed.firstUse, this.askingFor(id, entry.granted))
-      const before = new Set((entry.firstUse ?? []).map(capabilityKey))
-      const added = firstUse.some(item => !before.has(capabilityKey(item)))
-      if (classed.class === entry.class && !added && firstUse.length === before.size) continue
-      const next: Plugin = { ...entry, class: classed.class }
-      delete next.firstUse
-      if (firstUse.length > 0) next.firstUse = firstUse
-      moved.push({ id, from: entry.class, entry: next, rises: added || (classed.class ?? 4) > (entry.class ?? 4) })
+      const move = this.reclassed(id, entry, this.askingFor(id, entry.granted), pending)
+      if (move !== null) moved.push(move)
     }
     return moved
+  }
+
+  // A plugin-folder entry classed again, as a pending change would leave it when one is given. An item that asks counts
+  // as confirmed when askedBefore holds it and the entry no longer lists it, so a null askedBefore leaves none confirmed.
+  // Null when the class and the first-use list come out as the entry holds them
+  private reclassed(id: string, entry: Plugin, askedBefore: readonly Capability[] | null, pending?: Pending): Moved | null {
+    const classed = this.classed(id, entry.granted, pending)
+    const firstUse = carriedFirstUse(entry, classed.firstUse, askedBefore)
+    const before = new Set((entry.firstUse ?? []).map(capabilityKey))
+    const added = firstUse.some(item => !before.has(capabilityKey(item)))
+    if (classed.class === entry.class && !added && firstUse.length === before.size) return null
+    const next: Plugin = { ...entry, class: classed.class }
+    delete next.firstUse
+    if (firstUse.length > 0) next.firstUse = firstUse
+    return { id, from: entry.class, entry: next, rises: added || (classed.class ?? 4) > (entry.class ?? 4) }
+  }
+
+  // Whether every install plugin is the one the last start recorded, by version and hash, runs the bytes its list names
+  // and none came or went, so what install plugins hold and the class rules are those the plugin-folder entries were
+  // last classed under. Read before any install plugin starts, since an update's start moves the record on
+  private installAsLast(): boolean {
+    if (this.install === null || this.state.switches.skipVerification) return false
+    const install = [...this.known.values()].filter(k => k.from === 'install')
+    if (Object.keys(this.installed).length !== install.length) return false
+    return install.every(k => {
+      const last = this.installed[k.id]
+      return last !== undefined && !this.dev(k.id) && k.read.hash === k.listed!.hash && last.version === k.listed!.version && last.hash === k.listed!.hash
+    })
+  }
+
+  // Every plugin-folder entry classed again from the graph as it stands at start, before any plugin-folder plugin runs:
+  // an app update can change what an install plugin holds with no change to any entry and an entry can be out of date.
+  // The entry records what still asks and not what asked, so an item that asks now and the entry doesn't list counts
+  // as confirmed only when the entry's class is one at which anything asks, 4 or null. It must also have asked when
+  // the entry was written: it asks with no links at all, or the install is as the last start recorded so the links are
+  // those the entry was classed under. Only an entry whose class or list comes out different is written. One that rises
+  // and can't be written still asks in the run, one that lowers keeps its entry. With the slot down nothing can be
+  // classed, so every entry stands as stored
+  private async classAll(asLast: boolean): Promise<void> {
+    if (this.capabilities() === null) return
+    let changed = false
+    for (const [id, entry] of Object.entries(this.state.plugins)) {
+      if (this.known.get(id)?.from === 'install') continue
+      const asks = entry.class === 4 || entry.class === null
+      const askedBefore = !asks ? null : asLast ? this.askingFor(id, entry.granted) : this.askingAlone(entry.granted)
+      const move = this.reclassed(id, entry, askedBefore)
+      if (move === null) continue
+      try {
+        await this.store.writePlugin(id, move.entry)
+      } catch {
+        this.note('fault', { plugin: id, step: 'reclass' })
+        if (!move.rises) continue
+      }
+      this.putEntry(id, move.entry)
+      changed = true
+    }
+    if (changed) this.bump()
   }
 
   // Writes the entries of the plugins a change moves: those that rise before the change's own write and the rest after
@@ -734,6 +784,18 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
+  // What asks at first use under granted with no link to any plugin, so under any links, null when the slot can't say
+  private askingAlone(granted: readonly Capability[]): Capability[] | null {
+    const slot = this.capabilities()
+    if (slot === null) return null
+    try {
+      const asking = slot.firstUse(granted, [], { upstream: [], downstream: [], heard: [] })
+      return Array.isArray(asking) ? asking : null
+    } catch {
+      return null
+    }
+  }
+
   // The slot's lines under the core's words, or with the slot down what that means
   private screen(id: string, granted: readonly Capability[]): string[] {
     const slot = this.capabilities()
@@ -786,11 +848,12 @@ ${capabilityKey(change.capability)}`)
 
   // ---- boot
 
-  // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
-  // scanned and the sandboxed tier started in graph order. core.ready closes it with every slot's state, unless a
-  // shutdown began on the way
+  // In boot's order: the install checked and its host tier started, the first-party reconcile, every plugin-folder
+  // entry classed again, the plugin folder scanned and the sandboxed tier started in graph order. core.ready closes it
+  // with every slot's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
+    const asLast = this.installAsLast()
     this.failedBefore = await readFailedOnce(this.dataDir)
     // The security controls start alone first. One that is on and fails stops hetu before anything else runs
     this.replan()
@@ -802,6 +865,8 @@ ${capabilityKey(change.capability)}`)
     await this.settled()
     await this.saveInstalled()
     await this.reconcile()
+    // In the changes' turn, since a restore needs no plugin the scan found and could write an entry under the pass
+    await this.serial(() => this.classAll(asLast))
     await this.scan()
     this.replan()
     await this.settled()

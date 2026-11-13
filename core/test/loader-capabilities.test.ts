@@ -5,8 +5,9 @@ import { capabilityKey, type Capability } from '../api/capabilities.ts'
 import type { Change } from '../api/changes.ts'
 import type { Caller } from '../api/envelope.ts'
 import path from 'node:path'
+import type { Switches } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
 } from './loader-fakes.ts'
 
 afterEach(cleanup)
@@ -106,8 +107,7 @@ describe('a staged update', () => {
   })
 
   it.each([
-    ['a class above 0', { class: 1 }, withCapabilities(), []],
-    ['a null class, which counts as 4', { class: null }, withCapabilities(), []],
+    ['a class above 0', { class: 1, granted: [read] }, withCapabilities(), [read]],
     ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, withCapabilities(), [{ type: 'storage' }]],
     ['the slot down', { class: 0 }, coreInstall(), []],
     // A layout draws the whole window, so a new one never takes its place unasked
@@ -252,9 +252,9 @@ describe('a widened or narrowed grant', () => {
 })
 
 describe('the plugin list', () => {
+  // With the slot down the start classes nothing again, so each stored class stands
   it('shows each plugin-folder plugin\'s class, null for none known', async () => {
     const made = await harness({
-      install: withCapabilities(),
       folder: { tool: worker('tool'), other: worker('other') },
       entries: { tool: root => entryFor(root, { class: 2 }), other: root => entryFor(root, { class: null }) },
     })
@@ -520,5 +520,165 @@ describe('a class another plugin\'s change moves', () => {
     await made.loader.start()
     expect((await stored(made, 'git')).class).toBe(4)
     expect(await stored(made, 'notes')).toMatchObject({ class: 4, firstUse: [calls('git')] })
+  })
+})
+
+// At start every plugin-folder entry is classed again from the graph as it stands, before any plugin-folder plugin
+// runs. An item that asks and that the entry doesn't list counts as confirmed only when the entry's class is one at
+// which items ask and the item asks with no links at all or the install is the one the last start recorded
+describe('the classes at start', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  type Gate = ReturnType<typeof allowAll>
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const entryFile = (made: Made, id: string) => readFile(path.join(made.dataDir, 'state', 'plugins', `${id}.json`))
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]
+  const folder = () => ({ listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]) })
+  // A network listener stored as it was classed before the reader it hears was there: class 3 and nothing asking
+  const stale = {
+    listener: (root: string) => entryFor(root, { granted: [fetchOne, hears('reader.done')], class: 3 }),
+    reader: (root: string) => entryFor(root, { granted: [read], class: 1 }),
+  }
+  const asking = (gate: Gate, view = gate.seen.at(-1)) => view!.plugins.listener.map(item => item.firstUse)
+
+  // The ids written to the plugin entries from here on
+  function writes(made: Made): string[] {
+    const seen: string[] = []
+    const write = made.store.writePlugin.bind(made.store)
+    made.store.writePlugin = async (id, entry) => {
+      seen.push(id)
+      return write(id, entry)
+    }
+    return seen
+  }
+
+  // The gate's StateView as it stood when the listener's worker was started
+  function atStart(made: Made, gate: Gate): () => Gate['seen'][number] | undefined {
+    let view: Gate['seen'][number] | undefined
+    const startWorker = made.runtime.startWorker.bind(made.runtime)
+    made.runtime.startWorker = start => {
+      if (start.id === 'listener') view = gate.seen.at(-1)
+      startWorker(start)
+    }
+    return () => view
+  }
+
+  // A first start that approves the listener and then the reader, so both entries are right
+  async function approvedBoth(): Promise<Made> {
+    const made = await harness({ install: withCapabilities(), folder: folder() })
+    await made.loader.start()
+    await approved(made, 'listener')
+    await approved(made, 'reader')
+    return made
+  }
+
+  it('raises a stale network listener to 4 with its fetch and subscription asking before it starts, on a first start', async () => {
+    const gate = allowAll()
+    const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
+    const seen = atStart(made, gate)
+    await made.loader.start()
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
+    expect(stateOf(made.loader, 'listener')).toBe('ready')
+    expect(asking(gate, seen())).toEqual([true, true])
+    expect(asking(gate)).toEqual([true, true])
+  })
+
+  it('raises a stale network listener to 4 with its fetch and subscription asking on a start whose install the last start recorded', async () => {
+    const first = await harness({ install: withCapabilities(), folder: folder() })
+    await first.loader.start()
+    await first.loader.shutdown()
+    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder(), entries: stale })
+    await made.loader.start()
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
+  })
+
+  it('writes no entry that is right and leaves each file byte for byte', async () => {
+    const first = await approvedBoth()
+    await first.loader.shutdown()
+    const before = { listener: await entryFile(first, 'listener'), reader: await entryFile(first, 'reader') }
+    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
+    const seen = writes(made)
+    await made.loader.start()
+    expect(seen).toEqual([])
+    expect((await entryFile(made, 'listener')).equals(before.listener)).toBe(true)
+    expect((await entryFile(made, 'reader')).equals(before.reader)).toBe(true)
+  })
+
+  it('keeps an item the human confirmed from asking again on a start whose install the last start recorded', async () => {
+    const first = await approvedBoth()
+    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
+    expect((await stored(first, 'listener')).firstUse).toEqual([hears('reader.done')])
+    await first.loader.shutdown()
+    const before = await entryFile(first, 'listener')
+    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
+    await made.loader.start()
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')] })
+    expect((await entryFile(made, 'listener')).equals(before)).toBe(true)
+  })
+
+  // An install plugin whose topics the listener hears, holding capabilities at version
+  const speaker = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), http: { files: filesFor(hostManifest('http', { version, capabilities })) } })
+
+  it('asks for the items an app update to an install plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
+    const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('http.done')]) })
+    const first = await harness({ install: speaker('1.0.0', []), folder: listener() })
+    await first.loader.start()
+    await approved(first, 'listener')
+    expect(await stored(first, 'listener')).toMatchObject({ class: 4, firstUse: [exec] })
+    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: exec })
+    await first.loader.shutdown()
+    const made = await harness({ base: first.base, install: speaker('1.1.0', [read]), folder: listener() })
+    await made.loader.start()
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('http.done')] })
+  })
+
+  // The second start's install and switches, from the first start's folders
+  type Next = (first: Made) => Promise<{ install: ReturnType<typeof withCapabilities>, switches?: Partial<Switches> }>
+  // http's bytes changed while its list still names the hash the last start recorded
+  const tampered: Next = async first => {
+    const recorded = await hashOf(path.join(first.installDir, 'plugins', 'http'))
+    return { install: { ...withCapabilities(), http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'storage' }] })), hash: recorded } } }
+  }
+  it.each([
+    ['a new version', async () => ({ install: speaker('1.1.0', []) })],
+    ['new bytes under the same version', async () => ({ install: speaker('1.0.0', [{ type: 'storage' }]) })],
+    ['an install plugin gone', async () => ({ install: withCapabilities() })],
+    ['bytes that differ from the list', tampered],
+    ['dev mode on an install plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['http'] } })],
+    ['skipVerification on', async () => ({ install: speaker('1.0.0', []), switches: { skipVerification: true } })],
+  ] as [string, Next][])('asks again for a confirmed item that asks only through its links once the install may not be the one the last start recorded: %s', async (_name, next) => {
+    const first = await harness({ install: speaker('1.0.0', []), folder: folder() })
+    await first.loader.start()
+    await approved(first, 'listener')
+    await approved(first, 'reader')
+    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
+    expect((await stored(first, 'listener')).firstUse).toEqual([hears('reader.done')])
+    await first.loader.shutdown()
+    const made = await harness({ base: first.base, ...await next(first), folder: folder() })
+    await made.loader.start()
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
+  })
+
+  it('writes nothing when the slot is down at start, so each entry keeps its class and list', async () => {
+    const made = await harness({
+      folder: { ...folder(), other: worker('other', [{ type: 'storage' }]) },
+      entries: { ...stale, other: root => entryFor(root, { granted: [{ type: 'storage' }], class: 4, firstUse: [{ type: 'storage' }] }) },
+    })
+    const files = { listener: await entryFile(made, 'listener'), other: await entryFile(made, 'other') }
+    const seen = writes(made)
+    await made.loader.start()
+    expect(made.loader.slot('capabilities')).toBe('absent')
+    expect(seen).toEqual([])
+    expect((await entryFile(made, 'listener')).equals(files.listener)).toBe(true)
+    expect((await entryFile(made, 'other')).equals(files.other)).toBe(true)
+  })
+
+  it('asks for a raised item in the run when its entry can\'t be written and still starts', async () => {
+    const gate = allowAll()
+    const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
+    made.store.writePlugin = async () => Promise.reject(new Error('disk full'))
+    await made.loader.start()
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'listener', step: 'reclass' })
+    expect(asking(gate)).toEqual([true, true])
+    expect(stateOf(made.loader, 'listener')).toBe('ready')
   })
 })
