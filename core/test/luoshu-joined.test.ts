@@ -181,6 +181,20 @@ describe('the dot rule with the gate off by the human', () => {
     expect((await ask('luoshu.move', { from: 'a.md', to: 'journal/a.md' })).ok).toBe(true)
     expect(await readFile(path.join(folder, 'journal', 'a.md'), 'utf8')).toBe('note a')
   })
+
+  it('lists no dot file and nothing under a dot folder at any depth, and refuses listing a dot folder', async () => {
+    const { folder, ask } = await dotted()
+    await mkdir(path.join(folder, 'journal', 'deep', '.config'), { recursive: true })
+    await writeFile(path.join(folder, 'journal', 'deep', '.config', 'x.md'), 'x')
+    await writeFile(path.join(folder, 'journal', 'deep', 'b.md'), 'note b')
+    await writeFile(path.join(folder, '.hidden.md'), 'hidden')
+    // Every name passes canList with the gate off, so these are what the luoshu's walk found
+    expect(await ask('luoshu.list', {})).toMatchObject({ ok: true, result: { paths: ['a.md', 'journal/deep/b.md'], next: null } })
+    expect(await ask('luoshu.list', { folder: 'journal' })).toMatchObject({ ok: true, result: { paths: ['journal/deep/b.md'], next: null } })
+    for (const at of ['.obsidian', 'cfg', 'journal/deep/.config']) {
+      expect((await ask('luoshu.list', { folder: at })).refusal?.code, at).toBe('not-granted')
+    }
+  })
 })
 
 // The audit trail near 250 calls a second. The vault is a real one's size, 469 notes

@@ -174,6 +174,36 @@ describe('listing', () => {
     expect(await ask(made, 'luoshu.list', { after: 'e.md' })).toEqual({ paths: ['journal/b.md'], next: null })
   })
 
+  // canList lets every name through with the gate off by the human, so the walk itself leaves dot names out
+  it('names no dot file and nothing under a dot folder at any depth, with every name allowed as the gate off allows', async () => {
+    const dotted: [string, string][] = [
+      ['.obsidian/app.json', '{}'],
+      ['.obsidian/plugins/x/main.js', 'plugin code'],
+      ['.github/workflows/x.yml', 'on: push'],
+      ['.hidden.md', 'hidden'],
+      ['journal/.todo.md', 'todo'],
+      ['journal/deep/.scratch.md', 'scratch'],
+      ['journal/deep/.config/inner/x.md', 'x'],
+      ['journal/deep/.config/y.md', 'y'],
+      ['\ufeff.bom.md', 'behind a code point HFS+ skips'],
+      ['\u200c.config/z.md', 'z'],
+      ['journal/c.md', 'c'],
+      ['journal/deep/d.md', 'd'],
+    ]
+    for (const [relative, text] of dotted) {
+      await mkdir(path.dirname(path.join(folder, relative)), { recursive: true })
+      await writeFile(path.join(folder, relative), text)
+    }
+    const made = opened({ pageSize: 2 })
+    expect(await ask(made, 'luoshu.list', {})).toEqual({ paths: ['a.md', 'journal/b.md'], next: 'journal/b.md' })
+    expect(await ask(made, 'luoshu.list', { after: 'journal/b.md' })).toEqual({ paths: ['journal/c.md', 'journal/deep/d.md'], next: null })
+    expect(await ask(made, 'luoshu.list', { folder: 'journal/deep' })).toEqual({ paths: ['journal/deep/d.md'], next: null })
+    // The folders themselves are refused by canonical before any walk
+    for (const at of ['.obsidian', 'journal/deep/.config', '\u200c.config']) {
+      expect(await ask(made, 'luoshu.list', { folder: at })).toEqual({ refused: { code: 'not-granted' } })
+    }
+  })
+
   it('pages over only the names canList allows, so next never names one the caller can’t list', async () => {
     for (let i = 0; i < 30; i++) await writeFile(path.join(folder, 'journal', `hidden-${String(i).padStart(2, '0')}.md`), 'x')
     for (const name of ['p1.md', 'p2.md', 'p3.md']) await writeFile(path.join(folder, 'journal', name), name)

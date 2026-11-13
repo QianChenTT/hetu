@@ -4,6 +4,7 @@ import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink }
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
+import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
@@ -273,8 +274,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     return null
   }
 
-  // Every file under start, relative to root, past .git, temp files, links, junctions and hetu's own folders. readdir's
-  // entries name a link or junction as a link and never as a folder, so the walk can't follow one even without the check
+  // Every file under start, relative to root, past dot files and dot folders at any depth (.git and the temp files a
+  // write makes among them), links, junctions and hetu's own folders. The dot check is the walk's own, since canList
+  // lets every name through with the gate off by the human. readdir's entries name a link or junction as a link and
+  // never as a folder, so the walk can't follow one even without the check
   async function filesUnder(root: string, start: string, opened: Opening): Promise<string[]> {
     // Resolved as the walk is, so a link or another spelling of a folder still matches
     const skip = await Promise.all([opened.dataDir, opened.installDir].map(folder => realpath(folder).catch(() => folder)))
@@ -290,9 +293,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       }
       for (const entry of entries) {
         const full = path.join(dir, entry.name)
-        if (entry.isSymbolicLink() || isTemp(entry.name)) continue
+        if (entry.isSymbolicLink() || isDotName(entry.name)) continue
         if (entry.isDirectory()) {
-          if (entry.name.toLowerCase() === '.git' || skip.some(folder => within(folder, full))) continue
+          if (skip.some(folder => within(folder, full))) continue
           await walk(full)
         } else if (entry.isFile()) {
           found.push(path.relative(root, full).split(path.sep).join('/'))
