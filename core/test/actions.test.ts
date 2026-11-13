@@ -239,7 +239,7 @@ describe('the provider actions', () => {
     ['luoshu.write', { path: 'a.md' }, false],
     ['luoshu.write', { path: 'a.md', text: 42 }, false],
     ['luoshu.write', { path: 'notes\\a.md', text: 'x' }, false],
-    ['luoshu.remove', { path: 'a.md' }, true],
+    ['luoshu.remove', { path: 'a.md' }, false],
     ['luoshu.remove', { path: 'a.md', baseVersion: 'f'.repeat(64) }, true],
     ['luoshu.remove', { path: 'a.md', baseVersion: 'F'.repeat(64) }, false],
     ['luoshu.remove', { path: 'notes\\a.md' }, false],

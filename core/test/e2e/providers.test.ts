@@ -149,7 +149,9 @@ describe('luoshu.move and luoshu.remove in the app', () => {
   it('hands a removed note to the OS bin, so it is gone from the folder and can be put back', async () => {
     const name = `removed-${Date.now()}.md`
     const { editor, folder } = await started({ notes: { [name]: 'to the bin' } })
-    expect(codeOf(await ask(editor, 'luoshu.remove', { path: name }))).toBe('ok')
+    expect(codeOf(await ask(editor, 'luoshu.remove', { path: name }))).toBe('invalid')
+    const { version } = (await ask(editor, 'luoshu.read', { path: name })).result as { version: string }
+    expect(codeOf(await ask(editor, 'luoshu.remove', { path: name, baseVersion: version }))).toBe('ok')
     expect(await readdir(folder)).toEqual([])
     if (process.platform !== 'win32') return
     // Put back whatever the check finds, so no run leaves the note in the bin

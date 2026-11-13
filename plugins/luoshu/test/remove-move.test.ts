@@ -77,7 +77,7 @@ const names = async (dir = folder) => (await readdir(dir)).filter(name => name !
 describe('removing', () => {
   it('hands the note to the bin, answers null and publishes the change as its own', async () => {
     const made = opened()
-    expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toBeNull()
+    expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: sha('note a') })).toBeNull()
     expect(await exists('a.md')).toBe(false)
     expect(made.binned).toEqual([path.join(folder, 'a.md')])
     expect(await readFile(path.join(bin, '1-a.md'), 'utf8')).toBe('note a')
@@ -91,6 +91,25 @@ describe('removing', () => {
     expect(made.binned).toEqual([])
     expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: sha('note a') })).toBeNull()
     expect(await exists('a.md')).toBe(false)
+  })
+
+  // As a write over a note that exists: a plugin that can write a note and can't read it never learns its version, so
+  // it can't bin the note and write its own text under the name
+  it('refuses a remove with no version as stale, leaving the note and the bin', async () => {
+    const made = opened()
+    expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toEqual({ refused: { code: 'stale' } })
+    expect(await exists('a.md')).toBe(true)
+    expect(made.binned).toEqual([])
+    expect(made.heard).toEqual([])
+  })
+
+  it('refuses a remove at the version read before an outside save, leaving the text saved since', async () => {
+    const made = opened()
+    const { version } = await ask(made, 'luoshu.read', { path: 'a.md' }) as { version: string }
+    await writeFile(path.join(folder, 'a.md'), 'saved since')
+    expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: version })).toEqual({ refused: { code: 'stale' } })
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('saved since')
+    expect(made.binned).toEqual([])
   })
 
   it('answers not-found for a note that isn\'t there and for a folder', async () => {
@@ -123,7 +142,7 @@ describe('removing', () => {
     await mkdir(path.join(base, 'outside'))
     await writeFile(path.join(base, 'outside', 'b.md'), 'outside b')
     const made = opened()
-    const call = callOf('luoshu.remove', { path: 'journal/b.md' })
+    const call = callOf('luoshu.remove', { path: 'journal/b.md', baseVersion: sha('note b') })
     const prepared = await made.provider.prepare(call) as Prepared
     await rename(path.join(folder, 'journal'), path.join(folder, 'journal-old'))
     await symlink(path.join(base, 'outside'), path.join(folder, 'journal'), 'junction')
@@ -135,13 +154,13 @@ describe('removing', () => {
   it('answers unavailable with no bin to hand the note to, and removes nothing', async () => {
     const made = createLuoshu()
     made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
-    expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toEqual({ refused: { code: 'unavailable' } })
+    expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: sha('note a') })).toEqual({ refused: { code: 'unavailable' } })
     expect(await exists('a.md')).toBe(true)
   })
 
   it('answers failed when the bin refuses, and removes nothing', async () => {
     const made = opened({}, async () => { throw new Error('the bin is full') })
-    expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toEqual({ refused: new Error('the bin is full') })
+    expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: sha('note a') })).toEqual({ refused: new Error('the bin is full') })
     expect(await exists('a.md')).toBe(true)
     expect(made.heard).toEqual([])
   })
@@ -475,7 +494,7 @@ describe('the watcher', () => {
   it('publishes nothing outside for its own remove and move, then hears an outside change after them', async () => {
     const made = await watching()
     try {
-      expect(await ask(made, 'luoshu.remove', { path: 'a.md' })).toBeNull()
+      expect(await ask(made, 'luoshu.remove', { path: 'a.md', baseVersion: sha('note a') })).toBeNull()
       expect(await ask(made, 'luoshu.move', { from: 'journal/b.md', to: 'b.md' })).toBeNull()
       await tick(600)
       expect(made.heard.filter(([topic]) => topic === 'outside')).toEqual([])

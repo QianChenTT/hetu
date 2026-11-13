@@ -218,12 +218,13 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   // To the bin the runtime hands the luoshu with its folder, so a remove can be undone with hetu closed. A bin that
-  // refuses fails the remove and the note stays
+  // refuses fails the remove and the note stays. Only at the version the remover read, as a write over a note, so no
+  // version answers stale
   async function remove(target: Canonical, baseVersion: string | undefined, trash: LuoshuOpening['trash']): Promise<null> {
     if (trash === undefined) throw refused('unavailable')
     await unmoved(target.absolute)
     if (!(await isNote(target.absolute))) throw refused('not-found')
-    if (baseVersion !== undefined && (await current(target.absolute)) !== baseVersion) throw refused('stale')
+    if ((await current(target.absolute)) !== baseVersion) throw refused('stale')
     await trash(target.absolute)
     await syncDir(path.dirname(target.absolute))
     own.delete(target.key)

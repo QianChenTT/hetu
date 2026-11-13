@@ -13,7 +13,7 @@ export function versionOf(text: string): string {
 
 // The luoshu in memory. read answers { text, version } or not-found. write refuses stale for a baseVersion that isn't
 // the note's or one given for a note that doesn't exist yet. remove refuses stale for a baseVersion that isn't the
-// note's. move never lands on a note that exists. It tells changed of each path it wrote, removed or moved
+// note's, a missing one included. move never lands on a note that exists. It tells changed of each path it wrote, removed or moved
 export class MemoryLuoshu implements Provider {
   readonly notes = new Map<string, string>()
   // Codes the next calls answer with, one each, for a test that needs the luoshu to fail for a while
@@ -67,7 +67,7 @@ export class MemoryLuoshu implements Provider {
     }
     if (call.action === 'luoshu.remove') {
       if (current === undefined) throw { code: 'not-found' }
-      if (prepared.baseVersion !== undefined && prepared.baseVersion !== versionOf(current)) throw { code: 'stale' }
+      if (prepared.baseVersion !== versionOf(current)) throw { code: 'stale' }
       this.notes.delete(path)
       await this.changed(path)
       return null

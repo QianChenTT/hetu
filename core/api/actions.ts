@@ -179,10 +179,10 @@ const providerTable = {
     scope: 'path',
     write: true,
   },
-  // To the OS's bin. baseVersion, when given, is the hash of the bytes the remover read, and a note that moved on
-  // since answers stale
+  // To the OS's bin. baseVersion is the hash of the bytes the remover read, and a note that moved on since answers
+  // stale, so a plugin that writes a note and can't read it can't bin it any more than it can write over it
   'luoshu.remove': {
-    capability: 'luoshu.write', args: z.strictObject({ path, baseVersion: sha256.optional() }), scope: 'path', write: true,
+    capability: 'luoshu.write', args: z.strictObject({ path, baseVersion: sha256 }), scope: 'path', write: true,
   },
   // Never onto a note that exists. Write on both ends and read on the one it leaves, or a plugin that writes everywhere
   // could carry a note it can't read into a folder it reads

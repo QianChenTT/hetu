@@ -123,9 +123,12 @@ describe('the fake core', () => {
     expect(fake.luoshu.read('notes/old/a.md')).toBe('a')
     expect(fake.luoshu.read('notes/a.md')).toBeUndefined()
     await expect(ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'stale' })
-    expect(await ctx.luoshu.remove({ path: 'notes/c.md' })).toBe(null)
+    // The version is required, as hetu's schema holds it
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md' } as never)).rejects.toMatchObject({ code: 'invalid' })
+    const { version } = await ctx.luoshu.read({ path: 'notes/c.md' })
+    expect(await ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: version })).toBe(null)
     expect(fake.luoshu.read('notes/c.md')).toBeUndefined()
-    await expect(ctx.luoshu.remove({ path: 'notes/c.md' })).rejects.toMatchObject({ code: 'not-found' })
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: version })).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('publishes luoshu.changed for a note the test writes, luoshu.outside for one written outside', async () => {
