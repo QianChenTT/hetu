@@ -292,6 +292,7 @@ describe('the switches and limits', () => {
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)
     await showing(page, 'readyMs · floor 10000')
+    expect(await page.locator('section.install').innerText()).toContain('On macOS, programs running as you can change hetu’s install')
     await tick(PAST_DELAY)
     await page.getByLabel('New value for readyMs').fill('20000')
     await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
