@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import { isDotName, withoutIgnorable } from './names.ts'
+
+// Where they always were for the matcher's other callers. names.ts holds them apart from zod
+export { isDotName, withoutIgnorable }
 
 // The longest scope a grant may hold and the longest path the matcher takes. A longer path matches nothing
 export const MAX_SCOPE_LENGTH = 512
@@ -65,27 +69,11 @@ function sameUnit(a: number, b: number, foldCase: boolean): boolean {
   return lower >= 0x61 && lower <= 0x7a
 }
 
-// HFS+ skips these code points when comparing names, so .g\u200cit opens .git there or becomes .git in a folder that
-// has none. git's protectHFS skips the same set
-const ignorable = /[\u200c-\u200f\u202a-\u202e\u206a-\u206f\ufeff]/g
-
-// The text with the code points HFS+ skips taken out
-export function withoutIgnorable(text: string): string {
-  return text.replace(ignorable, '')
-}
-
 // Whether a segment names .git on some volume: any ASCII case, with what HFS+ skips taken out. The matcher and the
 // canonicaliser both ask this one check
 export function isGitName(segment: string): boolean {
   const name = withoutIgnorable(segment)
   return name.length === 4 && [...'.git'].every((char, i) => sameUnit(name.charCodeAt(i), char.charCodeAt(0), true))
-}
-
-// Whether a segment starts with a dot on some volume, once what HFS+ skips is taken out. Obsidian runs code from
-// .obsidian and GitHub from .github, so no note path reaches a dot folder or a dot file. The matcher and the
-// canonicaliser both ask this one check
-export function isDotName(segment: string): boolean {
-  return withoutIgnorable(segment).charCodeAt(0) === DOT
 }
 
 // One path segment against one scope segment. A * matches any run of characters but never a leading dot. Greedy with

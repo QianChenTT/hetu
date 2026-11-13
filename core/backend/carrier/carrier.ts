@@ -10,6 +10,7 @@ import {
   coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, slotIds,
   type GuardableAction,
 } from '../../api/ids.ts'
+import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
@@ -46,6 +47,10 @@ type Way = {
 }
 
 type Root = { principal: string, plugin: string | null, caller: Caller }
+
+// A path with a dot segment names no note, whatever the gate's state: a plugin wrote it or kept it from a build before
+// dot names were refused
+const dotted = (path: string) => path.split('/').some(isDotName)
 
 type Pending = {
   callId: string
@@ -964,7 +969,8 @@ export class Carrier {
   }
 
   // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-  // read too, every path with the gate off and policy-down while the gate is starting or failed. One message asks the
+  // read too, every path with the gate off and policy-down while the gate is starting or failed. Never one with a dot
+  // segment, which the gate isn't asked about. One message asks the
   // gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
   // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
   // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
@@ -975,7 +981,7 @@ export class Carrier {
     const paths = field(args, 'paths') as string[]
     if (live === undefined || live.done) return no('invalid')
     const state = this.slot('gate')
-    if (state === 'off') return { ok: true, result: [...paths] }
+    if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
     const budget = this.limits.of(live.way.plugin, 'filterMsPerSecond')
@@ -991,7 +997,7 @@ export class Carrier {
     try {
       while (progress.asked < paths.length) {
         const path = paths[progress.asked]
-        if (gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) progress.kept.push(progress.asked)
+        if (!dotted(path) && gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) progress.kept.push(progress.asked)
         progress.asked++
         if (progress.asked < paths.length && spent.spent + this.clock() - started >= budget) break
       }

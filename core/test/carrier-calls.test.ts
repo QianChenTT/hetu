@@ -541,6 +541,17 @@ describe('filterReadable', () => {
     expect(gate.reads).toEqual([])
   })
 
+  // A saved index or another store from a build before dot names were refused could still hold one
+  it('gives back no path with a dot segment whatever the gate says, with the gate on and off, and asks it nothing about one', async () => {
+    const { search, got, loader, gate } = await incoming()
+    gate.readable = () => true
+    const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
+    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+    expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
+    loader.slots.gate = 'off'
+    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+  })
+
   it('refuses policy-down when canRead throws and counts only an exact true', async () => {
     const { search, got, gate } = await incoming()
     const id = (caller: Caller) => (caller as { id: string }).id

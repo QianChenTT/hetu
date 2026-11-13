@@ -1,3 +1,5 @@
+import { isDotName } from '@hetu/sdk'
+
 // Words are lowercase runs of letters and digits in any script
 const word = /[\p{L}\p{N}]+/gu
 
@@ -47,7 +49,9 @@ export class Index {
     return { v: 1, notes: Object.fromEntries(this.notes) }
   }
 
-  // A saved index in this shape, or an empty one for anything else: an older version, a wiped cache or bad data
+  // A saved index in this shape, or an empty one for anything else: an older version, a wiped cache or bad data. A path
+  // with a dot segment is left out: a build from before dot names were refused could have indexed one, and no event or
+  // resync reads it again, so its words would answer a query for good
   static from(saved: unknown): Index {
     const index = new Index()
     if (typeof saved !== 'object' || saved === null) return index
@@ -55,7 +59,9 @@ export class Index {
     if (v !== 1 || typeof notes !== 'object' || notes === null) return index
     const entries = Object.entries(notes)
     if (!entries.every(([, words]) => Array.isArray(words) && words.every(item => typeof item === 'string'))) return index
-    for (const [path, words] of entries) index.put(path, words as string[])
+    for (const [path, words] of entries) {
+      if (!path.split('/').some(isDotName)) index.put(path, words as string[])
+    }
     return index
   }
 
