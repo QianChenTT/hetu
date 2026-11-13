@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import type { RefusalCode } from '../api/envelope.ts'
-import { isGitName, MAX_SCOPE_LENGTH, withoutIgnorable } from '../api/scope.ts'
+import { isDotName, isGitName, MAX_SCOPE_LENGTH, withoutIgnorable } from '../api/scope.ts'
 
 // A string that breaks a rule answers invalid and a refusal from the disk answers not-granted, so a caller can't tell
 // a link out of the luoshu from a missing grant. rule names the check for ctx.debug and the tests, never for a reply.
@@ -9,7 +9,7 @@ import { isGitName, MAX_SCOPE_LENGTH, withoutIgnorable } from '../api/scope.ts'
 export type StringRule =
   | 'type' | 'empty' | 'too-long' | 'ill-formed' | 'absolute' | 'backslash' | 'colon' | 'control'
   | 'empty-segment' | 'dot-segment' | 'trailing' | 'device'
-export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'data' | 'install'
+export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'dot' | 'data' | 'install'
 export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'invalid'>, rule: StringRule }
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule }
@@ -119,6 +119,9 @@ export async function canonical(root: string, input: string, options: CanonicalO
   // A link to the luoshu itself, where no note lives
   if (names.length === 0) return refuse('root')
   if (names.some(isGitName)) return refuse('git')
+  // A dot name where the path leads through links, junctions and 8.3 short names or as the caller spelled it, so a link
+  // named .x refuses as .x would
+  if (names.some(isDotName) || input.split('/').some(isDotName)) return refuse('dot')
 
   const absolute = path.join(found.real, ...found.rest)
   for (const [rule, folder] of [['data', options.dataDir], ['install', options.installDir]] as const) {

@@ -205,16 +205,52 @@ describe('matching', () => {
       expect(matches(grant, path)).toBe(false)
     })
 
+    // The grammar takes a scope naming a dot segment, the path it names is what matches nothing
     it.each([
       ['.obsidian/**', '.obsidian/app.json'],
+      ['.obsidian/plugins/x/main.js', '.obsidian/plugins/x/main.js'],
+      ['.github/workflows/*.yml', '.github/workflows/x.yml'],
       ['**/.obsidian/*.json', 'a/.obsidian/app.json'],
       ['**/.obsidian/*.json', '.obsidian/app.json'],
       ['.*', '.hidden'],
       ['notes/.*.md', 'notes/.x.md'],
       ['.trash/*', '.trash/a.md'],
-    ])('%j reaches %j, since a literal dot names the segment', (grant, path) => {
-      expect(matches(grant, path)).toBe(true)
+      ['notes/sub/deeper/.config/x.md', 'notes/sub/deeper/.config/x.md'],
+      ['notes/*/.b/x.md', 'notes/a/.b/x.md'],
+      ['..x/a.md', '..x/a.md'],
+      ['.OBSIDIAN/**', '.obsidian/app.json'],
+    ])('%j never reaches %j, a path with a dot segment', (grant, path) => {
+      expect(scopeProblem(grant)).toBeNull()
+      expect(matches(grant, path)).toBe(false)
+      expect(matches(grant, path, exact)).toBe(false)
+      expect(compileScopes([grant, '**'], fold)(path)).toBe(false)
     })
+
+    // HFS+ skips these when it compares names, so each path opens .obsidian there
+    it('never reaches a dot segment after any of the code points HFS+ skips', () => {
+      const skipped = [
+        0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+        0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff,
+      ]
+      for (const code of skipped) {
+        const mark = String.fromCharCode(code)
+        for (const path of [`${mark}.obsidian/app.json`, `notes/${mark}${mark}.config/x.md`]) {
+          expect(pathProblem(path), path).toBeNull()
+          expect(matches('**', path), path).toBe(false)
+          expect(matches('*/**', path), path).toBe(false)
+          expect(compileScopes(['**', '*/**', 'notes/*/x.md'], fold)(path), path).toBe(false)
+        }
+      }
+    })
+
+    // Other names on every volume, so a grant naming them reaches no dot folder
+    it.each(['．obsidian/app.json', '․obsidian/app.json', ' .obsidian/app.json', 'notes∕.obsidian/x.md'])(
+      'reaches %j, a look-alike that starts no segment with a dot',
+      path => {
+        expect(matches(path, path)).toBe(true)
+        expect(matches('**', path)).toBe(true)
+      },
+    )
   })
 
   // .git is refused after canonicalising whatever the grant says, so a grant naming .git reaches nothing
@@ -237,9 +273,9 @@ describe('matching', () => {
   })
 
   it.each([['.gitignore', '.gitignore'], ['.github/**', '.github/x.yml'], ['notes/.git-notes/*', 'notes/.git-notes/a']])(
-    '%j still reaches %j, which only start like .git',
+    '%j never reaches %j either, which only starts like .git and is a dot segment',
     (grant, path) => {
-      expect(matches(grant, path)).toBe(true)
+      expect(matches(grant, path)).toBe(false)
     },
   )
 })
@@ -349,7 +385,7 @@ describe('patterns that made glob libraries slow', () => {
 function reference(grant: string, path: string, foldCase: boolean): boolean {
   if (scopeProblem(grant) !== null || pathProblem(path) !== null) return false
   const segments = path.split('/')
-  if (segments.some(segment => /^\.git$/i.test(segment))) return false
+  if (segments.some(segment => segment.startsWith('.'))) return false
   const same = (a: string, b: string) => a === b || (foldCase && /[a-z]/i.test(a) && a.toLowerCase() === b.toLowerCase())
   const segment = (p: string, s: string): boolean => {
     if (p.startsWith('*') && s.startsWith('.')) return false

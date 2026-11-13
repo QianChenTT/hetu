@@ -139,7 +139,6 @@ describe('the string rules', () => {
   const allowed = [
     'notes/a.md',
     'notes/new.md',
-    'notes/.hidden.md',
     'notes/a..b.md',
     'notes/ leading space.md',
     'console.md',
@@ -147,7 +146,6 @@ describe('the string rules', () => {
     'lpt.md',
     'nul-notes.md',
     'auxiliary/x.md',
-    '.con',
     'COM\u2074.md',
     'notes/caf\u00e9.md',
     'notes/\ud83d\ude00.md',
@@ -174,8 +172,12 @@ describe('.. tricks', () => {
     expect(await canonical(luoshu, input)).toEqual(invalid(rule))
   })
 
-  it.each(['..notes/x.md', '..%2f..%2foutside/secret.md', '%2e%2e/secret.md'])('keeps %j as one name inside the luoshu', async input => {
+  it.each(['%2e%2e/secret.md', 'notes/%2e%2e%2foutside'])('keeps %j as one name inside the luoshu', async input => {
     expect(await canonical(luoshu, input)).toEqual(await resolved(input))
+  })
+
+  it.each(['..notes/x.md', '..%2f..%2foutside/secret.md'])('refuses %j as one dot name inside the luoshu', async input => {
+    expect(await canonical(luoshu, input)).toEqual(notGranted('dot'))
   })
 
   it('refuses a relative link that climbs out and resolves one that climbs back in', async () => {
@@ -381,10 +383,126 @@ describe('.git', () => {
     }
   })
 
-  // JS uppercases a dotless i to I but APFS opens no .git for that spelling. An NTFS that did would resolve to .git
-  // and fail this test on Windows
-  it.each(['.gitignore', '.github/x.md', 'notes.git', 'git/config', '.g\u0131t/config'])('lets %j through, not .git', async input => {
+  it.each(['notes.git', 'git/config', 'notes/git'])('lets %j through, not .git', async input => {
     expect(await canonical(luoshu, input)).toEqual(await resolved(input))
+  })
+
+  // JS uppercases a dotless i to I but APFS opens no .git for that spelling. An NTFS that did would resolve to .git
+  // and answer git on Windows
+  it.each(['.gitignore', '.github/x.md', '.g\u0131t/config'])('refuses %j as a dot name, not as .git', async input => {
+    expect(await canonical(luoshu, input)).toEqual(notGranted('dot'))
+  })
+})
+
+describe('dot names', () => {
+  beforeEach(async () => {
+    await mkdir(path.join(luoshu, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(luoshu, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+  })
+
+  it.each([
+    ['a plugin Obsidian runs', '.obsidian/plugins/x/main.js'],
+    ['a new plugin there', '.obsidian/plugins/y/main.js'],
+    ['the folder itself', '.obsidian'],
+    ['a workflow GitHub runs', '.github/workflows/x.yml'],
+    ['a dot folder deep in a path', 'notes/sub/deeper/.config/x.md'],
+    ['a dot folder second', 'notes/.trash/a.md'],
+    ['a dot file', 'notes/.hidden.md'],
+    ['a dot file at the top', '.gitignore'],
+    ['a dot name read like a device', '.con'],
+    ['a name of only dots and more', '..x/a.md'],
+    ['another case', '.OBSIDIAN/plugins/x/main.js'],
+    ['another case of a new name', '.GitHub/workflows/x.yml'],
+  ])('refuses %s: %j', async (_, input) => {
+    expect(await canonical(luoshu, input)).toEqual(notGranted('dot'))
+  })
+
+  // HFS+ skips these when it compares names, so each spelling opens .obsidian there
+  it('refuses a dot after any one of the code points HFS+ skips', async () => {
+    const skipped = [
+      0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
+      0x206a, 0x206b, 0x206c, 0x206d, 0x206e, 0x206f, 0xfeff,
+    ]
+    for (const code of skipped) {
+      const mark = String.fromCharCode(code)
+      expect(await canonical(luoshu, `${mark}.obsidian/plugins/x/main.js`), `U+${code.toString(16)}`).toEqual(notGranted('dot'))
+      expect(await canonical(luoshu, `notes/${mark}${mark}.config/x.md`), `U+${code.toString(16)} twice`).toEqual(notGranted('dot'))
+    }
+  })
+
+  it('refuses a folder link into a dot folder, for a file there, a new one and the link itself', async () => {
+    await linkFolder(path.join(luoshu, '.obsidian'), 'cfg')
+    expect(await readFile(path.join(luoshu, 'cfg', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await canonical(luoshu, 'cfg/plugins/x/main.js')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, 'cfg/plugins/y/main.js')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, 'cfg')).toEqual(notGranted('dot'))
+  })
+
+  it('refuses a link into a folder inside a dot folder and a chain of links ending in one', async () => {
+    await linkFolder(path.join(luoshu, '.obsidian', 'plugins'), 'plugins')
+    await linkFolder(path.join(luoshu, 'plugins'), 'first')
+    expect(await canonical(luoshu, 'plugins/x/main.js')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, 'first/x/main.js')).toEqual(notGranted('dot'))
+  })
+
+  it('refuses a file link to a file in a dot folder', async ({ skip }) => {
+    await linkFile(path.join(luoshu, '.obsidian', 'plugins', 'x', 'main.js'), 'main.js', skip)
+    expect(await canonical(luoshu, 'main.js')).toEqual(notGranted('dot'))
+  })
+
+  // The caller's spelling counts as well as where it leads
+  it('refuses a dot named link that leads to a plain folder', async () => {
+    await linkFolder(path.join(luoshu, 'notes'), '.alias')
+    expect(await canonical(luoshu, '.alias/a.md')).toEqual(notGranted('dot'))
+  })
+
+  it('serves the notes of a luoshu that itself sits in a dot folder', async () => {
+    const inside = path.join(base, '.vault')
+    await mkdir(path.join(inside, 'notes'), { recursive: true })
+    await writeFile(path.join(inside, 'notes', 'a.md'), 'a')
+    expect(await canonical(inside, 'notes/a.md')).toEqual({
+      ok: true, absolute: path.join(await realpath(inside), 'notes', 'a.md'), relative: 'notes/a.md', key: 'notes/a.md',
+    })
+  })
+
+  // Each is shown to name another file than the one in .obsidian, so letting it through reaches no dot folder
+  it.each([
+    ['a fullwidth full stop', '\uff0eobsidian'],
+    ['a one dot leader', '\u2024obsidian'],
+    ['a small full stop', '\ufe52obsidian'],
+    ['an ideographic full stop', '\u3002obsidian'],
+    ['a space before the dot', ' .obsidian'],
+  ])('lets a look-alike through as its own name: %s', async (_, folder) => {
+    await expect(readFile(path.join(luoshu, folder, 'plugins', 'x', 'main.js'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await canonical(luoshu, `${folder}/plugins/x/main.js`)).toEqual(await resolved(`${folder}/plugins/x/main.js`))
+  })
+
+  // On every platform these are characters of one name, so the dot after them starts no segment
+  it.each(['notes\u2215.obsidian/x.md', 'notes\uff0f.obsidian/x.md', 'notes\u29f8.obsidian/x.md', 'notes\uff3c.obsidian/x.md'])(
+    'reads %j as two names, the first holding a slash look-alike',
+    async input => {
+      const answer = await canonical(luoshu, input)
+      expect(answer).toEqual(await resolved(input))
+      expect((answer as { relative: string }).relative.split('/')).toHaveLength(2)
+    },
+  )
+
+  // The string rules answer first, so these never reach the disk
+  it.each<[string, StringRule]>([
+    ['.obsidian./plugins/x/main.js', 'trailing'],
+    ['.obsidian /plugins/x/main.js', 'trailing'],
+    ['.obsidian::$INDEX_ALLOCATION/plugins/x/main.js', 'colon'],
+    ['.obsidian:stream', 'colon'],
+    ['.obsidian\\plugins\\x\\main.js', 'backslash'],
+    ['notes/..\\.obsidian/x.md', 'backslash'],
+    ['/.obsidian/plugins/x/main.js', 'absolute'],
+    ['C:/.obsidian/plugins/x/main.js', 'absolute'],
+    ['c:.obsidian/plugins/x/main.js', 'absolute'],
+    ['notes//.obsidian/x.md', 'empty-segment'],
+    ['./.obsidian/x.md', 'dot-segment'],
+    ['notes/../.obsidian/x.md', 'dot-segment'],
+  ])('refuses %j as %s first', async (input, rule) => {
+    expect(await canonical(luoshu, input)).toEqual(invalid(rule))
   })
 })
 
@@ -469,6 +587,28 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
     expect(await canonical(luoshu, `${git}/config`)).toEqual(notGranted('git'))
     expect(await canonical(luoshu, `${git}/hooks/new`)).toEqual(notGranted('git'))
     expect(await canonical(luoshu, `${long}/x.md`)).toEqual(await resolved('Long folder name/x.md'))
+  })
+
+  it('expands the 8.3 short name of a dot folder and refuses it', async ({ skip }) => {
+    await mkdir(path.join(luoshu, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(luoshu, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    const short = await shortName(luoshu, '.obsidian')
+    if (short === null) {
+      if (process.env.CI) throw new Error('no 8.3 short names on this CI volume, the dot folder\'s short name unproven')
+      return skip('this volume makes no 8.3 short names')
+    }
+    expect(short.startsWith('.')).toBe(false)
+    expect(await readFile(path.join(luoshu, short, 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await canonical(luoshu, `${short}/plugins/x/main.js`)).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, `${short}/plugins/y/main.js`)).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, short)).toEqual(notGranted('dot'))
+    // A dot folder deeper in the path, named by its short name
+    await mkdir(path.join(luoshu, 'notes', '.config long'))
+    await writeFile(path.join(luoshu, 'notes', '.config long', 'x.md'), 'x')
+    const deeper = await shortName(path.join(luoshu, 'notes'), '.config long')
+    expect(deeper).not.toBeNull()
+    expect(await canonical(luoshu, `notes/${deeper}/x.md`)).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, `notes/${deeper}/new.md`)).toEqual(notGranted('dot'))
   })
 
   it('refuses ::$INDEX_ALLOCATION, which opens .git as its folder stream', async () => {
