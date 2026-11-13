@@ -833,7 +833,7 @@ export class Carrier {
   // needs-confirm with the request the prompt holds
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
     if (stage === 'raw') pending.gate = this.slot('gate')
-    return this.decideFor(pending, stage, capability, scope, true)
+    return this.decideFor(pending, stage, capability, scope)
   }
 
   // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
@@ -846,9 +846,9 @@ export class Carrier {
     return this.judge(pending, stage, kind.also.capability, frozen({ paths }))
   }
 
-  // The gate's answer for a call or for a subscription the bus asks about again. prompt is false for the bus, where an
-  // ask raises nothing and counts as a refusal, since no call waits on it and the human did nothing
-  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt: boolean): No | null {
+  // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
+  // since a live subscription is its item in use
+  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
     const open = this.gateOpen()
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
@@ -880,7 +880,7 @@ export class Carrier {
     if (view !== current) return { code: 'stale' }
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
-      const request = prompt ? this.raise(ask, access) : null
+      const request = this.raise(ask, access)
       if (typeof request === 'string') return { code: 'needs-confirm', request }
       return request ?? { code: 'not-granted' }
     }
@@ -1091,13 +1091,16 @@ export class Carrier {
   }
 
   // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
-  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault
-  private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' {
+  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
+  // An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
+  // waits for the Confirm. A declined ask refuses
+  private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
     const asker: Asker = { caller, onBehalf: undefined, action: 'events.subscribe' }
     const scope: Scope = frozen({ topics: [topic] })
     for (const stage of ['raw', 'canonical'] as const) {
-      const refused = this.decideFor(asker, stage, 'events.subscribe', scope, false)
+      const refused = this.decideFor(asker, stage, 'events.subscribe', scope)
       if (refused === null) continue
+      if (refused.code === 'needs-confirm' || refused.code === 'throttled') return 'ask'
       const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'
       return none ? 'down' : 'refuse'
     }

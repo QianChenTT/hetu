@@ -7,8 +7,10 @@ import type { Caller } from '../api/envelope.ts'
 import path from 'node:path'
 import type { Switches } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, tick, until, workerManifest, writeFolder,
+  type Files, type Message,
 } from './loader-fakes.ts'
+import { createGate } from '../../plugins/gate/src/gate.ts'
 
 afterEach(cleanup)
 
@@ -445,6 +447,69 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       expect(raises(request.notes)).toEqual([])
       expect((await stored(made, 'sync')).class).toBe(4)
     })
+  })
+})
+
+// A listener holding a fetch and one subscription item naming a reader's topic and a clock's. The reader's approval
+// pairs it, which moves it into class 4 and makes the subscription ask at first use while it is live
+describe('a live subscription its plugin\'s move into class 4 makes ask', () => {
+  const hears: Capability = { type: 'events.subscribe', topics: ['reader.done', 'clock.tick'] }
+  const signalled = (inbox: Message[]) => inbox.filter(message => message.kind === 'event')
+    .map(message => (Array.isArray(message.topics) ? `${message.topic}[${message.topics}]` : message.topic))
+
+  async function moved() {
+    const made = await harness({
+      install: withCapabilities(),
+      behave: { gate: { exports: { gate: createGate() } } },
+      folder: {
+        listener: worker('listener', [fetchOne, hears]),
+        reader: filesFor(workerManifest('reader', { capabilities: [read], provides: { topics: ['done'] } })),
+        clock: filesFor(workerManifest('clock', { provides: { topics: ['tick'] } })),
+      },
+      entries: {
+        listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
+        clock: root => entryFor(root, { granted: [], class: 0 }),
+      },
+      switches: { devMode: ['reader'] },
+    })
+    await made.loader.start()
+    await tick(30)
+    const listener = made.runtime.half('listener')
+    const clock = made.runtime.half('clock')
+    expect((await listener.ask('events.subscribe', { topics: ['reader.done', 'clock.tick'] }))?.result).toEqual({ standing: [] })
+    await clock.ask('events.publish', { topic: 'clock.tick' })
+    await until(() => signalled(listener.inbox).length === 1)
+    await made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })
+    expect((await made.store.load()).state.plugins.listener).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
+    // Nothing reaches it while it waits
+    await clock.ask('events.publish', { topic: 'clock.tick' })
+    await made.runtime.half('reader').ask('events.publish', { topic: 'reader.done' })
+    await tick(30)
+    expect(signalled(listener.inbox)).toEqual(['clock.tick'])
+    return { made, listener, clock }
+  }
+
+  it('waits with nothing delivered and holds the item\'s Confirm for the human, then goes on after it with one events.dropped', async () => {
+    const { made, listener, clock } = await moved()
+    const asked = made.loader.pending().filter(request => request.kind === 'item.on')
+    expect(asked).toEqual([expect.objectContaining({ kind: 'item.on', plugin: 'listener' })])
+    await made.loader.apply({ kind: 'item.on', plugin: 'listener', capability: hears })
+    await clock.ask('events.publish', { topic: 'clock.tick' })
+    await until(() => signalled(listener.inbox).length === 3)
+    await tick(30)
+    expect(signalled(listener.inbox)).toEqual(['clock.tick', 'events.dropped[reader.done,clock.tick]', 'clock.tick'])
+  })
+
+  it('ends once the human declines the Confirm and tells the plugin, whose subscribe again is refused as declined', async () => {
+    const { made, listener, clock } = await moved()
+    const [asked] = made.loader.pending().filter(request => request.kind === 'item.on')
+    await made.loader.cancel(asked.id)
+    await clock.ask('events.publish', { topic: 'clock.tick' })
+    await until(() => signalled(listener.inbox).length === 2)
+    await tick(30)
+    expect(signalled(listener.inbox)).toEqual(['clock.tick', 'events.ended[reader.done,clock.tick]'])
+    const again = await listener.ask('events.subscribe', { topics: ['reader.done', 'clock.tick'] })
+    expect(again?.refusal).toMatchObject({ code: 'not-granted', reason: 'declined' })
   })
 })
 
