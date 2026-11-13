@@ -50,9 +50,19 @@ describe('the commit a release builds', () => {
     }
   })
 
-  it('refuses a ref that names no commit, a tree among them or anything git would read as an option', () => {
-    for (const ref of ['nope', `${commits.tip}^{tree}`, '--upload-pack=x', '-n', ' ']) {
-      expect(() => releaseCommit(ref, { cwd: repo, main: commits.tip })).toThrow()
+  it('refuses a ref that names no commit, a tag on a tree among them', () => {
+    git('tag', 'tree-tag', `${commits.tip}^{tree}`)
+    for (const ref of ['nope', 'tree-tag']) {
+      expect(() => releaseCommit(ref, { cwd: repo, main: commits.tip })).toThrow(/names no commit/)
+    }
+  })
+
+  // git branch refuses a name that starts with a dash, but a file under refs/heads makes one that rev-parse reads
+  it('refuses before git reads it anything git would read as an option, a ref named like one on main\'s tip too', async () => {
+    await writeFile(path.join(repo, '.git', 'refs', 'heads', '-n'), `${commits.tip}\n`)
+    expect(git('rev-parse', '--verify', '--end-of-options', '-n^{commit}')).toBe(commits.tip)
+    for (const ref of ['--upload-pack=x', '-n', ' ', 'main tip', `${commits.tip}^{tree}`]) {
+      expect(() => releaseCommit(ref, { cwd: repo, main: commits.tip })).toThrow(/isn't a ref/)
     }
   })
 })
