@@ -1,9 +1,16 @@
 name: Release
 
-# By hand only: the Actions tab's Run workflow, or `gh workflow run release.yml --ref main`. Builds the Windows MSI
-# from main and publishes it as a pre-release named after the version in package.json
+# By hand only: the Actions tab's Run workflow, or `gh workflow run release.yml --ref main`, with `-f ref=<commit>` to
+# build a commit main holds in place of its tip. Builds the Windows MSI and publishes it as a pre-release named after
+# the version in that commit's package.json
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: A commit main holds, by hash or tag, to build in place of main's tip. Empty builds the tip
+        required: false
+        default: ''
+        type: string
 
 # Nothing by default. Each job asks for exactly what it needs
 permissions: {}
@@ -27,13 +34,27 @@ jobs:
       artifact-metadata: write # the storage record actions/attest makes for the MSI
     outputs:
       version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.commit.outputs.commit }}
     steps:
+      # All of main's history, so a named commit can be checked against it
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # main's own check picks the commit: the tip, or the named one when main holds it. Everything after builds from it
+      - name: pick the commit to build
+        id: commit
+        shell: bash
+        env:
+          REF: ${{ inputs.ref }}
+          MAIN: ${{ github.sha }}
+        run: |
+          commit=$(node scripts/release-commit.ts "$REF" "$MAIN")
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          git checkout --quiet --detach "$commit"
       - name: read the version
         id: version
         shell: bash
@@ -58,7 +79,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ steps.commit.outputs.commit }}
         run: |
           passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=$SHA" --jq '.total_count')
           if [ "$passed" -lt 1 ]; then
@@ -133,7 +154,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ needs.build.outputs.commit }}
         run: |
           tag="v$VERSION"
           draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo none)

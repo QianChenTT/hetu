@@ -1,3 +1,4 @@
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,6 +24,26 @@ describe('a window\'s way in', () => {
     const settled = ['watchdog: absent', 'pick a luoshu folder']
     await until(async () => JSON.stringify(await page.locator('#banner li').allTextContents()) === JSON.stringify(settled))
     expect(await page.locator('#banner li').allTextContents()).toEqual(settled)
+  })
+
+  it('says which state file failed its check after one was edited by hand and nothing once a start finds it as written', async () => {
+    const dataDir = await dataWith({})
+    const switches = path.join(dataDir, 'state', 'switches.json')
+    const written = await readFile(switches, 'utf8')
+    // The hash line stays as it was, so the edit fails the check
+    const byHand = written.replace('"recordNothing": false', '"recordNothing": true')
+    expect(byHand).not.toBe(written)
+    await writeFile(switches, byHand)
+    const line = 'state files that failed their check at start: switches'
+    const edited = await launch(dataDir)
+    const page = await editorPage(edited)
+    await until(async () => (await page.locator('#banner li').allTextContents()).includes(line))
+    await edited.close()
+    await writeFile(switches, written)
+    const clean = await launch(dataDir)
+    const again = await editorPage(clean)
+    await until(async () => (await again.locator('#banner li').allTextContents()).includes('pick a luoshu folder'))
+    expect(await again.locator('#banner li').allTextContents()).not.toContain(line)
   })
 
   it('gives each load of the window its own way: a reload takes the next n', async () => {

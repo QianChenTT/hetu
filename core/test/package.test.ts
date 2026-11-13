@@ -1,14 +1,16 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { icoFromPng, MSI_NAME, packageHetu } from '../build/package.ts'
+import { configFor, icoFromPng, MSI_NAME, packageHetu } from '../build/package.ts'
+import { FUSES } from '../build/fuses.ts'
 
 // A release asset's name is changed where it holds a space, so a name with one wouldn't match its line in SHA256SUMS
 describe('the MSI\'s file name', () => {
   it('holds the version and the architecture and no space', () => {
-    const name = MSI_NAME.replace('${version}', '0.4.0').replace('${ext}', 'msi')
-    expect(name).toBe('hetu-0.4.0-x64.msi')
+    const name = MSI_NAME.replace('${version}', '0.5.0').replace('${ext}', 'msi')
+    expect(name).toBe('hetu-0.5.0-x64.msi')
     expect(MSI_NAME).not.toMatch(/\s/)
   })
 })
@@ -41,4 +43,47 @@ describe('the installer\'s icon', () => {
   it('refuses bytes that aren\'t a PNG', () => {
     expect(() => icoFromPng(Buffer.from('not a png'))).toThrow('PNG')
   })
+})
+
+// electron-builder lists the archives in resources and writes that list into the executable after afterExtract and
+// before afterPack (platformPackager.js in app-builder-lib 26.18.0), so a file deleted later stays named in it
+describe('the integrity list in the executable', () => {
+  const require = createRequire(import.meta.url)
+  const builder = path.dirname(require.resolve('electron-builder/package.json'))
+  const { computeData } = createRequire(path.join(builder, 'package.json'))('app-builder-lib/out/asar/integrity') as {
+    computeData(options: { resourcesPath: string, resourcesRelativePath: string, resourcesDestinationPath: string }): Promise<Record<string, unknown>>
+  }
+  // A small archive in asar's layout stands in for Electron's default app and for app.asar, so the test needs no
+  // Electron binary, which the unit tests' install never fetches: a pickled size, then a pickled JSON header
+  const archive = (file: string) => {
+    const json = Buffer.from(JSON.stringify({ files: { 'index.js': { size: 0, offset: '0' } } }))
+    const padded = Math.ceil(json.length / 4) * 4
+    const head = Buffer.alloc(16 + padded)
+    head.writeUInt32LE(4, 0)
+    head.writeUInt32LE(8 + padded, 4)
+    head.writeUInt32LE(4 + padded, 8)
+    head.writeUInt32LE(json.length, 12)
+    json.copy(head, 16)
+    return writeFile(file, head)
+  }
+
+  for (const [platform, inside] of [['win32', ['resources']], ['linux', ['resources']], ['darwin', ['Electron.app', 'Contents', 'Resources']]] as const) {
+    it(`names app.asar alone once Electron is extracted, on ${platform}`, async () => {
+      const appOutDir = await mkdtemp(path.join(tmpdir(), 'hetu-pack-'))
+      try {
+        const resources = path.join(appOutDir, ...inside)
+        await mkdir(resources, { recursive: true })
+        await archive(path.join(resources, 'default_app.asar'))
+        const config = configFor(appOutDir, { target: 'dir', locked: true, out: appOutDir }, FUSES)
+        const afterExtract = config.afterExtract as ((context: { appOutDir: string, electronPlatformName: string }) => Promise<void>) | undefined
+        await afterExtract?.({ appOutDir, electronPlatformName: platform })
+        await archive(path.join(resources, 'app.asar'))
+        const relative = platform === 'darwin' ? 'Resources' : 'resources'
+        const list = await computeData({ resourcesPath: resources, resourcesRelativePath: relative, resourcesDestinationPath: resources })
+        expect(Object.keys(list)).toEqual([path.join(relative, 'app.asar')])
+      } finally {
+        await rm(appOutDir, { recursive: true, force: true })
+      }
+    })
+  }
 })

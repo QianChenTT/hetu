@@ -137,6 +137,11 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
     parts.push(luoshu)
 
+    const install = element('section')
+    install.className = 'install'
+    install.append(element('h2', 'Install'), element('p', shown.install))
+    parts.push(install)
+
     const limits = element('section')
     limits.className = 'limits'
     limits.append(element('h2', 'Limits'))

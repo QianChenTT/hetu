@@ -51,7 +51,17 @@ export default definePlugin({
     // The columns the last skeleton split, in order, for a resize's sizes
     let split: string[] = []
 
-    const save = () => void ctx.try(ctx.storage.set({ key: KEY, value: arrangement }))
+    // The writes not yet answered. A stop waits for them within the grace, so a quit right after a resize keeps it. A
+    // write begun while it waits is waited for too
+    const writing = new Set<Promise<unknown>>()
+    const save = () => {
+      const write = ctx.try(ctx.storage.set({ key: KEY, value: arrangement }))
+      writing.add(write)
+      void write.then(() => writing.delete(write))
+    }
+    ctx.onStop(async () => {
+      while (writing.size > 0) await Promise.all(writing)
+    })
     const viewOf = (instance: string): LayoutView | undefined => state?.views.find(view => view.instance === instance)
     const shown = (key: string) => {
       arrangement.recent[key] = ++counter

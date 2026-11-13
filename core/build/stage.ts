@@ -7,7 +7,7 @@ import { buildMain } from './main.ts'
 export const STAGED_APP = Object.freeze({
   name: 'hetu',
   productName: 'hetu',
-  version: '0.4.0',
+  version: '0.5.0',
   description: 'hetu',
   author: 'hetu',
   main: 'main.js',

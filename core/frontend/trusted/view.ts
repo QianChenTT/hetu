@@ -31,7 +31,11 @@ export type Screen = {
   switches: Switch[]
   limits: Limit[]
   luoshu: string
+  install: string
 }
+
+// A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
+const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s install'
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   const lines: string[] = []
@@ -155,6 +159,7 @@ export function screen(list: SecurityList): Screen {
     switches: switchesOf(list),
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
+    install: INSTALL_LINE,
   }
 }
 

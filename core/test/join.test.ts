@@ -38,6 +38,8 @@ async function joined(options: {
   entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
   before?: (booted: Booted) => void
+  // Runs on the data folder before boot reads it
+  prepare?: (dataDir: string) => Promise<void>
   wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure'>
 } = {}) {
   const base = await tempBase()
@@ -52,6 +54,7 @@ async function joined(options: {
     await writeFolder(root, files)
     await store.writePlugin(id, await entryFor(root, options.entries?.[id]))
   }
+  await options.prepare?.(dataDir)
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   options.before?.(booted)
   const runtime = new FakeRuntime()
@@ -424,10 +427,25 @@ describe('core.status, for a window\'s banner', () => {
       page: [],
       pending: [],
       stopped: null,
+      suspect: [],
     })
     runtime.half('alpha').crash()
     await until(() => loader.plugin('alpha')?.state === 'crashed')
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
+  })
+
+  it('names the switches when they are gone from a data folder hetu ran in before', async () => {
+    const { carrier, loader } = await joined({
+      // A first start leaves its records, then the switches go
+      prepare: async dataDir => {
+        const first = await boot({ packaged: false, installDir: dataDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
+        await first.release()
+        await rm(path.join(dataDir, 'state', 'switches.json'))
+      },
+    })
+    await loader.start()
+    const way = windowWay(carrier, { editor })
+    expect((await way.ask('editor', 'core.status')).result).toMatchObject({ suspect: ['switches'] })
   })
 
   it('names the requests waiting for the human, a plugin found in the folder among them', async () => {
