@@ -96,16 +96,23 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
 
 const codeOf = (reply: Reply) => (reply.ok ? 'ok' : reply.refusal?.code)
 
-// What the Windows recycle bin holds that was deleted from folder, by name. Read through the shell's own view of the
-// bin, which names each item's original folder
-function binned(folder: string): string[] {
+// Runs a script over each item of the Windows recycle bin deleted from folder and gives back its lines. Read through
+// the shell's own view of the bin, which names each item's original folder
+function inBin(folder: string, each: string): string[] {
   const script = [
     '$bin = (New-Object -ComObject Shell.Application).NameSpace(10)',
     `$from = '${folder.replace(/'/g, "''")}'`,
-    "$bin.Items() | Where-Object { $bin.GetDetailsOf($_, 1) -eq $from } | ForEach-Object { $_.Name }",
+    `$bin.Items() | Where-Object { $bin.GetDetailsOf($_, 1) -eq $from } | ForEach-Object { ${each} }`,
   ].join('; ')
   return execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
 }
+
+// The names of what the bin holds from folder. An item's Name is the one Explorer shows, which drops a known extension
+// while Explorer hides them, so the name the file had is read
+const binned = (folder: string) => inBin(folder, "$_.ExtendedProperty('System.FileName')")
+
+// Puts all the bin holds from folder back into it, through the bin's own Restore
+const putBack = (folder: string) => inBin(folder, "$_.InvokeVerb('undelete')")
 
 describe('luoshu.move and luoshu.remove in the app', () => {
   // With write alone, a plugin that writes everywhere and reads public/** could carry a private note into public/
@@ -142,7 +149,17 @@ describe('luoshu.move and luoshu.remove in the app', () => {
     const { editor, folder } = await started({ notes: { [name]: 'to the bin' } })
     expect(codeOf(await ask(editor, 'luoshu.remove', { path: name }))).toBe('ok')
     expect(await readdir(folder)).toEqual([])
-    if (process.platform === 'win32') expect(binned(await realpath(folder))).toEqual([name])
+    if (process.platform !== 'win32') return
+    // Put back whatever the check finds, so no run leaves the note in the bin
+    const from = await realpath(folder)
+    try {
+      expect(binned(from)).toEqual([name])
+    } finally {
+      putBack(from)
+    }
+    await until(async () => (await readdir(folder)).includes(name))
+    expect(await readFile(path.join(folder, name), 'utf8')).toBe('to the bin')
+    expect(binned(from)).toEqual([])
   })
 })
 
