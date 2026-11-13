@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FuseState, FuseV1Options } from '@electron/fuses'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { asarHeader, electronCopyIn, exitText, fuseFileIn, fuseFileOf, fuseText, plistAsarHash } from './packaged/helpers.ts'
+import { asarHeader, electronCopyIn, endedRefused, exitText, fuseFileIn, fuseFileOf, fuseText, plistAsarHash } from './packaged/helpers.ts'
 
 // The packaged suite's helpers that need no packed build and no Electron
 
@@ -37,6 +37,37 @@ describe('the text of an exit', () => {
     const text = exitText({ ...started, stderr: `first line\n${'x'.repeat(5000)}\nlast line` })
     expect(text).toContain('last line')
     expect(text).not.toContain('first line')
+  })
+})
+
+describe('a start the app ended as refused', () => {
+  const started = { code: null, signal: null, killed: false, stderr: '', records: [], dataDir: '', ready: false }
+
+  it.each(['win32', 'darwin'] as const)('ends with an exit code other than 0 on %s', platform => {
+    expect(endedRefused({ ...started, code: 1 }, platform)).toBe(true)
+    expect(endedRefused({ ...started, code: 0x80000003 }, platform)).toBe(true)
+    expect(endedRefused({ ...started, code: 0 }, platform)).toBe(false)
+  })
+
+  it('ends on macOS by the trap a failed FATAL check raises, with no exit code', () => {
+    expect(endedRefused({ ...started, signal: 'SIGTRAP' }, 'darwin')).toBe(true)
+    expect(endedRefused({ ...started, signal: 'SIGILL' }, 'darwin')).toBe(true)
+  })
+
+  it('never ends on a signal from outside', () => {
+    expect(endedRefused({ ...started, signal: 'SIGKILL' }, 'darwin')).toBe(false)
+    expect(endedRefused({ ...started, signal: 'SIGTERM' }, 'darwin')).toBe(false)
+    expect(endedRefused({ ...started, signal: 'SIGSEGV' }, 'darwin')).toBe(false)
+  })
+
+  it('ends on Windows with an exit code alone', () => {
+    expect(endedRefused({ ...started, signal: 'SIGTRAP' }, 'win32')).toBe(false)
+  })
+
+  it.each(['win32', 'darwin'] as const)('is never a start the test ended or one that reached ready on %s', platform => {
+    expect(endedRefused({ ...started, killed: true }, platform)).toBe(false)
+    expect(endedRefused({ ...started, code: 1, ready: true }, platform)).toBe(false)
+    expect(endedRefused({ ...started, signal: 'SIGTRAP', ready: true }, platform)).toBe(false)
   })
 })
 

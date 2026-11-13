@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, asarHeader, cleanup, electronCopyIn, exitText, fuseFileIn, fuseFileOf, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
+import { appDir, asarHeader, cleanup, electronCopyIn, endedRefused, exitText, fuseFileIn, fuseFileOf, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -228,16 +228,25 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     ].join('\n')
   }
 
+  // What Electron writes when it refuses the archive: a hash mismatch in a file's content, or the FATAL check naming the
+  // header against the hash the build recorded
+  const integrityFailure = { content: /ASAR Integrity Violation|Integrity check failed for asar archive/, header: /Integrity check failed for asar archive entry '<header>'/ }
+
+  // The app ends a refused start by itself. On Windows that is an exit code. On macOS a content change exits with code
+  // 1 while a changed header fails a FATAL check, which crashes with a trap and no exit code. Since the end alone can't
+  // tell a refusal from another crash, stderr must name the integrity failure too
   it.each(['content', 'header'] as const)('ends the app when its %s changed, and the same copy starts with the check off', async where => {
     const refusing = await changed(where, true)
     const refusedStart = await start({ dir: refusing.copy, ms: 20_000 })
     const off = await changed(where, false)
     const offStart = await start({ dir: off.copy })
     const text = await report(where, refusing, refusedStart, off, offStart)
+    const refused = endedRefused(refusedStart) && integrityFailure[where].test(refusedStart.stderr)
     // Printed on macOS each run so the two cases can be compared, elsewhere when the case fails
-    if (darwin || refusedStart.ready || refusedStart.code === null || !offStart.ready) console.log(text)
+    if (darwin || !refused || !offStart.ready) console.log(text)
     expect(refusedStart.ready, text).toBe(false)
-    expect(refusedStart.code, text).not.toBeNull()
+    expect(endedRefused(refusedStart), text).toBe(true)
+    expect(refusedStart.stderr, text).toMatch(integrityFailure[where])
     expect(offStart.ready, text).toBe(true)
   })
 })

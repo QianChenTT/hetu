@@ -98,6 +98,19 @@ export function exitText(started: Started): string {
   return `${how}, ready ${started.ready}, stderr's end:\n${tail.trim() === '' ? '(empty)' : tail}`
 }
 
+// The traps Chromium's immediate crash raises after a failed FATAL check: SIGTRAP on arm64, SIGTRAP or SIGILL on x64
+const CRASH_TRAPS: readonly string[] = ['SIGTRAP', 'SIGILL']
+
+// Whether the app ended a start by itself before ready, the way a refused start ends. Windows hands back an exit code
+// for every end, a crash included. On macOS a refusal in JavaScript exits with a code, while a failed FATAL check, such
+// as the one on a changed asar header, crashes on purpose with a trap and has no exit code. Both are the app refusing.
+// A start the test had to end, a clean exit and a start that reached ready are not, nor is a signal from outside
+export function endedRefused(started: Started, platform: string = process.platform): boolean {
+  if (started.killed || started.ready) return false
+  if (started.code !== null) return started.code !== 0
+  return platform !== 'win32' && started.signal !== null && CRASH_TRAPS.includes(started.signal)
+}
+
 // Where a copy of hetu named electron goes: beside the executable, so on macOS inside the bundle, where the executable
 // finds the Electron framework as a real copy of the app would have it
 export function electronCopyIn(appOutDir: string, platform: string = process.platform): string {
