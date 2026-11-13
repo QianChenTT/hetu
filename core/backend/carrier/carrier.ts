@@ -941,7 +941,7 @@ export class Carrier {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
       const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
-      const any = path !== undefined
+      const any = path !== undefined && !dotted(path)
       return { ok: true, result: { read: any, edit: any, uiRead: any, list: any, verbs } }
     }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
@@ -950,7 +950,8 @@ export class Carrier {
     try {
       const held = gate.verbs(plugin, 'editor')
       const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-      if (path === undefined) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
+      // No note the human opened has a path with a dot segment, so the gate isn't asked about one
+      if (path === undefined || dotted(path)) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
       const read = gate.canRead(caller, path) === true
       const list = gate.canList(caller, path) === true
       // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
@@ -1023,7 +1024,9 @@ export class Carrier {
   private events(pending: Pending, args: unknown, kind: Kind): void {
     const { way } = pending
     if (pending.action === 'events.publish') {
-      this.bus.publish(field(args, 'topic') as string, field(args, 'path') as string | undefined)
+      const path = field(args, 'path') as string | undefined
+      // One with a dot segment reaches no subscriber whatever the gate's state, as one the gate lets no one list
+      if (path === undefined || !dotted(path)) this.bus.publish(field(args, 'topic') as string, path)
       return this.finish(pending, { ok: true, result: null })
     }
     const topics = [...new Set(field(args, 'topics') as string[])]
@@ -1323,6 +1326,7 @@ export class Carrier {
     let charged = false
     return {
       canList: path => {
+        if (dotted(path)) return false
         if (off) return true
         if (gate === null || threw) return false
         try {
