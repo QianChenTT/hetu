@@ -111,6 +111,24 @@ async function deepest(base: string, names: string[]): Promise<{ real: string, r
   return { real, rest: [], hidden: null }
 }
 
+// The folder of a path canonical gave, looked at again just before a provider acts on the path: held when it still
+// resolves to itself, missing when it is gone and the deepest folder on the way that is there still resolves to
+// itself, moved otherwise. prepare judged the path, and a folder on the way swapped for a link or a junction since would
+// carry the act out of what was judged, so a provider refuses moved as canonical refuses a link out. What is left is
+// the time between this look and the act
+export async function folderState(absolute: string): Promise<'held' | 'moved' | 'missing'> {
+  let dir = path.dirname(absolute)
+  for (let gone = false; ; gone = true) {
+    try {
+      return (await realpath(dir)) !== dir ? 'moved' : gone ? 'missing' : 'held'
+    } catch (err) {
+      const up = path.dirname(dir)
+      if (!absent(err) || up === dir) return 'moved'
+      dir = up
+    }
+  }
+}
+
 // For a provider's prepare step. The string rules run first. Then the OS resolves each part that exists, with links,
 // junctions and 8.3 short names. The names that don't exist yet are kept for a write. The promise form of
 // realpath is realpath.native. Resolves once and keeps nothing open: the caller acts on exactly the path returned and

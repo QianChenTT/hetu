@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -331,6 +331,35 @@ describe('a name spelled with no dot that leads to a dot name', () => {
     const mixed = await commitOf(inDotted, ['journal/b.md', 'cfg/app.json'])
     expect(await ask(inDotted, 'history.read', { path: 'cfg/app.json', commit: mixed })).toEqual({ refused: { code: 'not-found' } })
     expect(await logOf(inDotted, 'cfg')).toEqual([])
+  })
+})
+
+describe('a folder swapped after prepare', () => {
+  // prepare judged a plain folder. One swapped for a junction into a dot folder by perform would put the dot file's
+  // bytes in the repo under the plain name
+  it('refuses a commit whose folder became a junction into a dot folder after prepare, and commits nothing', async () => {
+    await mkdir(path.join(where.notes, '.obsidian'))
+    await note(where, '.obsidian/b.md', 'DOT B')
+    const history = await started(where)
+    const first = await commitOf(history, ['a.md'])
+    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'swapped' })
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'journal-was'))
+    await symlink(path.join(where.notes, '.obsidian'), path.join(where.notes, 'journal'), 'junction')
+    await expect(history.provider.perform(call, prepared as never)).rejects.toEqual({ code: 'not-granted' })
+    expect((await logOf(history, 'a.md')).map(listed => listed.commit)).toEqual([first])
+    expect(await logOf(history, 'journal/b.md')).toEqual([])
+  })
+
+  // A folder gone since prepare holds no note, so the commit records the note gone, as for any missing one
+  it('commits a note whose folder is gone since prepare as gone', async () => {
+    const history = await started(where)
+    await commitOf(history, ['journal/b.md'])
+    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'gone' })
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'journal-was'))
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(await ask(history, 'history.read', { path: 'journal/b.md', commit: made.commit })).toEqual({ refused: { code: 'not-found' } })
   })
 })
 

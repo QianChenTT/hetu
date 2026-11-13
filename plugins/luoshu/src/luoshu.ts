@@ -6,7 +6,7 @@ import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
 import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, type Canonical, type NotCanonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, type Canonical, type NotCanonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
 export type Luoshu = {
@@ -121,6 +121,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // name swapped for a link to a file outside the notes folder between a check and a read by name would have handed
   // the caller that file. Anything but a regular file is no note
   async function read(target: Canonical): Promise<unknown> {
+    // The folder looked at again just before the open, as before a write. One gone since holds no note and the open
+    // answers so
+    if ((await folderState(target.absolute)) === 'moved') throw refused('not-granted')
     let handle
     try {
       handle = await retried(() => open(target.absolute, NOTE_READ), target.absolute, 'read')
@@ -173,11 +176,15 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // The version is checked under the lock. The bytes go to a temp file beside the note, synced, then a rename over it,
   // so a crash leaves the old note or the new one
   async function write(target: Canonical, text: string, baseVersion: string | undefined): Promise<unknown> {
+    // The version check reads the note, so the folder is looked at before it as before a read, then again once the
+    // folders the note needs exist
+    if ((await folderState(target.absolute)) === 'moved') throw refused('not-granted')
     if ((await current(target.absolute)) !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(target)) throw refused('not-granted')
     const bytes = Buffer.from(text, 'utf8')
     const dir = path.dirname(target.absolute)
     await mkdir(dir, { recursive: true })
+    await unmoved(target.absolute)
     const temp = path.join(dir, `.${path.basename(target.absolute)}.${randomBytes(6).toString('hex')}${TEMP}`)
     try {
       const handle = await open(temp, 'wx')
@@ -202,12 +209,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     return { version: made }
   }
 
-  // The folder a name sits in, looked at again just before a remove or a move changes the disk. The canonical path was
-  // judged at prepare, and a folder on the way swapped for a link or a junction since would carry the change out of
-  // what was judged, so one that no longer resolves to itself is refused as canonical refuses a link out
+  // The folder a name sits in, looked at again just before a write, a remove or a move changes the disk. One that no
+  // longer resolves to itself, or is gone, is refused
   async function unmoved(absolute: string): Promise<void> {
-    const dir = path.dirname(absolute)
-    if ((await realpath(dir).catch(() => null)) !== dir) throw refused('not-granted')
+    if ((await folderState(absolute)) !== 'held') throw refused('not-granted')
   }
 
   // Anything at the name, a link included, which lstat never follows

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -267,6 +267,55 @@ describe('a folder change while calls are in flight', () => {
     await expect(made.provider.perform(write, writing as Prepared)).rejects.toEqual({ code: 'unavailable' })
     await expect(made.provider.perform(list, listing as Prepared)).rejects.toEqual({ code: 'unavailable' })
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('note a')
+  })
+})
+
+// prepare judged a plain folder. One swapped for a junction into a dot folder by perform would hand a read the dot file
+// or land a write there, as remove and move already refuse
+describe('a folder swapped for a junction after prepare', () => {
+  beforeEach(async () => {
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'journal', 'main.js'), 'plain')
+  })
+
+  async function swapped(action: string, args: unknown): Promise<unknown> {
+    const made = opened()
+    const call = callOf(action, args)
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await symlink(path.join(folder, '.obsidian', 'plugins', 'x'), path.join(folder, 'journal'), 'junction')
+    return made.provider.perform(call, prepared).catch(err => ({ refused: err }))
+  }
+
+  it('refuses a read and reads nothing from the dot folder', async () => {
+    expect(await swapped('luoshu.read', { path: 'journal/main.js' })).toEqual({ refused: { code: 'not-granted' } })
+  })
+
+  it('refuses a write of a new note and writes nothing into the dot folder', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/planted.js', text: 'planted' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+  })
+
+  // The note's own folder isn't there yet, so the swapped folder is the one above it
+  it('refuses a write into a new folder under the swapped one and makes no folder in the dot folder', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/new/deeper/planted.js', text: 'planted' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+  })
+
+  it('refuses a write over a note there at its version and leaves the dot file as it was', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/main.js', text: 'planted', baseVersion: sha('plugin code') })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+  })
+
+  // A folder gone since prepare holds no note, so the read answers as for any missing one
+  it('answers not-found for a read whose folder is gone since prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.read', { path: 'journal/b.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-found' })
   })
 })
 

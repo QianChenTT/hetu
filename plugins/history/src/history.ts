@@ -6,7 +6,7 @@ import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE } from 'hetu-core/api/exec.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
 
 export type HistoryOptions = {
@@ -159,6 +159,8 @@ export function createHistory(options: HistoryOptions = {}): History {
   // file outside the notes folder between a check and a read by name would have put that file in the repo. Where the
   // system has them, a link at the last name is refused and a FIFO opens without waiting for a writer
   async function bytesOf(target: Canonical): Promise<Buffer | null> {
+    // The folder looked at again just before the open, as the luoshu does. One gone since holds no note
+    if ((await folderState(target.absolute)) === 'moved') throw refused('not-granted')
     let handle
     try {
       handle = await open(target.absolute, NOTE_READ)
