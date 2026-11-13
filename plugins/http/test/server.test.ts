@@ -1,0 +1,548 @@
+import http from 'node:http'
+import net from 'node:net'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { doorLimits, type RefusalReason, type TokenSeam } from '../src/checks.ts'
+import { type Answer, type Door, openDoor, type Passed } from '../src/server.ts'
+
+// Every test drives the door with raw sockets, so any Host, header or framing can be sent as written and nothing is
+// normalised on the way
+
+const doors: Door[] = []
+const sockets: net.Socket[] = []
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  for (const socket of sockets.splice(0)) socket.destroy()
+  for (const door of doors.splice(0)) await door.close()
+})
+
+type Made = { door: Door, port: number, refused: RefusalReason[], passed: Passed[] }
+
+async function made(options: {
+  token?: TokenSeam
+  serve?: (passed: Passed) => Promise<Answer>
+  limits?: Parameters<typeof openDoor>[0]['limits']
+  clock?: () => number
+} = {}): Promise<Made> {
+  const refused: RefusalReason[] = []
+  const passed: Passed[] = []
+  const door = await openDoor({
+    port: 0,
+    token: options.token ?? (() => null),
+    serve: async call => {
+      passed.push(call)
+      return options.serve ? options.serve(call) : { status: 200, body: '{"ok":true}' }
+    },
+    refused: reason => void refused.push(reason),
+    ...(options.limits !== undefined ? { limits: options.limits } : {}),
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+  })
+  doors.push(door)
+  return { door, port: door.address.port, refused, passed }
+}
+
+const anyToken: TokenSeam = text => (text === 'Bearer good' ? { client: 'https://client.example/metadata' } : null)
+
+type Exchange = { raw: string, closed: boolean, closedAfterMs: number | null }
+
+// Writes the text as it is and reads until the socket closes or waitMs passed
+async function exchange(port: number, text: string | Buffer, waitMs = 2000): Promise<Exchange> {
+  const socket = net.connect({ host: '127.0.0.1', port })
+  sockets.push(socket)
+  let raw = ''
+  let closed = false
+  let closedAt: number | null = null
+  socket.on('data', data => {
+    raw += data.toString('latin1')
+  })
+  socket.on('error', () => {})
+  socket.on('close', () => {
+    closed = true
+    closedAt = performance.now()
+  })
+  await new Promise(resolve => socket.once('connect', resolve))
+  const started = performance.now()
+  if (text.length > 0) socket.write(text)
+  while (!closed && performance.now() - started < waitMs) await new Promise(resolve => setTimeout(resolve, 5))
+  return { raw, closed, closedAfterMs: closedAt === null ? null : closedAt - started }
+}
+
+type Response = { status: number, headers: [string, string][], body: string }
+
+// Every response in what came back, each with its header names and values as sent
+function responses(raw: string): Response[] {
+  const out: Response[] = []
+  let rest = raw
+  while (rest.startsWith('HTTP/')) {
+    const end = rest.indexOf('\r\n\r\n')
+    if (end < 0) break
+    const [line, ...lines] = rest.slice(0, end).split('\r\n')
+    const headers = lines.map(text => {
+      const colon = text.indexOf(':')
+      return [text.slice(0, colon), text.slice(colon + 1).trim()] as [string, string]
+    })
+    const length = Number(headers.find(([name]) => name.toLowerCase() === 'content-length')?.[1] ?? 0)
+    const chunked = headers.some(([name, value]) => name.toLowerCase() === 'transfer-encoding' && value === 'chunked')
+    let body = rest.slice(end + 4, end + 4 + length)
+    let next = end + 4 + length
+    if (chunked) {
+      const stop = rest.indexOf('0\r\n\r\n', end + 4)
+      body = ''
+      next = stop + 5
+    }
+    out.push({ status: Number(line.split(' ')[1]), headers, body })
+    rest = rest.slice(next)
+  }
+  return out
+}
+
+const header = (response: Response, name: string) => response.headers.find(([key]) => key.toLowerCase() === name)?.[1]
+const names = (response: Response) => response.headers.map(([name]) => name.toLowerCase()).sort()
+
+const request = (lines: string[], body = '') => `${lines.join('\r\n')}\r\n\r\n${body}`
+const post = (port: number, extra: string[] = [], body = '{}') =>
+  request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, `Content-Length: ${Buffer.byteLength(body)}`, ...extra], body)
+
+// The headers every response carries and those Node adds, and nothing else
+const fixed = ['cache-control', 'content-security-policy', 'x-content-type-options']
+function expectOnlyOwnHeaders(response: Response, extra: string[]): void {
+  expect(names(response)).toEqual([...fixed, 'content-length', 'date', ...extra].sort())
+  expect(header(response, 'cache-control')).toBe('no-store')
+  expect(header(response, 'x-content-type-options')).toBe('nosniff')
+  expect(header(response, 'content-security-policy')).toBe('default-src \'none\'; frame-ancestors \'none\'')
+}
+
+describe('the bind', () => {
+  it('listens on 127.0.0.1 alone, read back from the socket', async () => {
+    const { door } = await made()
+    expect(door.address.address).toBe('127.0.0.1')
+    expect(door.address.family).toBe('IPv4')
+    // The IPv6 loopback has no listener on that port
+    const error = await new Promise<string>(resolve => {
+      const socket = net.connect({ host: '::1', port: door.address.port })
+      socket.on('connect', () => {
+        socket.destroy()
+        resolve('connected')
+      })
+      socket.on('error', err => resolve((err as NodeJS.ErrnoException).code ?? 'error'))
+    })
+    expect(error).not.toBe('connected')
+  })
+
+  it('rejects when the port is taken and tries no other', async () => {
+    const { port } = await made()
+    const listen = vi.spyOn(http.Server.prototype, 'listen')
+    await expect(openDoor({ port, token: () => null, serve: async () => ({ status: 200, body: null }), refused: () => {} }))
+      .rejects.toMatchObject({ code: 'EADDRINUSE' })
+    expect(listen).toHaveBeenCalledTimes(1)
+  })
+
+  it('sets Node\'s server to the door\'s limits and the strict parser', async () => {
+    const { door } = await made()
+    const server = door.server
+    expect(server.headersTimeout).toBe(doorLimits.headersMs)
+    expect(server.requestTimeout).toBe(doorLimits.requestMs)
+    expect(server.keepAliveTimeout).toBe(doorLimits.keepAliveMs)
+    expect(server.maxRequestsPerSocket).toBe(doorLimits.requestsPerSocket)
+    expect(server.maxConnections).toBe(doorLimits.connections)
+    expect(door.parser).toEqual({ maxHeaderSize: doorLimits.headerBytes, insecureHTTPParser: false, requireHostHeader: false })
+  })
+
+  it('closes the socket on close', async () => {
+    const { door, port } = await made()
+    await door.close()
+    doors.splice(0)
+    const error = await new Promise<string>(resolve => {
+      const socket = net.connect({ host: '127.0.0.1', port })
+      socket.on('connect', () => {
+        socket.destroy()
+        resolve('connected')
+      })
+      socket.on('error', err => resolve((err as NodeJS.ErrnoException).code ?? 'error'))
+    })
+    expect(error).toBe('ECONNREFUSED')
+  })
+})
+
+describe('the Host check on the wire', () => {
+  it.each([
+    ['no Host', (port: number) => request(['POST /mcp HTTP/1.1', 'Content-Length: 0'])],
+    ['another name', () => post(0, []).replace(/Host: [^\r]*/, 'Host: evil.example')],
+    ['another port', (port: number) => post(port).replace(`127.0.0.1:${port}`, `127.0.0.1:${port + 1}`)],
+    ['localhost', (port: number) => post(port).replace('127.0.0.1', 'localhost')],
+    ['the name upper case', (port: number) => post(port).replace('127.0.0.1', 'LOCALHOST')],
+    ['a trailing dot', (port: number) => post(port).replace('127.0.0.1', '127.0.0.1.')],
+    ['userinfo', (port: number) => post(port).replace('127.0.0.1', 'user@127.0.0.1')],
+    ['127.1', (port: number) => post(port).replace('127.0.0.1', '127.1')],
+    ['a decimal address', (port: number) => post(port).replace('127.0.0.1', '2130706433')],
+    ['an empty Host', (port: number) => post(port).replace(`127.0.0.1:${port}`, '')],
+    ['two Host headers, the right one first', (port: number) => post(port, ['Host: evil.example'])],
+    ['two Host headers, the right one last', (port: number) => post(port).replace('Host:', 'Host: evil.example\r\nHost:')],
+    ['two right Host headers', (port: number) => post(port, [`Host: 127.0.0.1:${port}`])],
+    ['an absolute target', (port: number) => post(port).replace('POST /mcp', `POST http://127.0.0.1:${port}/mcp`)],
+    ['an absolute target on another name', (port: number) => post(port).replace('POST /mcp', 'POST http://evil.example/mcp')],
+    ['HTTP/1.0 with no Host', () => request(['POST /mcp HTTP/1.0', 'Content-Length: 0'])],
+  ])('answers 403 to %s, reaches nothing and records host', async (_name, text) => {
+    const { port, refused, passed } = await made({ token: anyToken })
+    const { raw, closed } = await exchange(port, text(port).replace('Content-Length: 2\r\n', 'Content-Length: 2\r\nAuthorization: Bearer good\r\n'))
+    const [response] = responses(raw)
+    expect(response.status).toBe(403)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(header(response, 'connection')).toBe('close')
+    expect(closed).toBe(true)
+    expect(refused).toEqual(['host'])
+    expect(passed).toEqual([])
+  })
+
+  it('answers a CONNECT with nothing and closes, never tunnelling', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    const { raw, closed } = await exchange(port, request([`CONNECT 127.0.0.1:${port} HTTP/1.1`, `Host: 127.0.0.1:${port}`]))
+    expect(raw).toBe('')
+    expect(closed).toBe(true)
+    expect(passed).toEqual([])
+  })
+})
+
+describe('the Origin and Sec-Fetch-Site checks on the wire', () => {
+  it.each(['null', 'http://127.0.0.1:4747', 'http://127.0.0.1:5173', 'http://localhost:4747', 'https://evil.example'])(
+    'answers 403 to Origin %s and records origin',
+    async origin => {
+      const { port, refused, passed } = await made({ token: anyToken })
+      const [response] = responses((await exchange(port, post(port, [`Origin: ${origin}`, 'Authorization: Bearer good']))).raw)
+      expect(response.status).toBe(403)
+      expect(refused).toEqual(['origin'])
+      expect(passed).toEqual([])
+    },
+  )
+
+  it.each(['cross-site', 'same-site', 'None'])('answers 403 to Sec-Fetch-Site %s and records origin', async value => {
+    const { port, refused } = await made({ token: anyToken })
+    const [response] = responses((await exchange(port, post(port, [`Sec-Fetch-Site: ${value}`, 'Authorization: Bearer good']))).raw)
+    expect(response.status).toBe(403)
+    expect(refused).toEqual(['origin'])
+  })
+
+  it('passes Sec-Fetch-Site none and same-origin', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    for (const value of ['none', 'same-origin']) {
+      const [response] = responses((await exchange(port, post(port, [`Sec-Fetch-Site: ${value}`, 'Authorization: Bearer good', 'Connection: close']))).raw)
+      expect(response.status).toBe(200)
+    }
+    expect(passed).toHaveLength(2)
+  })
+})
+
+describe('the route table on the wire', () => {
+  it('answers 405 naming POST to GET and DELETE on /mcp, before the token', async () => {
+    const { port, refused, passed } = await made()
+    for (const method of ['GET', 'DELETE']) {
+      const [response] = responses((await exchange(port, request([`${method} /mcp HTTP/1.1`, `Host: 127.0.0.1:${port}`]))).raw)
+      expect(response.status).toBe(405)
+      expect(header(response, 'allow')).toBe('POST')
+      expectOnlyOwnHeaders(response, ['allow', 'connection'])
+    }
+    expect(refused).toEqual(['method', 'method'])
+    expect(passed).toEqual([])
+  })
+
+  it.each([
+    ['PUT /mcp HTTP/1.1', 404], ['HEAD /mcp HTTP/1.1', 404], ['OPTIONS /mcp HTTP/1.1', 404], ['POST / HTTP/1.1', 404],
+    ['POST /mcp?x=1 HTTP/1.1', 404], ['POST /mcp/ HTTP/1.1', 404], ['POST /MCP HTTP/1.1', 404], ['GET /favicon.ico HTTP/1.1', 404],
+    ['POST /.well-known/oauth-protected-resource/mcp HTTP/1.1', 404], ['POST /mcp HTTP/1.0', 505], ['POST /mcp HTTP/2.0', 505],
+  ])('answers %s with %i and records method', async (line, status) => {
+    const { port, refused, passed } = await made({ token: anyToken })
+    const [response] = responses((await exchange(port, request([line, `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good', 'Content-Length: 0']))).raw)
+    expect(response.status).toBe(status)
+    expect(refused).toEqual(['method'])
+    expect(passed).toEqual([])
+  })
+
+  it('answers 400 to a WebSocket or h2c upgrade and never switches protocols', async () => {
+    const { port, refused } = await made({ token: anyToken })
+    const websocket = ['GET /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Connection: Upgrade', 'Upgrade: websocket', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==']
+    const h2c = ['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Connection: Upgrade, HTTP2-Settings', 'Upgrade: h2c', 'HTTP2-Settings: AAMAAABkAAQAAP__', 'Authorization: Bearer good', 'Content-Length: 0']
+    for (const lines of [websocket, h2c]) {
+      const [response] = responses((await exchange(port, request(lines))).raw)
+      expect(response.status).toBe(400)
+    }
+    expect(refused).toEqual(['method', 'method'])
+  })
+})
+
+describe('the token check', () => {
+  it('answers 401 with a bare Bearer challenge when no token passes and records token', async () => {
+    const { port, refused, passed } = await made()
+    const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)
+    expect(response.status).toBe(401)
+    expect(header(response, 'www-authenticate')).toBe('Bearer')
+    expectOnlyOwnHeaders(response, ['www-authenticate', 'connection'])
+    expect(refused).toEqual(['token'])
+    expect(passed).toEqual([])
+  })
+
+  it('hands the seam the one Authorization header and refuses two', async () => {
+    const seen: (string | null)[] = []
+    const { port, passed } = await made({ token: text => (seen.push(text), anyToken(text)) })
+    await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))
+    await exchange(port, post(port, ['Authorization: Bearer good', 'Authorization: Bearer good']))
+    await exchange(port, post(port))
+    expect(seen).toEqual(['Bearer good', null, null])
+    expect(passed).toHaveLength(1)
+  })
+
+  it('passes a request that passed every check with the client, the body as bytes and the raw headers', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good', 'Mcp-Protocol-Version: 2025-11-25', 'Connection: close'], 'not json at all'))).raw)
+    expect(response.status).toBe(200)
+    expect(response.body).toBe('{"ok":true}')
+    expect(header(response, 'content-type')).toBe('application/json')
+    expect(passed).toHaveLength(1)
+    expect(passed[0].client).toBe('https://client.example/metadata')
+    expect(passed[0].body.toString('utf8')).toBe('not json at all')
+    expect(passed[0].headers).toContain('Mcp-Protocol-Version')
+  })
+})
+
+describe('what a response carries', () => {
+  it('carries only the door\'s own headers whatever the request sent or the answer held, and never a CORS header', async () => {
+    const { port } = await made({
+      token: anyToken,
+      serve: async () => ({ status: 200, body: '{}', headers: { 'Set-Cookie': 'a=b', 'Access-Control-Allow-Origin': '*' } }) as Answer,
+    })
+    const sent = [
+      'Authorization: Bearer good', 'X-Echo: reflected', 'Access-Control-Request-Method: POST', 'Access-Control-Request-Headers: x-echo',
+      'Cookie: a=b', 'Mcp-Session-Id: s1', 'Connection: close',
+    ]
+    const [response] = responses((await exchange(port, post(port, sent))).raw)
+    expect(response.status).toBe(200)
+    expectOnlyOwnHeaders(response, ['content-type', 'connection'])
+    expect(response.headers.some(([name]) => name.toLowerCase().startsWith('access-control-'))).toBe(false)
+    expect(JSON.stringify(response.headers)).not.toContain('reflected')
+  })
+
+  it('answers with no body when the answer has none', async () => {
+    const { port } = await made({ token: anyToken, serve: async () => ({ status: 202, body: null }) })
+    const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))).raw)
+    expect(response.status).toBe(202)
+    expect(response.body).toBe('')
+    expectOnlyOwnHeaders(response, ['connection'])
+  })
+
+  it('answers 502 when serving throws or names a status it can\'t write', async () => {
+    for (const serve of [async () => { throw new Error('no') }, async () => ({ status: 99, body: null })]) {
+      const { port } = await made({ token: anyToken, serve })
+      const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))).raw)
+      expect(response.status).toBe(502)
+      expect(response.body).toBe('')
+    }
+  })
+})
+
+describe('sizes', () => {
+  it('answers 431 to more than 8 KiB of headers with the door\'s headers and records size', async () => {
+    const { port, refused, passed } = await made({ token: anyToken })
+    const under = await exchange(port, post(port, ['Authorization: Bearer good', `X-Pad: ${'a'.repeat(7600)}`, 'Connection: close']))
+    expect(responses(under.raw)[0].status).toBe(200)
+    const over = await exchange(port, post(port, ['Authorization: Bearer good', `X-Pad: ${'a'.repeat(8300)}`]))
+    const [response] = responses(over.raw)
+    expect(response.status).toBe(431)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(over.closed).toBe(true)
+    expect(refused).toEqual(['size'])
+    expect(passed).toHaveLength(1)
+  })
+
+  it('answers 413 to a declared body over 512 KiB before reading it and records size', async () => {
+    const { port, refused, passed } = await made({ token: anyToken })
+    const text = request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good', `Content-Length: ${doorLimits.mcpBodyBytes + 1}`])
+    const { raw, closed } = await exchange(port, text)
+    expect(responses(raw)[0].status).toBe(413)
+    expect(closed).toBe(true)
+    expect(refused).toEqual(['size'])
+    expect(passed).toEqual([])
+  })
+
+  it('takes a body of exactly 512 KiB', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    const body = 'x'.repeat(doorLimits.mcpBodyBytes)
+    const { raw } = await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close'], body), 5000)
+    expect(responses(raw)[0].status).toBe(200)
+    expect(passed[0].body.length).toBe(doorLimits.mcpBodyBytes)
+  })
+
+  it('answers 413 to a chunked body that grows past 512 KiB, reaches nothing and records size', async () => {
+    const { port, refused, passed } = await made({ token: anyToken })
+    const chunk = 'y'.repeat(64 * 1024)
+    const chunks = Array.from({ length: 9 }, () => `${(64 * 1024).toString(16)}\r\n${chunk}\r\n`).join('')
+    const text = request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good', 'Transfer-Encoding: chunked'], `${chunks}0\r\n\r\n`)
+    const { raw, closed } = await exchange(port, text, 5000)
+    expect(responses(raw)[0].status).toBe(413)
+    expect(closed).toBe(true)
+    expect(refused).toEqual(['size'])
+    expect(passed).toEqual([])
+  })
+
+  it('asks for a body only once the request passed every check, answering Expect: 100-continue', async () => {
+    const { port } = await made({ token: anyToken })
+    const lines = ['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Content-Length: 2', 'Expect: 100-continue']
+    const refusedRaw = (await exchange(port, request([...lines, 'Origin: null']), 500)).raw
+    expect(refusedRaw.startsWith('HTTP/1.1 403')).toBe(true)
+    expect(refusedRaw).not.toContain('100 Continue')
+    const tokenless = (await exchange(port, request(lines), 500)).raw
+    expect(tokenless.startsWith('HTTP/1.1 401')).toBe(true)
+    const passing = (await exchange(port, request([...lines, 'Authorization: Bearer good']), 500)).raw
+    expect(passing.startsWith('HTTP/1.1 100 Continue')).toBe(true)
+  })
+})
+
+describe('the parser', () => {
+  it.each([
+    ['Content-Length with Transfer-Encoding', ['Content-Length: 5', 'Transfer-Encoding: chunked'], '0\r\n\r\n'],
+    ['two Content-Length values', ['Content-Length: 2', 'Content-Length: 3'], '{}x'],
+    ['Transfer-Encoding not ending in chunked', ['Transfer-Encoding: chunked, identity'], '0\r\n\r\n'],
+    ['a folded header', ['X-A: one', ' two', 'Content-Length: 0'], ''],
+    ['a space before the colon', ['Host : evil.example', 'Content-Length: 0'], ''],
+    ['a NUL in a value', ['X-A: a\u0000b', 'Content-Length: 0'], ''],
+  ])('answers 400 to %s with the door\'s headers and reaches nothing', async (_name, extra, body) => {
+    const { port, passed } = await made({ token: anyToken })
+    const text = request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good', ...extra], body)
+    const { raw, closed } = await exchange(port, text)
+    const [response] = responses(raw)
+    expect(response.status).toBe(400)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(closed).toBe(true)
+    expect(passed).toEqual([])
+  })
+
+  it('answers 400 to bare line feeds and to the HTTP/2 preface', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    for (const text of [`POST /mcp HTTP/1.1\nHost: 127.0.0.1:${port}\nContent-Length: 0\n\n`, 'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n']) {
+      expect(responses((await exchange(port, text)).raw)[0].status).toBe(400)
+    }
+    expect(passed).toEqual([])
+  })
+})
+
+describe('times', () => {
+  const quick = { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 }
+
+  it('answers 408 and closes when the headers don\'t arrive in time', async () => {
+    const { port } = await made({ limits: quick })
+    const { raw, closed, closedAfterMs } = await exchange(port, `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`, 3000)
+    const [response] = responses(raw)
+    expect(response.status).toBe(408)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(closed).toBe(true)
+    expect(closedAfterMs).toBeLessThan(1500)
+  })
+
+  it('answers 408 when the body doesn\'t arrive in time', async () => {
+    const { port, passed } = await made({ token: anyToken, limits: quick })
+    const { raw, closed } = await exchange(port, post(port, ['Authorization: Bearer good'], '{}').replace('Content-Length: 2', 'Content-Length: 50'), 3000)
+    expect(responses(raw)[0].status).toBe(408)
+    expect(closed).toBe(true)
+    expect(passed).toEqual([])
+  })
+
+  it('closes an idle kept-alive socket', async () => {
+    const { port } = await made({ token: anyToken, limits: quick })
+    const { raw, closed, closedAfterMs } = await exchange(port, post(port, ['Authorization: Bearer good']), 3000)
+    expect(responses(raw)[0].status).toBe(200)
+    expect(closed).toBe(true)
+    // Node keeps a second past the time it names in Keep-Alive
+    expect(closedAfterMs).toBeLessThan(2500)
+  })
+})
+
+describe('counts', () => {
+  it('answers 100 requests on one socket, the last naming Connection: close, and Node\'s 503 to one more', async () => {
+    // A clock a second on for each request, so the rate never answers first
+    let now = 0
+    const { port, passed } = await made({ token: anyToken, clock: () => (now += 1000) })
+    const one = post(port, ['Authorization: Bearer good'])
+    const { raw } = await exchange(port, one.repeat(101), 2500)
+    const all = responses(raw)
+    expect(all.slice(0, 100).every(response => response.status === 200)).toBe(true)
+    expect(header(all[99], 'connection')).toBe('close')
+    expect(all.slice(100).map(response => response.status)).toEqual([503])
+    expect(passed).toHaveLength(100)
+  }, 10_000)
+
+  it('holds 64 connections and drops more with no answer', async () => {
+    const { port } = await made()
+    const held: net.Socket[] = []
+    for (let i = 0; i < 64; i++) {
+      const socket = net.connect({ host: '127.0.0.1', port })
+      sockets.push(socket)
+      socket.on('error', () => {})
+      await new Promise(resolve => socket.once('connect', resolve))
+      held.push(socket)
+    }
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const extra = await exchange(port, post(port), 1000)
+    expect(extra.raw).toBe('')
+    expect(extra.closed).toBe(true)
+    for (const socket of held) socket.destroy()
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(responses((await exchange(port, post(port))).raw)[0].status).toBe(401)
+  })
+
+  it('answers 429 past 50 requests a second and records rate, counting only requests that passed the checks before it', async () => {
+    let now = 0
+    const { port, refused, passed } = await made({ token: anyToken, clock: () => now })
+    // A page that rebinds a name can't spend the agents' rate
+    const foreign = post(port).replace(`Host: 127.0.0.1:${port}`, 'Host: evil.example')
+    for (let i = 0; i < 60; i++) await exchange(port, foreign)
+    const good = post(port, ['Authorization: Bearer good'])
+    const first = responses((await exchange(port, good.repeat(51), 4000)).raw)
+    expect(first.map(response => response.status)).toEqual([...Array(50).fill(200), 429])
+    expect(refused.filter(reason => reason === 'rate')).toEqual(['rate'])
+    expect(passed).toHaveLength(50)
+    now = 1000
+    expect(responses((await exchange(port, good)).raw)[0].status).toBe(200)
+  })
+})
+
+describe('a client that goes', () => {
+  it('aborts the call it was waiting on', async () => {
+    let signal: AbortSignal | null = null
+    const { port } = await made({
+      token: anyToken,
+      serve: call => {
+        signal = call.signal
+        return new Promise(() => {})
+      },
+    })
+    const socket = net.connect({ host: '127.0.0.1', port })
+    sockets.push(socket)
+    await new Promise(resolve => socket.once('connect', resolve))
+    socket.write(post(port, ['Authorization: Bearer good']))
+    await vi.waitFor(() => expect(signal).not.toBe(null))
+    expect(signal!.aborted).toBe(false)
+    socket.destroy()
+    await vi.waitFor(() => expect(signal!.aborted).toBe(true))
+  })
+})
+
+describe('what the door writes', () => {
+  it('writes no line anywhere and records only fixed reasons, never a Host, an Origin, a target, a token or a body', async () => {
+    const lines: string[] = []
+    for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(' ')))
+    }
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => (lines.push(String(chunk)), true))
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(chunk => (lines.push(String(chunk)), true))
+    const { port, refused } = await made({ token: anyToken })
+    const secrets = ['host-secret.example', 'origin-secret.example', 'query-secret', 'Bearer token-secret', 'body-secret']
+    await exchange(port, post(port, [], '{"x":"body-secret"}').replace(`127.0.0.1:${port}`, 'host-secret.example'))
+    await exchange(port, post(port, ['Origin: https://origin-secret.example'], '{"x":"body-secret"}'))
+    await exchange(port, post(port, ['Authorization: Bearer good'], '{}').replace('POST /mcp', 'POST /mcp?query-secret'))
+    await exchange(port, post(port, ['Authorization: Bearer token-secret'], '{"x":"body-secret"}'))
+    await exchange(port, post(port, [`X-Pad: ${'host-secret.example'.repeat(500)}`]))
+    out.mockRestore()
+    err.mockRestore()
+    expect(lines).toEqual([])
+    expect(refused).toEqual(['host', 'origin', 'method', 'token', 'size'])
+    for (const reason of refused) for (const secret of secrets) expect(reason).not.toContain(secret)
+  })
+})

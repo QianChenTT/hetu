@@ -1,0 +1,194 @@
+import http from 'node:http'
+import type { AddressInfo, Socket } from 'node:net'
+import {
+  authorizationOf, checkDoor, doorLimits, HOST, type Refusal, type RefusalReason, type Seen, type TokenSeam,
+} from './checks.ts'
+
+// The door: Node's own HTTP/1.1 server on 127.0.0.1 and one port, every request through the checks of checks.ts in
+// their order, then the rate, the size, the token and only then the body. Nothing a request sent reaches a response
+// header and nothing is written to any log or console. A refusal is told by its fixed reason alone
+
+// What serving a request that passed every check answers. Only these two fields are read
+export type Answer = { status: number, body: string | null }
+
+// A request that passed every check: the client the token named, the body as bytes and the raw header list. signal
+// aborts when the client goes before the answer
+export type Passed = { client: string, body: Buffer, headers: readonly string[], signal: AbortSignal }
+
+// The times a test may shorten, with how often Node checks them
+export type DoorTimes = { headersMs: number, requestMs: number, keepAliveMs: number, checkMs: number }
+
+export type DoorOptions = {
+  port: number
+  token: TokenSeam
+  serve: (passed: Passed) => Promise<Answer>
+  refused: (reason: RefusalReason) => void
+  limits?: Partial<DoorTimes>
+  clock?: () => number
+}
+
+// What Node's parser is built with: the strict parser, the header limit and a missing Host left to the door's own check
+export type Parser = { maxHeaderSize: number, insecureHTTPParser: false, requireHostHeader: false }
+
+export type Door = { address: AddressInfo, server: http.Server, parser: Parser, close(): Promise<void> }
+
+// The headers every response carries. Nothing else is set but the length, a JSON body's type and the few a status names
+const FIXED: Readonly<Record<string, string>> = Object.freeze({
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'Content-Security-Policy': 'default-src \'none\'; frame-ancestors \'none\'',
+})
+
+// The headers a refusal adds to the fixed ones
+const added: Readonly<Partial<Record<number, Readonly<Record<string, string>>>>> = Object.freeze({
+  401: Object.freeze({ 'WWW-Authenticate': 'Bearer' }),
+  405: Object.freeze({ Allow: 'POST' }),
+})
+
+// A status line and the fixed headers for an answer written straight to the socket, when Node's parser refused the
+// request before it was one
+function rawAnswer(status: number): string {
+  const lines = [`HTTP/1.1 ${status} ${http.STATUS_CODES[status]}`]
+  for (const [name, value] of Object.entries(FIXED)) lines.push(`${name}: ${value}`)
+  lines.push(`Date: ${new Date().toUTCString()}`, 'Content-Length: 0', 'Connection: close')
+  return `${lines.join('\r\n')}\r\n\r\n`
+}
+
+// Requests in the last second, oldest first. A request counts only once it passed the checks before the rate, so a
+// page on another name can't spend what the agents have
+function rate(perSecond: number, clock: () => number): () => boolean {
+  const times: number[] = []
+  return () => {
+    const now = clock()
+    while (times.length > 0 && now - times[0] >= 1000) times.shift()
+    if (times.length >= perSecond) return false
+    times.push(now)
+    return true
+  }
+}
+
+// Opens the door on 127.0.0.1 and the port given, or rejects. A port that is taken is never traded for another, since
+// every URL a harness keeps names this one
+export function openDoor(options: DoorOptions): Promise<Door> {
+  const times: DoorTimes = { headersMs: doorLimits.headersMs, requestMs: doorLimits.requestMs, keepAliveMs: doorLimits.keepAliveMs, checkMs: 1000, ...options.limits }
+  const take = rate(doorLimits.perSecond, options.clock ?? (() => performance.now()))
+  const parser: Parser = { maxHeaderSize: doorLimits.headerBytes, insecureHTTPParser: false, requireHostHeader: false }
+  // The port the Host must name, the one bound when a test asked for any
+  let bound = options.port
+  // The response in progress on each socket, so a parser error after its headers went out ends the socket unanswered
+  const current = new WeakMap<Socket, http.ServerResponse>()
+
+  const answer = (res: http.ServerResponse, status: number, body: string | null, close: boolean, extra: Readonly<Record<string, string>> = {}) => {
+    const text = body ?? ''
+    const headers: Record<string, string> = { ...FIXED, ...extra, 'Content-Length': String(Buffer.byteLength(text)) }
+    if (body !== null) headers['Content-Type'] = 'application/json'
+    if (close) headers.Connection = 'close'
+    res.writeHead(status, headers)
+    res.end(text)
+  }
+
+  // A refusal is recorded by its reason, answered with no body and ends the connection, so nothing it sent after is read
+  const refuse = (res: http.ServerResponse, refusal: Refusal) => {
+    options.refused(refusal.reason)
+    answer(res, refusal.status, null, true, added[refusal.status] ?? {})
+  }
+
+  const handle = async (req: http.IncomingMessage, res: http.ServerResponse, expectsContinue: boolean) => {
+    current.set(req.socket, res)
+    const seen: Seen = { method: req.method ?? '', target: req.url ?? '', version: req.httpVersion, headers: req.rawHeaders }
+    const checked = checkDoor(seen, bound)
+    if ('status' in checked) return refuse(res, checked)
+    if (!take()) return refuse(res, { status: 429, reason: 'rate' })
+    const declared = req.headers['content-length']
+    if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(res, { status: 413, reason: 'size' })
+    const client = options.token(authorizationOf(seen))
+    if (client === null) return refuse(res, { status: 401, reason: 'token' })
+    if (expectsContinue) res.writeContinue()
+    const chunks: Buffer[] = []
+    let size = 0
+    let over = false
+    await new Promise<void>(resolve => {
+      req.on('data', (chunk: Buffer) => {
+        if (over) return
+        size += chunk.length
+        if (size > doorLimits.mcpBodyBytes) {
+          over = true
+          chunks.length = 0
+          resolve()
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => resolve())
+      req.on('error', () => resolve())
+      req.on('close', () => resolve())
+    })
+    if (over) {
+      refuse(res, { status: 413, reason: 'size' })
+      req.socket.destroySoon()
+      return
+    }
+    if (!req.complete) return
+    const gone = new AbortController()
+    res.on('close', () => {
+      if (!res.writableFinished) gone.abort()
+    })
+    let given: Answer
+    try {
+      given = await options.serve({ client: client.client, body: Buffer.concat(chunks), headers: req.rawHeaders, signal: gone.signal })
+    } catch {
+      return answer(res, 502, null, true)
+    }
+    if (res.destroyed) return
+    try {
+      answer(res, given.status, given.body, false)
+    } catch {
+      if (!res.headersSent) answer(res, 502, null, true)
+    }
+  }
+
+  const server = http.createServer({
+    ...parser,
+    headersTimeout: times.headersMs,
+    requestTimeout: times.requestMs,
+    keepAliveTimeout: times.keepAliveMs,
+    connectionsCheckingInterval: times.checkMs,
+    joinDuplicateHeaders: false,
+  }, (req, res) => void handle(req, res, false))
+  server.on('checkContinue', (req, res) => void handle(req, res, true))
+  server.keepAliveTimeout = times.keepAliveMs
+  server.maxRequestsPerSocket = doorLimits.requestsPerSocket
+  server.maxConnections = doorLimits.connections
+
+  // Node's parser refused the request or its time ran out. The answer carries the fixed headers and closes. Headers past
+  // the limit count as a size refusal. A broken request or a slow one has no reason of its own and goes unrecorded
+  server.on('clientError', (err: NodeJS.ErrnoException, socket: Socket) => {
+    if (err.code === 'HPE_HEADER_OVERFLOW') options.refused('size')
+    const res = current.get(socket)
+    if (err.code === 'ECONNRESET' || !socket.writable || (res !== undefined && res.headersSent && !res.writableFinished)) {
+      socket.destroy()
+      return
+    }
+    const status = err.code === 'HPE_HEADER_OVERFLOW' ? 431 : err.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? 408 : 400
+    socket.end(rawAnswer(status))
+  })
+
+  return new Promise((resolve, reject) => {
+    const failed = (err: Error) => reject(err)
+    server.once('error', failed)
+    server.listen({ host: HOST, port: options.port, exclusive: true }, () => {
+      server.off('error', failed)
+      const address = server.address() as AddressInfo
+      bound = address.port
+      resolve({
+        address,
+        server,
+        parser,
+        close: () => new Promise<void>(done => {
+          server.close(() => done())
+          server.closeAllConnections()
+        }),
+      })
+    })
+  })
+}

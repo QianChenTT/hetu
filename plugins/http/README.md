@@ -1,0 +1,13 @@
+The door agents come in through: an install plugin whose host half runs in a utility process and listens on `127.0.0.1:4747` with Node's own HTTP/1.1 server. Every request meets the checks in a fixed order before anything else reads it
+
+- **Host.** Exactly one Host header reading `127.0.0.1:4747`, compared as sent, and a target that is a path. No Host, another name or port, `localhost`, a trailing dot, userinfo, another spelling of the address, two Host headers and an absolute target all answer 403. This is the DNS rebinding check
+- **Origin.** Any Origin header answers 403, `null` and the door's own origin included. `Sec-Fetch-Site`, when sent, must be one header reading `none` or `same-origin`
+- **Route.** `POST /mcp` over HTTP/1.1 with the exact path and no query. `GET` and `DELETE` on `/mcp` answer 405 naming `POST`, every other method or target 404, another version 505 and a request asking to upgrade 400
+- **Rate.** 50 requests a second, counted only for requests that passed the checks above, then 429
+- **Size.** 8 KiB of headers (431) and 512 KiB of body (413), the declared length read before the body and the body counted as it arrives
+- **Token.** A seam from the `Authorization` header's text to a client. Two `Authorization` headers count as none. The build that ships issues no token, so it answers 401 with a bare `WWW-Authenticate: Bearer`
+- **Node's limits.** The strict parser, 5 s for headers, 35 s for a request, 5 s keep-alive, 100 requests a socket and 64 connections. A missing Host is left to the door's own check. `CONNECT` is closed unanswered and an upgrade is never taken
+
+Only a request past every check is read to its end and handed on with the client the token named. Every response carries `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and a CSP of `default-src 'none'` and `frame-ancestors 'none'`, the 400, 408 and 431 the door writes for Node's parser included. Node's own 503 to a request past 100 on one socket carries none of them and no body, and a connection past 64 is dropped unanswered. No `Access-Control-*` header and nothing a request sent ever reaches a response header, and an answer handed back sets only its status and body. A refusal is told by one of six fixed reasons, `host`, `origin`, `method`, `size`, `rate` and `token`. The door writes no line anywhere and never records a Host, an Origin, a target, a token or a body. The bind takes 127.0.0.1 and the port named or fails, with no other port tried
+
+`src/checks.ts` holds the checks as plain functions over the raw request and the limits as named constants. `src/server.ts` is the server
