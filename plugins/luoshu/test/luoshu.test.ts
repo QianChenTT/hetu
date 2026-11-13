@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -123,6 +123,18 @@ describe('writing', () => {
     const made = opened()
     await ask(made, 'luoshu.write', { path: 'journal/b.md', text: 'again', baseVersion: sha('note b') })
     expect((await readdir(path.join(folder, 'journal'))).sort()).toEqual(['b.md'])
+  })
+
+  // A hard link with a plain name to a dot file still reads as the dot file. A write goes to a temp file and a rename,
+  // which replaces the plain name only, so the dot file keeps its bytes
+  it('replaces only the plain name of a hard link to a dot file and leaves the dot file as it was', async () => {
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await link(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), path.join(folder, 'journal', 'alias.md'))
+    const made = opened()
+    expect(await ask(made, 'luoshu.write', { path: 'journal/alias.md', text: 'planted', baseVersion: sha('plugin code') })).toEqual({ version: sha('planted') })
+    expect(await readFile(path.join(folder, 'journal', 'alias.md'), 'utf8')).toBe('planted')
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
   })
 })
 
