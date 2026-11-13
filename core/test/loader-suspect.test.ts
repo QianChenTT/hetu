@@ -3,7 +3,8 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CoreStatus } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import { StateStore } from '../backend/boot/state.ts'
+import { FORMAT, StateStore } from '../backend/boot/state.ts'
+import { withHash } from '../lib/hashed-file.ts'
 import { cleanup, entryFor, filesFor, harness, workerManifest } from './loader-fakes.ts'
 
 afterEach(cleanup)
@@ -17,6 +18,18 @@ const stateFile = (dataDir: string, ...parts: string[]) => path.join(dataDir, 's
 describe('the state files that failed their check, for the banner', () => {
   it('names nothing after a start whose checks all passed', async () => {
     const made = await harness({ folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: root => entryFor(root) } })
+    await made.loader.start()
+    expect((await status(made)).suspect).toEqual([])
+  })
+
+  // A later build's file is read no further and is no sign of tampering
+  it('names nothing for a file a later build wrote, hash and all', async () => {
+    const made = await harness({
+      before: async ({ dataDir }) => {
+        await mkdir(stateFile(dataDir), { recursive: true })
+        await writeFile(stateFile(dataDir, 'switches.json'), withHash(Buffer.from(`${JSON.stringify({ format: FORMAT + 1 })}\n`)))
+      },
+    })
     await made.loader.start()
     expect((await status(made)).suspect).toEqual([])
   })
