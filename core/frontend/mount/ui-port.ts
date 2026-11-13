@@ -24,8 +24,9 @@ export type UiHooks = {
   changed(): void
   // A frame view's message from its owner's worker
   post(owner: string, instance: string, data: unknown): RefusalCode | null
-  // Opens a note in the editor with the window's own read, once the plugin's reach was checked
-  open(path: string): Promise<void>
+  // Opens a note in the editor with the window's own read, once the plugin's reach was checked on the path it named.
+  // reads says whether the plugin reads the path the luoshu resolved, and a no opens nothing
+  open(path: string, reads: (resolved: string) => Promise<boolean>): Promise<void>
 }
 
 export type UiReach = { read: boolean, list: boolean, verbs: readonly string[] }
@@ -182,7 +183,9 @@ export class UiPort {
         const reach = await this.options.reach(owner, call.args.path)
         // A real read only, so a note a plugin opens is never one ui.read reaches through a list grant or its own
         if (!reach.read) throw new UiRefusal('not-granted')
-        await this.options.hooks.open(call.args.path)
+        // And on where the note is, so a spelling through a link into a folder the plugin can't read opens nothing. It
+        // answers as an open whose read failed does, so the plugin can't tell whether a note is there
+        await this.options.hooks.open(call.args.path, async resolved => (await this.options.reach(owner, resolved)).read)
         return null
       }
     }

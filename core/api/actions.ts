@@ -328,7 +328,8 @@ export type ActionResults = {
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null
   'events.publish': null
-  'luoshu.read': { text: string, version: string }
+  // path is where the note is, the canonical path the luoshu resolved and the gate judged, whatever the caller spelled
+  'luoshu.read': { text: string, version: string, path: string }
   'luoshu.write': { version: string }
   'luoshu.remove': null
   'luoshu.move': null

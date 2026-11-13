@@ -11,7 +11,7 @@ export function versionOf(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
-// The luoshu in memory. read answers { text, version } or not-found. write refuses stale for a baseVersion that isn't
+// The luoshu in memory. read answers { text, version, path } or not-found. write refuses stale for a baseVersion that isn't
 // the note's or one given for a note that doesn't exist yet. remove refuses stale for a baseVersion that isn't the
 // note's, a missing one included. move never lands on a note that exists. It tells changed of each path it wrote, removed or moved
 export class MemoryLuoshu implements Provider {
@@ -63,7 +63,7 @@ export class MemoryLuoshu implements Provider {
     const current = this.notes.get(path)
     if (call.action === 'luoshu.read') {
       if (current === undefined) throw { code: 'not-found' }
-      return { text: current, version: versionOf(current) }
+      return { text: current, version: versionOf(current), path }
     }
     if (call.action === 'luoshu.remove') {
       if (current === undefined) throw { code: 'not-found' }

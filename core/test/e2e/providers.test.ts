@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -219,6 +219,32 @@ describe('ui.edit and ui.read in the app', () => {
     expect(seen.direct).toBe('not-granted')
     // A plugin holding ui.read alone opens nothing itself
     expect(await drive(reader, async scope => scope.ctx.editor.open('b.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('not-granted')
+  })
+
+  // public/link is a junction to private inside the notes folder. The window names a note by where the luoshu found it
+  it('opens nothing for a plugin naming a note through a junction into a folder it can\'t read, and names a note by where it is', async () => {
+    const plugins: Record<string, Capability[]> = {
+      pub: [{ type: 'luoshu.read', paths: ['public/**'] }, { type: 'ui.view' }],
+      priv: [{ type: 'luoshu.read', paths: ['private/**'] }, { type: 'ui.view' }],
+    }
+    const { app, folder } = await started({ notes: { 'public/a.md': 'public text', 'private/x.md': 'SECRET' }, plugins })
+    await symlink(path.join(folder, 'private'), path.join(folder, 'public', 'link'), 'junction')
+    const pub = await pluginWorker(app, 'pub')
+    const priv = await pluginWorker(app, 'priv')
+    // Each runs in the worker as its own text, so the path is written in each
+    const listed = (worker: Worker) => drive(worker, async scope => (await scope.ctx.editor.instances() as { path: string }[]).map(each => each.path))
+    // Answered as an open whose read failed, and nothing opens
+    expect(await drive(pub, async scope => scope.ctx.editor.open('public/link/x.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('ok')
+    expect(await drive(priv, async scope => scope.ctx.editor.open('public/link/x.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('not-granted')
+    await tick(300)
+    expect(await listed(priv)).toEqual([])
+    expect(await drive(pub, async scope => scope.ctx.editor.open('public/a.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('ok')
+    await until(async () => (await listed(pub)).length === 1)
+    expect(await drive(priv, async scope => scope.ctx.editor.open('private/x.md').then(() => 'ok', (err: { code: string }) => err.code))).toBe('ok')
+    await until(async () => (await listed(priv)).length === 1)
+    await tick(200)
+    expect(await listed(pub)).toEqual(['public/a.md'])
+    expect(await listed(priv)).toEqual(['private/x.md'])
   })
 })
 

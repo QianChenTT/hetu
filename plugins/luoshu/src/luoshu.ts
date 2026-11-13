@@ -135,7 +135,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       const bytes = await handle.readFile()
       // A note that grew after the check is held to the same cap
       if (bytes.length > readCap) throw refused('failed', 'too-large')
-      return { text: bytes.toString('utf8'), version: version(bytes) }
+      return { text: bytes.toString('utf8'), version: version(bytes), path: target.relative }
     } finally {
       await handle.close()
     }

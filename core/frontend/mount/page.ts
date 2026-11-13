@@ -131,7 +131,7 @@ function start(bridge: Bridge): void {
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         // A plugin's open adds the note without taking the human's focus or the current note from them
-        open: path => openNote(path, false),
+        open: (path, reads) => openNote(path, false, undefined, reads),
       },
     },
   })
@@ -463,11 +463,12 @@ function start(bridge: Bridge): void {
   }
 
   // focus false opens the note beside the others for the layout to place, leaving the current one current: a plugin's
-  // open, which isn't the human's. via names the plugin whose node named the note
-  async function openNote(path: string, focus = true, via?: string): Promise<void> {
+  // open, which isn't the human's, whose reads judges the path the luoshu resolved. via names the plugin whose node
+  // named the note
+  async function openNote(path: string, focus = true, via?: string, reads?: (resolved: string) => Promise<boolean>): Promise<void> {
     if (focus) closePalette()
     try {
-      const id = await theNotes.open(path)
+      const id = await theNotes.open(path, reads)
       const opened = views.instance(id)
       if (focus && opened !== undefined) void drawer?.humanOpened(opened, via)
       if (!focus) {

@@ -72,8 +72,14 @@ describe('with no folder picked', () => {
 })
 
 describe('reading', () => {
-  it('answers the text and the hash of its bytes', async () => {
-    expect(await ask(opened(), 'luoshu.read', { path: 'journal/b.md' })).toEqual({ text: 'note b', version: sha('note b') })
+  it('answers the text, the hash of its bytes and the path it read', async () => {
+    expect(await ask(opened(), 'luoshu.read', { path: 'journal/b.md' })).toEqual({ text: 'note b', version: sha('note b'), path: 'journal/b.md' })
+  })
+
+  // The path the gate judged, so the editor window names the note by where it is whatever the caller spelled
+  it('answers the canonical path for another spelling of the note', async () => {
+    const answered = await ask(opened(), 'luoshu.read', { path: 'Journal/B.md' }) as { path: string }
+    expect(answered.path).toBe(onWindows || process.platform === 'darwin' ? 'journal/b.md' : 'Journal/B.md')
   })
 
   it('scopes the call to the canonical path the gate judges', async () => {
@@ -268,7 +274,7 @@ describe('a note too large to answer', () => {
   it('is refused failed and too-large from its size, before it is read', async () => {
     await writeFile(path.join(folder, 'big.md'), 'x'.repeat(2048))
     expect(await ask(opened({ readCap: 1024 }), 'luoshu.read', { path: 'big.md' })).toEqual({ refused: { code: 'failed', reason: 'too-large' } })
-    expect(await ask(opened({ readCap: 1024 }), 'luoshu.read', { path: 'a.md' })).toEqual({ text: 'note a', version: sha('note a') })
+    expect(await ask(opened({ readCap: 1024 }), 'luoshu.read', { path: 'a.md' })).toEqual({ text: 'note a', version: sha('note a'), path: 'a.md' })
   })
 })
 
