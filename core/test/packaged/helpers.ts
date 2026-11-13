@@ -102,6 +102,19 @@ export function electronCopyIn(appOutDir: string, platform: string = process.pla
   return path.join(path.dirname(executableIn(appOutDir, platform)), platform === 'win32' ? 'electron.exe' : 'electron')
 }
 
+// The header's JSON text in an archive's bytes: a pickled size, then a pickle holding the text's length and the text.
+// These are the bytes Electron checks against the integrity the build recorded
+export function asarHeader(bytes: Buffer): { start: number, length: number } {
+  return { start: 16, length: bytes.readUInt32LE(12) }
+}
+
+// The SHA-256 recorded for Resources/app.asar under ElectronAsarIntegrity in an Info.plist in XML
+export function plistAsarHash(text: string): string | undefined {
+  const integrity = /<key>ElectronAsarIntegrity<\/key>\s*<dict>([\s\S]*?)<\/dict>\s*<\/dict>/.exec(text)?.[1]
+  if (integrity === undefined) return undefined
+  return /<key>Resources\/app\.asar<\/key>\s*<dict>[\s\S]*?<key>hash<\/key>\s*<string>([^<]*)<\/string>/.exec(integrity)?.[1]
+}
+
 // The process and every one it started, which a plain kill on Windows leaves running
 function end(pid: number): void {
   if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })

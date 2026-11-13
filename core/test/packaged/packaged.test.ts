@@ -1,11 +1,13 @@
-import { appendFile, link, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { appendFile, link, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { flipFuses, FuseV1Options, FuseVersion, getCurrentFuseWire } from '@electron/fuses'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, cleanup, electronCopyIn, exitText, homeEnv, linkedCopy, repo, resourcesOf, start, temp } from './helpers.ts'
+import { appDir, asarHeader, cleanup, electronCopyIn, exitText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -152,8 +154,10 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   const asar = path.relative(appDir, path.join(resourcesOf(appDir), 'app.asar')).split(path.sep).join('/')
   const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
 
+  type Change = { copy: string, at: number }
+
   // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts
-  async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<string> {
+  async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<Change> {
     const copy = await linkedCopy([asar, executable])
     const file = path.join(copy, asar)
     const bytes = await readFile(file)
@@ -162,14 +166,58 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     bytes[at] = bytes[at] === 0x61 ? 0x62 : 0x61
     await writeFile(file, bytes)
     if (!fuseOn) await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false })
-    return copy
+    return { copy, at }
+  }
+
+  const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
+  const headerOf = (bytes: Buffer) => {
+    const { start: from, length } = asarHeader(bytes)
+    return bytes.subarray(from, from + length)
+  }
+
+  // Info.plist as XML text: plutil turns a binary one into XML where macOS has it
+  async function plistText(file: string): Promise<string> {
+    const plutil = spawnSync('plutil', ['-convert', 'xml1', '-o', '-', file], { encoding: 'utf8' })
+    return plutil.status === 0 ? plutil.stdout : readFile(file, 'utf8')
+  }
+
+  // What tells how a changed archive got past the header check or was stopped: where the byte changed against the
+  // header's bounds, the header's hash before and after against the one Info.plist records, whether the copy's archive
+  // is a file of its own and how each start ended
+  async function report(where: string, refusing: Change, refusedStart: Started, off: Change, offStart: Started): Promise<string> {
+    const original = await readFile(path.join(appDir, asar))
+    const copied = await readFile(path.join(refusing.copy, asar))
+    const { start: from, length } = asarHeader(copied)
+    const [originalStat, copyStat] = await Promise.all([stat(path.join(appDir, asar)), stat(path.join(refusing.copy, asar))])
+    const plist = path.join(resourcesOf(refusing.copy), '..', 'Info.plist')
+    const recorded = darwin ? plistAsarHash(await plistText(plist)) ?? 'none found' : 'not macOS'
+    const integrityMessage = (started: Started) => `holds "Integrity check failed" ${started.stderr.includes('Integrity check failed')}, holds "<header>" ${started.stderr.includes('<header>')}`
+    return [
+      `=== asar integrity report: ${where} changed ===`,
+      `platform ${process.platform} ${process.arch}`,
+      `copy ${refusing.copy}, its real path ${await realpath(refusing.copy)}`,
+      `changed offset ${refusing.at}, header from ${from} for ${length} bytes, offset inside header ${refusing.at >= from && refusing.at < from + length}`,
+      `header sha256 as it was ${sha256(headerOf(original))}`,
+      `header sha256 as changed ${sha256(headerOf(copied))}`,
+      `Info.plist ElectronAsarIntegrity Resources/app.asar ${recorded}`,
+      `original app.asar inode ${originalStat.ino} links ${originalStat.nlink}, copy's app.asar inode ${copyStat.ino} links ${copyStat.nlink}, separate file ${originalStat.ino !== copyStat.ino || originalStat.dev !== copyStat.dev}`,
+      `start with the check on: ${integrityMessage(refusedStart)}, ${exitText(refusedStart)}`,
+      `start with the check off (offset ${off.at}): ${integrityMessage(offStart)}, ${exitText(offStart)}`,
+      '=== end of asar integrity report ===',
+    ].join('\n')
   }
 
   it.each(['content', 'header'] as const)('ends the app when its %s changed, and the same copy starts with the check off', async where => {
-    const refusedStart = await start({ dir: await changed(where, true), ms: 20_000 })
-    expect(refusedStart.ready).toBe(false)
-    expect(refusedStart.code).not.toBeNull()
-    expect((await start({ dir: await changed(where, false) })).ready).toBe(true)
+    const refusing = await changed(where, true)
+    const refusedStart = await start({ dir: refusing.copy, ms: 20_000 })
+    const off = await changed(where, false)
+    const offStart = await start({ dir: off.copy })
+    const text = await report(where, refusing, refusedStart, off, offStart)
+    // Printed on macOS each run so the two cases can be compared, elsewhere when the case fails
+    if (darwin || refusedStart.ready || refusedStart.code === null || !offStart.ready) console.log(text)
+    expect(refusedStart.ready, text).toBe(false)
+    expect(refusedStart.code, text).not.toBeNull()
+    expect(offStart.ready, text).toBe(true)
   })
 })
 
