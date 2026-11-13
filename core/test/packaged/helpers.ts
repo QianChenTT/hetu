@@ -82,7 +82,25 @@ export async function records(dataDir: string): Promise<Record<string, unknown>[
   return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
 }
 
-export type Started = { code: number | null, stderr: string, records: Record<string, unknown>[], dataDir: string, ready: boolean }
+// code and signal are Node's for the exit, so a death by signal has a null code and names the signal. killed says the
+// test ended the process once its wait was over
+export type Started = { code: number | null, signal: string | null, killed: boolean, stderr: string, records: Record<string, unknown>[], dataDir: string, ready: boolean }
+
+// The last characters of stderr, where a fatal error lands
+const TAIL = 2000
+
+// How a start ended, for an assertion's message
+export function exitText(started: Started): string {
+  const tail = started.stderr.length > TAIL ? started.stderr.slice(-TAIL) : started.stderr
+  const how = started.killed ? 'ended by the test' : `code ${started.code}, signal ${started.signal}`
+  return `${how}, ready ${started.ready}, stderr's end:\n${tail.trim() === '' ? '(empty)' : tail}`
+}
+
+// Where a copy of hetu named electron goes: beside the executable, so on macOS inside the bundle, where the executable
+// finds the Electron framework as a real copy of the app would have it
+export function electronCopyIn(appOutDir: string, platform: string = process.platform): string {
+  return path.join(path.dirname(executableIn(appOutDir, platform)), platform === 'win32' ? 'electron.exe' : 'electron')
+}
 
 // The process and every one it started, which a plain kill on Windows leaves running
 function end(pid: number): void {
@@ -106,9 +124,11 @@ export async function start(options: {
   let stderr = ''
   child.stderr.on('data', (piece: Buffer) => { stderr += piece.toString('utf8') })
   let code: number | null = null
+  let signal: string | null = null
   let exited = false
-  child.on('exit', exitCode => {
+  child.on('exit', (exitCode, exitSignal) => {
     code = exitCode
+    signal = exitSignal
     exited = true
   })
   const done = options.until ?? (all => all.some(record => record.event === 'core.ready'))
@@ -125,5 +145,5 @@ export async function start(options: {
   // A moment for the last lines to land
   await new Promise(resolve => setTimeout(resolve, 300))
   seen = await records(dataDir)
-  return { code: killed ? null : code, stderr, records: seen, dataDir, ready: seen.some(record => record.event === 'core.ready') }
+  return { code: killed ? null : code, signal: killed ? null : signal, killed, stderr, records: seen, dataDir, ready: seen.some(record => record.event === 'core.ready') }
 }

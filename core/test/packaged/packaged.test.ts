@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, cleanup, homeEnv, linkedCopy, repo, resourcesOf, start, temp } from './helpers.ts'
+import { appDir, cleanup, electronCopyIn, exitText, homeEnv, linkedCopy, repo, resourcesOf, start, temp } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -53,7 +53,7 @@ describe('a start', () => {
 async function refused(args: string[], extra: Record<string, string> = {}, executable?: string) {
   const { env } = await homeEnv(extra)
   const started = await start({ env, args, ms: 20_000, ...(executable === undefined ? {} : { executable }) })
-  expect(started.code, args.join(' ')).toBe(1)
+  expect(started.code, `${args.join(' ')}: ${exitText(started)}`).toBe(1)
   expect(started.stderr).not.toMatch(/DevTools listening|Debugger listening/)
   expect(started.records).toEqual([])
 }
@@ -78,7 +78,7 @@ describe('switches and arguments', () => {
   // app.isPackaged reads the executable's name. The build's own constant doesn't
   it('refuses a debugging switch to a copy of hetu named electron', async () => {
     const copy = await linkedCopy()
-    const named = path.join(copy, process.platform === 'win32' ? 'electron.exe' : 'electron')
+    const named = electronCopyIn(copy)
     await link(executableIn(copy), named)
     await refused(['--remote-debugging-port=0'], {}, named)
   })
