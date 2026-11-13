@@ -58,4 +58,19 @@ describe('the state files that failed their check, for the banner', () => {
     await made.loader.start()
     expect((await status(made)).suspect).toEqual(['plugins'])
   })
+
+  it('hands each caller its own copy of the kinds', async () => {
+    const made = await harness({
+      folder: { alpha: filesFor(workerManifest('alpha')) },
+      entries: { alpha: root => entryFor(root) },
+      before: async ({ dataDir }) => {
+        await appendFile(stateFile(dataDir, 'plugins', 'alpha.json'), ' ')
+      },
+    })
+    await made.loader.start()
+    const first = (await status(made)).suspect
+    first.length = 0
+    first.push('luoshu')
+    expect((await status(made)).suspect).toEqual(['plugins'])
+  })
 })

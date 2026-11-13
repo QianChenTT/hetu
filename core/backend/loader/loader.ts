@@ -634,7 +634,7 @@ ${capabilityKey(change.capability)}`)
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
       pending: this.pending(),
       stopped: this.stoppedMode,
-      suspect: this.suspect,
+      suspect: [...this.suspect],
     }
   }
 
