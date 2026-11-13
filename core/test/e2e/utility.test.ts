@@ -12,7 +12,7 @@ import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes
 import { cleanup, editorPage, launch, logged, records, repo, temp, until, workersPage } from './helpers.ts'
 
 // The utility place's proof: http's host entry in a utility process, here a hello plugin standing in for http, called
-// by a folder plugin's worker. Not run while test windows can't stay off the screen
+// by a folder plugin's worker
 
 afterEach(cleanup)
 
@@ -78,15 +78,14 @@ async function install(): Promise<string> {
   return dir
 }
 
-// A data folder with the caller approved to call http, and http's heartbeat, rate and call deadline lowered so a hang
-// and a flood show within a test. A flooding half's calls the carrier drops free their place in flight at the deadline,
-// so about 320 messages a second go out against a flood cap of 100 in a second
-async function data(): Promise<string> {
+// A data folder with the caller approved to call http, and http's heartbeat and rate lowered so a hang shows within a
+// test. more holds more of http's limits
+async function data(more: Record<string, number> = {}): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({
     ...defaultSwitches(),
-    limits: { all: {}, plugins: { http: { heartbeatMs: 300, heartbeatMisses: 2, messagesPerSecond: 10, floodMs: 1000, callDeadlineMs: 200 } } },
+    limits: { all: {}, plugins: { http: { heartbeatMs: 300, heartbeatMisses: 2, messagesPerSecond: 10, floodMs: 1000, ...more } } },
   })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': caller })
@@ -98,8 +97,8 @@ async function data(): Promise<string> {
   return dataDir
 }
 
-async function started(): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
-  const dataDir = await data()
+async function started(more: Record<string, number> = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
+  const dataDir = await data(more)
   const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
@@ -152,10 +151,15 @@ describe('a utility half', () => {
     expect((await ask(editor, 'core.status')).ok).toBe(true)
   })
 
+  // A flood cap of 20 in a second, which the burst of the flood call crosses before http answers it or misses a beat.
+  // A half over its rate also loses its pongs and is killed unresponsive after two beats, so a cap the burst never
+  // reaches would read unresponsive. The answer never reaches main and the caller requires http, so it stops with
+  // http and its call is refused
   it('has its way closed for a flood, reads crashed and starts again on core.restart', async () => {
-    const { worker, editor, dataDir } = await started()
+    const { worker, editor, dataDir } = await started({ floodFactor: 2 })
     const { pid } = await call<Facts>(worker, 'hello')
-    expect(await call<string>(worker, 'flood')).toBe('flooding')
+    const answer = await worker.evaluate(`globalThis.ctx.call('http', 'flood', {}).then(value => ({ value }), error => ({ refused: error.code }))`)
+    expect(answer).toHaveProperty('refused')
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'http', reason: 'flood' }))
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
