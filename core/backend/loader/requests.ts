@@ -27,6 +27,8 @@ export type RequestHost = {
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
   declined(plugin: string, change: Change): void
+  // The human cancelled any request, after it went
+  cancelled?(change: Change): Promise<void>
   // A request was raised or went, so windows read core.status again
   changed(): void
   // A clock no change of the wall clock moves, and how long a request must be first in line before its Confirm counts
@@ -196,6 +198,7 @@ export class Requests {
       this.drop(id)
       void this.host.record('security.cancel', { ...fieldsOf(one.change, one.key), window: 'trusted' })
       if (one.raisedBy !== null) this.host.declined(one.raisedBy, one.change)
+      await this.host.cancelled?.(one.change)
     })
   }
 

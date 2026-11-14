@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
-import { MAX_FOLDER_LENGTH } from '../../api/changes.ts'
+import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
 import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
@@ -98,6 +98,9 @@ const plugin = z.strictObject({
   // A change applied while the human had the capabilities plugin switched off: class is the last one classed and
   // nothing since was classed. Left out of every other entry
   unclassed: z.literal(true).optional(),
+  // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human
+  // answers it: the class last shown, null for one never known, what moved it and the plugin whose change it was
+  owed: z.strictObject({ from: z.int().min(0).max(4).nullable(), cause: z.enum(classCauses), by: pluginId.nullable() }).optional(),
 })
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against

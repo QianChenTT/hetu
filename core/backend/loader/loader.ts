@@ -156,6 +156,8 @@ type ClassChange = {
   readonly cause: Cause
   readonly confirm: boolean
   readonly pending?: Pending
+  // What a notice for this change says moved it: the cause of the change and the plugin it changed, null for a pass
+  readonly notice: { readonly cause: ClassRaised['cause'], readonly by: string | null }
 }
 
 // What a class change comes to: the entry stored, null once the plugin goes, whether its class, first-use list,
@@ -353,6 +355,7 @@ export class Loader implements Seam {
       fingerprint: change => (change.kind === 'class.raised' ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
+      cancelled: change => (change.kind === 'class.raised' ? this.answered(change.plugin) : Promise.resolve()),
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
@@ -713,7 +716,7 @@ ${capabilityKey(change.capability)}`)
   // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
   // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
   private decide(change: ClassChange): Decided {
-    const { id, before, after, cause, confirm, pending } = change
+    const { id, before, after, cause, confirm, pending, notice } = change
     let slot = this.classing()
     if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, slot }
     const held = new Set(after.granted.map(capabilityKey))
@@ -738,13 +741,21 @@ ${capabilityKey(change.capability)}`)
     const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
     const asks = asking.filter(item => !listed.has(capabilityKey(item)))
     const moving: ClassMove | null = slot === 'on' && before !== null && n !== before.class ? { id, from: before.class, to: n } : null
+    const raised = !confirm && moving !== null && this.alerts(moving) ? moving : null
+    // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer
+    const was = before?.owed
+    const owed = slot !== 'on' ? was
+      : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
+        : was !== undefined && n !== null && this.alerts({ id, from: was.from, to: n }) ? was : undefined
+    delete next.owed
+    if (owed !== undefined) next.owed = owed
     const changed = before === null || n !== before.class || !sameItems(asking, before.firstUse) || !sameItems(confirmed, before.confirmed)
-      || next.unclassed !== before.unclassed
+      || next.unclassed !== before.unclassed || JSON.stringify(owed) !== JSON.stringify(before.owed)
     return {
       id, entry: next, changed, asks, slot,
       rises: asks.length > 0 || (next.unclassed === true && before?.unclassed !== true) || (n ?? 4) > (before?.class ?? 4),
       move: confirm ? moving : null,
-      raised: !confirm && moving !== null && this.alerts(moving) ? moving : null,
+      raised,
     }
   }
 
@@ -766,28 +777,52 @@ ${capabilityKey(change.capability)}`)
     return true
   }
 
-  // A notice in the trusted window for each move a change made with no Confirm on screen that alerts, naming the cause
-  // and the plugin whose change it was. The class and its asks are stored already, so it waits to be answered and holds
-  // nothing back. One the requests can't hold notes a fault and the class stays stored
-  private announce(cause: ClassRaised['cause'], by: string | null, change: { own: Decided, others: readonly Decided[] }): void {
-    for (const decided of [change.own, ...change.others]) {
-      const move = decided.raised
-      if (move === null || move.to === null) continue
-      const notice: ClassRaised = { kind: 'class.raised', plugin: move.id, from: move.from, to: move.to, cause, by }
-      if (typeof this.requests.raise(notice, null, MAX_PENDING) !== 'string') this.note('fault', { plugin: move.id, step: 'class.raised' })
+  // The plugins a change decided for
+  private touched(change: { own: Decided, others: readonly Decided[] }): string[] {
+    return [change.own, ...change.others].map(decided => decided.id)
+  }
+
+  // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
+  // it holds, naming the cause and the plugin whose change it was. One that finds no place stays owed and is raised again
+  // at the next start, and a notice that says what is no longer owed goes. The class and its asks are stored already, so a notice holds nothing back
+  private raiseOwed(ids: Iterable<string>): void {
+    for (const id of ids) {
+      const entry = this.state.plugins[id]
+      const owed = entry?.owed
+      // A class not known while the slot is down: the notice held stays as it was until the class is known again
+      if (owed !== undefined && entry!.class === null) continue
+      const notice: ClassRaised | null = owed === undefined
+        ? null : { kind: 'class.raised', plugin: id, from: owed.from, to: entry!.class!, cause: owed.cause, by: owed.by }
+      this.requests.withdraw(held => held.kind === 'class.raised' && held.plugin === id
+        && (notice === null || held.from !== notice.from || held.to !== notice.to || held.cause !== notice.cause || held.by !== notice.by))
+      if (notice === null) continue
+      if (typeof this.requests.raise(notice, null, MAX_PENDING) !== 'string') this.note('fault', { plugin: id, step: 'class.raised' })
     }
+  }
+
+  // The human answered a plugin's notice, with Confirm or Cancel: its entry owes it no longer
+  private async answered(id: string): Promise<void> {
+    const entry = this.state.plugins[id]
+    if (entry?.owed !== undefined) {
+      const next: Plugin = { ...entry }
+      delete next.owed
+      await this.store.writePlugin(id, next)
+      this.putEntry(id, next)
+    }
+    this.raiseOwed([id])
   }
 
   // A change to one plugin as class changes: its own, then one for every other plugin-folder plugin whose links it
   // moves and whose entry it changes, each decided under the state the change asks for
-  private changeOf(cause: Cause, id: string, after: Plugin | null, confirm: boolean): { own: Decided, others: Decided[] } {
+  private changeOf(cause: ClassRaised['cause'], id: string, after: Plugin | null, confirm: boolean): { own: Decided, others: Decided[] } {
     const pending: Pending = { id, granted: after?.granted ?? null }
-    const own = this.decide({ id, before: this.state.plugins[id] ?? null, after, cause, confirm, pending })
+    const notice = { cause, by: id }
+    const own = this.decide({ id, before: this.state.plugins[id] ?? null, after, cause, confirm, pending, notice })
     const others: Decided[] = []
     for (const [other, entry] of Object.entries(this.state.plugins)) {
       if (other === id || this.known.get(other)?.from === 'install') continue
       if (this.links(other, entry.granted) === this.links(other, entry.granted, pending)) continue
-      const decided = this.decide({ id: other, before: entry, after: entry, cause: 'moved', confirm, pending })
+      const decided = this.decide({ id: other, before: entry, after: entry, cause: 'moved', confirm, pending, notice })
       if (decided.changed) others.push(decided)
     }
     return { own, others }
@@ -820,7 +855,7 @@ ${capabilityKey(change.capability)}`)
     let changed = false
     for (const [id, entry] of Object.entries(this.state.plugins)) {
       if (this.known.get(id)?.from === 'install') continue
-      const decided = this.decide({ id, before: entry, after: entry, cause, confirm: false })
+      const decided = this.decide({ id, before: entry, after: entry, cause, confirm: false, notice: { cause, by: null } })
       if (!decided.changed || decided.entry === null) continue
       try {
         await this.store.writePlugin(id, decided.entry)
@@ -830,9 +865,10 @@ ${capabilityKey(change.capability)}`)
       }
       this.putEntry(id, decided.entry)
       changed = true
-      this.announce(cause, null, { own: decided, others: [] })
     }
     if (changed) this.bump()
+    // Every notice an entry owes, a new one or one a run before never saw answered
+    this.raiseOwed(Object.keys(this.state.plugins))
   }
 
   // Writes the entries of the other plugins a change moves: those that rise before the change's own write and the rest
@@ -1187,7 +1223,7 @@ ${capabilityKey(change.capability)}`)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
     await this.settle(change.others, false)
-    this.announce(cause, id, change)
+    this.raiseOwed(this.touched(change))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
     this.bump()
     return true
@@ -1941,7 +1977,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.reset(change.plugin, confirm)
       // Answered: the class and its asks were stored when the notice was raised
       case 'class.raised':
-        return
+        return this.answered(change.plugin)
     }
   }
 
@@ -1964,7 +2000,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
     await this.settle(change.others, false)
-    this.announce(add ? 'widen' : 'narrow', id, change)
+    this.raiseOwed(this.touched(change))
     this.bump()
   }
 
@@ -2013,7 +2049,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         await this.store.removePlugin(id)
         delete this.state.plugins[id]
         await this.settle(change.others, false)
-        this.announce('reset', id, change)
+        this.raiseOwed(this.touched(change))
         this.entryChecks.set(id, 'absent')
         k.entry = null
         this.bump()
@@ -2205,7 +2241,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
     await this.settle(change.others, false)
-    this.announce('approve', id, change)
+    this.raiseOwed(this.touched(change))
     this.bump()
     this.replan()
   }
@@ -2223,7 +2259,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
     await this.settle(change.others, false)
-    this.announce('remove', id, change)
+    this.raiseOwed(this.touched(change))
     // What the human let this plugin do goes with it, so a plugin added later under the id asks again
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })
@@ -2314,7 +2350,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
     const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
-    const now = this.decide({ id, before: k.entry, after: k.entry, cause: 'update', confirm: false })
+    const now = this.decide({ id, before: k.entry, after: k.entry, cause: 'update', confirm: false, notice: { cause: 'update', by: id } })
     if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.slot === 'on' && now.entry?.class === 0) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
@@ -2352,7 +2388,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.state.plugins[id] = entry
     this.entryChecks.set(id, 'ok')
     await this.settle(change.others, false)
-    this.announce('update', id, change)
+    this.raiseOwed(this.touched(change))
     if (k.live !== null) {
       k.held = { kind: 'held', state: 'stopped', reason: 'update' }
       this.replan()

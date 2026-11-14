@@ -1518,7 +1518,7 @@ describe('a move up with no Confirm on screen', () => {
     expect(await notices(made)).toEqual([])
   })
 
-  it.each(['confirm', 'cancel'] as const)('changes nothing when the human answers it with %s and the notice goes', async answer => {
+  it.each(['confirm', 'cancel'] as const)('changes nothing but what the entry owes when the human answers it with %s and the notice goes', async answer => {
     const made = await confirmOff({ sync: [[fetchOne], 3] })
     await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
     const before = await made.store.load()
@@ -1526,6 +1526,8 @@ describe('a move up with no Confirm on screen', () => {
     if (answer === 'confirm') await made.loader.confirm(notice!.id, {})
     else await made.loader.cancel(notice!.id)
     expect(await notices(made)).toEqual([])
+    expect(before.state.plugins.sync!.owed).toEqual({ from: 3, cause: 'widen', by: 'sync' })
+    delete before.state.plugins.sync!.owed
     expect((await made.store.load()).state).toEqual(before.state)
   })
 
@@ -1638,5 +1640,100 @@ describe('an update applied with no Confirm', () => {
         .toEqual(confirmOff ? { firstUse: [fetchOne], confirmed: [] } : { firstUse: [], confirmed: [fetchOne] })
       await cleanup()
     }
+  })
+})
+
+// A notice for a move up with no Confirm on screen is owed in the plugin's entry, written with the class, and raised
+// again at every start until the human answers it. Notices hold places of their own, and one that found no place is
+// raised when one frees or at the next start
+describe('a notice owed until the human answers it', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
+  const http = (version: string, capabilities: Capability[]): Listing =>
+    ({ files: filesFor(hostManifest('http', { version, capabilities, provides: { topics: ['done'] } })) })
+  const v1 = () => ({ ...withCapabilities(), http: http('1.0.0', []) })
+  const fetches = () => ({ ...withCapabilities(), http: http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...withCapabilities(), http: http('1.1.0', [read]) })
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
+  const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
+  const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
+  async function closed(made: Made): Promise<void> {
+    await made.loader.shutdown().catch(() => {})
+    made.carrier.close()
+    made.link.carrier?.close()
+  }
+  // p stored at a class right under the first install, the install then updated
+  async function updated(granted: Capability[], n: number, second: () => ReturnType<typeof v1>): Promise<{ base: string, made: Made }> {
+    const base = await tempBase()
+    const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n }) } })
+    await one.loader.start()
+    await closed(one)
+    const made = await harness({ base, install: second() })
+    await made.loader.start()
+    return { base, made }
+  }
+
+  it.each([
+    ['out of 0', [calls('http')], 0, fetches, 'class 0, Contained', 'class 3, Network'],
+    ['into 4', [fetchOne, hears('http.done')], 3, reads, 'class 3, Network', 'class 4, Powerful'],
+  ] as [string, Capability[], number, () => ReturnType<typeof v1>, string, string][])('raises a notice for a move %s again at a restart nobody answered it in', async (_name, granted, n, second, from, to) => {
+    const { base, made } = await updated(granted, n, second)
+    expect(await notices(made)).toEqual([notice('p', from, to)])
+    expect((await stored(made, 'p')).owed).toEqual({ from: n, cause: 'start', by: null })
+    await closed(made)
+    const again = await harness({ base, install: second() })
+    await again.loader.start()
+    expect(await notices(again)).toEqual([notice('p', from, to)])
+  })
+
+  it('raises it at the next start when the process died between the class written and the notice', async () => {
+    const base = await tempBase()
+    const granted = [calls('http')]
+    const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) } })
+    await one.loader.start()
+    await closed(one)
+    const dying = await harness({ base, install: fetches() })
+    ;(dying.loader as unknown as { raiseOwed: () => void }).raiseOwed = () => {
+      throw new Error('the process died here')
+    }
+    await dying.loader.start().catch(() => {})
+    expect((await stored(dying, 'p')).class).toBe(3)
+    await closed(dying)
+    const next = await harness({ base, install: fetches() })
+    await next.loader.start()
+    expect(await notices(next)).toEqual([notice('p', 'class 0, Contained', 'class 3, Network')])
+  })
+
+  it.each(['confirm', 'cancel'] as const)('clears what is owed once the human answers with %s, so no restart raises it again', async answer => {
+    const { base, made } = await updated([calls('http')], 0, fetches)
+    const [held] = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
+    if (answer === 'confirm') await made.loader.confirm(held!.id, {})
+    else await made.loader.cancel(held!.id)
+    expect((await stored(made, 'p')).owed).toBeUndefined()
+    expect(await stored(made, 'p')).toMatchObject({ class: 3 })
+    await closed(made)
+    const again = await harness({ base, install: fetches() })
+    await again.loader.start()
+    expect(await notices(again)).toEqual([])
+  })
+
+  it('keeps one notice per plugin from the class last shown to the one it holds now', async () => {
+    const { base, made } = await updated([calls('http')], 0, fetches)
+    await closed(made)
+    const further = await harness({ base, install: { ...withCapabilities(), http: http('1.2.0', [read, fetchOne]) } })
+    await further.loader.start()
+    expect(await notices(further)).toEqual([notice('p', 'class 0, Contained', 'class 4, Powerful')])
+    expect((await stored(further, 'p')).owed).toEqual({ from: 0, cause: 'start', by: null })
+  })
+
+  it('owes nothing once the plugin is back where nothing alerts', async () => {
+    const { base, made } = await updated([calls('http')], 0, fetches)
+    await closed(made)
+    const back = await harness({ base, install: { ...withCapabilities(), http: http('1.2.0', []) } })
+    await back.loader.start()
+    expect(await stored(back, 'p')).toMatchObject({ class: 0 })
+    expect((await stored(back, 'p')).owed).toBeUndefined()
+    expect(await notices(back)).toEqual([])
   })
 })
