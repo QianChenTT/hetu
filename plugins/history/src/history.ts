@@ -4,7 +4,7 @@ import { mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS } from 'hetu-core/api/exec.ts'
+import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from 'hetu-core/api/exec.ts'
 import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
 import { canonical, folderState, looked, type Canonical } from 'hetu-core/lib/canonical.ts'
@@ -269,10 +269,14 @@ export function createHistory(options: HistoryOptions = {}): History {
     const limit = (call.args as { limit?: number }).limit ?? LOG_PAGE
     const format = ['%H', '%an', '%cn', '%aI', '%B'].join('%x1f')
     const commits: HistoryCommit[] = []
-    // A page at a time until the commits kept fill one, since a page can lose some
-    for (let skip = 0; commits.length < limit; skip += limit) {
+    // A page at a time until the commits kept fill one, since a page can lose some. The first page is the limit, all a
+    // log with no commit of dot paths only needs. Each after it is the largest page, so a run of such commits costs a
+    // page for every 200 and not one for each. The deadline is looked at before each page, so a long run ends there and
+    // frees the calls waiting behind it
+    for (let skip = 0, size = limit; commits.length < limit; skip += size, size = MAX_LOG_PAGE) {
+      if (Date.now() > call.deadline) throw refused('timeout')
       // A message of the longest kind is three bytes a character, with room for the names, the date and the id
-      const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--skip=${skip}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: limit * (MAX_COMMIT_MESSAGE * 3 + 4096) })
+      const out = await git(repo, ['rev-list', `--max-count=${size}`, `--skip=${skip}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: size * (MAX_COMMIT_MESSAGE * 3 + 4096) })
       const page: HistoryCommit[] = []
       for (const record of out.split(RECORD)) {
         // rev-list writes its own "commit <id>" line before each formatted one
@@ -284,7 +288,7 @@ export function createHistory(options: HistoryOptions = {}): History {
       if (page.length === 0) break
       const plain = await plainOf(repo, page.map(listed => listed.commit), target.relative)
       commits.push(...page.filter(listed => plain.has(listed.commit)))
-      if (page.length < limit) break
+      if (page.length < size) break
     }
     return { commits: commits.slice(0, limit) }
   }
