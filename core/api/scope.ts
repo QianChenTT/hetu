@@ -81,6 +81,13 @@ export function isGitName(segment: string): boolean {
   return name.length === 4 && [...'.git'].every((char, i) => sameUnit(name.charCodeAt(i), char.charCodeAt(0), true))
 }
 
+// Whether a segment starts with a dot on some volume, once what HFS+ skips is taken out. Obsidian runs code from
+// .obsidian and GitHub from .github, so no note path reaches a dot folder or a dot file. The matcher and the
+// canonicaliser both ask this one check
+export function isDotName(segment: string): boolean {
+  return withoutIgnorable(segment).charCodeAt(0) === DOT
+}
+
 // One path segment against one scope segment. A * matches any run of characters but never a leading dot. Greedy with
 // a return to the last *, so the cost stays within the product of the two lengths, no regex and no recursion
 function segmentMatches(pattern: string, segment: string, foldCase: boolean): boolean {
@@ -133,11 +140,12 @@ function segmentsMatch(patterns: string[], segments: string[], foldCase: boolean
 }
 
 // Whether a path lies inside a scope. Both must be in their grammar or nothing matches. foldCase is for a volume that
-// ignores case, which the matcher can't see from here. A path with a .git segment matches no scope at all
+// ignores case, which the matcher can't see from here. A path with a .git segment or any other dot segment matches no
+// scope at all, a scope naming one included
 export function scopeMatches(scope: string, path: string, options: { foldCase: boolean }): boolean {
   if (scopeProblem(scope) !== null || pathProblem(path) !== null) return false
   const segments = path.split('/')
-  if (segments.some(isGitName)) return false
+  if (segments.some(isGitName) || segments.some(isDotName)) return false
   return segmentsMatch(scope.split('/'), segments, options.foldCase)
 }
 
@@ -150,7 +158,7 @@ export function compileScopes(scopes: readonly string[], options: { foldCase: bo
   return path => {
     if (compiled.length === 0 || pathProblem(path) !== null) return false
     const segments = path.split('/')
-    if (segments.some(isGitName)) return false
+    if (segments.some(isGitName) || segments.some(isDotName)) return false
     return compiled.some(patterns => segmentsMatch(patterns, segments, foldCase))
   }
 }

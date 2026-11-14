@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/slots.ts'
@@ -7,6 +7,7 @@ import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.
 import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../../plugins/gate/src/gate.ts'
+import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
@@ -587,6 +588,61 @@ describe('the gate plugin on the joined core', () => {
     expect(parts.loader.slot('gate')).toBe('failed')
     expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
+  })
+})
+
+// The real luoshu on a folder Obsidian and GitHub would also open, a plugin granted every dot folder by name
+describe('dot folders through the joined core', () => {
+  const scopes = ['.obsidian/**', '.github/**', 'notes/**', 'cfg/**']
+  const granted = (['luoshu.read', 'luoshu.write', 'luoshu.list'] as const).map(type => ({ type, paths: scopes }))
+
+  async function dotted(gate: 'on' | 'off') {
+    const folder = path.join(await tempBase(), 'notes folder')
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await mkdir(path.join(folder, 'notes'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'notes', 'a.md'), 'a note')
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
+    open.push(() => rm(path.dirname(folder), { recursive: true, force: true }))
+    const luoshu = createLuoshu()
+    open.push(async () => luoshu.close())
+    const parts = await joined({
+      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: granted })) },
+      entries: { alpha: { granted } },
+      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } } },
+      prepare: dataDir => new StateStore(dataDir).writeLuoshu({ folder }),
+      before: booted => { if (gate === 'off') booted.state.switches.off = ['gate'] },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, folder, alpha: parts.runtime.half('alpha') }
+  }
+
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, a link into one too', async gate => {
+    const { alpha, folder } = await dotted(gate)
+    expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
+    for (const where of ['.obsidian/plugins/x/main.js', 'cfg/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
+      expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('not-granted')
+      expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('not-granted')
+    }
+    expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/y/main.js', text: 'planted' }))!)).toBe('not-granted')
+    // A vault in a subfolder has its own .obsidian
+    expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.list', { folder: 'cfg' }))!)).toBe('not-granted')
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await exists(path.join(folder, '.github'))).toBe(false)
+    expect(await exists(path.join(folder, '.obsidian', 'plugins', 'y'))).toBe(false)
+    expect(await exists(path.join(folder, 'notes', '.obsidian'))).toBe(false)
+  })
+
+  it('lists no dot file to a plugin granted the dot folders by name while the gate is on', async () => {
+    const { alpha } = await dotted('on')
+    const reply = await alpha.ask('luoshu.list', {})
+    expect(reply?.ok).toBe(true)
+    expect((reply!.result as { paths: string[] }).paths).toEqual(['notes/a.md'])
   })
 })
 

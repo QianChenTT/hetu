@@ -6,7 +6,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `describe.ts`: the core's own words for each change, which the trusted window draws above Confirm
 - `trusted.ts`: what the trusted page shares with the core, apart from zod: the input delay and how a capability reads
 - `capabilities.ts`: the fixed capability list with the install-only types marked
-- `scope.ts`: the scope grammar, the path matcher and the check for characters that could hide on a screen
+- `scope.ts`: the scope grammar, the path matcher and the check for characters that could hide on a screen. The matcher matches no path with a dot segment
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder
 - `ids.ts`: plugin ids and names, reserved ids, the slot, provider and guard ids and the security controls, whose failure stops hetu
 - `windows.ts`: what each window holds
