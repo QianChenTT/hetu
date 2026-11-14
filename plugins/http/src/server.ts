@@ -21,7 +21,9 @@ export type DoorTimes = { headersMs: number, requestMs: number, keepAliveMs: num
 export type DoorOptions = {
   port: number
   token: TokenSeam
-  serve: (passed: Passed) => Promise<Answer>
+  // An answer is passed on with its status and body. A refusal is the door's: recorded by its reason, answered with
+  // no body and the connection closed
+  serve: (passed: Passed) => Promise<Answer | Refusal>
   refused: (reason: RefusalReason) => void
   limits?: Partial<DoorTimes>
   clock?: () => number
@@ -77,6 +79,8 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   let bound = options.port
   // The response in progress on each socket, so a parser error after its headers went out ends the socket unanswered
   const current = new WeakMap<Socket, http.ServerResponse>()
+  // The sockets Node's parser already refused, each recorded once
+  const told = new WeakSet<Socket>()
 
   const answer = (res: http.ServerResponse, status: number, body: string | null, close: boolean, extra: Readonly<Record<string, string>> = {}) => {
     const text = body ?? ''
@@ -133,13 +137,14 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     res.on('close', () => {
       if (!res.writableFinished) gone.abort()
     })
-    let given: Answer
+    let given: Answer | Refusal
     try {
       given = await options.serve({ client: client.client, body: Buffer.concat(chunks), headers: req.rawHeaders, signal: gone.signal })
     } catch {
       return answer(res, 502, null, true)
     }
     if (res.destroyed) return
+    if ('reason' in given) return refuse(res, given)
     try {
       answer(res, given.status, given.body, false)
     } catch {
@@ -161,9 +166,16 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   server.maxConnections = doorLimits.connections
 
   // Node's parser refused the request or its time ran out. The answer carries the fixed headers and closes. Headers past
-  // the limit count as a size refusal. A broken request or a slow one has no reason of its own and goes unrecorded
+  // the limit count as size, other bytes the parser refused as malformed and a request too slow as timeout, once a
+  // socket, since the parser may fail again on what a refused socket still holds. A socket error is no refusal and goes
+  // unrecorded
   server.on('clientError', (err: NodeJS.ErrnoException, socket: Socket) => {
-    if (err.code === 'HPE_HEADER_OVERFLOW') options.refused('size')
+    if (!told.has(socket)) {
+      told.add(socket)
+      if (err.code === 'HPE_HEADER_OVERFLOW') options.refused('size')
+      else if (err.code === 'ERR_HTTP_REQUEST_TIMEOUT') options.refused('timeout')
+      else if (err.code?.startsWith('HPE_') === true) options.refused('malformed')
+    }
     const res = current.get(socket)
     if (err.code === 'ECONNRESET' || !socket.writable || (res !== undefined && res.headersSent && !res.writableFinished)) {
       socket.destroy()

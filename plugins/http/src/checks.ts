@@ -27,10 +27,16 @@ export const doorLimits = Object.freeze({
   callsInAll: 32,
   // The largest answer passed back from MCP
   answerBytes: 4 * 1024 * 1024,
+  // The mcp- headers handed on: how many, the longest name and the longest value, in bytes
+  mcpHeaders: 32,
+  mcpHeaderNameBytes: 64,
+  mcpHeaderValueBytes: 256,
 })
 
-// What a refusal at the door is recorded under. Never the text of a header, a body or a target
-export const refusalReasons = Object.freeze(['host', 'origin', 'method', 'size', 'rate', 'token'] as const)
+// What a refusal at the door is recorded under, the reasons core.agentRefused takes. malformed is bytes Node's parser
+// or the door's own reading of the body and the mcp- headers refused and timeout a request too slow. Never the text of
+// a header, a body or a target
+export const refusalReasons = Object.freeze(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
 export type RefusalReason = typeof refusalReasons[number]
 export type Refusal = { status: number, reason: RefusalReason, allow?: 'POST' }
 

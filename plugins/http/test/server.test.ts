@@ -1,7 +1,7 @@
 import http from 'node:http'
 import net from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { doorLimits, type RefusalReason, type TokenSeam } from '../src/checks.ts'
+import { doorLimits, type Refusal, type RefusalReason, type TokenSeam } from '../src/checks.ts'
 import { type Answer, type Door, openDoor, type Passed } from '../src/server.ts'
 
 // Every test drives the door with raw sockets, so any Host, header or framing can be sent as written and nothing is
@@ -20,7 +20,7 @@ type Made = { door: Door, port: number, refused: RefusalReason[], passed: Passed
 
 async function made(options: {
   token?: TokenSeam
-  serve?: (passed: Passed) => Promise<Answer>
+  serve?: (passed: Passed) => Promise<Answer | Refusal>
   limits?: Parameters<typeof openDoor>[0]['limits']
   clock?: () => number
 } = {}): Promise<Made> {
@@ -403,8 +403,8 @@ describe('the parser', () => {
     ['a folded header', ['X-A: one', ' two', 'Content-Length: 0'], ''],
     ['a space before the colon', ['Host : evil.example', 'Content-Length: 0'], ''],
     ['a NUL in a value', ['X-A: a\u0000b', 'Content-Length: 0'], ''],
-  ])('answers 400 to %s with the door\'s headers and reaches nothing', async (_name, extra, body) => {
-    const { port, passed } = await made({ token: anyToken })
+  ])('answers 400 to %s with the door\'s headers, reaches nothing and records malformed', async (_name, extra, body) => {
+    const { port, passed, refused } = await made({ token: anyToken })
     const text = request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good', ...extra], body)
     const { raw, closed } = await exchange(port, text)
     const [response] = responses(raw)
@@ -412,36 +412,51 @@ describe('the parser', () => {
     expectOnlyOwnHeaders(response, ['connection'])
     expect(closed).toBe(true)
     expect(passed).toEqual([])
+    expect(refused).toEqual(['malformed'])
   })
 
-  it('answers 400 to bare line feeds and to the HTTP/2 preface', async () => {
-    const { port, passed } = await made({ token: anyToken })
+  it('answers 400 to bare line feeds and to the HTTP/2 preface, each recorded malformed', async () => {
+    const { port, passed, refused } = await made({ token: anyToken })
     for (const text of [`POST /mcp HTTP/1.1\nHost: 127.0.0.1:${port}\nContent-Length: 0\n\n`, 'PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n']) {
       expect(responses((await exchange(port, text)).raw)[0].status).toBe(400)
     }
     expect(passed).toEqual([])
+    expect(refused).toEqual(['malformed', 'malformed'])
+  })
+
+  it('records a refusal the serving part gives by its reason, answers it with no body and closes', async () => {
+    const { port, refused } = await made({ token: anyToken, serve: async () => ({ status: 431, reason: 'size' }) })
+    const { raw, closed } = await exchange(port, post(port, ['Authorization: Bearer good']))
+    const [response] = responses(raw)
+    expect(response.status).toBe(431)
+    expect(response.body).toBe('')
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(closed).toBe(true)
+    expect(refused).toEqual(['size'])
   })
 })
 
 describe('times', () => {
   const quick = { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 }
 
-  it('answers 408 and closes when the headers don\'t arrive in time', async () => {
-    const { port } = await made({ limits: quick })
+  it('answers 408 and closes when the headers don\'t arrive in time, recorded timeout', async () => {
+    const { port, refused } = await made({ limits: quick })
     const { raw, closed, closedAfterMs } = await exchange(port, `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`, 3000)
     const [response] = responses(raw)
     expect(response.status).toBe(408)
     expectOnlyOwnHeaders(response, ['connection'])
     expect(closed).toBe(true)
     expect(closedAfterMs).toBeLessThan(1500)
+    expect(refused).toEqual(['timeout'])
   })
 
-  it('answers 408 when the body doesn\'t arrive in time', async () => {
-    const { port, passed } = await made({ token: anyToken, limits: quick })
+  it('answers 408 when the body doesn\'t arrive in time, recorded timeout', async () => {
+    const { port, passed, refused } = await made({ token: anyToken, limits: quick })
     const { raw, closed } = await exchange(port, post(port, ['Authorization: Bearer good'], '{}').replace('Content-Length: 2', 'Content-Length: 50'), 3000)
     expect(responses(raw)[0].status).toBe(408)
     expect(closed).toBe(true)
     expect(passed).toEqual([])
+    expect(refused).toEqual(['timeout'])
   })
 
   it('closes an idle kept-alive socket', async () => {

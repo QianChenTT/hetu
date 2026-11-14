@@ -3,6 +3,7 @@ import {
   authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, originOk, PORT, refusalReasons, refuseEveryToken, routeOf,
   type Seen,
 } from '../src/checks.ts'
+import { agentRefusals } from 'hetu-core/api/actions.ts'
 
 // A request as Node's parser hands it over: the method, the target as sent, the version and the raw header list,
 // names as sent and each followed by its value
@@ -30,12 +31,16 @@ describe('the fixed values', () => {
       callsPerClient: 8,
       callsInAll: 32,
       answerBytes: 4 * 1024 * 1024,
+      mcpHeaders: 32,
+      mcpHeaderNameBytes: 64,
+      mcpHeaderValueBytes: 256,
     })
     expect(Object.isFrozen(doorLimits)).toBe(true)
   })
 
-  it('records a refusal under six fixed reasons and no others', () => {
-    expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token'])
+  it('records a refusal under the eight fixed reasons core.agentRefused takes and no others', () => {
+    expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
+    expect(refusalReasons).toEqual(agentRefusals)
   })
 })
 
