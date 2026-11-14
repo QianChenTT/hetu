@@ -173,6 +173,10 @@ type Decided = {
   readonly slot: Classing
 }
 
+// Whether a pass over every entry leaves each as stored: only with the slot switched off by the human, or absent from an
+// install that doesn't name it, as in tests and dev. A role that fails or any other state classes an entry strictly
+const standsInPass = (state: SlotState) => state === 'off' || state === 'absent'
+
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
   const keys = new Set(others.map(capabilityKey))
@@ -704,8 +708,8 @@ ${capabilityKey(change.capability)}`)
   // plugin under the state the change asks for and an item asks unless the entry records the human confirmed it. With
   // the slot switched off by the human the change passes: the class stays the last one classed, the entry is marked as
   // not classed and lists every item not confirmed, which the gate is handed only once the slot is on again. Down any
-  // other way, or a role that fails, the class is not known and every item asks, except in a pass over every entry,
-  // where each stands as stored. With the slot on a move goes on the Confirm on screen. With none on screen it gets a
+  // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
+  // stored only with the slot switched off or absent from the install. With the slot on a move goes on the Confirm on screen. With none on screen it gets a
   // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
   // item stays confirmed while the plugin holds it
   private decide(change: ClassChange): Decided {
@@ -717,7 +721,7 @@ ${capabilityKey(change.capability)}`)
     const known = new Set(confirmed.map(capabilityKey))
     const classed = slot === 'on' ? this.classed(id, after.granted, pending) : null
     if (classed === null && slot === 'on') slot = 'down'
-    if (slot !== 'on' && (cause === 'start' || cause === 'slot-on')) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
+    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.slot('capabilities'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
     const n = classed !== null ? classed.class : slot === 'off' ? before?.class ?? null : null
     const asking = classed !== null
       ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))

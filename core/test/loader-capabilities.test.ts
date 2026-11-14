@@ -1089,13 +1089,13 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     ['a first-party copy at start that moves another plugin within 1 to 3', 'down', { class: null, firstUse: [commit, calls('git')] }],
     ['the pass at start, a move up', 'on', { class: 4, firstUse: [fetchOne, listens], alerted: alerted('listener', 'class 3, Network', 'class 4, Powerful') }],
     ['the pass at start, a move up', 'off', { class: 3, firstUse: [] }],
-    ['the pass at start, a move up', 'down', { class: 3, firstUse: [] }],
+    ['the pass at start, a move up', 'down', { class: null, firstUse: [fetchOne, listens] }],
     ['the pass at start, a move from 0 to 4', 'on', { class: 4, firstUse: [fetchOne, listens], alerted: alerted('listener', 'class 0, Contained', 'class 4, Powerful') }],
     ['the pass at start, a move from 0 to 4', 'off', { class: 0, firstUse: [] }],
-    ['the pass at start, a move from 0 to 4', 'down', { class: 0, firstUse: [] }],
+    ['the pass at start, a move from 0 to 4', 'down', { class: null, firstUse: [fetchOne, listens] }],
     ['the pass at start, a move down', 'on', { class: 3, firstUse: [] }],
     ['the pass at start, a move down', 'off', { class: 4, firstUse: [fetchOne, listens] }],
-    ['the pass at start, a move down', 'down', { class: 4, firstUse: [fetchOne, listens] }],
+    ['the pass at start, a move down', 'down', { class: null, firstUse: [fetchOne, listens] }],
   ]
 
   // The scenario run with the slot in its state: from start for one with no change and otherwise just before the change
@@ -1534,5 +1534,55 @@ describe('a move up with no Confirm on screen', () => {
     await expect(made.loader.request({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause: 'start', by: null } as unknown as Change, editor))
       .rejects.toMatchObject({ code: 'invalid' })
     expect(await notices(made)).toEqual([])
+  })
+})
+
+// A pass over every entry leaves an entry as stored only with the capabilities plugin switched off by the human. A role
+// that fails for an entry while the slot reads on stores that entry strict: the class not known and every item asking
+describe('a pass whose role fails for one entry', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
+  // The real policy, throwing for any plugin that holds a subscription
+  function failingFor(): Capabilities {
+    const real = createCapabilities()
+    const hearing = (granted: readonly Capability[]) => granted.some(item => item.type === 'events.subscribe')
+    return {
+      ...real,
+      classify: (granted, reachable, flow) => {
+        if (hearing(granted)) throw new Error('broken for this one')
+        return real.classify(granted, reachable, flow)
+      },
+    }
+  }
+  const setup = (switches: Partial<Switches> = {}) => harness({
+    install: withCapabilities(), switches, behave: { capabilities: { exports: { capabilities: failingFor() } } },
+    folder: { listener: worker('listener'), reader: worker('reader') },
+    entries: {
+      listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
+      reader: root => entryFor(root, { granted: [read], class: 1 }),
+    },
+  })
+
+  it('stores that entry strict at start and classes the others', async () => {
+    const made = await setup()
+    await made.loader.start()
+    expect(made.loader.slot('capabilities')).toBe('on')
+    const listener = await stored(made, 'listener')
+    expect({ class: listener.class, firstUse: listener.firstUse }).toEqual({ class: null, firstUse: [fetchOne, hears] })
+    expect(listener.unclassed).toBeUndefined()
+    expect((await stored(made, 'reader')).class).toBe(4)
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'capabilities', step: 'classify' })
+  })
+
+  it('stores that entry strict in the pass when the slot is switched on again', async () => {
+    const made = await setup({ off: ['capabilities'] })
+    await made.loader.start()
+    expect((await stored(made, 'listener')).class).toBe(3)
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await until(() => made.loader.slot('capabilities') === 'on')
+    await made.loader.settled()
+    await tick(30)
+    expect(await stored(made, 'listener')).toMatchObject({ class: null, firstUse: [fetchOne, hears] })
   })
 })
