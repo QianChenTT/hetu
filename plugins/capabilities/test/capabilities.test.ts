@@ -253,3 +253,15 @@ describe('the classes a change moves', () => {
     expect(caps.moves!([{ id: 'sync', from: 3, to: null }])).toEqual(['Raises sync from class 3, Network to a class not known, counted as 4'])
   })
 })
+
+// A move up nobody confirmed alerts only where the class changes what hetu does: leaving 0, whose updates apply on their
+// own, or entering 4, whose items ask at first use. A move inside 1 to 3 is a label
+describe('the moves that alert with no Confirm on screen', () => {
+  it.each([
+    [0, 1, true], [0, 3, true], [0, 4, true], [3, 4, true], [1, 4, true],
+    [1, 3, false], [2, 3, false], [1, 2, false], [4, 0, false], [3, 1, false], [2, 2, false],
+    [0, 0, false], [4, 4, false], [null, 4, false], [null, 1, false], [2, null, true], [0, null, true],
+  ] as [number | null, number | null, boolean][])('from %s to %s: %s', (from, to, alerts) => {
+    expect(caps.alerts!({ id: 'sync', from, to })).toBe(alerts)
+  })
+})

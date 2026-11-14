@@ -1,5 +1,6 @@
-import type { Change } from './changes.ts'
+import type { Change, ClassRaised } from './changes.ts'
 import { isSecurityControl } from './ids.ts'
+import { classNames } from './slots.ts'
 import { capabilityText } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. Ids are
@@ -77,5 +78,39 @@ export function describeChange(change: Change): Described {
         : { text: `Stop trusting the unsigned build ${change.hash}`, notes: [] }
     case 'limit.set':
       return { text: `Set ${change.constant} to ${change.value} for ${change.plugin ?? 'every plugin'}`, notes: [] }
+    case 'class.raised':
+      return {
+        text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,
+        notes: [`Why: ${why(change)}`, 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
+      }
+  }
+}
+
+const className = (n: number | null) => (n === null ? 'a class not known' : `class ${n}, ${classNames[n]}`)
+
+// What moved the class, the plugin whose change it was in quotes
+function why(change: ClassRaised): string {
+  const by = quoted(change.by ?? change.plugin)
+  switch (change.cause) {
+    case 'approve':
+      return `the approval of ${by} without a Confirm`
+    case 'copy':
+      return `the copy of ${by} hetu ships, made at start`
+    case 'update':
+      return `the update of ${by} without a Confirm`
+    case 'widen':
+      return `a grant given to ${by} without a Confirm`
+    case 'narrow':
+      return `a grant taken from ${by}`
+    case 'restore':
+      return `the restore of ${by} without a Confirm`
+    case 'remove':
+      return `the removal of ${by}`
+    case 'reset':
+      return `the reset of ${by}`
+    case 'start':
+      return 'the classing at start, which found what changed while hetu was not running'
+    case 'slot-on':
+      return 'the capabilities plugin switched on again'
   }
 }

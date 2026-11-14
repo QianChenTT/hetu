@@ -139,5 +139,14 @@ export function createCapabilities(): Capabilities {
       const named = (n: number | null) => (n === null ? 'a class not known, counted as 4' : `class ${n}, ${classNames[n]}`)
       return moves.filter(move => (move.to ?? 4) > (move.from ?? 4)).map(move => `Raises ${move.id} from ${named(move.from)} to ${named(move.to)}`)
     },
+
+    // A move up nobody confirmed alerts where the class changes what hetu does: leaving 0, whose updates apply on their
+    // own, or entering 4, whose items ask at first use. A move inside 1 to 3 changes a label only. A class not known
+    // counts as 4
+    alerts(move: ClassMove): boolean {
+      const from = move.from ?? 4
+      const to = move.to ?? 4
+      return to > from && (from === 0 || to === 4)
+    },
   }
 }

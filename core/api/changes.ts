@@ -48,7 +48,25 @@ export const change = z.discriminatedUnion('kind', [
     plugin: pluginId.nullable(),
   }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
 ])
-export type Change = z.infer<typeof change>
+// What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
+// and for the capabilities plugin switched on again
+export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
+const classNumber = z.int().min(0).max(4)
+
+// A notice the core raises alone, never one security.request carries: a plugin's class moved up past where the
+// capabilities plugin alerts with no Confirm on screen. The class and its asks are stored already, so the human answers
+// it and approves nothing. from is null for a class not known
+export const classRaised = z.strictObject({
+  kind: z.literal('class.raised'),
+  plugin: pluginId,
+  from: classNumber.nullable(),
+  to: classNumber,
+  cause: z.enum(classCauses),
+  by: pluginId.nullable(),
+})
+export type ClassRaised = z.infer<typeof classRaised>
+
+export type Change = z.infer<typeof change> | ClassRaised
 export type ChangeKind = Change['kind']
 
 // What applying a change does to what hetu lets through. A narrowing change applies at once with its record. A
@@ -88,6 +106,9 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'allowUnsigned':
       return change.on ? 'widens' : 'narrows'
     case 'limit.set':
+      return 'widens'
+    // Only the core raises one and it always waits for the human
+    case 'class.raised':
       return 'widens'
   }
 }

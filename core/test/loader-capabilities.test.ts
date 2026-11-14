@@ -44,6 +44,7 @@ function breakable(): Capabilities & { broken: boolean } {
     firstUse: (...args: Parameters<Capabilities['firstUse']>) => (role.broken ? fail() : real.firstUse(...args)),
     screen: (...args: Parameters<Capabilities['screen']>) => (role.broken ? fail() : real.screen(...args)),
     moves: (...args: Parameters<NonNullable<Capabilities['moves']>>) => (role.broken ? fail() : real.moves!(...args)),
+    alerts: (...args: Parameters<NonNullable<Capabilities['alerts']>>) => (role.broken ? fail() : real.alerts!(...args)),
   }
   return role
 }
@@ -976,6 +977,7 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
   const fetchTwo: Capability = { type: 'net.fetch', hosts: ['example.org'] }
   const listens = hears('reader.done')
+  const commit: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
 
   type Scenario = {
     seeded?: Seeded
@@ -1020,7 +1022,14 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     'a first-party copy at start that moves another plugin up': {
       install: { git: bundledGit([fetchOne]) }, seeded: { notes: [[read, calls('git')], 1] }, atStart: true, subject: 'notes',
     },
+    'a first-party copy at start that moves another plugin from 0 to 4': {
+      install: { git: bundledGit([read, fetchOne]) }, seeded: { notes: [[{ type: 'ui.view' }, calls('git')], 0] }, atStart: true, subject: 'notes',
+    },
+    'a first-party copy at start that moves another plugin within 1 to 3': {
+      install: { git: bundledGit([fetchOne]) }, seeded: { notes: [[commit, calls('git')], 2] }, atStart: true, subject: 'notes',
+    },
     'the pass at start, a move up': { seeded: { listener: [[fetchOne, listens], 3], reader: [[read], 1] }, atStart: true, subject: 'listener' },
+    'the pass at start, a move from 0 to 4': { seeded: { listener: [[fetchOne, listens], 0], reader: [[read], 1] }, atStart: true, subject: 'listener' },
     'the pass at start, a move down': { seeded: { listener: [[fetchOne, listens], 4, [fetchOne, listens]] }, atStart: true, subject: 'listener' },
   }
 
@@ -1032,8 +1041,11 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     // The Raises lines on the change's Confirm and whether it showed the class line, the down line or neither
     raises?: string[]
     shows?: 'class' | 'down' | 'nothing'
+    // The notices raised for a move up with no Confirm on screen that crosses where the policy alerts
+    alerted?: string[]
   }
   const raised = (id: string, from: string, to: string) => [`Raises ${id} from ${from} to ${to}`]
+  const alerted = (id: string, from: string, to: string) => [`${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`]
   const rows: [string, Slot, Expected][] = [
     ['a first approval', 'on', { class: 4, firstUse: [fetchOne], raises: [], shows: 'class' }],
     ['a first approval', 'off', { class: null, firstUse: [read, fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
@@ -1058,18 +1070,29 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     ['a reset that moves another plugin down', 'on', { class: 3, firstUse: [], confirmed: [fetchOne], raises: [], shows: 'nothing' }],
     ['a reset that moves another plugin down', 'off', { class: 4, firstUse: [listens], confirmed: [fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
     ['a reset that moves another plugin down', 'down', { class: null, firstUse: [fetchOne, listens], confirmed: [fetchOne], raises: [], shows: 'nothing' }],
-    ['a restore that moves its own plugin up', 'on', { class: 4, firstUse: [fetchOne], raises: raised('git', 'class 1, Reader', 'class 4, Powerful') }],
-    ['a restore that moves its own plugin up', 'off', { class: 1, firstUse: [read, fetchOne], unclassed: true, raises: [] }],
-    ['a restore that moves its own plugin up', 'down', { class: null, firstUse: [read, fetchOne], raises: [] }],
+    ['a restore that moves its own plugin up', 'on', { class: 4, firstUse: [fetchOne], raises: raised('git', 'class 1, Reader', 'class 4, Powerful'), shows: 'class' }],
+    ['a restore that moves its own plugin up', 'off', { class: 1, firstUse: [read, fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
+    ['a restore that moves its own plugin up', 'down', { class: null, firstUse: [read, fetchOne], raises: [], shows: 'down' }],
     ['an update that moves nothing', 'on', { class: 4, firstUse: [], confirmed: [fetchOne], raises: [], shows: 'class' }],
     ['an update that moves nothing', 'off', { class: 4, firstUse: [read], confirmed: [fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
     ['an update that moves nothing', 'down', { class: null, firstUse: [read, fetchOne], confirmed: [fetchOne], raises: [], shows: 'down' }],
-    ['a first-party copy at start that moves another plugin up', 'on', { class: 4, firstUse: [calls('git')] }],
+    ['a first-party copy at start that moves another plugin up', 'on', { class: 4, firstUse: [calls('git')], alerted: alerted('notes', 'class 1, Reader', 'class 4, Powerful') }],
     ['a first-party copy at start that moves another plugin up', 'off', { class: 1, firstUse: [read, calls('git')], unclassed: true }],
     ['a first-party copy at start that moves another plugin up', 'down', { class: null, firstUse: [read, calls('git')] }],
-    ['the pass at start, a move up', 'on', { class: 4, firstUse: [fetchOne, listens] }],
+    ['a first-party copy at start that moves another plugin from 0 to 4', 'on', {
+      class: 4, firstUse: [calls('git')], alerted: alerted('notes', 'class 0, Contained', 'class 4, Powerful'),
+    }],
+    ['a first-party copy at start that moves another plugin from 0 to 4', 'off', { class: 0, firstUse: [{ type: 'ui.view' }, calls('git')], unclassed: true }],
+    ['a first-party copy at start that moves another plugin from 0 to 4', 'down', { class: null, firstUse: [{ type: 'ui.view' }, calls('git')] }],
+    ['a first-party copy at start that moves another plugin within 1 to 3', 'on', { class: 3, firstUse: [] }],
+    ['a first-party copy at start that moves another plugin within 1 to 3', 'off', { class: 2, firstUse: [commit, calls('git')], unclassed: true }],
+    ['a first-party copy at start that moves another plugin within 1 to 3', 'down', { class: null, firstUse: [commit, calls('git')] }],
+    ['the pass at start, a move up', 'on', { class: 4, firstUse: [fetchOne, listens], alerted: alerted('listener', 'class 3, Network', 'class 4, Powerful') }],
     ['the pass at start, a move up', 'off', { class: 3, firstUse: [] }],
     ['the pass at start, a move up', 'down', { class: 3, firstUse: [] }],
+    ['the pass at start, a move from 0 to 4', 'on', { class: 4, firstUse: [fetchOne, listens], alerted: alerted('listener', 'class 0, Contained', 'class 4, Powerful') }],
+    ['the pass at start, a move from 0 to 4', 'off', { class: 0, firstUse: [] }],
+    ['the pass at start, a move from 0 to 4', 'down', { class: 0, firstUse: [] }],
     ['the pass at start, a move down', 'on', { class: 3, firstUse: [] }],
     ['the pass at start, a move down', 'off', { class: 4, firstUse: [fetchOne, listens] }],
     ['the pass at start, a move down', 'down', { class: 4, firstUse: [fetchOne, listens] }],
@@ -1127,13 +1150,14 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
         ...(entry.unclassed === undefined ? {} : { unclassed: entry.unclassed }),
       },
       gated: (gate.seen.at(-1)!.plugins[scenario.subject] ?? []).filter(item => item.firstUse).map(item => item.capability),
-      others: made.loader.pending().filter(request => request.plugin === scenario.subject && request.kind !== change?.kind),
+      others: made.loader.pending().filter(request => request.plugin === scenario.subject && request.kind !== change?.kind && request.kind !== 'class.raised'),
+      alerted: (await listed(made)).requests.filter(request => request.kind === 'class.raised' && request.plugin === scenario.subject).map(request => request.text),
     }
   }
 
   it.each(rows)('%s with the slot %s', async (name, slot, expected) => {
-    const { got, notes, gated, others } = await run(scenarios[name]!, slot)
-    const { raises, shows, ...stored } = expected
+    const { got, notes, gated, others, alerted: notices } = await run(scenarios[name]!, slot)
+    const { raises, shows, alerted: expectedNotices, ...stored } = expected
     expect(got).toEqual(stored)
     // Off: nothing asks while it is off. Otherwise the gate is handed what the entry lists
     expect(gated).toEqual(slot === 'off' ? [] : expected.firstUse)
@@ -1144,6 +1168,7 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
       expect(lines.includes(DOWN)).toBe(shows === 'down')
     }
     expect(others).toEqual([])
+    expect(notices).toEqual(expectedNotices ?? [])
   })
 })
 
@@ -1347,7 +1372,7 @@ describe('the capabilities plugin switched off by the human', () => {
     expect(flags(gate, 'sync')).toEqual([fetchOne])
   })
 
-  it('makes every item an entry written while off doesn\'t name as confirmed ask once it is switched on, before any pass', async () => {
+  it('makes every item an entry written while off doesn\'t name as confirmed ask once it is switched on, until the pass that follows classes it', async () => {
     const gate = allowAll()
     const made = await harness({
       install: withCapabilities(), behave: { gate: { exports: { gate } } }, switches: { off: ['capabilities'] }, folder: { sync: worker('sync', [read, fetchOne]) },
@@ -1357,6 +1382,39 @@ describe('the capabilities plugin switched off by the human', () => {
     expect(flags(gate, 'sync')).toEqual([])
     await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
     expect(flags(gate, 'sync')).toEqual([read, fetchOne])
+    await until(() => flags(gate, 'sync').length === 1)
+    expect(flags(gate, 'sync')).toEqual([fetchOne])
+    const entry = await stored(made, 'sync')
+    expect(entry).toMatchObject({ class: 4, firstUse: [fetchOne] })
+    expect(entry.unclassed).toBeUndefined()
+    // A class not known counts as 4, so leaving it alerts nobody
+    expect(made.loader.pending().filter(request => request.kind === 'class.raised')).toEqual([])
+  })
+
+  it('classes every entry once it is switched on again in the run and raises a notice for each move up that alerts', async () => {
+    const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
+    const made = await harness({
+      install: withCapabilities(), switches: { off: ['capabilities'] },
+      folder: { listener: worker('listener'), reader: worker('reader'), tool: worker('tool'), sender: worker('sender') },
+      entries: {
+        listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
+        reader: root => entryFor(root, { granted: [read], class: 1 }),
+        tool: root => entryFor(root, { granted: [{ type: 'history', access: 'commit', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['sender'] }], class: 2 }),
+        sender: root => entryFor(root, { granted: [fetchOne], class: 3 }),
+      },
+    })
+    await made.loader.start()
+    expect(made.loader.slot('capabilities')).toBe('off')
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
+    expect((await stored(made, 'tool')).class).toBe(3)
+    const notices = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
+    const why = ['Why: the capabilities plugin switched on again', 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it']
+    expect(notices.map(request => [request.plugin, request.text, request.notes])).toEqual([
+      ['listener', '"listener" moved from class 3, Network to class 4, Powerful with no Confirm on screen', why],
+      ['reader', '"reader" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', why],
+    ])
   })
 
   it('keeps a capabilities plugin that crashed strict, its class not known and every item asking, before hetu quits', async () => {
@@ -1391,5 +1449,90 @@ describe('the capabilities plugin switched off by the human', () => {
     await made.loader.request({ kind: 'plugin.off', plugin: 'capabilities' }, trusted)
     const request = (await listed(made)).requests.find(held => held.kind === 'plugin.off')!
     expect(request.notes).toContain('Plugins then go unclassified and nothing asks at its first use until it is on again')
+  })
+})
+
+// A move up applied with no Confirm on screen that crosses where the policy alerts raises a notice of its own in the
+// trusted window. The higher class and its asks are stored already, so the notice is answered and never approved
+describe('a move up with no Confirm on screen', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const commit: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
+  const notices = async (made: Made) => (await listed(made)).requests.filter(request => request.kind === 'class.raised')
+
+  async function confirmOff(entries: Record<string, [Capability[], number]>): Promise<Made> {
+    const made = await harness({
+      install: withCapabilities(), switches: { confirmOff: true },
+      folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
+      entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
+    })
+    await made.loader.start()
+    return made
+  }
+
+  it('raises a notice for a widen Confirm-off applied that moves its plugin into 4, its class and asks stored already', async () => {
+    const made = await confirmOff({ sync: [[fetchOne], 3] })
+    expect(await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)).toEqual({ applied: true })
+    expect(await stored(made, 'sync')).toMatchObject({ class: 4, firstUse: [fetchOne] })
+    expect((await notices(made)).map(request => [request.plugin, request.text, request.notes])).toEqual([[
+      'sync', '"sync" moved from class 3, Network to class 4, Powerful with no Confirm on screen',
+      ['Why: a grant given to "sync" without a Confirm', 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
+    ]])
+  })
+
+  it('names the plugin a Confirm-off change moves through its links, with the plugin changed', async () => {
+    const made = await confirmOff({ a: [[read, { type: 'plugin.call', targets: ['b'] }], 1], b: [[{ type: 'storage' }], 1] })
+    await made.loader.request({ kind: 'grant.widen', plugin: 'b', capability: fetchOne }, trusted)
+    expect((await notices(made)).map(request => [request.plugin, request.text, request.notes[0]])).toEqual([
+      ['b', '"b" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', 'Why: a grant given to "b" without a Confirm'],
+      ['a', '"a" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', 'Why: a grant given to "b" without a Confirm'],
+    ])
+  })
+
+  it('raises nothing for a move up inside 1 to 3 that nobody confirmed', async () => {
+    const made = await confirmOff({ tool: [[read], 1] })
+    await made.loader.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
+    expect((await stored(made, 'tool')).class).toBe(2)
+    expect(await notices(made)).toEqual([])
+  })
+
+  it('raises a notice for every move up a slot with no rule on alerts would show, inside 1 to 3 too', async () => {
+    const role: Capabilities = { ...createCapabilities() }
+    delete role.alerts
+    const made = await harness({
+      install: withCapabilities(), switches: { confirmOff: true }, behave: { capabilities: { exports: { capabilities: role } } },
+      folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) },
+    })
+    await made.loader.start()
+    await made.loader.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
+    expect((await notices(made)).map(request => request.text)).toEqual(['"tool" moved from class 1, Reader to class 2, Writer with no Confirm on screen'])
+  })
+
+  it('raises nothing for the same widen through the Confirm, which shows the move', async () => {
+    const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync') }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) } })
+    await made.loader.start()
+    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
+    const [held] = (await listed(made)).requests
+    await made.loader.confirm(held!.id, {})
+    expect((await stored(made, 'sync')).class).toBe(4)
+    expect(await notices(made)).toEqual([])
+  })
+
+  it.each(['confirm', 'cancel'] as const)('changes nothing when the human answers it with %s and the notice goes', async answer => {
+    const made = await confirmOff({ sync: [[fetchOne], 3] })
+    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
+    const before = await made.store.load()
+    const [notice] = await notices(made)
+    if (answer === 'confirm') await made.loader.confirm(notice!.id, {})
+    else await made.loader.cancel(notice!.id)
+    expect(await notices(made)).toEqual([])
+    expect((await made.store.load()).state).toEqual(before.state)
+  })
+
+  it('takes no notice a window asks for, since only the core raises one', async () => {
+    const made = await confirmOff({ sync: [[fetchOne], 3] })
+    await expect(made.loader.request({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause: 'start', by: null } as unknown as Change, editor))
+      .rejects.toMatchObject({ code: 'invalid' })
+    expect(await notices(made)).toEqual([])
   })
 })

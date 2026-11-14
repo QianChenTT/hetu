@@ -21,8 +21,8 @@ export type RequestHost = {
   fingerprint(change: Change): Promise<string>
   // Runs work with no other change applying meanwhile
   exclusive<T>(work: () => Promise<T>): Promise<T>
-  // Applies a change, only from inside exclusive
-  applyNow(change: Change): Promise<void>
+  // Applies a change, only from inside exclusive. confirmed is whether the human clicked its Confirm
+  applyNow(change: Change, confirmed: boolean): Promise<void>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
@@ -97,7 +97,7 @@ export class Requests {
     const fields = { ...fieldsOf(change, key), window: windowOf(from) }
     const effect = this.host.effect(change)
     if (effect === 'narrows') {
-      await this.host.exclusive(() => this.host.applyNow(change))
+      await this.host.exclusive(() => this.host.applyNow(change, false))
       void this.host.record('security.applied', { ...fields, by: 'narrows' })
       return { applied: true }
     }
@@ -219,7 +219,7 @@ export class Requests {
     }
     if (landing === 'lost' && !stopping) throw { code: 'failed' }
     try {
-      await this.host.applyNow(change)
+      await this.host.applyNow(change, fields.by === 'confirm')
     } catch {
       if (stopping) this.host.resume()
       void this.host.record('security.failed', fields)

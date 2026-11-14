@@ -299,4 +299,65 @@ self.onmessage = event => {
     const entry = (await new StateStore(dataDir).load()).state.plugins.listener
     expect(entry).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
   })
+
+  // A window's call to the core through its bridge, answered with the reply
+  let next = 1
+  const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
+    const bridge = (window as unknown as { hetu: { send(m: unknown): void, listen(f: (m: unknown) => void): void } }).hetu
+    bridge.listen(message => {
+      const reply = message as { kind?: string, id?: number }
+      if (reply.kind === 'reply' && reply.id === id) resolve(reply)
+    })
+    bridge.send({ v: 1, kind: 'call', id, action, args })
+  }), [next++, action, args] as const) as Promise<{ ok: boolean, result?: unknown }>
+
+  async function trustedWindow(app: ElectronApplication, editor: Page): Promise<Page> {
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await pageAt(app, 'hetu://trusted/')
+    await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
+    return page
+  }
+
+  it('shows the screen and the plugin\'s own Raises line on the Confirm of a restore of a bundled plugin the human narrowed', async () => {
+    const dataDir = await temp()
+    const store = new StateStore(dataDir)
+    await store.writeSwitches(defaultSwitches())
+    await store.writeLuoshu({ folder: await temp() })
+    const app = await launch(dataDir)
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'search' }))
+    const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
+    expect((await ask(editor, 'security.request', { change: { kind: 'grant.narrow', plugin: 'search', capability: readAll } })).ok).toBe(true)
+    expect((await new StateStore(dataDir).load()).state.plugins.search).toMatchObject({ class: 0 })
+    expect((await ask(editor, 'security.request', { change: { kind: 'plugin.restore', plugin: 'search' } })).ok).toBe(true)
+    const page = await trustedWindow(app, editor)
+    await until(async () => (await page.locator('#root').innerText()).includes('Raises search from class 0, Contained to class 1, Reader'))
+    expect(await page.locator('#root').innerText()).toContain('Class 1, Reader')
+  })
+
+  it('shows a notice in the trusted window for a stale class 0 listener the start finds beside a reader, at 4 already', async () => {
+    const dataDir = await temp()
+    const store = new StateStore(dataDir)
+    const listener = path.join(dataDir, 'plugins', 'listener')
+    await writeFolder(listener, filesFor(workerManifest('listener', { capabilities: [fetchOne, hears] }), { 'worker.js': idle }))
+    await store.writePlugin('listener', await entryFor(listener, { granted: [fetchOne, hears], class: 0 }))
+    const reader = path.join(dataDir, 'plugins', 'reader')
+    const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
+    await writeFolder(reader, filesFor(workerManifest('reader', { capabilities: [readAll], provides: { topics: ['done'] } }), { 'worker.js': idle }))
+    await store.writePlugin('reader', await entryFor(reader, { granted: [readAll], class: 1 }))
+    await store.writeSwitches(defaultSwitches())
+    await store.writeLuoshu({ folder: await temp() })
+    const app = await launch(dataDir)
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'listener' }))
+    expect((await new StateStore(dataDir).load()).state.plugins.listener).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
+    const page = await trustedWindow(app, editor)
+    const text = '"listener" moved from class 0, Contained to class 4, Powerful with no Confirm on screen'
+    await until(async () => (await page.locator('#root').innerText()).includes(text))
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Confirm' }).click()
+    await until(async () => !(await page.locator('#root').innerText()).includes(text))
+    expect((await new StateStore(dataDir).load()).state.plugins.listener).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
+  })
 })
