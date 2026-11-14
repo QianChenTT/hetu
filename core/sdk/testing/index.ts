@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs'
+import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
 import { type FloorConstant, floorConstants } from '../../api/floor.ts'
-import { dependencyReason } from '../../api/lifecycle.ts'
+import { utilityIds } from '../../api/ids.ts'
+import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
-import type { PluginState, SlotState } from '../../api/slots.ts'
+import type { Call, PluginState, SlotState } from '../../api/slots.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
 import type { HumanLimits, Loader, PluginInfo } from '../../backend/carrier/seams.ts'
@@ -21,6 +23,23 @@ export type { FakeMode }
 
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }
+
+// A call the carrier delivered to a stand-in, onBehalf only when the caller named one
+export type Delivered = { action: string, args: unknown, caller: Caller, onBehalf?: string }
+// What deps tells the plugin under test of a stand-in
+export type StandInState = DepState
+// A plugin the fake core plays for the plugin under test: its actions with their from lists, which the real carrier
+// enforces, and handle, which answers each call delivered. What handle returns is the result and a throw of { code }
+// is the refusal. Without handle every call answers null. state is ready unless named
+export type StandInOptions = {
+  actions: Record<string, { from?: string[] }>
+  handle?: (call: Delivered) => unknown
+  state?: StandInState
+}
+// Each call delivered to the stand-in, oldest first
+export type StandIn = { readonly id: string, readonly delivered: readonly Delivered[] }
+// A core action that reached the part the core serves, which the fake core plays for core.bindFailed alone
+export type CoreCall = { action: string, args: unknown, caller: Caller }
 
 // manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the luoshu at start
 // latencyMs is how long the luoshu, storage and cache take to answer each call, so a plugin meets a save or a read that
@@ -159,6 +178,17 @@ function sameCaller(one: Caller, two: Caller): boolean {
   return one.kind === 'plugin' && two.kind === 'plugin' && one.id === two.id && one.half === two.half && one.incarnation === two.incarnation
 }
 
+// A utility half's way: a port registered with the carrier, as the loader registers the port of a utility process
+function portTransportOf(carrier: Carrier, caller: Caller, ports: MessagePort[]): Transport {
+  const { port1, port2 } = new MessageChannel()
+  ports.push(port1, port2)
+  carrier.register(port1, caller)
+  return {
+    post: message => port2.postMessage(message),
+    listen: next => { port2.on('message', next) },
+  }
+}
+
 // A plugin's way on an in-process handle. What arrives before listen waits for it
 function transportOf(carrier: Carrier, caller: Caller): Transport {
   const held: unknown[] = []
@@ -177,10 +207,14 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
 }
 
 // A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the luoshu, storage and
-// cache in memory and test callers with the grants each test names. One plugin runs on it at a time
+// cache in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin runs on it
+// at a time, placed as the loader would place it: http's host entry in a utility process on a port
 export class FakeCore {
   readonly mode: FakeMode
   readonly floor: { event: string, fields: Record<string, Field> }[] = []
+  // Each core action that reached the part the core serves, oldest first. core.bindFailed ends the plugin under test
+  // as failed with its reason and every other answers unavailable
+  readonly coreCalls: CoreCall[] = []
   readonly luoshu: {
     write(path: string, text: string, options?: { outside?: boolean }): Promise<void>
     remove(path: string, options?: { outside?: boolean }): Promise<void>
@@ -205,8 +239,11 @@ export class FakeCore {
   private readonly readyMs: number
   private readonly drawer: FakeDrawer | null
   private readonly missing: Set<string>
+  private readonly standIns = new Map<string, { state: StandInState, actions: Record<string, { from?: string[] }> }>()
+  private readonly ports: MessagePort[] = []
   private incarnation = 0
   private lastStop: string | null = null
+  private reason: string | null = null
   private waiting: Plugin | null = null
   private live: Caller | null = null
 
@@ -234,6 +271,7 @@ export class FakeCore {
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       watchdog: () => null,
+      core: call => this.served(call),
       // Floor records are kept and the call records are taken and dropped, so calls pass unlogged
       log: {
         append: async (event, fields = {}) => { this.floor.push({ event, fields }) },
@@ -288,12 +326,12 @@ export class FakeCore {
   async stop(): Promise<void> {
     const caller = this.live
     if (caller === null) return
-    this.setState('stopping')
+    this.markState('stopping')
     const stopped = this.loader.waitFor(caller, 'stopped', floorConstants.stopGraceMs)
     this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: floorConstants.stopGraceMs })
     await stopped
     this.carrier.end(caller, 'stopped')
-    this.setState('stopped')
+    this.markState('stopped')
     this.live = null
     this.lastStop = 'human'
   }
@@ -318,6 +356,49 @@ export class FakeCore {
     return way.ask(action, args, floorConstants.callDeadlineMs + 1000)
   }
 
+  // Plays another plugin on its worker half: the plugin under test calls it through the real carrier, which checks
+  // each action's from list. A requirement it stands in for is no longer missing
+  standIn(id: string, options: StandInOptions): StandIn {
+    if (id === this.manifest.id || id in providers || this.testers.has(id) || this.standIns.has(id)) {
+      throw new Error(`${id} is a plugin the fake core runs already`)
+    }
+    const delivered: Delivered[] = []
+    const caller: Caller = { kind: 'plugin', id, half: 'worker', incarnation: 1 }
+    const handle = this.carrier.handle(caller, message => {
+      const { kind, callId, action, args, onBehalf } = message as Record<string, unknown>
+      if (kind !== 'call' || typeof callId !== 'string' || typeof action !== 'string') return
+      const call: Delivered = { action, args, caller: (message as { caller: Caller }).caller, ...(typeof onBehalf === 'string' ? { onBehalf } : {}) }
+      delivered.push(call)
+      void (async () => {
+        try {
+          const result = options.handle === undefined ? null : await options.handle(call)
+          handle.post({ v: VERSION, kind: 'reply', callId, ok: true, result })
+        } catch (err) {
+          const code = typeof (err as { code?: unknown } | null)?.code === 'string' ? (err as { code: string }).code : 'failed'
+          handle.post({ v: VERSION, kind: 'reply', callId, ok: false, refusal: { code, action } })
+        }
+      })()
+    })
+    this.standIns.set(id, { state: options.state ?? 'ready', actions: options.actions })
+    this.missing.delete(id)
+    this.placeStandIn(id)
+    return { id, delivered }
+  }
+
+  // Sets a stand-in's state and tells the plugin under test with deps, as the loader does on every change
+  setState(id: string, state: StandInState): void {
+    const standIn = this.standIns.get(id)
+    if (standIn === undefined) throw new Error(`${id} is no stand-in`)
+    standIn.state = state
+    this.placeStandIn(id)
+    if (this.live !== null) this.carrier.send(this.live, { v: VERSION, kind: 'deps', deps: this.deps() })
+  }
+
+  // The plugin under test as the plugin list would show it: its state and why, null while it runs
+  status(): { state: PluginState | null, reason: string | null } {
+    return { state: this.loader.infos.get(this.manifest.id)?.state ?? null, reason: this.reason }
+  }
+
   // What the plugin under test stored under key in its storage or cache, undefined for nothing
   stored(kind: 'storage' | 'cache', key: string): unknown {
     return this.storage.read(kind, this.manifest.id, key)
@@ -326,49 +407,78 @@ export class FakeCore {
   async close(): Promise<void> {
     this.carrier.close()
     await this.carrier.flush()
+    for (const port of this.ports.splice(0)) port.close()
   }
 
   private async launch(plugin: Plugin): Promise<FakeState> {
     const incarnation = ++this.incarnation
     const caller: Caller = { kind: 'plugin', id: this.manifest.id, half: this.half, incarnation }
+    const utility = this.half === 'host' && (utilityIds as readonly string[]).includes(this.manifest.id)
+    this.reason = null
     this.infos(this.manifest.id, {
       state: 'starting',
-      place: this.half === 'host' ? 'host' : 'sandboxed',
+      place: utility ? 'utility' : this.half === 'host' ? 'host' : 'sandboxed',
       incarnation,
       serves: this.half,
       actions: this.manifest.provides?.actions ?? {},
       topics: this.manifest.provides?.topics ?? [],
     })
     const ready = this.loader.waitFor(caller, 'ready', this.readyMs)
-    run(plugin, transportOf(this.carrier, caller), this.drawer === null ? {} : { editor: this.drawer.fresh() })
+    const transport = utility ? portTransportOf(this.carrier, caller, this.ports) : transportOf(this.carrier, caller)
+    run(plugin, transport, this.drawer === null ? {} : { editor: this.drawer.fresh() })
     this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
     this.carrier.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,
     })
     if (!(await ready)) {
-      this.setState('crashed')
+      this.markState('crashed')
       this.carrier.end(caller, 'crashed')
       this.lastStop = 'start-timeout'
       return { state: 'crashed', reason: 'start-timeout' }
     }
-    this.setState('ready')
+    this.markState('ready')
     this.live = caller
     return { state: 'ready' }
   }
 
-  // Its requires and plugin.call targets: ready when the fake core runs it, else unavailable
-  private deps(): Record<string, 'ready' | 'unavailable'> {
+  // Its requires and plugin.call targets: ready or starting as the fake core runs it or a stand-in's state, else
+  // unavailable
+  private deps(): Record<string, DepState> {
     const targets = (this.manifest.capabilities ?? []).flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
-    const deps: Record<string, 'ready' | 'unavailable'> = {}
-    for (const id of [...(this.manifest.requires ?? []), ...targets]) deps[id] = this.loader.infos.get(id)?.state === 'ready' ? 'ready' : 'unavailable'
+    const deps: Record<string, DepState> = {}
+    for (const id of [...(this.manifest.requires ?? []), ...targets]) {
+      const state = this.loader.infos.get(id)?.state
+      deps[id] = state === 'ready' ? 'ready' : state === 'starting' ? 'starting' : 'unavailable'
+    }
     return deps
+  }
+
+  // A stand-in as the carrier finds it: a sandboxed plugin answering from its worker, stopped while unavailable
+  private placeStandIn(id: string): void {
+    const { state, actions } = this.standIns.get(id)!
+    this.infos(id, { state: state === 'unavailable' ? 'stopped' : state, place: 'sandboxed', incarnation: 1, serves: 'worker', actions, topics: [] })
+  }
+
+  // core.bindFailed from the half that runs ends it as failed with the reason before any answer, as the loader does
+  private async served(call: Call): Promise<unknown> {
+    this.coreCalls.push({ action: call.action, args: call.args, caller: call.caller })
+    const live = this.live
+    if (call.action !== 'core.bindFailed') throw { code: 'unavailable' }
+    if (live === null || !sameCaller(live, call.caller)) throw { code: 'not-found' }
+    const reason = (call.args as { reason: string }).reason
+    this.markState('failed')
+    this.reason = reason
+    this.lastStop = reason
+    this.live = null
+    this.carrier.end(live, 'crashed')
+    return null
   }
 
   private infos(id: string, info: PluginInfo): void {
     this.loader.infos.set(id, info)
   }
 
-  private setState(state: PluginState): void {
+  private markState(state: PluginState): void {
     const info = this.loader.infos.get(this.manifest.id)
     if (info !== undefined) this.loader.infos.set(this.manifest.id, { ...info, state })
   }

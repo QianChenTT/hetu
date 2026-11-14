@@ -167,3 +167,76 @@ describe('a plugin\'s life through the SDK', () => {
     expect(heard()).toEqual(['ready'])
   })
 })
+
+describe('a plugin hearing its requirements change', () => {
+  const deps = (map: object) => ({ v: 1, kind: 'deps', deps: map })
+
+  // A hook gets nothing and reads has again, so what it reads is the map the deps message brought
+  it('runs each onDeps hook once a deps message changed the map, with has already reading the new map', async () => {
+    const seen: boolean[][] = []
+    let ctx: PluginContext | null = null
+    const { send } = running({
+      start: given => {
+        ctx = given
+        given.onDeps(() => { seen.push([given.has('mcp'), given.has('git')]) })
+      },
+    }, init({ deps: { mcp: 'unavailable', git: 'ready' } }))
+    await until(() => ctx !== null)
+    await tick(20)
+    // init's own read runs none
+    expect(seen).toEqual([])
+    send(deps({ mcp: 'starting', git: 'ready' }))
+    await until(() => seen.length === 1)
+    expect(seen).toEqual([[true, true]])
+    // starting to ready is a change, though has read true for both
+    send(deps({ mcp: 'ready', git: 'ready' }))
+    await until(() => seen.length === 2)
+    // The same map in another order is no change
+    send(deps({ git: 'ready', mcp: 'ready' }))
+    await tick(30)
+    expect(seen).toHaveLength(2)
+    // A key gone or a key added is
+    send(deps({ mcp: 'ready' }))
+    await until(() => seen.length === 3)
+    expect(seen[2]).toEqual([true, false])
+    send(deps({ mcp: 'ready', git: 'unavailable' }))
+    await until(() => seen.length === 4)
+    expect(seen[3]).toEqual([true, false])
+  })
+
+  it('runs every hook, one that throws or rejects caught and the rest still run', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const ran: string[] = []
+    let ctx: PluginContext | null = null
+    const { send } = running({
+      start: given => {
+        ctx = given
+        given.onDeps(() => { throw new Error('first') })
+        given.onDeps(async () => { throw new Error('second') })
+        given.onDeps(() => { ran.push('third') })
+      },
+    })
+    await until(() => ctx !== null)
+    send(deps({ mcp: 'ready' }))
+    await until(() => ran.length === 1)
+    await tick(20)
+    expect(errors).toHaveBeenCalledTimes(2)
+    send(deps({ mcp: 'unavailable' }))
+    await until(() => ran.length === 2)
+  })
+
+  it('runs none for a deps message that is not a map, nor once the half is stopping', async () => {
+    let ran = 0
+    const { send, heard } = running({ start: given => { given.onDeps(() => { ran++ }) } })
+    await until(() => heard().includes('ready'))
+    send({ v: 1, kind: 'deps', deps: 'mcp' })
+    send({ v: 1, kind: 'deps' })
+    await tick(30)
+    expect(ran).toBe(0)
+    send({ v: 1, kind: 'stop', graceMs: 3000 })
+    send(deps({ mcp: 'ready' }))
+    await until(() => heard().includes('stopped'))
+    await tick(20)
+    expect(ran).toBe(0)
+  })
+})
