@@ -41,7 +41,7 @@ describe('a start', () => {
     expect(started.ready).toBe(true)
     expect(started.dataDir).toBe(dataDir)
     const events = started.records.map(record => `${record.event}${typeof record.plugin === 'string' ? ` ${record.plugin}` : ''}`)
-    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started gate', 'plugin.started capabilities', 'plugin.started search', 'plugin.started layout']))
+    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started gate', 'plugin.started capabilities', 'plugin.started search', 'plugin.started layout', 'plugin.started http']))
     expect(started.records.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
     expect(started.records.find(record => record.event === 'core.ready')).toMatchObject({ gate: 'on' })
     expect([await exists(decoyData), await exists(decoyInstall)]).toEqual([false, false])
