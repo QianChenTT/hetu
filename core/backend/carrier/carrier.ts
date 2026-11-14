@@ -718,7 +718,8 @@ export class Carrier {
 
   // http's host half in its utility process: a way register made, so a port the loader minted, bound to plugin http's
   // host half, with http placed utility as the loader reads it now. A worker of http matches the id, the way and the
-  // place, so the half is named too
+  // place, so the half is named too. The incarnation is not compared: the loader ends every way of an incarnation in
+  // release before it mints the next, so no way of an older one is left to call
   private isDoor(way: Way): boolean {
     const { caller } = way
     const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'http' && caller.half === 'host'
