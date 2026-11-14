@@ -483,6 +483,10 @@ ${capabilityKey(change.capability)}`)
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
         if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
+        // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
+        // ended, so it is the human's in the trusted window alone, as its stop is. The place is the loader's to know,
+        // so the rule is here and not in the floor, which sees only that a window asked
+        if (call.action === 'core.restart' && k.place === 'utility' && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
         else await this.restart(k.id, 'human')
         return null

@@ -177,7 +177,7 @@ describe('a utility process that ends', () => {
   it('changes nothing when an incarnation that is over exits late', async () => {
     const made = await harness({ install: install() })
     await made.loader.start()
-    await made.loader.serve(windowCall('core.restart', 'http', 'editor'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
     await until(() => made.loader.plugin('http')?.incarnation === 2 && stateOf(made.loader, 'http') === 'ready')
     made.runtime.exit('http', 1, false)
     await tick(20)
@@ -209,13 +209,28 @@ describe('stops and restarts of a utility half', () => {
     await made.loader.start()
     made.runtime.exit('http', 1, false)
     await until(() => stateOf(made.loader, 'http') === 'crashed')
-    await made.loader.serve(windowCall('core.restart', 'http', 'editor'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
     await until(() => stateOf(made.loader, 'http') === 'ready')
     const starts = made.runtime.started.filter(start => start.id === 'http')
     expect(starts.map(start => start.incarnation)).toEqual([1, 2])
     expect(starts[1].code).toBe(starts[0].code)
     expect(made.link.registered).toContainEqual(utilityCaller(2))
     await expect(made.loader.serve(windowCall('core.restart', 'storage', 'editor'))).rejects.toEqual({ code: 'not-granted' })
+  })
+
+  // The door is the human's to restart: a restart cuts every agent call in flight and brings back a door the core ended
+  it('is restarted from the trusted window alone, never from the editor window, running or failed', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await expect(made.loader.serve(windowCall('core.restart', 'http', 'editor'))).rejects.toEqual({ code: 'not-granted' })
+    expect(made.runtime.killed).toEqual([])
+    expect(made.loader.plugin('http')).toMatchObject({ state: 'ready', incarnation: 1 })
+    await made.loader.serve({ callId: 'c', caller: utilityCaller(), action: 'core.bindFailed', args: { reason: 'port-taken' }, deadline: Date.now() + 1000 })
+    await expect(made.loader.serve(windowCall('core.restart', 'http', 'editor'))).rejects.toEqual({ code: 'not-granted' })
+    expect(stateOf(made.loader, 'http')).toBe('failed')
+    await made.loader.serve(windowCall('core.restart', 'http'))
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(made.runtime.started.filter(start => start.id === 'http').map(start => start.incarnation)).toEqual([1, 2])
   })
 
   it('is out of the watchdog\'s reach, which acts on sandboxed plugins only', async () => {

@@ -159,15 +159,20 @@ describe('a utility half', () => {
   // rate loses its pongs, but everything main hears from it counts as alive, so it is never read as hung while it floods
   // and only the cap ends it. The answer never reaches main and the caller requires http, so it stops with http and
   // its call is refused
-  it('has its way closed for a flood, reads crashed and starts again on core.restart', async () => {
-    const { worker, editor, dataDir } = await started({ floodFactor: 2 })
+  it('has its way closed for a flood, reads crashed and starts again on core.restart from the trusted window alone', async () => {
+    const { app, worker, editor, dataDir } = await started({ floodFactor: 2 })
     const { pid } = await call<Facts>(worker, 'hello')
     const answer = await worker.evaluate(`globalThis.ctx.call('http', 'flood', {}).then(value => ({ value }), error => ({ refused: error.code }))`)
     expect(answer).toHaveProperty('refused')
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'http', reason: 'flood' }))
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
-    expect((await ask(editor, 'core.restart', { plugin: 'http' })).ok).toBe(true)
+    expect(await ask(editor, 'core.restart', { plugin: 'http' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    // Past the trusted window's input delay, inside which a request counts for nothing
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    expect((await ask(trusted, 'core.restart', { plugin: 'http' })).ok).toBe(true)
     await until(async () => (await records(dataDir)).filter(record => record.event === 'plugin.started' && record.plugin === 'http').length === 2)
   })
 
