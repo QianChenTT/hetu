@@ -668,10 +668,13 @@ export class Carrier {
     const trusted = caller.kind === 'window' && caller.role === 'trusted'
     if (target.kind === 'core') {
       const { from } = target.spec
-      if (from === 'windows' && caller.kind !== 'window') return { code: 'not-granted' }
-      if (from === 'trusted' && !trusted) return { code: 'not-granted' }
-      if (from === 'watchdog' && !(this.isWatchdog(way) && this.watchable(field(args, 'plugin')))) return { code: 'not-granted' }
-      return { kind: 'core' }
+      const admitted = from === 'any'
+        || (from === 'windows' && caller.kind === 'window')
+        || (from === 'trusted' && trusted)
+        || (from === 'watchdog' && this.isWatchdog(way) && this.watchable(field(args, 'plugin')))
+        || (from === 'http' && this.isDoor(way))
+      // A from with no rule here refuses every caller
+      return admitted ? { kind: 'core' } : { code: 'not-granted' }
     }
     if (target.kind === 'events') return this.eventsFloor(caller, target.action, args)
     // The trusted window holds core actions and the core topics only and never note content
@@ -703,6 +706,15 @@ export class Carrier {
   private isWatchdog(way: Way): boolean {
     const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
     return holder && this.slot('watchdog') === 'on'
+  }
+
+  // http's host half in its utility process: a way register made, so a port the loader minted, bound to plugin http's
+  // host half, with http placed utility as the loader reads it now. A worker of http matches the id, the way and the
+  // place, so the half is named too
+  private isDoor(way: Way): boolean {
+    const { caller } = way
+    const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'http' && caller.half === 'host'
+    return half && this.info('http')?.place === 'utility'
   }
 
   // watchdog.* acts only on sandboxed plugins holding no slot or guard role
@@ -919,6 +931,12 @@ export class Carrier {
       try {
         this.options.limited?.(plugin)
       } catch {}
+      return this.finish(pending, { ok: true, result: null })
+    }
+    // Coalesced by reason with the counts added up, so http calling at its whole rate still leaves two records a reason
+    // a second
+    if (pending.action === 'core.agentRefused') {
+      this.coalesced.hit('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
       return this.finish(pending, { ok: true, result: null })
     }
     return this.serve(pending, this.options.core, args)

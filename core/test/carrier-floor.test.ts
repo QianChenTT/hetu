@@ -295,6 +295,58 @@ describe('the floor', () => {
     expect(seen).toEqual([])
   })
 
+  it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
+    const { carrier, connect, loader, gate, log } = harness()
+    loader.slots.gate = state
+    loader.utility('http')
+    const http = connect(host('http'))
+    expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
+    expect(gate.asked).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
+  })
+
+  it.each(['on', 'off', 'failed'] as const)('refuses core.agentRefused to every other caller with the gate %s', async state => {
+    const seen: Call[] = []
+    const { carrier, connect, loader, gate, log } = harness({ core: async call => { seen.push(call); return null } })
+    loader.slots.gate = state
+    loader.utility('http')
+    loader.sandboxed('search')
+    loader.installed('exec')
+    const report = { reason: 'host', count: 1 }
+    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const refused = [
+      // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
+      await connect(worker('search')).ask('core.agentRefused', report),
+      await connect(worker('http')).ask('core.agentRefused', report),
+      // Another plugin's host half, on a port and on an in-process handle
+      await connect(host('exec')).ask('core.agentRefused', report),
+      await hostHalf(carrier, host('exec', 2)).ask('core.agentRefused', report),
+      // http's host half on a handle, which no utility half is ever given
+      await hostHalf(carrier, host('http')).ask('core.agentRefused', report),
+      await way.ask('editor-1', 'core.agentRefused', report),
+      await way.ask('trusted', 'core.agentRefused', report),
+    ]
+    expect(refused.map(code)).toEqual(Array(refused.length).fill('not-granted'))
+    expect(gate.asked).toEqual([])
+    expect(seen).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused')).toEqual([])
+  })
+
+  it('refuses core.agentRefused to http\'s host half on a port when http is not placed in a utility process', async () => {
+    const { carrier, connect, loader, log } = harness()
+    loader.installed('http')
+    expect(code(await connect(host('http')).ask('core.agentRefused', { reason: 'host', count: 1 }))).toBe('not-granted')
+    delete loader.plugins.http
+    expect(code(await connect(host('http', 2)).ask('core.agentRefused', { reason: 'host', count: 1 }))).toBe('not-granted')
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused')).toEqual([])
+  })
+
   it('holds the trusted window to core actions, with the gate on or off', async () => {
     const { carrier, loader, luoshu } = harness()
     luoshu.files.set('notes/a.md', 'x')

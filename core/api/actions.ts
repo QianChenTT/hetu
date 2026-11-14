@@ -50,9 +50,18 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window or the watchdog slot's holder. The floor
-// decides these and never the gate, so a failed gate can't block the way out
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog'
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder or http's host
+// half in its utility process. The floor decides these and never the gate, so a failed gate can't block the way out.
+// A value the floor has no rule for refuses every caller
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http'
+
+// Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
+// Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
+// too slow
+export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
+export type AgentRefusal = typeof agentRefusals[number]
+// The most refusals one report counts, far above what the door can refuse in the second a report covers
+export const MAX_REFUSAL_COUNT = 1_000_000
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
@@ -141,6 +150,12 @@ const coreTable = {
   'watchdog.limit': {
     from: 'watchdog',
     args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
+  },
+  // The refusals at the door since http's last report for one reason, which the core writes as http.refused coalesced
+  // by reason
+  'core.agentRefused': {
+    from: 'http',
+    args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
@@ -324,6 +339,7 @@ export type ActionResults = {
   'security.list': SecurityList
   'security.request': { applied: true } | { held: string }
   'core.filterReadable': string[]
+  'core.agentRefused': null
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

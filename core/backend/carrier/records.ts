@@ -176,8 +176,8 @@ export type Join = (held: Record<string, Field> | null, next: Record<string, Fie
 // Floor records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
 // when its second is over. The key is the whole fields unless the caller names one. A plugin that picks part of the
 // fields, such as the topics of a subscribe, would otherwise make a key per message, so those name a key without it
-// and join what the later hits carried. Nothing counts while the human turned recording off, so no count from the gap
-// lands after it
+// and join what the later hits carried. weight is how many one hit counts for, such as a count a plugin reported.
+// Nothing counts while the human turned recording off, so no count from the gap lands after it
 export class Coalesced {
   private readonly lane: FloorLane
   private readonly open = new Map<string, {
@@ -189,16 +189,16 @@ export class Coalesced {
     this.lane = lane
   }
 
-  hit(event: string, fields: Record<string, Field>, keyed?: { by: Record<string, Field>, join: Join }): void {
+  hit(event: string, fields: Record<string, Field>, keyed?: { by: Record<string, Field>, join: Join }, weight = 1): void {
     if (!this.lane.recording) return
     const key = JSON.stringify([event, keyed?.by ?? fields])
     const found = this.open.get(key)
     if (found !== undefined) {
-      found.count++
+      found.count += weight
       if (found.join !== null) found.later = found.join(found.later, fields)
       return
     }
-    this.lane.write(event, { ...fields, count: 1 })
+    this.lane.write(event, { ...fields, count: weight })
     const timer = setTimeout(() => this.end(key), 1000)
     timer.unref?.()
     this.open.set(key, { event, fields, later: null, join: keyed?.join ?? null, count: 0, timer })
