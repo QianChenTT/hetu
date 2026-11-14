@@ -321,6 +321,26 @@ describe('a folder swapped for a junction after prepare', () => {
     expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
   })
 
+  it('refuses a listing of the swapped folder and names nothing in the dot folder', async () => {
+    expect(await swapped('luoshu.list', { folder: 'journal' })).toEqual({ refused: { code: 'not-granted' } })
+  })
+
+  it('refuses a listing of a folder missing at prepare and a junction into a dot folder by perform', async () => {
+    const made = opened()
+    const call = callOf('luoshu.list', { folder: 'later' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await symlink(path.join(folder, '.obsidian', 'plugins', 'x'), path.join(folder, 'later'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+  })
+
+  it('answers an empty page for a listing whose folder is gone since prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.list', { folder: 'journal' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    expect(await made.provider.perform(call, prepared)).toEqual({ paths: [], next: null })
+  })
+
   // A folder gone since prepare holds no note, so the read answers as for any missing one
   it('answers not-found for a read whose folder is gone since prepare', async () => {
     const made = opened()

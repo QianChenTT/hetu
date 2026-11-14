@@ -6,7 +6,7 @@ import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
 import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, folderState, type Canonical, type NotCanonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, listedState, type Canonical, type NotCanonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
 export type Luoshu = {
@@ -411,6 +411,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         if (call.action === 'luoshu.list') {
           // The carrier's canList is what keeps a name from a caller that may not list it, so no listing runs without it
           if (call.canList === undefined) throw refused('failed')
+          // The folder listed looked at again before the walk, as before a read. One gone since lists nothing
+          if (target !== undefined && (await listedState(target.absolute)) === 'moved') throw refused('not-granted')
           const root = await realpath(opening.folder)
           return await list(root, target?.absolute ?? root, (call.args as { after?: string }).after, call.canList)
         }

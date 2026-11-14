@@ -116,8 +116,13 @@ async function deepest(base: string, names: string[]): Promise<{ real: string, r
 // itself, moved otherwise. prepare judged the path. A folder on the way swapped for a link or a junction since would
 // carry the act out of what was judged, so a provider refuses moved as canonical refuses a link out. What is left is
 // the time between this look and the act
-export async function folderState(absolute: string): Promise<'held' | 'moved' | 'missing'> {
-  let dir = path.dirname(absolute)
+export const folderState = (absolute: string) => stateOf(path.dirname(absolute))
+
+// The folder a listing walks, looked at itself as folderState looks at the folder a note sits in
+export const listedState = (folder: string) => stateOf(folder)
+
+async function stateOf(folder: string): Promise<'held' | 'moved' | 'missing'> {
+  let dir = folder
   for (let gone = false; ; gone = true) {
     try {
       return (await realpath(dir)) !== dir ? 'moved' : gone ? 'missing' : 'held'
