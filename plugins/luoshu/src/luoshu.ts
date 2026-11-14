@@ -476,7 +476,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
           const listed = target === undefined ? undefined : await lookAt(target, listedState)
           if (listed?.state === 'moved') throw refused('not-granted')
           const root = await realpath(opening.folder)
-          return await list(root, listed?.target.absolute ?? root, (call.args as { after?: string }).after, call.canList)
+          const page = await list(root, listed?.target.absolute ?? root, (call.args as { after?: string }).after, call.canList)
+          // Once more after the walk, so a folder swapped for a junction while it was walked lists nothing
+          if (listed !== undefined && (await lookAt(listed.target, listedState)).state === 'moved') throw refused('not-granted')
+          return page
         }
         if (target === undefined) throw refused('failed')
         if (call.action === 'luoshu.read') return await read(target)

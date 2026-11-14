@@ -7,16 +7,20 @@ import type { Caller } from 'hetu-core/api/envelope.ts'
 import type { Prepared } from 'hetu-core/api/slots.ts'
 import { createLuoshu } from '../src/luoshu.ts'
 
-// Each runs once: the next time the luoshu makes a folder, just before or just after it, or the next time it opens a
-// write's temp file, just before
+// Each runs once: the next time the luoshu makes a folder, just before or just after it, the next time it opens a
+// write's temp file, just before, or the next time it reads a folder's names, just before
 let beforeMkdir: (() => Promise<void>) | null = null
 let duringMkdir: (() => Promise<void>) | null = null
 let beforeTemp: (() => Promise<void>) | null = null
-const once = async (hook: 'before' | 'during' | 'temp') => {
-  const then = hook === 'before' ? beforeMkdir : hook === 'during' ? duringMkdir : beforeTemp
+let beforeReaddir: (() => Promise<void>) | null = null
+// Every folder whose names the luoshu reads
+const read: string[] = []
+const once = async (hook: 'before' | 'during' | 'temp' | 'readdir') => {
+  const then = { before: beforeMkdir, during: duringMkdir, temp: beforeTemp, readdir: beforeReaddir }[hook]
   if (hook === 'before') beforeMkdir = null
   else if (hook === 'during') duringMkdir = null
-  else beforeTemp = null
+  else if (hook === 'temp') beforeTemp = null
+  else beforeReaddir = null
   await then?.()
 }
 
@@ -34,6 +38,11 @@ vi.mock('node:fs/promises', async original => {
       if (String(args[0]).endsWith('.hetu-tmp')) await once('temp')
       return real.open(...args)
     },
+    readdir: (async (...args: Parameters<typeof real.readdir>) => {
+      await once('readdir')
+      read.push(String(args[0]))
+      return real.readdir(...args)
+    }) as typeof real.readdir,
   }
 })
 
@@ -56,6 +65,8 @@ afterEach(async () => {
   beforeMkdir = null
   duringMkdir = null
   beforeTemp = null
+  beforeReaddir = null
+  read.length = 0
   await rm(base, { recursive: true, force: true })
 })
 
@@ -115,5 +126,36 @@ describe('a folder swapped for a junction while a write runs', () => {
     expect(await performed('luoshu.write', { path: 'journal/planted.js', text: 'planted' })).toEqual({ refused: { code: 'not-granted' } })
     expect(beforeTemp).toBeNull()
     expect(await dotFolder()).toEqual(['main.js'])
+  })
+})
+
+describe('a folder swapped for a junction while a listing walks it', () => {
+  // The look before the walk refuses it, so the dot folder's names are never read
+  it('refuses a listing of a folder swapped before perform without reading any names', async () => {
+    const made = createLuoshu()
+    made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const call = { callId: `c${++n}`, caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
+    const prepared = await made.provider.prepare(call) as Prepared
+    await swap()
+    read.length = 0
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+    made.close()
+    expect(read).toEqual([])
+  })
+
+  // The look before the walk passed, so only the look once the walk is done stands between the swap and the names
+  it('refuses the listing and names nothing in the dot folder', async () => {
+    await disk.writeFile(path.join(folder, 'journal', 'b.md'), 'note b')
+    const made = createLuoshu()
+    made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    // The walk of the whole folder that opening starts reads names too, so the hook waits for it
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const call = { callId: `c${++n}`, caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
+    const prepared = await made.provider.prepare(call) as Prepared
+    beforeReaddir = swap
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+    made.close()
+    expect(beforeReaddir).toBeNull()
   })
 })
