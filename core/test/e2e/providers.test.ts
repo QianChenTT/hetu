@@ -46,9 +46,8 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
     for (const [id, granted] of Object.entries(setup.plugins)) {
       const root = path.join(dataDir, 'plugins', id)
       await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built.text }))
-      // Approved with each item's first use confirmed: a class 4 entry listing nothing, which the start lowers to the
-      // plugin's own class. A lower stored class would show nothing ever asked, so an item that asks would ask
-      await store.writePlugin(id, await entryFor(root, { granted, class: 4 }))
+      // Approved with each item's first use confirmed, which the entry records. The start classes it again
+      await store.writePlugin(id, await entryFor(root, { granted, class: 4, confirmed: granted }))
     }
   }
   const app = await launch(dataDir)

@@ -91,6 +91,13 @@ const plugin = z.strictObject({
   // Items of granted whose first use still asks for the human's Confirm, each as granted holds it. The capabilities
   // plugin names them from step 17. Left out of an entry written before first use came, which then asks for none
   firstUse: folderCapabilities.optional(),
+  // Items of granted whose first use the human confirmed, each as granted holds it, so the same type with another scope
+  // is another item. An item asks unless named here. Left out of an entry with none confirmed and of one written before
+  // the record came, which has confirmed nothing
+  confirmed: folderCapabilities.optional(),
+  // A change applied while the human had the capabilities plugin switched off: class is the last one classed and
+  // nothing since was classed. Left out of every other entry
+  unclassed: z.literal(true).optional(),
 })
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against

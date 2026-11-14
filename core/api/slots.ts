@@ -110,14 +110,14 @@ export type ScreenSubject = {
   readonly flow?: Flow
 }
 
-// A plugin whose class a change to another plugin moves, or the plugin a widen changes: the class its entry holds and
-// the one the change gives it, null for a class not known
+// A plugin whose class a change moves, the changed plugin or another whose links it moves: the class its entry holds
+// and the one the change gives it, null for a class not known
 export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
 
 // The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
-// it at an approval, a first-party copy, an update and a widened grant and for every other plugin whose links the
-// change moves. A throw counts as the slot down, which leaves a class null, counted as 4. moves gives the lines a
-// request's Confirm shows for the classes the change moves, which a slot without it shows none of
+// it at every class change, the changed plugin's and every other plugin's whose links the change moves. A throw counts
+// as the slot down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
+// classes the change moves, which a slot without it shows none of
 export type Capabilities = {
   classify(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number
   firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[]
