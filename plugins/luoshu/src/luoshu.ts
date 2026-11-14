@@ -186,8 +186,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     if ((await current(first.target.absolute)) !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(prepared)) throw refused('not-granted')
     const bytes = Buffer.from(text, 'utf8')
-    await mkdir(path.dirname(first.target.absolute), { recursive: true })
-    const target = await unmoved(first.target)
+    const target = await unmoved(await madeUnder(first.target))
     const dir = path.dirname(target.absolute)
     const temp = path.join(dir, `.${path.basename(target.absolute)}.${randomBytes(6).toString('hex')}${TEMP}`)
     try {
@@ -198,6 +197,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       } finally {
         await handle.close()
       }
+      // Once more with the temp file written, so a folder swapped since the look before the temp file was made carries
+      // no note where it leads. The temp file is removed by the same path
+      await unmoved(target)
       await retried(() => rename(temp, target.absolute), target.absolute)
     } catch (err) {
       await rm(temp, { force: true }).catch(() => {})
@@ -243,18 +245,29 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
   }
 
-  // The folders a move's to end names, made only below the deepest one that exists once that one still resolves to
-  // itself, so a folder swapped for a link or a junction since prepare gets no new folder made through it. One that
-  // doesn't gets the one more look the folder's look gives: the caller's spelling resolved again, which goes on when it
-  // gives the key prepare took. Answers the path to act on
+  // The folders a write or a move's to end needs, made only below the deepest one that exists once that one still
+  // resolves to itself, so a folder swapped for a link or a junction since prepare gets no new folder made through it.
+  // One that doesn't gets the one more look the folder's look gives: the caller's spelling resolved again, which goes on
+  // when it gives the key prepare took. Then one level at a time, each looked at once made. One that doesn't resolve to
+  // itself, made through a folder swapped since the look before or first under another spelling, ends the making there,
+  // so a swap that races the call puts at most one empty folder where it leads. The look at the note's folder after this
+  // decides whether the call goes on. Answers the path to act on
   async function madeUnder(prepared: Canonical): Promise<Canonical> {
     let target = prepared
     for (let again = true; ; again = false) {
-      const dir = path.dirname(target.absolute)
-      let existing = dir
-      while (!(await present(existing)) && path.dirname(existing) !== existing) existing = path.dirname(existing)
+      const missing: string[] = []
+      let existing = path.dirname(target.absolute)
+      while (!(await present(existing)) && path.dirname(existing) !== existing) {
+        missing.unshift(existing)
+        existing = path.dirname(existing)
+      }
       if ((await realpath(existing).catch(() => null)) === existing) {
-        await mkdir(dir, { recursive: true })
+        for (const dir of missing) {
+          await mkdir(dir).catch(err => {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+          })
+          if ((await realpath(dir).catch(() => null)) !== dir) break
+        }
         return target
       }
       const now = again ? await resolvedAgain(prepared) : null
