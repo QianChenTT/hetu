@@ -81,6 +81,26 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   const current = new WeakMap<Socket, http.ServerResponse>()
   // The sockets Node's parser already refused, each recorded once
   const told = new WeakSet<Socket>()
+  // Each request's place on its socket and the place of the first one refused there. A request Node read behind a
+  // refused one is never checked or served, one ahead of it still is
+  const placed = new WeakMap<http.IncomingMessage, number>()
+  const counted = new WeakMap<Socket, number>()
+  const shut = new WeakMap<Socket, number>()
+  const behindRefusal = (req: http.IncomingMessage) => (shut.get(req.socket) ?? Infinity) < (placed.get(req) ?? 0)
+  // The calls each socket carries, all cancelled when it closes, a response still queued behind another included
+  const carried = new WeakMap<Socket, Set<AbortController>>()
+  const callsOn = (socket: Socket) => {
+    let calls = carried.get(socket)
+    if (calls === undefined) {
+      const made = new Set<AbortController>()
+      calls = made
+      carried.set(socket, made)
+      socket.once('close', () => {
+        for (const call of made) call.abort()
+      })
+    }
+    return calls
+  }
 
   const answer = (res: http.ServerResponse, status: number, body: string | null, close: boolean, extra: Readonly<Record<string, string>> = {}) => {
     const text = body ?? ''
@@ -92,21 +112,26 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   }
 
   // A refusal is recorded by its reason, answered with no body and ends the connection, so nothing it sent after is read
-  const refuse = (res: http.ServerResponse, refusal: Refusal) => {
+  const refuse = (req: http.IncomingMessage, res: http.ServerResponse, refusal: Refusal) => {
+    shut.set(req.socket, Math.min(shut.get(req.socket) ?? Infinity, placed.get(req) ?? 0))
     options.refused(refusal.reason)
     answer(res, refusal.status, null, true, added[refusal.status] ?? {})
   }
 
   const handle = async (req: http.IncomingMessage, res: http.ServerResponse, expectsContinue: boolean) => {
+    const place = (counted.get(req.socket) ?? 0) + 1
+    counted.set(req.socket, place)
+    placed.set(req, place)
+    if (behindRefusal(req)) return
     current.set(req.socket, res)
     const seen: Seen = { method: req.method ?? '', target: req.url ?? '', version: req.httpVersion, headers: req.rawHeaders }
     const checked = checkDoor(seen, bound)
-    if ('status' in checked) return refuse(res, checked)
-    if (!take()) return refuse(res, { status: 429, reason: 'rate' })
+    if ('status' in checked) return refuse(req, res, checked)
+    if (!take()) return refuse(req, res, { status: 429, reason: 'rate' })
     const declared = req.headers['content-length']
-    if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(res, { status: 413, reason: 'size' })
+    if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(req, res, { status: 413, reason: 'size' })
     const client = options.token(authorizationOf(seen))
-    if (client === null) return refuse(res, { status: 401, reason: 'token' })
+    if (client === null) return refuse(req, res, { status: 401, reason: 'token' })
     if (expectsContinue) res.writeContinue()
     const chunks: Buffer[] = []
     let size = 0
@@ -128,23 +153,27 @@ export function openDoor(options: DoorOptions): Promise<Door> {
       req.on('close', () => resolve())
     })
     if (over) {
-      refuse(res, { status: 413, reason: 'size' })
+      refuse(req, res, { status: 413, reason: 'size' })
       req.socket.destroySoon()
       return
     }
-    if (!req.complete) return
+    if (!req.complete || behindRefusal(req) || req.socket.destroyed) return
     const gone = new AbortController()
     res.on('close', () => {
       if (!res.writableFinished) gone.abort()
     })
+    const calls = callsOn(req.socket)
+    calls.add(gone)
     let given: Answer | Refusal
     try {
       given = await options.serve({ client: client.client, body: Buffer.concat(chunks), headers: req.rawHeaders, signal: gone.signal })
     } catch {
       return answer(res, 502, null, true)
+    } finally {
+      calls.delete(gone)
     }
     if (res.destroyed) return
-    if ('reason' in given) return refuse(res, given)
+    if ('reason' in given) return refuse(req, res, given)
     try {
       answer(res, given.status, given.body, false)
     } catch {

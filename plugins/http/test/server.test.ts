@@ -436,6 +436,54 @@ describe('the parser', () => {
   })
 })
 
+describe('requests behind one another on a socket', () => {
+  it.each([
+    ['another Host', ['Host: evil.example', 'Authorization: Bearer good'], 403],
+    ['an Origin with a body', ['Origin: https://evil.example', 'Authorization: Bearer good'], 403],
+    ['no token', [], 401],
+  ])('serves nothing written behind a request refused for %s, the refused one answered alone and the socket closed', async (_name, extra, status) => {
+    const { port, passed } = await made({ token: anyToken })
+    const refused = request(['POST /mcp HTTP/1.1', ...(extra.some(line => line.startsWith('Host:')) ? [] : [`Host: 127.0.0.1:${port}`]), ...extra, 'Content-Length: 2'], '{}')
+    const { raw, closed } = await exchange(port, refused + post(port, ['Authorization: Bearer good']))
+    expect(responses(raw).map(response => response.status)).toEqual([status])
+    expect(closed).toBe(true)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(passed).toEqual([])
+  })
+
+  it('serves good requests written behind one another, each answered in order', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    const good = post(port, ['Authorization: Bearer good'])
+    const { raw } = await exchange(port, good + good, 1000)
+    expect(responses(raw).map(response => response.status)).toEqual([200, 200])
+    expect(passed).toHaveLength(2)
+  })
+
+  it('cancels every call a connection carried when it closes, not only the first', async () => {
+    let aborted = 0
+    const { port, passed } = await made({
+      token: anyToken,
+      serve: call => new Promise(resolve => {
+        call.signal.addEventListener('abort', () => {
+          aborted++
+          resolve({ status: 200, body: null })
+        })
+      }),
+    })
+    const good = post(port, ['Authorization: Bearer good'])
+    const socket = net.connect({ host: '127.0.0.1', port })
+    sockets.push(socket)
+    socket.on('error', () => {})
+    await new Promise(resolve => socket.once('connect', resolve))
+    socket.write(good + good + good)
+    for (let waited = 0; passed.length < 3 && waited < 2000; waited += 5) await new Promise(resolve => setTimeout(resolve, 5))
+    expect(passed).toHaveLength(3)
+    socket.destroy()
+    for (let waited = 0; aborted < 3 && waited < 2000; waited += 5) await new Promise(resolve => setTimeout(resolve, 5))
+    expect(aborted).toBe(3)
+  })
+})
+
 describe('times', () => {
   const quick = { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 }
 
