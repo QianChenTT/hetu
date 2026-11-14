@@ -14,7 +14,8 @@ export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'dot' | 'data
 // absent is there when the caller spelled no dot segment and a name on the way leads to a dot name through a link, a
 // junction or an 8.3 short name: the same input as if nothing were there from that name on. Its relative and key are
 // what a missing name gets and its absolute a path no file has. A provider that only reads may act on it, so the
-// caller learns no more than a missing name tells. One that writes refuses it as it would the dot name
+// answer tells the caller no more than a missing name's. The time it takes still can, since a resolve that succeeds
+// through a short name or a junction costs more than one that fails. One that writes refuses it as it would the dot name
 export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'invalid'>, rule: StringRule }
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule, absent?: Canonical }

@@ -42,7 +42,8 @@ async function stepsOf(folder: string, input: string): Promise<string[]> {
   return [...steps]
 }
 
-// So a caller timing the answer can't tell a name that leads to a dot name from a missing one by the work done for it
+// The same looks in the same order. Their time still differs: a resolve that succeeds through a short name or a
+// junction costs more than one that fails, so a caller timing many calls can tell the two apart
 describe('the looks at the disk for a name spelled with no dot that leads to a dot name', () => {
   it.each(['cfg', 'cfg/plugins/x/main.js', 'cfg/plugins/y/new.js', 'notes/deep/x/main.js', 'notes/deep'])('are those a missing name gets: %s', async input => {
     const dotted = await stepsOf('dotted', input)
