@@ -49,9 +49,9 @@ const added: Readonly<Partial<Record<number, Readonly<Record<string, string>>>>>
 
 // A status line and the fixed headers for an answer written straight to the socket, when Node's parser refused the
 // request before it was one
-function rawAnswer(status: number): string {
+function rawAnswer(status: number, extra: Readonly<Record<string, string>> = {}): string {
   const lines = [`HTTP/1.1 ${status} ${http.STATUS_CODES[status]}`]
-  for (const [name, value] of Object.entries(FIXED)) lines.push(`${name}: ${value}`)
+  for (const [name, value] of Object.entries({ ...FIXED, ...extra })) lines.push(`${name}: ${value}`)
   lines.push(`Date: ${new Date().toUTCString()}`, 'Content-Length: 0', 'Connection: close')
   return `${lines.join('\r\n')}\r\n\r\n`
 }
@@ -118,7 +118,9 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     answer(res, refusal.status, null, true, added[refusal.status] ?? {})
   }
 
-  const handle = async (req: http.IncomingMessage, res: http.ServerResponse, expectsContinue: boolean) => {
+  // expects is the Expect header Node met: none, 100-continue or another, which the door answers 417 once the checks
+  // before it passed
+  const handle = async (req: http.IncomingMessage, res: http.ServerResponse, expects: 'none' | 'continue' | 'other') => {
     const place = (counted.get(req.socket) ?? 0) + 1
     counted.set(req.socket, place)
     placed.set(req, place)
@@ -127,12 +129,13 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     const seen: Seen = { method: req.method ?? '', target: req.url ?? '', version: req.httpVersion, headers: req.rawHeaders }
     const checked = checkDoor(seen, bound)
     if ('status' in checked) return refuse(req, res, checked)
+    if (expects === 'other') return refuse(req, res, { status: 417, reason: 'malformed' })
     if (!take()) return refuse(req, res, { status: 429, reason: 'rate' })
     const declared = req.headers['content-length']
     if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(req, res, { status: 413, reason: 'size' })
     const client = options.token(authorizationOf(seen))
     if (client === null) return refuse(req, res, { status: 401, reason: 'token' })
-    if (expectsContinue) res.writeContinue()
+    if (expects === 'continue') res.writeContinue()
     const chunks: Buffer[] = []
     let size = 0
     let over = false
@@ -188,8 +191,19 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     keepAliveTimeout: times.keepAliveMs,
     connectionsCheckingInterval: times.checkMs,
     joinDuplicateHeaders: false,
-  }, (req, res) => void handle(req, res, false))
-  server.on('checkContinue', (req, res) => void handle(req, res, true))
+  }, (req, res) => void handle(req, res, 'none'))
+  server.on('checkContinue', (req, res) => void handle(req, res, 'continue'))
+  server.on('checkExpectation', (req, res) => void handle(req, res, 'other'))
+  // A CONNECT is never taken. It meets the checks, so a wrong Host or target is refused for that, and is refused with
+  // the door's own answer, recorded, where Node would cut it unanswered
+  server.on('connect', (req: http.IncomingMessage, socket: Socket) => {
+    socket.on('error', () => {})
+    const seen: Seen = { method: req.method ?? '', target: req.url ?? '', version: req.httpVersion, headers: req.rawHeaders }
+    const checked = checkDoor(seen, bound)
+    const refusal: Refusal = 'status' in checked ? checked : { status: 405, reason: 'method', allow: 'POST' }
+    options.refused(refusal.reason)
+    socket.end(rawAnswer(refusal.status, added[refusal.status] ?? {}))
+  })
   server.keepAliveTimeout = times.keepAliveMs
   server.maxRequestsPerSocket = doorLimits.requestsPerSocket
   server.maxConnections = doorLimits.connections

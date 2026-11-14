@@ -194,12 +194,14 @@ describe('the Host check on the wire', () => {
     expect(passed).toEqual([])
   })
 
-  it('answers a CONNECT with nothing and closes, never tunnelling', async () => {
-    const { port, passed } = await made({ token: anyToken })
+  // The door's own address as an authority is still no path, so the Host check refuses it
+  it('refuses a CONNECT to the door\'s own address and closes, never tunnelling', async () => {
+    const { port, passed, refused } = await made({ token: anyToken })
     const { raw, closed } = await exchange(port, request([`CONNECT 127.0.0.1:${port} HTTP/1.1`, `Host: 127.0.0.1:${port}`]))
-    expect(raw).toBe('')
+    expect(responses(raw).map(response => response.status)).toEqual([403])
     expect(closed).toBe(true)
     expect(passed).toEqual([])
+    expect(refused).toEqual(['host'])
   })
 })
 
@@ -481,6 +483,41 @@ describe('requests behind one another on a socket', () => {
     socket.destroy()
     for (let waited = 0; aborted < 3 && waited < 2000; waited += 5) await new Promise(resolve => setTimeout(resolve, 5))
     expect(aborted).toBe(3)
+  })
+})
+
+describe('the requests Node would answer itself', () => {
+  it('answers an Expect other than 100-continue with its own 417 after the checks, recorded malformed, and closes', async () => {
+    const { port, passed, refused } = await made({ token: anyToken })
+    const { raw, closed } = await exchange(port, post(port, ['Authorization: Bearer good', 'Expect: something-else']))
+    const [response] = responses(raw)
+    expect(response.status).toBe(417)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(closed).toBe(true)
+    expect(passed).toEqual([])
+    expect(refused).toEqual(['malformed'])
+  })
+
+  it('meets an Expect with the Host and Origin checks first', async () => {
+    const { port, refused } = await made({ token: anyToken })
+    const text = request(['POST /mcp HTTP/1.1', 'Host: evil.example', 'Origin: https://evil.example', 'Expect: something-else', 'Content-Length: 2'], '{}')
+    const [response] = responses((await exchange(port, text)).raw)
+    expect(response.status).toBe(403)
+    expect(refused).toEqual(['host'])
+  })
+
+  it.each([
+    ['another host', (port: number) => ['CONNECT evil.example:443 HTTP/1.1', `Host: 127.0.0.1:${port}`], 403, 'host'],
+    ['the door\'s own path', (port: number) => ['CONNECT /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`], 404, 'method'],
+  ])('refuses a CONNECT to %s through the checks with the door\'s headers, recorded, and closes', async (_name, lines, status, reason) => {
+    const { port, passed, refused } = await made({ token: anyToken })
+    const { raw, closed } = await exchange(port, request(lines(port)))
+    const [response] = responses(raw)
+    expect(response.status).toBe(status)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(closed).toBe(true)
+    expect(passed).toEqual([])
+    expect(refused).toEqual([reason])
   })
 })
 
