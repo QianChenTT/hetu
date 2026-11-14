@@ -341,6 +341,16 @@ describe('a folder swapped for a junction after prepare', () => {
     expect(await made.provider.perform(call, prepared)).toEqual({ paths: [], next: null })
   })
 
+  // The caller's spelling looked at again leads to another folder, whose key isn't the one prepare took
+  it('refuses a read whose folder became a junction into another plain folder', async () => {
+    const made = opened()
+    const call = callOf('luoshu.read', { path: 'journal/b.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await symlink(path.join(folder, 'journal-was'), path.join(folder, 'journal'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+  })
+
   // A folder gone since prepare holds no note, so the read answers as for any missing one
   it('answers not-found for a read whose folder is gone since prepare', async () => {
     const made = opened()
@@ -348,6 +358,52 @@ describe('a folder swapped for a junction after prepare', () => {
     const prepared = await made.provider.prepare(call) as Prepared
     await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
     await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-found' })
+  })
+})
+
+// The look at the folder before the act finds another spelling of the one prepare resolved. The caller's spelling
+// resolved again gives the key prepare took, so the call goes on as it did before the look
+describe.runIf(onWindows || process.platform === 'darwin')('a folder whose name differs only in case from the one prepare resolved', () => {
+  it('writes two notes sent together into one new folder spelled in two cases', async () => {
+    const made = opened()
+    const first = callOf('luoshu.write', { path: 'Inbox/a.md', text: 'a' })
+    const second = callOf('luoshu.write', { path: 'inbox/b.md', text: 'b' })
+    const [one, two] = [await made.provider.prepare(first), await made.provider.prepare(second)]
+    expect(await made.provider.perform(first, one as Prepared)).toEqual({ version: sha('a') })
+    expect(await made.provider.perform(second, two as Prepared)).toEqual({ version: sha('b') })
+    expect((await readdir(folder)).filter(name => name.toLowerCase() === 'inbox')).toEqual(['Inbox'])
+    expect((await readdir(path.join(folder, 'Inbox'))).sort()).toEqual(['a.md', 'b.md'])
+  })
+
+  it('reads and lists a note whose folder another program renamed in case since prepare', async () => {
+    const made = opened()
+    const read = callOf('luoshu.read', { path: 'journal/b.md' })
+    const list = callOf('luoshu.list', { folder: 'journal' })
+    const [reading, listing] = [await made.provider.prepare(read), await made.provider.prepare(list)]
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    expect(await made.provider.perform(read, reading as Prepared)).toEqual({ text: 'note b', version: sha('note b'), path: 'Journal/b.md' })
+    expect(await made.provider.perform(list, listing as Prepared)).toEqual({ paths: ['Journal/b.md'], next: null })
+  })
+
+  it('moves a note out of and into a folder another program renamed in case since prepare', async () => {
+    const made = opened()
+    const out = callOf('luoshu.move', { from: 'journal/b.md', to: 'b.md' })
+    const into = callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' })
+    const [leaving, entering] = [await made.provider.prepare(out), await made.provider.prepare(into)]
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    expect(await made.provider.perform(out, leaving as Prepared)).toBeNull()
+    expect(await made.provider.perform(into, entering as Prepared)).toBeNull()
+    expect(await readFile(path.join(folder, 'b.md'), 'utf8')).toBe('note b')
+    expect(await readdir(path.join(folder, 'Journal'))).toEqual(['a.md'])
+  })
+
+  // The note's own folder is gone under the renamed one, so the look at the path resolved again finds it gone
+  it('refuses a move from a folder gone under one renamed in case, as from any gone folder', async () => {
+    const made = opened()
+    const call = callOf('luoshu.move', { from: 'journal/sub/x.md', to: 'y.md' })
+    const prepared = await made.provider.prepare(call)
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    await expect(made.provider.perform(call, prepared as Prepared)).rejects.toEqual({ code: 'not-granted' })
   })
 })
 

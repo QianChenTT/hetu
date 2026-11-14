@@ -7,7 +7,7 @@ import type { Caller } from 'hetu-core/api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS } from 'hetu-core/api/exec.ts'
 import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, folderState, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, looked, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
 
 export type HistoryOptions = {
@@ -63,6 +63,8 @@ export function createHistory(options: HistoryOptions = {}): History {
   const repos = new Map<Folder, Promise<Repo>>()
   const resolved = new Map<string, Canonical[]>()
   const preparedUnder = new Map<string, Folder>()
+  // The path each target was prepared from, as the caller wrote it, so a look at its folder can resolve it again
+  const spelling = new WeakMap<Canonical, string>()
   let stopping = new AbortController()
   // git keeps one index per repo, so one call runs at a time
   let tail: Promise<void> = Promise.resolve()
@@ -160,8 +162,6 @@ export function createHistory(options: HistoryOptions = {}): History {
   // file outside the notes folder between a check and a read by name would have put that file in the repo. Where the
   // system has them, a link at the last name is refused and a FIFO opens without waiting for a writer
   async function bytesOf(target: Canonical): Promise<Buffer | null> {
-    // The folder looked at again just before the open, as the luoshu does. One gone since holds no note
-    if ((await folderState(target.absolute)) === 'moved') throw refused('not-granted')
     let handle
     try {
       handle = await open(target.absolute, NOTE_READ)
@@ -183,12 +183,26 @@ export function createHistory(options: HistoryOptions = {}): History {
     }
   }
 
+  // The folder of a prepared path looked at again just before its note is read, as the luoshu does, with one more look
+  // through canonical on the caller's spelling for a folder that reads as moved. One gone since holds no note. Answers
+  // the path to read and record
+  async function standing(prepared: Canonical): Promise<Canonical> {
+    const spelled = spelling.get(prepared)
+    const now = opening
+    const { state, target } = now === null || spelled === undefined
+      ? { state: await folderState(prepared.absolute), target: prepared }
+      : await looked(prepared, folderState, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }))
+    if (state === 'moved') throw refused('not-granted')
+    return target
+  }
+
   async function commit(repo: Repo, call: Call, targets: readonly Canonical[]): Promise<unknown> {
     const { message } = call.args as { message: string }
     // Every note is read before git hears of any, so a file over the cap commits none of the call
     const notes: { path: string, bytes: Buffer | null }[] = []
     let total = 0
-    for (const target of targets) {
+    for (const prepared of targets) {
+      const target = await standing(prepared)
       const bytes = await bytesOf(target)
       total += bytes?.length ?? 0
       // All of a commit sits in memory at once, so the call as a whole has a cap too
@@ -309,8 +323,10 @@ export function createHistory(options: HistoryOptions = {}): History {
         // A name spelled with no dot that leads to a dot name is taken as the same name missing, at a path no file has,
         // so its commit, log and read answer as a missing note's do. History writes nothing in the notes folder
         let target: Canonical
-        if (found.ok) target = found
-        else if (found.code === 'not-granted' && found.absent !== undefined) target = found.absent
+        if (found.ok) {
+          target = found
+          spelling.set(target, item)
+        } else if (found.code === 'not-granted' && found.absent !== undefined) target = found.absent
         else return refused(found.code)
         if (!targets.some(known => known.relative === target.relative)) targets.push(target)
       }

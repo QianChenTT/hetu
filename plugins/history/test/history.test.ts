@@ -351,6 +351,30 @@ describe('a folder swapped after prepare', () => {
     expect(await logOf(history, 'journal/b.md')).toEqual([])
   })
 
+  // The caller's spelling resolved again gives the key prepare took, so the commit goes on
+  it.runIf(onWindows || process.platform === 'darwin')('commits a note whose folder another program renamed in case since prepare', async () => {
+    const history = await started(where)
+    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'renamed' })
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'Journal'))
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(await ask(history, 'history.read', { path: 'journal/b.md', commit: made.commit })).toEqual({ text: 'note b', version: sha256('note b') })
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('commits a note once when two spellings of its new folder are one folder by perform', async () => {
+    const history = await started(where)
+    const call = callOf('history.commit', { paths: ['inbox/x.md', 'Inbox/x.md'], message: 'one folder' })
+    const prepared = await history.provider.prepare(call)
+    expect((prepared as { scope: { paths: string[] } }).scope.paths).toEqual(['inbox/x.md', 'Inbox/x.md'])
+    await mkdir(path.join(where.notes, 'Inbox'))
+    await note(where, 'Inbox/x.md', 'note x')
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(await ask(history, 'history.read', { path: 'inbox/x.md', commit: made.commit })).toEqual({ text: 'note x', version: sha256('note x') })
+    const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => name !== 'empty')!, 'shadow.git')
+    const { stdout } = await promisify(execFile)('git', [`--git-dir=${repo}`, 'ls-tree', '-r', '--name-only', made.commit])
+    expect(stdout.trim().split('\n')).toEqual(['Inbox/x.md'])
+  })
+
   // A folder gone since prepare holds no note, so the commit records the note gone, as for any missing one
   it('commits a note whose folder is gone since prepare as gone', async () => {
     const history = await started(where)
