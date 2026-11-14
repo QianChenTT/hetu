@@ -518,6 +518,14 @@ export class Carrier {
   // 1 bind: the caller is the way's. Every message counts against the way's rate before it is read
   private receive(way: Way, message: unknown, answer: Send): void {
     if (!way.open || this.closed) return
+    // Everything main hears from a utility half counts as alive, noted before the rate so one dropped for it or one
+    // that can't be read counts too. A worker's messages pass its relay first, which drops some unheard, so a worker
+    // keeps the heartbeat alone
+    if (way.via === 'port' && way.caller.kind === 'plugin' && way.caller.half === 'host' && this.info(way.caller.id)?.place === 'utility') {
+      try {
+        this.options.loader.heard(way.caller, 'alive')
+      } catch {}
+    }
     const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
     // Closing a window's way would lock the human out, so a window only ever drops
     if (verdict === 'flood' && way.via !== 'window') return this.flood(way)

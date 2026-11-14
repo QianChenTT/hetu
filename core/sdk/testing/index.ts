@@ -134,7 +134,7 @@ class FakeLoader implements Loader {
     for (const listener of [...this.listeners]) listener(caller, reason)
   }
 
-  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
+  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive'): void {
     for (const listener of [...this.listeners]) listener(caller, kind)
   }
 

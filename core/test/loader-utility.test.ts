@@ -101,6 +101,44 @@ describe('the heartbeat of a utility half', () => {
     expect(stateOf(made.loader, 'net')).toBe('waiting')
   })
 
+  // Everything main hears from it counts as alive, noted before its rate. Held far over the rate its pongs are dropped
+  // and it still lives while it sends, then dies once silent
+  it('keeps one over its rate whose pongs are dropped while main hears anything from it and kills it once it is silent', async () => {
+    const made = await harness({
+      install: install(),
+      limits: { heartbeatMs: 40, heartbeatMisses: 2 },
+      switches: { limits: { all: {}, plugins: { http: { messagesPerSecond: 5, floodFactor: 1000 } } } },
+    })
+    await made.loader.start()
+    const half = made.runtime.half('http', 1, 'utility')
+    const end = Date.now() + 500
+    let sent = 0
+    while (Date.now() < end) {
+      half.send({ v: 1, kind: 'busy', n: sent++ })
+      await tick(2)
+    }
+    expect(stateOf(made.loader, 'http')).toBe('ready')
+    expect(made.runtime.killed).toEqual([])
+    expect(made.link.sentTo('http', 'ping').length).toBeGreaterThanOrEqual(5)
+    made.runtime.behave.http = { pong: false }
+    await until(() => stateOf(made.loader, 'http') === 'crashed')
+    expect(reasonOf(made.loader, 'http')).toBe('unresponsive')
+  })
+
+  it('ends one past its flood cap as flood, though main heard it', async () => {
+    const made = await harness({
+      install: install(),
+      limits: { heartbeatMs: 40, heartbeatMisses: 2 },
+      switches: { limits: { all: {}, plugins: { http: { messagesPerSecond: 5, floodFactor: 2, floodMs: 1000 } } } },
+    })
+    await made.loader.start()
+    const half = made.runtime.half('http', 1, 'utility')
+    for (let i = 0; i < 20; i++) half.send({ v: 1, kind: 'busy', n: i })
+    await until(() => stateOf(made.loader, 'http') === 'crashed')
+    expect(reasonOf(made.loader, 'http')).toBe('flood')
+    expect(made.runtime.killed).toEqual([{ id: 'http', incarnation: 1 }])
+  })
+
   it('keeps one that answers ready and running', async () => {
     const made = await harness({ install: install(), limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
     await made.loader.start()

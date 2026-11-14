@@ -434,7 +434,7 @@ ${capabilityKey(change.capability)}`)
     this.die(found.k, reason)
   }
 
-  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
+  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive'): void {
     const found = this.runOf(caller)
     if (found === null) return
     const { k, live, run } = found
@@ -445,7 +445,7 @@ ${capabilityKey(change.capability)}`)
     } else if (kind === 'stopped' && live.stop !== null) {
       run.stopped = true
       if ([...live.halves.values()].every(half => half.stopped)) this.finished(k, live)
-    } else if (kind === 'pong' && live.beat !== null) {
+    } else if ((kind === 'pong' || kind === 'alive') && live.beat !== null) {
       live.beat.misses = 0
       live.beat.waiting = false
       if (k.state === 'unresponsive') {
@@ -1833,7 +1833,8 @@ ${capabilityKey(change.capability)}`)
   // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
   // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
   // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
-  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Host halves in main
+  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
+  // heard from a utility half answers a beat, a message dropped for its rate included. Host halves in main
   // get none, a host half that hangs holds main itself
   private beat(k: Known, live: Live): void {
     const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')

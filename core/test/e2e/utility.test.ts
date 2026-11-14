@@ -155,10 +155,10 @@ describe('a utility half', () => {
     expect((await ask(editor, 'core.status')).ok).toBe(true)
   })
 
-  // A flood cap of 20 in a second, which the burst of the flood call crosses before http answers it or misses a beat.
-  // A half over its rate also loses its pongs and is killed unresponsive after two beats, so a cap the burst never
-  // reaches would read unresponsive. The answer never reaches main and the caller requires http, so it stops with
-  // http and its call is refused
+  // A flood cap of 20 in a second, which the burst of the flood call crosses before http answers it. A half over its
+  // rate loses its pongs, but everything main hears from it counts as alive, so it is never read as hung while it floods
+  // and only the cap ends it. The answer never reaches main and the caller requires http, so it stops with http and
+  // its call is refused
   it('has its way closed for a flood, reads crashed and starts again on core.restart', async () => {
     const { worker, editor, dataDir } = await started({ floodFactor: 2 })
     const { pid } = await call<Facts>(worker, 'hello')
@@ -172,8 +172,8 @@ describe('a utility half', () => {
   })
 
   // Lowered from 50 to 10 a second through the trusted window while the caller keeps 8 calls in flight for 6 s. Paced
-  // at the old rate the half would send about 45 a second, lose what main drops past 10, its pongs among them, and be
-  // killed. Beats every 2 s keep the pongs inside the tenth of the rate the pacing leaves for them
+  // at the old rate the half would send about 45 a second and lose what main drops past 10, so calls would time out.
+  // Main hears it all the same, so a dropped pong never kills it
   it('paces itself to a rate the human lowers while it runs and is never cut off for it', async () => {
     const { app, editor, worker, dataDir } = await started({ heartbeatMs: 2000, messagesPerSecond: 50 }, { confirmOff: true })
     const { pid } = await call<Facts>(worker, 'hello')
