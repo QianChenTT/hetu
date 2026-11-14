@@ -1736,4 +1736,41 @@ describe('a notice owed until the human answers it', () => {
     expect((await stored(back, 'p')).owed).toBeUndefined()
     expect(await notices(back)).toEqual([])
   })
+
+  it('holds a notice for each of seventeen moves at one start beside a new plugin approval, the last once a place frees', async () => {
+    const base = await tempBase()
+    const granted = [calls('http')]
+    const ids = Array.from({ length: 17 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`)
+    const one = await harness({
+      base, install: v1(), folder: Object.fromEntries(ids.map(id => [id, worker(id, granted)])),
+      entries: Object.fromEntries(ids.map(id => [id, (root: string) => entryFor(root, { granted, class: 0 })])),
+    })
+    await one.loader.start()
+    await closed(one)
+    const two = await harness({ base, install: fetches(), folder: { newcomer: worker('newcomer', [read]) } })
+    await two.loader.start()
+    const held = () => listed(two).then(list => list.requests)
+    expect((await held()).some(request => request.kind === 'plugin.approve' && request.plugin === 'newcomer')).toBe(true)
+    const raised = (await held()).filter(request => request.kind === 'class.raised')
+    expect(raised).toHaveLength(16)
+    const missing = ids.filter(id => !raised.some(request => request.plugin === id))
+    expect(missing).toHaveLength(1)
+    expect((await stored(two, missing[0]!)).owed).toBeDefined()
+    await two.loader.confirm(raised[0]!.id, {})
+    expect((await held()).filter(request => request.kind === 'class.raised').map(request => request.plugin)).toContain(missing[0])
+  })
+
+  it('holds the notice of a switch-on pass beside sixteen approval notices', async () => {
+    const granted = [fetchOne, hears('reader.done')]
+    const extra = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`new${i}`, worker(`new${i}`)]))
+    const made = await harness({
+      install: withCapabilities(), switches: { off: ['capabilities'] },
+      folder: { listener: worker('listener', granted), reader: worker('reader', [read]), ...extra },
+      entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
+    })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
+    expect(await notices(made)).toContain(notice('listener', 'class 3, Network', 'class 4, Powerful'))
+  })
 })

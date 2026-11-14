@@ -783,8 +783,9 @@ ${capabilityKey(change.capability)}`)
   }
 
   // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
-  // it holds, naming the cause and the plugin whose change it was. One that finds no place stays owed and is raised again
-  // at the next start, and a notice that says what is no longer owed goes. The class and its asks are stored already, so a notice holds nothing back
+  // it holds, naming the cause and the plugin whose change it was. Notices take places of their own. One that finds no
+  // place stays owed and is raised again once a notice is answered or at the next start, and a notice that says what is
+  // no longer owed goes. The class and its asks are stored already, so a notice holds nothing back
   private raiseOwed(ids: Iterable<string>): void {
     for (const id of ids) {
       const entry = this.state.plugins[id]
@@ -796,11 +797,12 @@ ${capabilityKey(change.capability)}`)
       this.requests.withdraw(held => held.kind === 'class.raised' && held.plugin === id
         && (notice === null || held.from !== notice.from || held.to !== notice.to || held.cause !== notice.cause || held.by !== notice.by))
       if (notice === null) continue
-      if (typeof this.requests.raise(notice, null, MAX_PENDING) !== 'string') this.note('fault', { plugin: id, step: 'class.raised' })
+      if (typeof this.requests.raise(notice, null, MAX_PENDING, 'class.raised') !== 'string') this.note('fault', { plugin: id, step: 'class.raised' })
     }
   }
 
-  // The human answered a plugin's notice, with Confirm or Cancel: its entry owes it no longer
+  // The human answered a plugin's notice, with Confirm or Cancel: its entry owes it no longer, and a notice that found
+  // no place before can take the one freed
   private async answered(id: string): Promise<void> {
     const entry = this.state.plugins[id]
     if (entry?.owed !== undefined) {
@@ -810,6 +812,7 @@ ${capabilityKey(change.capability)}`)
       this.putEntry(id, next)
     }
     this.raiseOwed([id])
+    this.raiseOwed(Object.keys(this.state.plugins))
   }
 
   // A change to one plugin as class changes: its own, then one for every other plugin-folder plugin whose links it

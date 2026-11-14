@@ -118,11 +118,12 @@ export class Requests {
   }
 
   // A request a plugin's call or the core raised: never applied at once, since nobody clicked anything. A plugin may
-  // hold open requests up to its limit, the same change asked again finds its id
-  raise(change: Change, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
+  // hold open requests up to its limit, the same change asked again finds its id. source names whose places it takes,
+  // the plugin or the core unless one is named
+  raise(change: Change, raisedBy: string | null, limit: number, source?: string): string | { code: 'throttled' } {
     const key = canonical(change)
     const window = raisedBy === null ? 'core' : 'plugin'
-    return this.hold(change, key, { ...fieldsOf(change, key), window }, raisedBy, limit, raisedBy ?? 'core')
+    return this.hold(change, key, { ...fieldsOf(change, key), window }, raisedBy, limit, source ?? raisedBy ?? 'core')
   }
 
   // source names whose places the request takes: a window role, the core or the plugin that raised it
