@@ -189,6 +189,56 @@ describe('stops and restarts of a utility half', () => {
   })
 })
 
+describe('a utility half whose bind failed', () => {
+  const bindFailed = (reason: string, caller: Caller = utilityCaller()) =>
+    ({ callId: 'c', caller, action: 'core.bindFailed', args: { reason }, deadline: Date.now() + 1000 })
+  // A folder plugin would need an entry, so an install host plugin requires http here
+  const withDependent = () => ({ ...install(), net: host('net', { requires: ['http'] }) })
+
+  it.each(['port-taken', 'bind-failed'])('reads failed with %s, not crashed, its process ended and its dependents waiting', async reason => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve(bindFailed(reason))
+    expect(stateOf(made.loader, 'http')).toBe('failed')
+    expect(reasonOf(made.loader, 'http')).toBe(reason)
+    expect(made.loader.list().find(row => row.id === 'http')).toMatchObject({ place: 'utility', state: 'failed', reason })
+    expect(made.link.events('plugin.failed')).toEqual([{ plugin: 'http', incarnation: 1, reason }])
+    expect(made.link.events('plugin.crashed')).toEqual([])
+    expect(made.link.ended).toContainEqual({ caller: utilityCaller(), code: 'crashed' })
+    expect(made.runtime.killed).toEqual([{ id: 'http', incarnation: 1 }])
+  })
+
+  it('moves a plugin that requires it to waiting, naming it failed', async () => {
+    const made = await harness({ install: withDependent() })
+    await made.loader.start()
+    expect(stateOf(made.loader, 'net')).toBe('ready')
+    await made.loader.serve(bindFailed('port-taken'))
+    expect(stateOf(made.loader, 'net')).toBe('waiting')
+    expect(reasonOf(made.loader, 'net')).toBe('dependency:http:failed')
+  })
+
+  it('starts again on core.restart from the trusted window, a new incarnation from the same bytes', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve(bindFailed('port-taken'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(made.runtime.started.filter(start => start.id === 'http').map(start => start.incarnation)).toEqual([1, 2])
+    expect(made.runtime.half('http', 2, 'utility').got('init')[0]).toMatchObject({ lastStop: 'port-taken' })
+  })
+
+  it('ends nothing for a caller whose incarnation is over or that is not a utility half', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await expect(made.loader.serve(bindFailed('port-taken', utilityCaller(2)))).rejects.toEqual({ code: 'not-found' })
+    const storage: Caller = { kind: 'plugin', id: 'storage', half: 'host', incarnation: 1 }
+    await expect(made.loader.serve(bindFailed('port-taken', storage))).rejects.toEqual({ code: 'not-granted' })
+    expect(stateOf(made.loader, 'http')).toBe('ready')
+    expect(stateOf(made.loader, 'storage')).toBe('ready')
+    expect(made.runtime.killed).toEqual([])
+  })
+})
+
 describe('limits the human sets', () => {
   // The runtime hears each change once it landed and reads the values as the carrier holds them at that moment
   async function listening() {

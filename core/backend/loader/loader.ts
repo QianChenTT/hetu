@@ -14,7 +14,7 @@ import {
 import {
   FIRST_PARTY_SIGNER, INSTALL_LIST, installList, isNewer, MAX_INSTALL_LIST_BYTES, type InstallList, type Listed,
 } from '../../api/install.ts'
-import type { DepState, Init } from '../../api/lifecycle.ts'
+import { bindFailures, type BindFailure, type DepState, type Init, type StopReason } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
@@ -485,6 +485,14 @@ ${capabilityKey(change.capability)}`)
         if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
         else await this.restart(k.id, 'human')
+        return null
+      }
+      // The calling half alone, which the carrier has checked is http's in its utility process
+      case 'core.bindFailed': {
+        const found = this.runOf(call.caller)
+        if (found === null) throw { code: 'not-found' }
+        if (found.k.place !== 'utility') throw { code: 'not-granted' }
+        this.die(found.k, args.reason as BindFailure)
         return null
       }
     }
@@ -1797,14 +1805,14 @@ ${capabilityKey(change.capability)}`)
     stop?.end()
   }
 
-  // A crash or a failed host half. The states change first, every dependent waiting, then the ways end, so no call is
-  // answered before the dependents moved
-  private die(k: Known, reason: string): void {
+  // A crash, a failed host half or a utility half whose bind failed, which crashed nothing. The states change first,
+  // every dependent waiting, then the ways end, so no call is answered before the dependents moved
+  private die(k: Known, reason: StopReason): void {
     const live = k.live
     if (live === null || live.over) return
     if (live.stop !== null) return this.finished(k, live)
     this.retire(k, live)
-    const state = k.place === 'host' ? 'failed' : 'crashed'
+    const state = k.place === 'host' || isOne(bindFailures, reason) ? 'failed' : 'crashed'
     k.held = { kind: 'held', state, reason }
     k.lastStop = reason
     this.note(`plugin.${state}`, { plugin: k.id, incarnation: live.n, reason })

@@ -1,5 +1,5 @@
 import { floorConstants } from '../api/floor.ts'
-import type { DepState } from '../api/lifecycle.ts'
+import type { BindFailure, DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
@@ -24,6 +24,9 @@ export type PluginContext = Client & {
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
   onStop(fn: () => void | Promise<void>): void
+  // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
+  // reason. Only http's host half in its utility process may, every other caller is refused not-granted
+  bindFailed(reason: BindFailure): Promise<void>
   // Serves <id>.<name>, an action the manifest declares under provides.actions
   provide(name: string, handler: Handler): void
   // The paths of these the call's own caller may read too, only while the call is live
@@ -148,6 +151,7 @@ class Half {
         return state === 'ready' || state === 'starting'
       },
       onStop: fn => { this.stops.push(fn) },
+      bindFailed: async reason => { await request('core.bindFailed', { reason }) },
       provide: (name, handler) => serving.provide(name, handler),
       filterReadable: (call, paths) => serving.filterReadable(call, paths),
       events: {

@@ -37,6 +37,7 @@ describe('the core actions', () => {
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',
       'core.agentRefused': 'http',
+      'core.bindFailed': 'http',
     })
   })
 
@@ -124,6 +125,15 @@ describe('the core actions', () => {
     ['core.agentRefused', { reason: 'refused at the door', count: 1 }, false],
     ['core.agentRefused', { reason: 'token', count: 1, host: 'evil.example' }, false],
     ['core.agentRefused', { reason: 'token', count: 1, plugin: 'search' }, false],
+    ['core.bindFailed', { reason: 'port-taken' }, true],
+    ['core.bindFailed', { reason: 'bind-failed' }, true],
+    ['core.bindFailed', { reason: 'crashed' }, false],
+    ['core.bindFailed', { reason: 'port taken by another program' }, false],
+    ['core.bindFailed', {}, false],
+    ['core.bindFailed', undefined, false],
+    // A half speaks only about itself, so no plugin is named
+    ['core.bindFailed', { reason: 'port-taken', plugin: 'gate' }, false],
+    ['core.bindFailed', { reason: 'port-taken', port: 4748 }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
   })

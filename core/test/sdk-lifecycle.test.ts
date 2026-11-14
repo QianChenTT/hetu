@@ -70,6 +70,19 @@ describe('a plugin\'s life through the SDK', () => {
     expect(ctx!.has('mcp')).toBe(true)
   })
 
+  // Only http's utility half may make the call, so search's worker is refused at the floor
+  it('tells the core a failed bind as core.bindFailed with the reason and nothing else', async () => {
+    let answer: unknown = null
+    const { transport } = running({
+      start: async ctx => { answer = await ctx.bindFailed('port-taken').then(() => 'answered', (error: Refused) => error.code) },
+    })
+    await until(() => answer !== null)
+    expect(answer).toBe('not-granted')
+    const call = (transport.sent as Record<string, unknown>[]).find(message => message.kind === 'call')
+    expect(call).toMatchObject({ action: 'core.bindFailed', args: { reason: 'port-taken' } })
+    expect(Object.keys(call!.args as object)).toEqual(['reason'])
+  })
+
   it('answers ping with pong', async () => {
     const { heard, send } = running({ start: () => {} })
     await until(() => heard().includes('ready'))

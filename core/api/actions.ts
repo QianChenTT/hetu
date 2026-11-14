@@ -5,6 +5,7 @@ import { token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
@@ -157,6 +158,9 @@ const coreTable = {
     from: 'http',
     args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
+  // http's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
+  // names no plugin, so a half speaks only about itself
+  'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -340,6 +344,7 @@ export type ActionResults = {
   'security.request': { applied: true } | { held: string }
   'core.filterReadable': string[]
   'core.agentRefused': null
+  'core.bindFailed': null
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }
