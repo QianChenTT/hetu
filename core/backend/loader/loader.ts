@@ -740,13 +740,16 @@ ${capabilityKey(change.capability)}`)
     if (slot === 'off' || (slot === 'down' && after.unclassed === true)) next.unclassed = true
     const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
     const asks = asking.filter(item => !listed.has(capabilityKey(item)))
-    const moving: ClassMove | null = slot === 'on' && before !== null && n !== before.class ? { id, from: before.class, to: n } : null
-    const raised = !confirm && moving !== null && this.alerts(moving) ? moving : null
+    // A plugin never classed, approved while the slot was off or approved now, moves from a class not known. For its
+    // notice that class counts as 0, since nothing showed the human any class. Everywhere else it counts as 4
+    const unknown = before === null ? cause === 'approve' : before.class === null && before.unclassed === true
+    const moving: ClassMove | null = slot === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
+    const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: 0 } : moving) ? moving : null
     // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer
     const was = before?.owed
     const owed = slot !== 'on' ? was
       : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
-        : was !== undefined && n !== null && this.alerts({ id, from: was.from, to: n }) ? was : undefined
+        : was !== undefined && n !== null && this.alerts({ id, from: was.from ?? 0, to: n }) ? was : undefined
     delete next.owed
     if (owed !== undefined) next.owed = owed
     const changed = before === null || n !== before.class || !sameItems(asking, before.firstUse) || !sameItems(confirmed, before.confirmed)

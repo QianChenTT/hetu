@@ -1387,8 +1387,9 @@ describe('the capabilities plugin switched off by the human', () => {
     const entry = await stored(made, 'sync')
     expect(entry).toMatchObject({ class: 4, firstUse: [fetchOne] })
     expect(entry.unclassed).toBeUndefined()
-    // A class not known counts as 4, so leaving it alerts nobody
-    expect(made.loader.pending().filter(request => request.kind === 'class.raised')).toEqual([])
+    // Approved while off, so never classed: for its notice the class not known counts as 0
+    expect((await listed(made)).requests.filter(request => request.kind === 'class.raised').map(request => request.text))
+      .toEqual(['"sync" moved from a class not known to class 4, Powerful with no Confirm on screen'])
   })
 
   it('classes every entry once it is switched on again in the run and raises a notice for each move up that alerts', async () => {
@@ -1772,5 +1773,55 @@ describe('a notice owed until the human answers it', () => {
     await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
     await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
     expect(await notices(made)).toContain(notice('listener', 'class 3, Network', 'class 4, Powerful'))
+  })
+})
+
+// A plugin never classed that reaches a known class with no Confirm on screen having shown that class gets a notice, its
+// class not known counting as 0 there: approved while the capabilities plugin was off, or approved Confirm-off.
+// Everywhere else a class not known counts as 4
+describe('a notice for a plugin never classed', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => [held.plugin, held.text, held.notes[0]])
+  const fromNothing = (id: string, to: string) => `${JSON.stringify(id)} moved from a class not known to ${to} with no Confirm on screen`
+  async function closed(made: Made): Promise<void> {
+    await made.loader.shutdown().catch(() => {})
+    made.carrier.close()
+    made.link.carrier?.close()
+  }
+
+  it('raises one at the next start with the slot on for a plugin approved while off', async () => {
+    const base = await tempBase()
+    const off = await harness({ base, install: withCapabilities(), switches: { off: ['capabilities'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
+    await off.loader.start()
+    await approved(off, 'sync')
+    await closed(off)
+    const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
+    await made.loader.start()
+    expect(await notices(made)).toEqual([['sync', fromNothing('sync', 'class 4, Powerful'), 'Why: the classing at start, which found what changed while hetu was not running']])
+  })
+
+  it('raises one for a plugin approved Confirm-off, even below 4, and none for one approved through its Confirm', async () => {
+    for (const confirmOff of [true, false]) {
+      const made = await harness({ install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool', [read]) } })
+      await made.loader.start()
+      const answer = await made.loader.request({ kind: 'plugin.approve', plugin: 'tool' }, trusted)
+      if (!confirmOff) await made.loader.confirm((answer as { held: string }).held, {})
+      expect((await made.store.load()).state.plugins.tool!.class).toBe(1)
+      expect(await notices(made)).toEqual(confirmOff ? [['tool', fromNothing('tool', 'class 1, Reader'), 'Why: the approval of "tool" without a Confirm']] : [])
+      await cleanup()
+    }
+  })
+
+  it('raises none for an entry the slot down left with a class not known, which counts as 4', async () => {
+    const base = await tempBase()
+    const down = await harness({ base, install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
+    await down.loader.start()
+    await approved(down, 'sync')
+    expect((await down.store.load()).state.plugins.sync).toMatchObject({ class: null })
+    await closed(down)
+    const made = await harness({ base, install: withCapabilities() })
+    await made.loader.start()
+    expect((await made.store.load()).state.plugins.sync).toMatchObject({ class: 4 })
+    expect(await notices(made)).toEqual([])
   })
 })
