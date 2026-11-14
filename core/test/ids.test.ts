@@ -82,9 +82,9 @@ describe('slots, providers and guards', () => {
     expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'])
   })
 
-  it('lets guards hook luoshu.write and expects none until leases ships', () => {
-    expect(guardableActions).toEqual(['luoshu.write'])
-    expect(guards).toEqual({ 'luoshu.write': [] })
+  it('lets guards hook the luoshu\'s writes, removes and moves and expects none until leases ships', () => {
+    expect(guardableActions).toEqual(['luoshu.write', 'luoshu.remove', 'luoshu.move'])
+    expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
   it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {

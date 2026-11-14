@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { coreActions, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
-import { capabilityTypes, type CapabilityType } from '../../api/capabilities.ts'
+import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
+import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
@@ -89,9 +89,10 @@ type Target =
   | { kind: 'provider', provider: string, spec: ProviderAction }
   | { kind: 'plugin', target: string, name: string }
 
+// also is a provider action's second requirement: its capability over the paths at these places in the scope
 type Kind =
   | { kind: 'core' | 'served' | 'free' }
-  | { kind: 'power', capability: CapabilityType, scope: Scope }
+  | { kind: 'power', capability: CapabilityType, scope: Scope, also?: { capability: CapabilityType, at: readonly number[] } }
 
 type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
 type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
@@ -677,15 +678,18 @@ export class Carrier {
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }
     if (target.kind === 'provider') {
-      const { capability, scope, access } = target.spec
+      const { capability, scope, access, also } = target.spec
       if (capability === null) return { kind: 'free' }
-      const paths = scope === 'path' ? [field(args, 'path') as string] : scope === 'paths' ? [...field(args, 'paths') as string[]] : undefined
+      const paths = scope === 'path'
+        ? [field(args, 'path') as string]
+        : scope === 'paths' ? [...field(args, 'paths') as string[]] : scope === 'ends' ? ends.map(end => field(args, end) as string) : undefined
       // A command is canonical as written. access is the action's own, from core/api's table
       const command = scope === 'command' ? [...field(args, 'command') as string[]] : undefined
       return {
         kind: 'power',
         capability,
         scope: frozen({ ...(paths !== undefined ? { paths } : {}), ...(access !== undefined ? { access } : {}), ...(command !== undefined ? { command } : {}) }),
+        ...(also !== undefined ? { also: frozen({ capability: also.capability, at: also.ends.map(end => ends.indexOf(end)) }) } : {}),
       }
     }
     // A plugin's own halves call each other freely
@@ -803,7 +807,7 @@ export class Carrier {
     if (target.kind === 'events') return this.events(pending, args, kind)
     // 5 precheck, for calls with power only
     if (kind.kind === 'power') {
-      const refused = this.judge(pending, 'raw', kind.capability, kind.scope)
+      const refused = this.judgeAll(pending, 'raw', kind, kind.scope)
       if (refused !== null) return this.finish(pending, { ok: false, ...refused })
     }
     // 6 route, then 7 to 10 by the route
@@ -829,12 +833,22 @@ export class Carrier {
   // needs-confirm with the request the prompt holds
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
     if (stage === 'raw') pending.gate = this.slot('gate')
-    return this.decideFor(pending, stage, capability, scope, true)
+    return this.decideFor(pending, stage, capability, scope)
   }
 
-  // The gate's answer for a call or for a subscription the bus asks about again. prompt is false for the bus, where an
-  // ask raises nothing and counts as a refusal, since no call waits on it and the human did nothing
-  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt: boolean): No | null {
+  // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
+  // scope that lacks one of those places fails, since the second requirement would judge nothing
+  private judgeAll(pending: Pending, stage: Access['stage'], kind: Extract<Kind, { kind: 'power' }>, scope: Scope): No | null {
+    const refused = this.judge(pending, stage, kind.capability, scope)
+    if (refused !== null || kind.also === undefined) return refused
+    const paths = kind.also.at.map(at => scope.paths?.[at])
+    if (paths.length === 0 || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
+    return this.judge(pending, stage, kind.also.capability, frozen({ paths }))
+  }
+
+  // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
+  // since a live subscription is its item in use
+  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
     const open = this.gateOpen()
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
@@ -866,7 +880,7 @@ export class Carrier {
     if (view !== current) return { code: 'stale' }
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
-      const request = prompt ? this.raise(ask, access) : null
+      const request = this.raise(ask, access)
       if (typeof request === 'string') return { code: 'needs-confirm', request }
       return request ?? { code: 'not-granted' }
     }
@@ -921,8 +935,9 @@ export class Carrier {
     if (state === 'off') {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
-      const verbs = capabilityTypes.filter(type => type.startsWith('ui.'))
-      return { ok: true, result: { read: path !== undefined, write: path !== undefined, list: path !== undefined, verbs } }
+      const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
+      const any = path !== undefined
+      return { ok: true, result: { read: any, edit: any, uiRead: any, list: any, verbs } }
     }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -930,14 +945,18 @@ export class Carrier {
     try {
       const held = gate.verbs(plugin, 'editor')
       const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-      if (path === undefined) return { ok: true, result: { read: false, write: false, list: false, verbs } }
+      if (path === undefined) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
       const read = gate.canRead(caller, path) === true
       const list = gate.canList(caller, path) === true
-      const decision = gate.decide(frozen({
-        stage: 'canonical', caller, action: 'luoshu.write', capability: 'luoshu.write', scope: frozen({ paths: [path] }),
-      }))
-      const write = 'allow' in decision && decision.allow === true
-      return { ok: true, result: { read, write, list, verbs } }
+      // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
+      // only for a note the human opened
+      const allows = (action: string, capability: 'ui.edit' | 'ui.read') => {
+        const decision = gate.decide(frozen({ stage: 'canonical', caller, action, capability, scope: frozen({ paths: [path] }) }))
+        return 'allow' in decision && decision.allow === true
+      }
+      const edit = allows('editor.edit', 'ui.edit')
+      const uiRead = allows('editor.read', 'ui.read')
+      return { ok: true, result: { read, edit, uiRead, list, verbs } }
     } catch {
       this.fault('gate', 'reach')
       return no('policy-down')
@@ -1072,13 +1091,16 @@ export class Carrier {
   }
 
   // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
-  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault
-  private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' {
+  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
+  // An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
+  // waits for the Confirm. A declined ask refuses
+  private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
     const asker: Asker = { caller, onBehalf: undefined, action: 'events.subscribe' }
     const scope: Scope = frozen({ topics: [topic] })
     for (const stage of ['raw', 'canonical'] as const) {
-      const refused = this.decideFor(asker, stage, 'events.subscribe', scope, false)
+      const refused = this.decideFor(asker, stage, 'events.subscribe', scope)
       if (refused === null) continue
+      if (refused.code === 'needs-confirm' || refused.code === 'throttled') return 'ask'
       const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'
       return none ? 'down' : 'refuse'
     }
@@ -1135,7 +1157,9 @@ export class Carrier {
     // Nothing awaits from here to perform, and perform gets the frozen copy the gate and the guards judge, never the
     // object prepare gave, which could answer another path when read again
     if (kind.kind === 'power') {
-      const refused = this.judge(pending, 'canonical', kind.capability, prepared.scope)
+      // Each end the caller named stays one end, so the second requirement judges the end it was asked about
+      const reshaped = kind.also !== undefined && prepared.scope.paths?.length !== kind.scope.paths?.length
+      const refused = reshaped ? { code: 'failed' as const } : this.judgeAll(pending, 'canonical', kind, prepared.scope)
       if (refused !== null) {
         release()
         return this.finish(pending, { ok: false, ...refused })

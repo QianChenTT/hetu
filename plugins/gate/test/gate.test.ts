@@ -188,6 +188,66 @@ describe('deciding', () => {
   })
 })
 
+// The carrier hands a move's write as both ends in one scope and its read as the from end alone
+describe('a move, judged on both its ends', () => {
+  const sorter = { alpha: [item({ type: 'luoshu.write', paths: ['public/**'] }), item({ type: 'luoshu.read', paths: ['**'] })] }
+  const move = (paths: string[], stage: Access['stage']): Access => ({ ...access(alpha, 'luoshu.write', { paths }, stage), action: 'luoshu.move' })
+
+  it.each(['raw', 'canonical'] as const)('refuses a move granted on one end only, whichever end that is, at the %s stage', stage => {
+    const gate = gateOn(sorter)
+    expect(gate.decide(move(['public/a.md', 'private/a.md'], stage))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(move(['private/a.md', 'public/a.md'], stage))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(move(['public/a.md', 'public/old/a.md'], stage))).toMatchObject({ allow: true })
+  })
+
+  it('refuses a move with one end inside an item switched off and asks for one whose first use asks on either end', () => {
+    const write = (more: Partial<GrantedItem>) => item({ type: 'luoshu.write', paths: ['private/**'] }, more)
+    const off = gateOn({ alpha: [...sorter.alpha, write({ off: true })] })
+    expect(off.decide(move(['private/a.md', 'public/a.md'], 'canonical'))).toMatchObject({ allow: false, code: 'switched-off' })
+    expect(off.decide(move(['public/a.md', 'private/a.md'], 'canonical'))).toMatchObject({ allow: false, code: 'switched-off' })
+    const asking = gateOn({ alpha: [...sorter.alpha, write({ firstUse: true })] })
+    expect(asking.decide(move(['public/a.md', 'private/a.md'], 'canonical'))).toEqual({ ask: expect.any(String), view: 1 })
+    expect(asking.decide(move(['private/a.md', 'public/a.md'], 'canonical'))).toEqual({ ask: expect.any(String), view: 1 })
+  })
+})
+
+// Changing an open note through the editor, which the human then saves. It reaches the disk through no action
+describe('ui.edit', () => {
+  const edits = { alpha: [item({ type: 'ui.edit', paths: ['notes/**'] }), item({ type: 'luoshu.read', paths: ['**'] })] }
+
+  it('covers the paths it names and no other', () => {
+    const gate = gateOn(edits)
+    expect(gate.decide(access(alpha, 'ui.edit', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'ui.edit', { paths: ['journal/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+  })
+
+  it('serves no action that changes the disk, whatever its scope', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.edit', paths: ['**'] })] })
+    for (const action of ['luoshu.write', 'luoshu.remove', 'luoshu.move', 'leases.acquire']) {
+      const asked = { ...access(alpha, 'luoshu.write', { paths: ['notes/a.md'] }), action }
+      expect(gate.decide(asked)).toMatchObject({ allow: false, code: 'not-granted' })
+    }
+  })
+
+  it('is no verb the editor serves on holding alone, since it reaches only the notes it names', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.edit', paths: ['**'] }), item({ type: 'ui.decoration' })] })
+    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.decoration'])
+  })
+})
+
+// The read twin of ui.edit. The drawer serves it for notes the human opened, and no provider action or event takes it
+describe('ui.read', () => {
+  it('covers the paths it names and serves no read, listing or event of the luoshu', () => {
+    const gate = gateOn({ alpha: [item({ type: 'ui.read', paths: ['**'] }), item({ type: 'ui.decoration' })] })
+    expect(gate.decide(access(alpha, 'ui.read', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
+    expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.decide(access(alpha, 'luoshu.list', { paths: ['notes/a.md'] }))).toMatchObject({ allow: false, code: 'not-granted' })
+    expect(gate.canRead(alpha, 'notes/a.md')).toBe(false)
+    expect(gate.canList(alpha, 'notes/a.md')).toBe(false)
+    expect(gate.verbs('alpha', 'editor')).toEqual(['ui.decoration'])
+  })
+})
+
 describe('windows', () => {
   it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })
@@ -276,6 +336,8 @@ describe('coverage', () => {
     expect(rows).toEqual([
       ['luoshu.read', 'luoshu.read', 'path', 'paths'],
       ['luoshu.write', 'luoshu.write', 'path', 'paths'],
+      ['luoshu.remove', 'luoshu.write', 'path', 'paths'],
+      ['luoshu.move', 'luoshu.write', 'ends', 'paths'],
       ['leases.acquire', 'luoshu.write', 'paths', 'paths'],
       ['history.commit', 'history', 'paths', 'access'],
       ['history.log', 'history', 'path', 'access'],
@@ -286,7 +348,11 @@ describe('coverage', () => {
       expect(rule).not.toBe('none')
       // Paths are judged by the paths rule or, with an access beside them, by history's. A command by exec's
       expect(rule === 'command').toBe(scope === 'command')
-      expect(rule === 'paths' || rule === 'access').toBe(scope === 'path' || scope === 'paths')
+      expect(rule === 'paths' || rule === 'access').toBe(scope === 'path' || scope === 'paths' || scope === 'ends')
+    }
+    // A second requirement is judged on paths too
+    for (const [, action] of Object.entries(providerActions)) {
+      if (action.also !== undefined) expect(scopeRules[action.also.capability]).toBe('paths')
     }
     // A history action names its access in core/api, which the carrier puts in the scope
     for (const [name, capability] of rows) expect('access' in providerActions[name as string]).toBe(capability === 'history')

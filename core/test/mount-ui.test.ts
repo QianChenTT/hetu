@@ -6,7 +6,7 @@ import { CoreLink } from '../frontend/mount/link.ts'
 import type { SettingsValue } from '../frontend/mount/settings.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
 
-type Reach = { read?: string[], list?: string[], verbs?: string[] }
+type Reach = { read?: string[], list?: string[], uiRead?: string[], verbs?: string[] }
 
 function port() {
   const sent: Record<string, unknown>[] = []
@@ -46,7 +46,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
       const held = reach[plugin]
       if (held === undefined) return { ok: false, refusal: { code: 'policy-down' } }
       const has = (list?: string[]) => path !== undefined && (list ?? []).includes(path)
-      return { ok: true, result: { read: has(held.read), write: false, list: has(held.list) || has(held.read), verbs: held.verbs ?? [] } }
+      return { ok: true, result: { read: has(held.read), edit: false, uiRead: has(held.uiRead), list: has(held.list) || has(held.read), verbs: held.verbs ?? [] } }
     },
   })
   const link = new CoreLink(core.bridge)
@@ -54,6 +54,8 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
   const value: SettingsValue = { layout: null, plain: false, theme: null, favorites: [], keys: {}, ...settings }
   const drawn: string[] = []
   const opened: string[] = []
+  // What the plugin's reach answered for each path the page resolved a note to
+  const resolved: Record<string, boolean> = {}
   const posted: unknown[] = []
   let changed = 0
   const drawer = new Drawer(link, () => [], () => {}, {
@@ -67,13 +69,18 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
           posted.push([owner, instance, data])
           return null
         },
-        open: async path => void opened.push(path),
+        open: async (path, reads) => {
+          opened.push(path)
+          // The path the luoshu would answer, a junction public/link to private standing in
+          const at = path.replace(/^public\/link\//, 'private/')
+          resolved[at] = await reads(at)
+        },
       },
     },
   })
   drawer.start()
   drawer.ui.views.declared([kanban, files])
-  return { core, drawer, drawn, opened, posted, value, changes: () => changed }
+  return { core, drawer, drawn, opened, resolved, posted, value, changes: () => changed }
 }
 
 const text = (id: string, value: string): UiNode => ({ kind: 'text', id, text: value })
@@ -305,14 +312,25 @@ describe('events from the human, by owner', () => {
 })
 
 describe('editor.open', () => {
-  it('opens a note inside the plugin\'s read or list scope and refuses one outside before anything is read', async () => {
-    const { drawer, opened, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'], list: ['names/b.md'] } })
+  // A real read only: a note a plugin opens is never the human's, so it can't hand ui.read a note to read
+  it('opens a note inside the plugin\'s read scope and refuses one it only lists or reaches on ui.read, before anything is read', async () => {
+    const { drawer, opened, core } = started({ kanban: { verbs: ['ui.view'], read: ['a.md'], list: ['names/b.md'], uiRead: ['shown/c.md'] } })
     const board = await connected(drawer, 'kanban')
     expect(await board.call('editor.open', { path: 'a.md' })).toMatchObject({ ok: true })
-    expect(await board.call('editor.open', { path: 'names/b.md' })).toMatchObject({ ok: true })
+    expect(await board.call('editor.open', { path: 'names/b.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await board.call('editor.open', { path: 'shown/c.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     expect(await board.call('editor.open', { path: 'secret.md' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
-    expect(opened).toEqual(['a.md', 'names/b.md'])
+    expect(opened).toEqual(['a.md'])
     expect(core.calls('luoshu.read')).toEqual([])
+  })
+
+  // The page reads the note, then asks whether the plugin reads where it is before anything opens
+  it('hands the page the plugin\'s read of the path the luoshu resolved, so a spelling through a link is judged where it leads', async () => {
+    const { drawer, resolved } = started({ kanban: { verbs: ['ui.view'], read: ['public/link/x.md', 'public/a.md'] } })
+    const board = await connected(drawer, 'kanban')
+    expect(await board.call('editor.open', { path: 'public/link/x.md' })).toMatchObject({ ok: true })
+    expect(await board.call('editor.open', { path: 'public/a.md' })).toMatchObject({ ok: true })
+    expect(resolved).toEqual({ 'private/x.md': false, 'public/a.md': true })
   })
 })
 

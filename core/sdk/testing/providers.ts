@@ -11,8 +11,9 @@ export function versionOf(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
-// The luoshu in memory. read answers { text, version } or not-found. write refuses stale for a baseVersion that isn't
-// the note's or one given for a note that doesn't exist yet. It tells changed of each path it wrote
+// The luoshu in memory. read answers { text, version, path } or not-found. write refuses stale for a baseVersion that isn't
+// the note's or one given for a note that doesn't exist yet. remove refuses stale for a baseVersion that isn't the
+// note's, a missing one included. move never lands on a note that exists. It tells changed of each path it wrote, removed or moved
 export class MemoryLuoshu implements Provider {
   readonly notes = new Map<string, string>()
   // Codes the next calls answer with, one each, for a test that needs the luoshu to fail for a while
@@ -35,6 +36,11 @@ export class MemoryLuoshu implements Provider {
   }
 
   async prepare(call: Call): Promise<Prepared> {
+    // A move's two ends, in the order the carrier built its raw scope
+    if (call.action === 'luoshu.move') {
+      const { from, to } = call.args as { from: string, to: string }
+      return { scope: { paths: [from, to] } }
+    }
     const { path, baseVersion } = call.args as { path: string, baseVersion?: string }
     return baseVersion === undefined ? { scope: { paths: [path] } } : { scope: { paths: [path] }, baseVersion }
   }
@@ -57,7 +63,24 @@ export class MemoryLuoshu implements Provider {
     const current = this.notes.get(path)
     if (call.action === 'luoshu.read') {
       if (current === undefined) throw { code: 'not-found' }
-      return { text: current, version: versionOf(current) }
+      return { text: current, version: versionOf(current), path }
+    }
+    if (call.action === 'luoshu.remove') {
+      if (current === undefined) throw { code: 'not-found' }
+      if (prepared.baseVersion !== versionOf(current)) throw { code: 'stale' }
+      this.notes.delete(path)
+      await this.changed(path)
+      return null
+    }
+    if (call.action === 'luoshu.move') {
+      const to = prepared.scope.paths![1]
+      if (current === undefined) throw { code: 'not-found' }
+      if (this.notes.has(to)) throw { code: 'stale' }
+      this.notes.set(to, current)
+      this.notes.delete(path)
+      await this.changed(path)
+      await this.changed(to)
+      return null
     }
     if (call.action !== 'luoshu.write') throw { code: 'not-found' }
     const base = prepared.baseVersion

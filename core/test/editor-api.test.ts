@@ -6,14 +6,14 @@ import {
 const call = (verb: string, args: unknown, id = 1) => JSON.stringify({ v: 1, kind: 'call', id, verb, args })
 
 describe("the bridge's verbs", () => {
-  it('names each verb with what it needs: a read of the note, a write of it and a ui item', () => {
+  it('names each verb with what it needs: a read of the note, ui.edit on it for an edit and a ui item', () => {
     expect(editorVerbs).toEqual(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys'])
-    expect(verbNeeds['editor.instances']).toEqual({ read: false, write: false, ui: null })
-    expect(verbNeeds['editor.read']).toEqual({ read: true, write: false, ui: null })
-    expect(verbNeeds['editor.decorate']).toEqual({ read: true, write: false, ui: 'ui.decoration' })
-    expect(verbNeeds['editor.edit']).toEqual({ read: true, write: true, ui: null })
-    expect(verbNeeds['editor.bind']).toEqual({ read: false, write: false, ui: 'ui.command' })
-    expect(verbNeeds['editor.keys']).toEqual({ read: false, write: false, ui: 'ui.keys' })
+    expect(verbNeeds['editor.instances']).toEqual({ read: false, edit: false, ui: null })
+    expect(verbNeeds['editor.read']).toEqual({ read: true, edit: false, ui: null })
+    expect(verbNeeds['editor.decorate']).toEqual({ read: true, edit: false, ui: 'ui.decoration' })
+    expect(verbNeeds['editor.edit']).toEqual({ read: true, edit: true, ui: null })
+    expect(verbNeeds['editor.bind']).toEqual({ read: false, edit: false, ui: 'ui.command' })
+    expect(verbNeeds['editor.keys']).toEqual({ read: false, edit: false, ui: 'ui.keys' })
   })
 
   it('is frozen, so a slip in the page or a host half changes nothing it decides', () => {

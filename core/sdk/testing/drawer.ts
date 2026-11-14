@@ -95,8 +95,10 @@ export class FakeDrawer {
     return this.granted.some(granted => granted.type === item)
   }
 
+  // Every note the test opens is the human's, so ui.read reaches it as hetu's drawer would
   private reads(path: string): boolean {
     return holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })
+      || holds(this.granted, { capability: 'ui.read', scope: { paths: [path] } })
   }
 
   private async serve(message: unknown): Promise<void> {
@@ -157,7 +159,8 @@ export class FakeDrawer {
       case 'editor.open': {
         need('ui.view')
         const { path } = call.args
-        if (!this.reads(path) && !holds(this.granted, { capability: 'luoshu.list', scope: { paths: [path] } })) throw new Refusal('not-granted')
+        // A real read only, as hetu's drawer asks
+        if (!holds(this.granted, { capability: 'luoshu.read', scope: { paths: [path] } })) throw new Refusal('not-granted')
         this.opened.push(path)
         return null
       }
@@ -169,7 +172,7 @@ export class FakeDrawer {
       }
       case 'editor.edit': {
         const held = note(call.args.instance)
-        if (!holds(this.granted, { capability: 'luoshu.write', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
+        if (!holds(this.granted, { capability: 'ui.edit', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
         if (call.args.version !== held.version) throw new Refusal('stale')
         let changes: ChangeSet
         try {

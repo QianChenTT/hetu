@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { capabilityText } from '../api/trusted.ts'
 import {
   capabilities, capability, capabilityKey, capabilityTypes, type Capability, folderCapabilities, folderCapability,
   installOnlyTypes, isInstallOnly, MAX_CAPABILITIES, MAX_SCOPES_PER_TYPE, MAX_TEXT_LENGTH, text,
@@ -18,6 +19,8 @@ const everyType = [
   { type: 'ui.decoration' },
   { type: 'ui.command' },
   { type: 'ui.keys' },
+  { type: 'ui.edit', paths: ['**'] },
+  { type: 'ui.read', paths: ['**'] },
   { type: 'events.subscribe', topics: ['luoshu.changed', 'search.indexed'] },
   { type: 'storage' },
   { type: 'history', access: 'read', paths: ['**'] },
@@ -29,15 +32,27 @@ const everyType = [
 ]
 
 describe('the fixed list', () => {
-  it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2', () => {
+  it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2, and ui.edit', () => {
     expect(capabilityTypes).toEqual([
       'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
-      'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
+      'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
     ])
   })
 
   it('has a schema for every listed type and no other', () => {
     expect([...new Set(everyType.map(granted => granted.type))]).toEqual(capabilityTypes)
+  })
+
+  // The right to change an open note through the editor, so it names the notes as a write does
+  it('takes ui.edit only with paths, judged as any scope is', () => {
+    expect(capability.safeParse({ type: 'ui.edit' }).success).toBe(false)
+    expect(capability.safeParse({ type: 'ui.edit', paths: ['notes/../a.md'] }).success).toBe(false)
+    expect(capabilityText({ type: 'ui.edit', paths: ['notes/**', '**'] })).toBe('ui.edit on "notes/**", "**"')
+  })
+
+  it('takes ui.read only with paths and shows them', () => {
+    expect(capability.safeParse({ type: 'ui.read' }).success).toBe(false)
+    expect(capabilityText({ type: 'ui.read', paths: ['**'] })).toBe('ui.read on "**"')
   })
 
   it.each(everyType)('takes $type', granted => {

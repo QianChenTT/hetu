@@ -21,12 +21,14 @@ export type RequestHost = {
   fingerprint(change: Change): Promise<string>
   // Runs work with no other change applying meanwhile
   exclusive<T>(work: () => Promise<T>): Promise<T>
-  // Applies a change, only from inside exclusive
-  applyNow(change: Change): Promise<void>
+  // Applies a change, only from inside exclusive. confirmed is whether the human clicked its Confirm
+  applyNow(change: Change, confirmed: boolean): Promise<void>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
   declined(plugin: string, change: Change): void
+  // The human cancelled any request, after it went
+  cancelled?(change: Change): Promise<void>
   // A request was raised or went, so windows read core.status again
   changed(): void
   // A clock no change of the wall clock moves, and how long a request must be first in line before its Confirm counts
@@ -97,7 +99,7 @@ export class Requests {
     const fields = { ...fieldsOf(change, key), window: windowOf(from) }
     const effect = this.host.effect(change)
     if (effect === 'narrows') {
-      await this.host.exclusive(() => this.host.applyNow(change))
+      await this.host.exclusive(() => this.host.applyNow(change, false))
       void this.host.record('security.applied', { ...fields, by: 'narrows' })
       return { applied: true }
     }
@@ -116,11 +118,12 @@ export class Requests {
   }
 
   // A request a plugin's call or the core raised: never applied at once, since nobody clicked anything. A plugin may
-  // hold open requests up to its limit, the same change asked again finds its id
-  raise(change: Change, raisedBy: string | null, limit: number): string | { code: 'throttled' } {
+  // hold open requests up to its limit, the same change asked again finds its id. source names whose places it takes,
+  // the plugin or the core unless one is named
+  raise(change: Change, raisedBy: string | null, limit: number, source?: string): string | { code: 'throttled' } {
     const key = canonical(change)
     const window = raisedBy === null ? 'core' : 'plugin'
-    return this.hold(change, key, { ...fieldsOf(change, key), window }, raisedBy, limit, raisedBy ?? 'core')
+    return this.hold(change, key, { ...fieldsOf(change, key), window }, raisedBy, limit, source ?? raisedBy ?? 'core')
   }
 
   // source names whose places the request takes: a window role, the core or the plugin that raised it
@@ -196,6 +199,7 @@ export class Requests {
       this.drop(id)
       void this.host.record('security.cancel', { ...fieldsOf(one.change, one.key), window: 'trusted' })
       if (one.raisedBy !== null) this.host.declined(one.raisedBy, one.change)
+      await this.host.cancelled?.(one.change)
     })
   }
 
@@ -219,7 +223,7 @@ export class Requests {
     }
     if (landing === 'lost' && !stopping) throw { code: 'failed' }
     try {
-      await this.host.applyNow(change)
+      await this.host.applyNow(change, fields.by === 'confirm')
     } catch {
       if (stopping) this.host.resume()
       void this.host.record('security.failed', fields)

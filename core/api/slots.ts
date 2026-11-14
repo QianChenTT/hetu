@@ -86,21 +86,45 @@ export type Gate = {
 // The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
 export const classNames = frozen(['Contained', 'Reader', 'Writer', 'Network', 'Powerful'] as const)
 
+// A plugin with what it holds
+export type Peer = { readonly id: string, readonly granted: readonly Capability[] }
+
+// Where data can move to and from a plugin, followed in turn: along plugin.call both ways, since a callee answers its
+// caller, and along a subscription from the plugin that owns the topic to the plugin that hears it, never back. Hearing
+// a plugin gives the listener none of its grants, so this feeds the pair rule alone. heard is each of the plugin's
+// subscriptions to another plugin's topics with what every plugin upstream through it holds. With no flow given the
+// links are plugin.call's alone, so upstream and downstream are both what plugin.call reaches
+export type Flow = {
+  readonly upstream: readonly Peer[]
+  readonly downstream: readonly Peer[]
+  readonly heard: readonly { readonly item: Capability, readonly upstream: readonly Capability[] }[]
+}
+
 // What the trusted window shows under the core's words is made from: what the plugin asks for, what it reaches through
-// plugin.call followed in turn, and every plugin that can reach it with what each holds. Which of those read is policy
+// plugin.call followed in turn, every plugin connected to it that way with what each holds and where data moves to and
+// from it. Which of those read is policy
 export type ScreenSubject = {
   readonly granted: readonly Capability[]
   readonly reachable: readonly Capability[]
-  readonly callers: readonly { readonly id: string, readonly granted: readonly Capability[] }[]
+  readonly callers: readonly Peer[]
+  readonly flow?: Flow
 }
 
+// A plugin whose class a change moves, the changed plugin or another whose links it moves: the class its entry holds
+// and the one the change gives it, null for a class not known
+export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
+
 // The capabilities slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
-// it at an approval, a first-party copy, an update and a widened grant. A throw counts as the slot down, which leaves a
-// class null, counted as 4
+// it at every class change, the changed plugin's and every other plugin's whose links the change moves. A throw counts
+// as the slot down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
+// classes the change moves, which a slot without it shows none of. alerts says whether a move made with no Confirm on
+// screen raises a notice of its own, which a slot without it decides by whether moves shows the move
 export type Capabilities = {
-  classify(granted: readonly Capability[], reachable: readonly Capability[]): number
-  firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[]
+  classify(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number
+  firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[]
   screen(subject: ScreenSubject): string[]
+  moves?(moves: readonly ClassMove[]): string[]
+  alerts?(move: ClassMove): boolean
 }
 
 // How the loader clears a space through the storage plugin, so the clear runs after every call already queued on the
@@ -110,9 +134,13 @@ export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Pro
 // The notes folder the human picked, null for none, and hetu's own folders, which a luoshu picked around them holds
 export type Opening = { readonly folder: string | null, readonly dataDir: string, readonly installDir: string }
 
+// What the luoshu alone is handed beside its folder: the OS's bin the runtime gives, which rejects when the bin refuses
+// a file. None in a core with no bin, where a remove answers unavailable
+export type LuoshuOpening = Opening & { readonly trash?: (absolute: string) => Promise<void> }
+
 // How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
 // the luoshu failed
-export type LuoshuRole = { open(opening: Opening): void }
+export type LuoshuRole = { open(opening: LuoshuOpening): void }
 
 // How the loader hands history the notes folder: when the plugin is ready and each time luoshu.set applies. A throw
 // marks history failed

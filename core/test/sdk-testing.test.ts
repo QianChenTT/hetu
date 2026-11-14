@@ -23,7 +23,7 @@ const manifest = (over: object = {}) => ({
   id: 'reader',
   name: 'Reader',
   version: '1.0.0',
-  api: '^2',
+  api: '^3',
   entries: { worker: 'dist/worker.js' },
   provides: { actions: { read: {}, list: {} } },
   capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }],
@@ -97,6 +97,38 @@ describe('the fake core', () => {
 
   it('refuses a manifest outside the schema', () => {
     expect(() => fakeCore({ manifest: manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })).toThrow()
+  })
+
+  // As the loader refuses it with api, so a plugin's own tests fail where hetu would
+  it('refuses a manifest whose api range leaves out this core, and takes an older one this core only added to', () => {
+    expect(() => fakeCore({ manifest: manifest({ api: '^1' }) })).toThrow(/api/)
+    expect(() => fakeCore({ manifest: manifest({ api: '^2', capabilities: [{ type: 'ui.edit', paths: ['**'] }] }) })).toThrow(/api/)
+    cores.push(fakeCore({ manifest: manifest({ api: '^2' }) }))
+  })
+
+  // The fake luoshu serves both actions and the carrier judges them as hetu's does: write on both ends of a move and
+  // read on the end it leaves
+  it('serves luoshu.remove and luoshu.move, a move judged on both ends and on read where it leaves', async () => {
+    const fake = core(undefined, {
+      capabilities: [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['notes/**'] }],
+    })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    const ctx = box.ctx!
+    await expect(ctx.luoshu.move({ from: 'secret/b.md', to: 'notes/b.md' })).rejects.toMatchObject({ code: 'not-granted' })
+    expect(fake.luoshu.read('secret/b.md')).toBe('b')
+    await fake.luoshu.write('notes/c.md', 'c')
+    await expect(ctx.luoshu.move({ from: 'notes/a.md', to: 'notes/c.md' })).rejects.toMatchObject({ code: 'stale' })
+    expect(await ctx.luoshu.move({ from: 'notes/a.md', to: 'notes/old/a.md' })).toBe(null)
+    expect(fake.luoshu.read('notes/old/a.md')).toBe('a')
+    expect(fake.luoshu.read('notes/a.md')).toBeUndefined()
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'stale' })
+    // The version is required, as hetu's schema holds it
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md' } as never)).rejects.toMatchObject({ code: 'invalid' })
+    const { version } = await ctx.luoshu.read({ path: 'notes/c.md' })
+    expect(await ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: version })).toBe(null)
+    expect(fake.luoshu.read('notes/c.md')).toBeUndefined()
+    await expect(ctx.luoshu.remove({ path: 'notes/c.md', baseVersion: version })).rejects.toMatchObject({ code: 'not-found' })
   })
 
   it('publishes luoshu.changed for a note the test writes, luoshu.outside for one written outside', async () => {
@@ -238,7 +270,7 @@ describe('the fake core\'s gate', () => {
 
 describe('the fake drawer', () => {
   const drawn = (over: object = {}) => manifest({
-    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
+    capabilities: [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.view' }, { type: 'ui.layout' }],
     views: { board: { title: 'Board', kind: 'view' } },
     ...over,
   })
@@ -290,6 +322,36 @@ describe('the fake drawer', () => {
     await ctx.editor.open('notes/b.md')
     await expect(ctx.editor.open('secret/b.md')).rejects.toMatchObject({ code: 'not-granted' })
     expect(drawer.opened).toEqual(['notes/b.md'])
+  })
+
+  // As hetu's drawer does: luoshu.write reaches the disk and never the editor, and ui.edit reaches only the notes it names
+  it.each([
+    ['luoshu.write on every note', [{ type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }]],
+    ['ui.edit on another folder', [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['other/**'] }]],
+  ])('refuses editor.edit with %s', async (_name, capabilities) => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: drawn({ capabilities }), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    await expect((given as unknown as PluginContext).editor.edit(instance, 0, [5, [0, '!']])).rejects.toMatchObject({ code: 'not-granted' })
+    expect(drawer.text(instance)).toBe('hello')
+  })
+
+  // A note the test opens is the human's. editor.open needs a real read, as hetu's drawer does
+  it('serves editor.read on ui.read for a note the test opened, and editor.open on luoshu.read alone', async () => {
+    const drawer = new FakeDrawer()
+    const capabilities = [{ type: 'ui.read', paths: ['**'] }, { type: 'luoshu.list', paths: ['**'] }, { type: 'ui.view' }]
+    const made = fakeCore({ manifest: drawn({ capabilities }), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const ctx = given as unknown as PluginContext
+    const instance = drawer.openNote('secret/a.md', 'hello')
+    expect(await ctx.editor.read(instance)).toMatchObject({ text: 'hello' })
+    await expect(ctx.editor.open('secret/b.md')).rejects.toMatchObject({ code: 'not-granted' })
+    expect(drawer.opened).toEqual([])
   })
 
   it('hands events from the test to the plugin\'s handlers', async () => {

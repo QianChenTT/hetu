@@ -25,7 +25,7 @@ export async function checkManifest(dir: string, options: { install?: boolean, b
     return [`hetu-plugin.json: ${err instanceof Error ? err.message : String(err)}`]
   }
   const problems: string[] = []
-  if (!supportsApi(manifest.api)) problems.push(`api ${manifest.api} leaves out this core's API`)
+  if (!supportsApi(manifest.api, (manifest.capabilities ?? []).map(granted => granted.type))) problems.push(`api ${manifest.api} leaves out this core's API`)
   if (options.built === true) {
     for (const entry of entryPaths(manifest)) {
       try {

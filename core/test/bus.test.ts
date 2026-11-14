@@ -319,16 +319,6 @@ describe('asking again', () => {
     ])
   })
 
-  it('raises no prompt when the gate asks for a Confirm on a subscription it is asked about again, and ends it', async () => {
-    const { carrier, loader, gate, search, asks } = setup()
-    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    gate.decision = access => access.stage === 'raw' ? gate.granted(access) : { ask: 'events.subscribe luoshu.changed', view: 2 }
-    loader.current = 2
-    carrier.changed()
-    await until(() => signals(search.events(), 'events.ended').length === 1)
-    expect(asks).toEqual([])
-  })
-
   // An answer on an older StateView means the gate hasn't caught up yet, which refuses nothing
   it('holds back a subscription the gate answers on an older StateView and starts it once the gate answers on this one', async () => {
     const { carrier, loader, gate, search, edited } = setup()
@@ -412,6 +402,133 @@ describe('asking again', () => {
     await settle()
     expect(heard(git.events(), 'search.indexed')).toHaveLength(1)
     expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
+  })
+})
+
+// A subscription live when its item comes to ask at first use, as when another plugin's change moves its plugin into
+// class 4, is in use. It waits for the human's Confirm the gate's ask raises, hears nothing meanwhile and goes on after
+// it with one events.dropped. A refusal ends it as before
+describe('a subscription whose first use the gate comes to ask about', () => {
+  const asking = (gate: FakeGate, view: number) => {
+    gate.decision = access => access.stage === 'raw' ? gate.granted(access) : { ask: 'events.subscribe luoshu.changed', view }
+  }
+
+  it('waits, delivering nothing and ending nothing, and raises the Confirm for its item', async () => {
+    const { carrier, loader, gate, search, asks, edited } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    await edited('notes/a.md')
+    await edited('notes/b.md')
+    await settle()
+    expect(search.events()).toEqual([])
+    expect(asks.length).toBeGreaterThan(0)
+    for (const { ask, access } of asks) {
+      expect(ask).toBe('events.subscribe luoshu.changed')
+      expect(access).toMatchObject({ stage: 'canonical', caller: worker('search'), capability: 'events.subscribe', scope: { topics: ['luoshu.changed'] } })
+    }
+  })
+
+  it('goes on after the Confirm with one events.dropped for what it missed while it waited', async () => {
+    const { carrier, loader, gate, search, edited } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    await edited('notes/a.md')
+    await settle()
+    // The Confirm applies the item, which moves the StateView
+    gate.decision = null
+    loader.current = 3
+    carrier.changed()
+    await edited('notes/b.md')
+    await until(() => paths(search.events()).length === 1)
+    await settle()
+    expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
+    expect(signals(search.events(), 'events.dropped')).toEqual([['luoshu.changed']])
+  })
+
+  it('ends a waiting subscription the gate refuses and tells the plugin', async () => {
+    const { carrier, loader, gate, search, edited } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    gate.decision = null
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
+    loader.current = 3
+    carrier.changed()
+    await until(() => signals(search.events(), 'events.ended').length === 1)
+    expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
+    // Gone for good: granted again, it hears nothing until it subscribes again
+    gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+    loader.current = 4
+    carrier.changed()
+    await edited('notes/a.md')
+    await settle()
+    expect(search.events().map(message => message.topic)).toEqual(['events.ended'])
+  })
+
+  it('ends a waiting subscription once the human declined its Confirm, with no StateView moved', async () => {
+    let declined = false
+    const { carrier, loader, gate, search, edited } = setup({
+      asks: { raise: () => (declined ? { code: 'not-granted', reason: 'declined' } : 'req-1') },
+    })
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    await edited('notes/a.md')
+    await settle()
+    expect(search.events()).toEqual([])
+    declined = true
+    await edited('notes/b.md')
+    await until(() => signals(search.events(), 'events.ended').length === 1)
+    await settle()
+    expect(search.events().map(message => message.topic)).toEqual(['events.ended'])
+  })
+
+  it('keeps waiting while its Confirm can\'t be raised and raises it at a later sync', async () => {
+    let throttled = true
+    const raised: string[] = []
+    const { carrier, loader, gate, search, edited } = setup({
+      asks: { raise: ask => {
+        if (throttled) return { code: 'throttled' }
+        raised.push(ask)
+        return 'req-1'
+      } },
+    })
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    await edited('notes/a.md')
+    await settle()
+    expect(search.events()).toEqual([])
+    expect(raised).toEqual([])
+    throttled = false
+    await edited('notes/b.md')
+    await settle()
+    expect(raised).toContain('events.subscribe luoshu.changed')
+    expect(search.events()).toEqual([])
+  })
+
+  it('records the subscription as waiting, then as started after the Confirm', async () => {
+    const { carrier, loader, gate, search, log } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    asking(gate, 2)
+    loader.current = 2
+    carrier.changed()
+    gate.decision = null
+    loader.current = 3
+    carrier.changed()
+    carrier.close()
+    await tick()
+    const fields = (event: string) => log.events(event).map(record => record.fields)
+    expect(fields('events.waiting')).toEqual([{ plugin: 'search', half: 'worker', topics: 'luoshu.changed', count: 1 }])
+    expect(fields('events.started')).toEqual([{ plugin: 'search', half: 'worker', topics: 'luoshu.changed', count: 1 }])
+    expect(fields('events.ended')).toEqual([])
   })
 })
 

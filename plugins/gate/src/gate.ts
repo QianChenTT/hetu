@@ -22,6 +22,8 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   'ui.command': 'held',
   'ui.layout': 'held',
   'ui.keys': 'held',
+  'ui.edit': 'paths',
+  'ui.read': 'paths',
   storage: 'held',
   'guard.hook': 'held',
   // Scope holds no host yet
@@ -130,7 +132,9 @@ export function createGate(): Gate {
     verbs(plugin: string, window: string): string[] {
       if (held === null || window !== 'editor') return []
       const items = held.plugins.get(plugin) ?? []
-      return [...new Set(items.filter(item => item.type.startsWith('ui.') && on(item)).map(item => item.type))]
+      // A ui item scoped by paths reaches only the notes it names, so editor.reach asks about it per note
+      const whole = (item: Compiled) => item.type.startsWith('ui.') && scopeRules[item.type as CapabilityType] === 'held' && on(item)
+      return [...new Set(items.filter(whole).map(item => item.type))]
     },
 
     // Every item compiled once here. A throw marks the gate failed, so a view it can't read leaves it refusing

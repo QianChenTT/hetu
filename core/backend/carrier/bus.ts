@@ -12,9 +12,9 @@ export type Paths = 'ask' | 'all' | 'none'
 export type BusParts = {
   state(): { key: string, paths: Paths, view: number | null }
   canList(caller: Caller, path: string): boolean
-  // The gate's answer on one subscription it holds: allow, refuse, which ends it, or down when the gate gave no answer,
-  // which holds it back until the gate allows it
-  recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down'
+  // The gate's answer on one subscription it holds: allow, refuse, which ends it, down when the gate gave no answer or
+  // ask when its item asks at first use, which both hold it back until the gate allows it
+  recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask'
   limit(plugin: string | null, name: FloorConstant): number
   // Drops are counted for the floor lane. A change asking again made is recorded with the topics: subscriptions ended,
   // started once the gate allowed them, or held back to wait for the gate
@@ -68,7 +68,8 @@ export class Bus {
   private key: string | null = null
   private paths: Paths = 'ask'
   private view: number | null = null
-  // A subscription the gate gave no answer about waits, so the next sync asks again though the key didn't move
+  // A subscription the gate gave no answer about, or whose item asks, waits, so the next sync asks again though the key
+  // didn't move
   private unsettled = false
 
   constructor(parts: BusParts) {
@@ -172,9 +173,9 @@ export class Bus {
   // didn't allow on the current StateView waits too, path-less events included. Only an exact allow counts, so a
   // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the StateView
   // moved, the bus asks about every subscription the gate holds. A refused one ends with events.ended. One the gate
-  // gave no answer about waits and is asked again at every sync until it answers. Each subscriber with a marked or
-  // newly started subscription gets one events.dropped. With the gate off by the human nothing is asked and everything
-  // starts
+  // gave no answer about, or whose item asks at first use, waits and is asked again at every sync until it is allowed
+  // or refused, so a Confirm the human declined ends it. Each subscriber with a marked or newly started subscription
+  // gets one events.dropped. With the gate off by the human nothing is asked and everything starts
   sync(): void {
     const { key, paths, view } = this.parts.state()
     if (key === this.key && !this.unsettled) return
@@ -202,7 +203,7 @@ export class Bus {
         const answer = held.free || paths === 'all' ? 'allow' : this.parts.recheck(subscriber.caller, topic)
         if (answer === 'refuse') {
           ended.push(topic)
-        } else if (answer === 'down') {
+        } else if (answer === 'down' || answer === 'ask') {
           this.unsettled = true
           if (held.live) {
             held.live = false

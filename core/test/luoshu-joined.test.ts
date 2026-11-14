@@ -1,15 +1,28 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { Text } from '@codemirror/state'
+import { cp, mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
+import type { GuardCall } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../../plugins/gate/src/gate.ts'
 import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
-import { coreInstall, FakeRuntime, filesFor, hostManifest, tempBase, writeInstall } from './loader-fakes.ts'
+import { Drawer, type Instance, type PortLike } from '../frontend/mount/bridge.ts'
+import { CoreLink } from '../frontend/mount/link.ts'
+import { type Editors, Notes } from '../frontend/mount/notes.ts'
+import type { SettingsValue } from '../frontend/mount/settings.ts'
+import type { UiHooks } from '../frontend/mount/ui-port.ts'
+import { Versions } from '../frontend/mount/versions.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall } from './loader-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
+const versionOf = (text: string) => createHash('sha256').update(text).digest('hex')
+// A well formed version for a call refused before the luoshu compares it
+const VERSION = '0'.repeat(64)
 
 afterEach(async () => {
   for (const close of open.splice(0)) await close()
@@ -18,16 +31,24 @@ afterEach(async () => {
 type Reply = { id?: number, ok?: boolean, result?: unknown, refusal?: { code: string } }
 
 // The joined core over a real boot, with the gate and the luoshu plugins as they ship and the folder picked. Calls come
-// from the editor window, each reply handed back the moment the carrier sends it
-async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor'>, install?: object } = {}) {
+// from the editor window, each reply handed back the moment the carrier sends it, or from a plugin-folder plugin
+// approved at class 4 with the grants and the API range given
+type Folder = Record<string, { granted: Capability[], api?: string }>
+async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor' | 'trash'>, install?: object, gate?: 'off', plugins?: Folder } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
   await writeInstall(installDir, { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, ...options.install })
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  // The gate switched off by the human, as the trusted window does
+  await store.writeSwitches(options.gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
   await store.writeLuoshu({ folder })
+  for (const [id, { granted, api }] of Object.entries(options.plugins ?? {})) {
+    const root = path.join(dataDir, 'plugins', id)
+    await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted, ...(api === undefined ? {} : { api }) })))
+    await store.writePlugin(id, await entryFor(root, { granted, class: 4 }))
+  }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
   const runtime = new FakeRuntime()
@@ -58,7 +79,30 @@ async function joined(folder: string, options: { behave?: FakeRuntime['behave'],
       waiting.delete(reply.id)
     })
   })
-  return { loader, carrier, dataDir, base, ask }
+  return { loader, carrier, runtime, dataDir, base, ask, receive }
+}
+
+// A plugin's port to the editor window's drawer, each reply read once the drawer answered
+function bridgePort() {
+  const sent: Record<string, unknown>[] = []
+  const port: PortLike = {
+    onmessage: null,
+    postMessage(message: unknown) {
+      sent.push(JSON.parse(message as string) as Record<string, unknown>)
+    },
+    close() {},
+  }
+  let id = 0
+  const call = async (verb: string, args?: unknown) => {
+    const n = ++id
+    port.onmessage?.({ data: JSON.stringify({ v: 1, kind: 'call', id: n, verb, args }) })
+    for (let waited = 0; !sent.some(message => message.kind === 'reply' && message.id === n); waited += 5) {
+      if (waited > 3000) throw new Error(`no reply to ${verb}`)
+      await tick(5)
+    }
+    return sent.find(message => message.kind === 'reply' && message.id === n)
+  }
+  return { port, call, events: () => sent.filter(message => message.kind === 'event') }
 }
 
 async function events(dataDir: string): Promise<Record<string, unknown>[]> {
@@ -86,7 +130,274 @@ describe('the guard step', () => {
     const { version } = read.result as { version: string }
     expect((await ask('luoshu.write', { path: 'a.md', text: 'changed', baseVersion: version })).refusal?.code).toBe('guard-refused')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('as it was')
-    expect((await ask('luoshu.read', { path: 'a.md' })).result).toEqual({ text: 'as it was', version })
+    expect((await ask('luoshu.read', { path: 'a.md' })).result).toEqual({ text: 'as it was', version, path: 'a.md' })
+  })
+
+  it('refuses a move a guard denies on either end and the remove of a guarded note, leaving every note, then moves past it', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'held.md'), 'held')
+    await writeFile(path.join(folder, 'free.md'), 'free')
+    const asked: string[][] = []
+    const { ask } = await joined(folder, {
+      install: { leases: { files: filesFor(hostManifest('leases')) } },
+      behave: { leases: { exports: { guard: { check: (call: GuardCall) => {
+        const paths = call.scope.paths ?? []
+        asked.push([...paths])
+        return paths.includes('held.md') ? 'deny' : 'allow'
+      } } } } },
+      wire: { guardsFor: () => ['leases'] },
+    })
+    expect((await ask('luoshu.move', { from: 'held.md', to: 'moved.md' })).refusal?.code).toBe('guard-refused')
+    expect((await ask('luoshu.move', { from: 'free.md', to: 'held.md' })).refusal?.code).toBe('guard-refused')
+    expect((await ask('luoshu.remove', { path: 'held.md', baseVersion: VERSION })).refusal?.code).toBe('guard-refused')
+    expect(await readFile(path.join(folder, 'held.md'), 'utf8')).toBe('held')
+    expect(await readFile(path.join(folder, 'free.md'), 'utf8')).toBe('free')
+    expect((await ask('luoshu.move', { from: 'free.md', to: 'kept.md' })).ok).toBe(true)
+    expect(await readFile(path.join(folder, 'kept.md'), 'utf8')).toBe('free')
+    expect(asked).toEqual([['held.md', 'moved.md'], ['free.md', 'held.md'], ['held.md'], ['free.md', 'kept.md']])
+  })
+})
+
+// main hands the bin it builds on shell.trashItem through the wiring, and the luoshu removes nothing itself
+describe('a remove through the bin main hands the core', () => {
+  it('hands the bin the absolute path of the note and answers null', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'a.md'), 'to the bin')
+    const binned: string[] = []
+    const bin = path.join(path.dirname(folder), 'bin')
+    await mkdir(bin)
+    const { ask } = await joined(folder, { wire: { trash: async absolute => {
+      binned.push(absolute)
+      await rename(absolute, path.join(bin, path.basename(absolute)))
+    } } })
+    expect(await ask('luoshu.remove', { path: 'a.md', baseVersion: versionOf('to the bin') })).toMatchObject({ ok: true, result: null })
+    expect(binned).toEqual([path.join(await realpath(folder), 'a.md')])
+    expect(await readFile(path.join(bin, 'a.md'), 'utf8')).toBe('to the bin')
+  })
+
+  it('fails the remove when the bin refuses and leaves the note', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'a.md'), 'stays')
+    const { ask } = await joined(folder, { wire: { trash: async () => { throw new Error('the bin refused') } } })
+    expect((await ask('luoshu.remove', { path: 'a.md', baseVersion: versionOf('stays') })).refusal?.code).toBe('failed')
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('stays')
+  })
+})
+
+// A write over a note that exists needs the version the writer read. A remove needs it too, or a plugin that writes a
+// note and can't read it could bin the note and write its own text under the name
+describe('a remove at the version the remover read', () => {
+  it('refuses a plugin holding write and no read every remove of a note it never read, then every write over it', async () => {
+    const folder = await notes()
+    await mkdir(path.join(folder, 'inbox'))
+    await writeFile(path.join(folder, 'inbox', 'kept.md'), 'the human wrote this')
+    const binned: string[] = []
+    const { runtime } = await joined(folder, {
+      plugins: { writer: { granted: [{ type: 'luoshu.write', paths: ['inbox/**'] }], api: '^2' } },
+      wire: { trash: async absolute => { binned.push(absolute) } },
+    })
+    await tick(30)
+    const writer = runtime.half('writer')
+    const codeOf = async (action: string, args: unknown) => ((await writer.ask(action, args)) as Reply).refusal?.code
+    expect(await codeOf('luoshu.remove', { path: 'inbox/kept.md' })).toBe('invalid')
+    expect(await codeOf('luoshu.remove', { path: 'inbox/kept.md', baseVersion: '0'.repeat(64) })).toBe('stale')
+    expect(await codeOf('luoshu.write', { path: 'inbox/kept.md', text: 'replaced' })).toBe('stale')
+    expect(await readFile(path.join(folder, 'inbox', 'kept.md'), 'utf8')).toBe('the human wrote this')
+    expect(binned).toEqual([])
+  })
+
+  it('removes at the version read and refuses that version once the note was saved since', async () => {
+    const folder = await notes()
+    await writeFile(path.join(folder, 'a.md'), 'first')
+    await writeFile(path.join(folder, 'b.md'), 'second')
+    const { ask } = await joined(folder, { wire: { trash: async absolute => { await rm(absolute) } } })
+    const read = (await ask('luoshu.read', { path: 'a.md' })).result as { version: string }
+    await writeFile(path.join(folder, 'a.md'), 'saved since')
+    expect((await ask('luoshu.remove', { path: 'a.md', baseVersion: read.version })).refusal?.code).toBe('stale')
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('saved since')
+    const { version } = (await ask('luoshu.read', { path: 'b.md' })).result as { version: string }
+    expect(await ask('luoshu.remove', { path: 'b.md', baseVersion: version })).toMatchObject({ ok: true, result: null })
+    expect((await readdir(folder)).sort()).toEqual(['a.md'])
+  })
+})
+
+// The editor window names an open note by the path the luoshu resolved when it read it, so a plugin's reach to it is
+// judged on where the note is. public/link is a junction to private inside the notes folder
+describe('an open note judged on where it is, never on the spelling it was opened under', () => {
+  const scoped = (scope: string, types: ('luoshu.read' | 'ui.read' | 'ui.edit')[]): Capability[] => types.map(type => ({ type, paths: [scope] }))
+
+  async function windowed() {
+    const folder = await notes()
+    await mkdir(path.join(folder, 'public'))
+    await mkdir(path.join(folder, 'private'))
+    await writeFile(path.join(folder, 'public', 'a.md'), 'public text')
+    await writeFile(path.join(folder, 'private', 'x.md'), 'SECRET')
+    await symlink(path.join(folder, 'private'), path.join(folder, 'public', 'link'), 'junction')
+    const made = await joined(folder, { plugins: {
+      pub: { granted: [...scoped('public/**', ['luoshu.read', 'ui.read', 'ui.edit']), { type: 'ui.view' }] },
+      uionly: { granted: scoped('public/**', ['ui.read', 'ui.edit']) },
+      priv: { granted: [...scoped('private/**', ['luoshu.read']), { type: 'ui.view' }] },
+      privui: { granted: scoped('private/**', ['ui.read', 'ui.edit']) },
+    } })
+    await tick(30)
+    // The editor window's own core link, notes and drawer over the joined carrier
+    let listener: ((message: unknown) => void) | null = null
+    const link = new CoreLink({
+      send: message => made.receive('editor', message, out => listener?.(out)),
+      listen: next => { listener = next },
+    })
+    link.start()
+    const texts = new Map<string, Instance>()
+    const editors: Editors = {
+      create(instance, text, at) {
+        let doc = Text.of(text.split('\n'))
+        const versions = new Versions(doc.length)
+        texts.set(instance, {
+          id: instance, path: at, versions, text: () => doc.toString(), selection: () => [],
+          apply(changes) {
+            doc = changes.apply(doc)
+            versions.push(changes)
+          },
+          setMarks() {},
+          clearMarks() {},
+        })
+      },
+      text: instance => texts.get(instance)?.text() ?? '',
+      replace() {},
+      destroy: instance => void texts.delete(instance),
+    }
+    const opened = new Notes(link, editors, () => {})
+    opened.start()
+    const hooks: UiHooks = {
+      drawn() {},
+      changed() {},
+      post: () => 'unavailable',
+      open: (at, reads) => opened.open(at, reads).then(() => {}, () => {}),
+    }
+    const settings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
+    const drawer = new Drawer(link, () => texts.values(), () => {}, { ui: { settings, hooks } })
+    drawer.start()
+    const ports = new Map<string, ReturnType<typeof bridgePort>>()
+    for (const plugin of ['pub', 'uionly', 'priv', 'privui']) {
+      const one = bridgePort()
+      drawer.connect(plugin, 1, one.port)
+      ports.set(plugin, one)
+    }
+    await tick(30)
+    // The human opens a note from the palette under the spelling given
+    const human = async (spelled: string) => {
+      const id = await opened.open(spelled)
+      await drawer.humanOpened(texts.get(id)!)
+      return id
+    }
+    return { made, opened, texts, human, port: (plugin: string) => ports.get(plugin)! }
+  }
+
+  it('opens a note through a junction under the path the luoshu resolved', async () => {
+    const { opened, human, texts } = await windowed()
+    const id = await human('public/link/x.md')
+    expect(texts.get(id)?.path).toBe('private/x.md')
+    expect([...opened.opened.values()].map(note => note.path)).toEqual(['private/x.md'])
+  })
+
+  it('gives a plugin reading public/** nothing of a note the human opened through public/link, by luoshu.read, ui.read or ui.edit', async () => {
+    const { human, port } = await windowed()
+    const id = await human('public/link/x.md')
+    for (const plugin of ['pub', 'uionly']) {
+      const { call, events } = port(plugin)
+      expect(await call('editor.instances'), plugin).toMatchObject({ ok: true, result: { instances: [] } })
+      expect(await call('editor.read', { instance: id }), plugin).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+      expect(await call('editor.edit', { instance: id, version: 0, changes: [6, [0, '!']] }), plugin).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+      expect(events().filter(event => event.instance === id), plugin).toEqual([])
+    }
+  })
+
+  it('gives a plugin granted private/** the note the human opened through public/link, by luoshu.read and by ui.read and ui.edit', async () => {
+    const { human, port, texts } = await windowed()
+    const id = await human('public/link/x.md')
+    for (const plugin of ['priv', 'privui']) {
+      const { call } = port(plugin)
+      expect(await call('editor.instances'), plugin).toMatchObject({ ok: true, result: { instances: [{ instance: id, path: 'private/x.md' }] } })
+      expect(await call('editor.read', { instance: id }), plugin).toMatchObject({ ok: true, result: { text: 'SECRET' } })
+    }
+    expect(await port('privui').call('editor.edit', { instance: id, version: 0, changes: [6, [0, '!']] })).toMatchObject({ ok: true })
+    expect(texts.get(id)?.text()).toBe('SECRET!')
+  })
+
+  it('opens nothing for a plugin whose editor.open names a spelling the luoshu resolves outside its read', async () => {
+    const { opened, port } = await windowed()
+    const { call } = port('pub')
+    await call('editor.open', { path: 'public/link/x.md' })
+    expect(opened.opened.size).toBe(0)
+    expect(await call('editor.instances')).toMatchObject({ ok: true, result: { instances: [] } })
+    // Inside its read the open goes through
+    await call('editor.open', { path: 'public/a.md' })
+    expect([...opened.opened.values()].map(note => note.path)).toEqual(['public/a.md'])
+  })
+
+  it('keeps one note for two spellings of it, the human\'s open counting under either', async () => {
+    const { opened, human, port } = await windowed()
+    await port('priv').call('editor.open', { path: 'private/x.md' })
+    const [first] = opened.opened.keys()
+    expect(await human('public/link/x.md')).toBe(first)
+    expect(opened.opened.size).toBe(1)
+    // The human opened it, so ui.read on private/** reaches it
+    expect(await port('privui').call('editor.read', { instance: first })).toMatchObject({ ok: true, result: { text: 'SECRET' } })
+  })
+})
+
+// With the gate off by the human the carrier asks no one about a path, so the luoshu's canonical is the one check left
+describe('the dot rule with the gate off by the human', () => {
+  // A gate that throws at every question, so a call it would have to answer fails if the carrier asks it
+  const asked = () => {
+    throw new Error('the gate was asked')
+  }
+  const unasked = { gate: { exports: { gate: { decide: asked, canRead: asked, canList: asked, verbs: asked, stateChanged: asked } } } }
+
+  async function dotted() {
+    const folder = await notes()
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await mkdir(path.join(folder, 'journal'))
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'journal', '.hidden.md'), 'hidden')
+    await writeFile(path.join(folder, 'a.md'), 'note a')
+    await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
+    // A remove past canonical would answer failed here, so not-granted shows canonical refused it
+    const { ask } = await joined(folder, { gate: 'off', behave: unasked, wire: { trash: async () => { throw new Error('nothing goes to the bin') } } })
+    return { folder, ask }
+  }
+
+  it('refuses either end of a move and a remove that names a dot folder or a dot file, a junction into one too', async () => {
+    const { folder, ask } = await dotted()
+    for (const to of ['.obsidian/a.md', '.obsidian/plugins/x/a.js', '.github/workflows/x.yml', 'journal/.config/a.md', 'journal/.a.md', '.a.md', 'cfg/a.md']) {
+      expect((await ask('luoshu.move', { from: 'a.md', to })).refusal?.code, to).toBe('not-granted')
+    }
+    for (const from of ['.obsidian/plugins/x/main.js', 'journal/.hidden.md', 'cfg/plugins/x/main.js']) {
+      expect((await ask('luoshu.move', { from, to: 'stolen.md' })).refusal?.code, from).toBe('not-granted')
+      expect((await ask('luoshu.remove', { path: from, baseVersion: VERSION })).refusal?.code, from).toBe('not-granted')
+    }
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+    expect(await readFile(path.join(folder, 'journal', '.hidden.md'), 'utf8')).toBe('hidden')
+    expect(await readdir(path.join(folder, '.obsidian'))).toEqual(['plugins'])
+    expect(await readdir(path.join(folder, 'journal'))).toEqual(['.hidden.md'])
+    expect((await readdir(folder)).sort()).toEqual(['.obsidian', 'a.md', 'cfg', 'journal'])
+    // A plain move goes through with the gate never asked
+    expect((await ask('luoshu.move', { from: 'a.md', to: 'journal/a.md' })).ok).toBe(true)
+    expect(await readFile(path.join(folder, 'journal', 'a.md'), 'utf8')).toBe('note a')
+  })
+
+  it('lists no dot file and nothing under a dot folder at any depth, and refuses listing a dot folder', async () => {
+    const { folder, ask } = await dotted()
+    await mkdir(path.join(folder, 'journal', 'deep', '.config'), { recursive: true })
+    await writeFile(path.join(folder, 'journal', 'deep', '.config', 'x.md'), 'x')
+    await writeFile(path.join(folder, 'journal', 'deep', 'b.md'), 'note b')
+    await writeFile(path.join(folder, '.hidden.md'), 'hidden')
+    // Every name passes canList with the gate off, so these are what the luoshu's walk found
+    expect(await ask('luoshu.list', {})).toMatchObject({ ok: true, result: { paths: ['a.md', 'journal/deep/b.md'], next: null } })
+    expect(await ask('luoshu.list', { folder: 'journal' })).toMatchObject({ ok: true, result: { paths: ['journal/deep/b.md'], next: null } })
+    for (const at of ['.obsidian', 'cfg', 'journal/deep/.config']) {
+      expect((await ask('luoshu.list', { folder: at })).refusal?.code, at).toBe('not-granted')
+    }
   })
 })
 

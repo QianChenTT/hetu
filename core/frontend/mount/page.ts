@@ -131,7 +131,7 @@ function start(bridge: Bridge): void {
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         // A plugin's open adds the note without taking the human's focus or the current note from them
-        open: path => openNote(path, false),
+        open: (path, reads) => openNote(path, false, undefined, reads),
       },
     },
   })
@@ -147,7 +147,7 @@ function start(bridge: Bridge): void {
   const mark = element('drop-mark')
   const drawHooks = (owner: string, surface: string): DrawHooks => ({
     event: (node, type, value) => ui.nodeEvent(owner, surface, node, type, value),
-    dragStart: (_node, payload, event) => payloadDrag(payload, event),
+    dragStart: (_node, payload, event) => payloadDrag(owner, payload, event),
     divider: (node, index, event, split) => dividerDrag(owner, surface, node, index, event, split),
     iconUrl: src => `hetu://views/icon/${owner}/${src}`,
     scrolled: () => listScrolled(owner, surface),
@@ -252,7 +252,7 @@ function start(bridge: Bridge): void {
   // A node's payload dragged onto a node that accepts its type, or a note's path onto an editor, which opens it. A
   // click on a node carrying a note's path opens the note too. The gesture is the human's, so the window's own read
   // opens it and the target still needs its own grant to read the note
-  function payloadDrag(payload: Payload, start: PointerEvent): void {
+  function payloadDrag(owner: string, payload: Payload, start: PointerEvent): void {
     track(start, (event, dragging) => {
       if (!dragging) return
       moveGhost(event, payload.value)
@@ -268,13 +268,13 @@ function start(bridge: Bridge): void {
       ghost.hidden = true
       mark.hidden = true
       if (how === 'click') {
-        if (payload.type === 'note') void openNote(payload.value)
+        if (payload.type === 'note') void openNote(payload.value, true, owner)
         return
       }
       if (how !== 'drop') return
       const target = dropTarget(event, payload)
       if (target === null) return
-      if ('editor' in target) void openNote(payload.value)
+      if ('editor' in target) void openNote(payload.value, true, owner)
       else ui.nodeEvent(target.owner, target.surface, target.node, 'drop', undefined, payload)
     })
   }
@@ -462,11 +462,15 @@ function start(bridge: Bridge): void {
     element('note-actions').replaceChildren(...actions)
   }
 
-  // focus false opens the note beside the others for the layout to place, leaving the current one current
-  async function openNote(path: string, focus = true): Promise<void> {
+  // focus false opens the note beside the others for the layout to place, leaving the current one current: a plugin's
+  // open, which isn't the human's, whose reads judges the path the luoshu resolved. via names the plugin whose node
+  // named the note
+  async function openNote(path: string, focus = true, via?: string, reads?: (resolved: string) => Promise<boolean>): Promise<void> {
     if (focus) closePalette()
     try {
-      const id = await theNotes.open(path)
+      const id = await theNotes.open(path, reads)
+      const opened = views.instance(id)
+      if (focus && opened !== undefined) void drawer?.humanOpened(opened, via)
       if (!focus) {
         // With no note current nothing the human types can go astray, so it becomes current, still without focus
         if (views.shown() === null) views.show(id, false)
