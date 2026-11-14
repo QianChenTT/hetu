@@ -1586,3 +1586,57 @@ describe('a pass whose role fails for one entry', () => {
     expect(await stored(made, 'listener')).toMatchObject({ class: null, firstUse: [fetchOne, hears] })
   })
 })
+
+// An update of a plugin's code that applies with no Confirm on screen takes no confirmation with it: the new code asks
+// again for every item that asks
+describe('an update applied with no Confirm', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
+  const calls: Capability = { type: 'plugin.call', targets: ['relay'] }
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
+  const staged = async (made: Made, id: string, capabilities: Capability[]) => {
+    const dir = path.join(made.dataDir, 'staging', `${id}-next`)
+    await writeFolder(dir, filesFor(workerManifest(id, { version: '1.1.0', capabilities })))
+    return made.loader.update(id, dir)
+  }
+
+  it('empties the record of a class 0 plugin whose update applied alone, so its items ask once the network comes back', async () => {
+    const made = await harness({
+      install: withCapabilities(), folder: { mid: worker('mid'), reader: worker('reader'), relay: worker('relay') },
+      entries: {
+        mid: root => entryFor(root, { granted: [hears, calls], class: 4 }),
+        reader: root => entryFor(root, { granted: [read], class: 4 }),
+        relay: root => entryFor(root, { granted: [fetchOne], class: 4 }),
+      },
+    })
+    await made.loader.start()
+    expect(await stored(made, 'mid')).toMatchObject({ class: 4, firstUse: [hears, calls] })
+    await made.loader.apply({ kind: 'item.on', plugin: 'mid', capability: hears })
+    await made.loader.apply({ kind: 'item.on', plugin: 'mid', capability: calls })
+    await made.loader.apply({ kind: 'grant.narrow', plugin: 'relay', capability: fetchOne })
+    expect(await stored(made, 'mid')).toMatchObject({ class: 0, confirmed: [hears, calls] })
+    expect(await staged(made, 'mid', [hears, calls])).toEqual({ outcome: 'applied' })
+    expect((await stored(made, 'mid')).confirmed).toBeUndefined()
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'relay', capability: fetchOne })
+    expect(await stored(made, 'mid')).toMatchObject({ version: '1.1.0', class: 4, firstUse: [hears, calls] })
+  })
+
+  it('empties the record when the update applies Confirm-off and keeps it through a Confirm', async () => {
+    for (const confirmOff of [true, false]) {
+      const made = await harness({
+        install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool') },
+        entries: { tool: root => entryFor(root, { granted: [read, fetchOne], class: 4 }) },
+      })
+      await made.loader.start()
+      await made.loader.apply({ kind: 'item.on', plugin: 'tool', capability: fetchOne })
+      expect(await staged(made, 'tool', [read, fetchOne])).toMatchObject({ outcome: 'confirm' })
+      const answer = await made.loader.request({ kind: 'plugin.update', plugin: 'tool' }, trusted)
+      if (!confirmOff) await made.loader.confirm((answer as { held: string }).held, {})
+      const entry = await stored(made, 'tool')
+      expect(entry.version).toBe('1.1.0')
+      expect({ firstUse: entry.firstUse ?? [], confirmed: entry.confirmed ?? [] })
+        .toEqual(confirmOff ? { firstUse: [fetchOne], confirmed: [] } : { firstUse: [], confirmed: [fetchOne] })
+      await cleanup()
+    }
+  })
+})

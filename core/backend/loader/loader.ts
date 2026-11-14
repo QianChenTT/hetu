@@ -711,13 +711,15 @@ ${capabilityKey(change.capability)}`)
   // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
   // stored only with the slot switched off or absent from the install. With the slot on a move goes on the Confirm on screen. With none on screen it gets a
   // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
-  // item stays confirmed while the plugin holds it
+  // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
   private decide(change: ClassChange): Decided {
     const { id, before, after, cause, confirm, pending } = change
     let slot = this.classing()
     if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, slot }
     const held = new Set(after.granted.map(capabilityKey))
-    const confirmed = (before?.confirmed ?? []).filter(item => held.has(capabilityKey(item)))
+    // New code that applied with no Confirm on screen inherits no confirmation the old code was given
+    const carried = cause === 'update' && !confirm ? [] : before?.confirmed ?? []
+    const confirmed = carried.filter(item => held.has(capabilityKey(item)))
     const known = new Set(confirmed.map(capabilityKey))
     const classed = slot === 'on' ? this.classed(id, after.granted, pending) : null
     if (classed === null && slot === 'on') slot = 'down'
