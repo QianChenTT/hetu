@@ -29,10 +29,14 @@ function agents(over: Partial<CarrierOptions> = {}) {
   }
 }
 
-// The call mcp got for the door's mcp.handle on behalf of label
-async function handled(door: Side, mcp: Side, label: string | undefined = 'client#1') {
-  const id = door.call('mcp.handle', { body: '{}' }, label === undefined ? {} : { onBehalf: label })
-  const got = await mcp.waitFor(message => message.kind === 'call' && message.action === 'mcp.handle' && message.onBehalf === label)
+// The call mcp got for the door's mcp.handle on behalf of label, null for a call with no label. Each delivery is taken
+// once, so two calls with one label are two
+const taken = new WeakSet<object>()
+async function handled(door: Side, mcp: Side, label: string | null = 'client#1') {
+  const id = door.call('mcp.handle', { body: '{}' }, label === null ? {} : { onBehalf: label })
+  const got = await mcp.waitFor(message => message.kind === 'call' && message.action === 'mcp.handle' && !taken.has(message)
+    && (message.caller as { half?: string }).half === 'host' && message.onBehalf === (label ?? undefined))
+  taken.add(got)
   return { id, got, parent: { parent: got.callId as string } }
 }
 
@@ -127,7 +131,7 @@ describe('an agent\'s label down a chain of calls', () => {
     }
     await until(() => asked(gate, 'search.query').length === 4)
     expect(asked(gate, 'search.query').map(access => [access.onBehalf, access.agent])).toEqual(Array(4).fill(['client#1', undefined]))
-    const { parent } = await handled(door, mcp, undefined)
+    const { parent } = await handled(door, mcp, null)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('not-granted')
     expect(gate.asked.filter(access => access.agent !== undefined)).toEqual([])
   })
@@ -211,7 +215,12 @@ function gated() {
       mcp: [...items('inbox/**', 'private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false }],
       search: items('**'),
     }),
-    agents: table({ 'client#1': [...items('inbox/**', 'secret/**'), { capability: { type: 'storage' }, off: false, firstUse: false }] }),
+    agents: table({
+      'client#1': [...items('inbox/**', 'secret/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
+      // Two agents that reach search through mcp, one reading inbox and one private
+      'client#4': [...items('inbox/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
+      'client#5': [...items('private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
+    }),
   })
   const parts = agents({ gate: () => gate })
   for (const path of ['private/b.md', 'secret/c.md']) parts.luoshu.files.set(path, path)
@@ -295,6 +304,71 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     // mcp holds plugin.call on search and the agent doesn't
     expect(code(await mcp.ask('search.query', {}, parent))).toBe('not-granted')
     expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+})
+
+describe('what an agent may read and list through mcp', () => {
+  const every = ['inbox/a.md', 'private/b.md', 'secret/c.md']
+
+  it('filters for each agent on the door\'s own call the paths both mcp and that agent may read', async () => {
+    const { door, mcp } = gated()
+    const one = await handled(door, mcp, 'client#1')
+    const two = await handled(door, mcp, 'client#2')
+    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every })).result).toEqual(['inbox/a.md'])
+    expect((await mcp.ask('core.filterReadable', { call: two.got.callId, paths: every })).result).toEqual([])
+    // The same asked under the door's call as its parent
+    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
+  })
+
+  it('filters what a search behind mcp found for the agent the chain is for, one agent apart from the other', async () => {
+    const { door, mcp, search } = gated()
+    // A search_notes that hands back what core.filterReadable kept of every note it holds
+    const searchNotes = async (label: string) => {
+      const { parent } = await handled(door, mcp, label)
+      const id = mcp.call('search.query', { text: 'a' }, parent)
+      const atSearch = await search.waitFor(message => message.kind === 'call' && message.action === 'search.query' && message.onBehalf === label)
+      const kept = await search.ask('core.filterReadable', { call: atSearch.callId, paths: every })
+      search.answer(atSearch.callId, kept.result)
+      return (await mcp.reply(id)).result
+    }
+    expect(await searchNotes('client#4')).toEqual(['inbox/a.md'])
+    expect(await searchNotes('client#5')).toEqual(['private/b.md'])
+  })
+
+  it('keeps filtering for a plugin\'s own call as before, every path with the gate off, while an agent\'s answers policy-down', async () => {
+    const { door, mcp, search, loader } = gated()
+    const one = await handled(door, mcp, 'client#1')
+    mcp.call('search.query', {})
+    const plain = await search.delivered('search.query')
+    loader.slots.gate = 'off'
+    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    expect((await search.ask('core.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
+    loader.slots.gate = 'failed'
+    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    loader.slots.gate = 'starting'
+    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('starting')
+  })
+
+  it('still asks for the door\'s own caller when the door named no agent, which reads nothing', async () => {
+    const { door, mcp } = gated()
+    const { got } = await handled(door, mcp, null)
+    expect((await mcp.ask('core.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
+  })
+
+  it('lists for an agent the names both mcp and the agent may list', async () => {
+    const { door, mcp } = gated()
+    const one = await handled(door, mcp, 'client#1')
+    const two = await handled(door, mcp, 'client#2')
+    expect((await mcp.ask('luoshu.list', {}, one.parent)).result).toEqual({ paths: ['inbox/a.md'], next: null })
+    expect((await mcp.ask('luoshu.list', {}, two.parent)).result).toEqual({ paths: [], next: null })
+  })
+
+  it('fails a listing whose provider hands an agent a name outside the agent\'s grant', async () => {
+    const { door, mcp, luoshu } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    // A luoshu that filters for mcp alone
+    luoshu.perform_ = () => ({ paths: ['inbox/a.md', 'private/b.md'], next: null })
+    expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe('failed')
   })
 })
 

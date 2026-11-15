@@ -1032,10 +1032,19 @@ export class Carrier {
   // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
   // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
   // gate or the StateView changed, so no answer from before a narrowing stands
+  // For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
+  // The door's own call names http as its caller, which reads nothing and passes the answer on to the agent, so there the
+  // agent's grant stands in for the caller's
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)
     const paths = field(args, 'paths') as string[]
     if (live === undefined || live.done) return no('invalid')
+    const agent = live.lends
+    const door = agent !== undefined && live.agent === undefined
+    if (agent !== undefined) {
+      const open = this.gateOpen(agent)
+      if (open !== 'decide') return no(open as RefusalCode)
+    }
     const state = this.slot('gate')
     if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
@@ -1053,7 +1062,8 @@ export class Carrier {
     try {
       while (progress.asked < paths.length) {
         const path = paths[progress.asked]
-        if (!dotted(path) && gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) progress.kept.push(progress.asked)
+        const kept = !dotted(path) && gate.canRead(way.caller, path, agent) === true && (door || gate.canRead(live.caller, path) === true)
+        if (kept) progress.kept.push(progress.asked)
         progress.asked++
         if (progress.asked < paths.length && spent.spent + this.clock() - started >= budget) break
       }
@@ -1396,21 +1406,23 @@ export class Carrier {
   }
 
   // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
-  // caller, every name passing with the gate off by the human. A throw counts as a no and fails the listing. The whole
-  // listing, the walk and the gate's time alike, counts against the caller's second as filterReadable's does
+  // caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
+  // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
+  // the caller's second as filterReadable's does
   private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
     const off = this.slot('gate') === 'off'
     const gate = off ? null : this.holder(() => this.options.gate())
+    const { agent } = pending
     let threw = false
     const started = this.clock()
     let charged = false
     return {
       canList: path => {
         if (dotted(path)) return false
-        if (off) return true
+        if (off) return agent === undefined
         if (gate === null || threw) return false
         try {
-          return gate.canList(pending.caller, path) === true
+          return gate.canList(pending.caller, path, agent) === true
         } catch {
           threw = true
           return false
