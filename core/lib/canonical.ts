@@ -126,15 +126,19 @@ export type FolderState = 'held' | 'moved' | 'missing'
 
 // A look that finds the folder moved gets one more: canonical once more on the spelling the caller wrote. When that
 // gives the key prepare took, the disk reads the spelling as the same name now, as when a write sent beside this one
-// made a new folder under another case or another program changed a name's case. The call then acts on the path it
-// gives and the folder of that path is looked at as before
+// made a new folder under another case or another program changed a name's case. The key folds further than the gate
+// matches, so a relative path that differs in any character from the one judged goes on only when judged says the gate
+// allows it and is moved otherwise. The call then acts on the path it gives and the folder of that path is looked at
+// as before
 export async function looked(
   target: Canonical, look: (absolute: string) => Promise<FolderState>, again: () => Promise<Canonical | NotCanonical>,
+  judged: (now: Canonical) => boolean = () => false,
 ): Promise<{ state: FolderState, target: Canonical }> {
   const state = await look(target.absolute)
   if (state !== 'moved') return { state, target }
   const now = await again()
   if (!now.ok || now.key !== target.key) return { state, target }
+  if (now.relative !== target.relative && !judged(now)) return { state, target }
   return { state: await look(now.absolute), target: now }
 }
 

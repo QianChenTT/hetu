@@ -362,39 +362,96 @@ describe('a folder swapped for a junction after prepare', () => {
 })
 
 // The look at the folder before the act finds another spelling of the one prepare resolved. The caller's spelling
-// resolved again gives the key prepare took, so the call goes on as it did before the look
+// resolved again gives the key prepare took and another path, so the call asks the gate again through its judge and
+// goes on when the judge allows the new path
 describe.runIf(onWindows || process.platform === 'darwin')('a folder whose name differs only in case from the one prepare resolved', () => {
+  // A folder renamed back and forth under the luoshu's watch, which can hold it open for a moment on Windows
+  const renamed = async (from: string, to: string) => {
+    for (let wait = 10; ; wait *= 2) {
+      try {
+        return await rename(from, to)
+      } catch (err) {
+        if (!['EPERM', 'EBUSY'].includes((err as NodeJS.ErrnoException).code ?? '') || wait > 1280) throw err
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
+  }
+
+  // A call whose judge answers as given, null as the gate does for a caller granted every path, keeping each ask
+  const judging = (call: Call, asked: string[][], answer: { code: 'not-granted' } | null = null): Call => ({
+    ...call,
+    judge: (paths: readonly string[]) => {
+      asked.push([...paths])
+      return answer
+    },
+  })
+
   it('writes two notes sent together into one new folder spelled in two cases', async () => {
     const made = opened()
-    const first = callOf('luoshu.write', { path: 'Inbox/a.md', text: 'a' })
-    const second = callOf('luoshu.write', { path: 'inbox/b.md', text: 'b' })
+    const asked: string[][] = []
+    const first = judging(callOf('luoshu.write', { path: 'Inbox/a.md', text: 'a' }), asked)
+    const second = judging(callOf('luoshu.write', { path: 'inbox/b.md', text: 'b' }), asked)
     const [one, two] = [await made.provider.prepare(first), await made.provider.prepare(second)]
     expect(await made.provider.perform(first, one as Prepared)).toEqual({ version: sha('a') })
     expect(await made.provider.perform(second, two as Prepared)).toEqual({ version: sha('b') })
+    expect(asked).toEqual([['Inbox/b.md']])
     expect((await readdir(folder)).filter(name => name.toLowerCase() === 'inbox')).toEqual(['Inbox'])
     expect((await readdir(path.join(folder, 'Inbox'))).sort()).toEqual(['a.md', 'b.md'])
   })
 
   it('reads and lists a note whose folder another program renamed in case since prepare', async () => {
     const made = opened()
-    const read = callOf('luoshu.read', { path: 'journal/b.md' })
-    const list = callOf('luoshu.list', { folder: 'journal' })
+    const asked: string[][] = []
+    const read = judging(callOf('luoshu.read', { path: 'journal/b.md' }), asked)
+    const list = judging(callOf('luoshu.list', { folder: 'journal' }), asked)
     const [reading, listing] = [await made.provider.prepare(read), await made.provider.prepare(list)]
     await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
     expect(await made.provider.perform(read, reading as Prepared)).toEqual({ text: 'note b', version: sha('note b'), path: 'Journal/b.md' })
+    // A listing's folder is never judged again, since canList judges each name it gives
     expect(await made.provider.perform(list, listing as Prepared)).toEqual({ paths: ['Journal/b.md'], next: null })
+    expect(asked).toEqual([['Journal/b.md']])
   })
 
   it('moves a note out of and into a folder another program renamed in case since prepare', async () => {
     const made = opened()
-    const out = callOf('luoshu.move', { from: 'journal/b.md', to: 'b.md' })
-    const into = callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' })
+    const asked: string[][] = []
+    const out = judging(callOf('luoshu.move', { from: 'journal/b.md', to: 'b.md' }), asked)
+    const into = judging(callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' }), asked)
     const [leaving, entering] = [await made.provider.prepare(out), await made.provider.prepare(into)]
     await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
     expect(await made.provider.perform(out, leaving as Prepared)).toBeNull()
     expect(await made.provider.perform(into, entering as Prepared)).toBeNull()
+    expect(asked).toEqual([['Journal/b.md', 'b.md'], ['a.md', 'Journal/a.md']])
     expect(await readFile(path.join(folder, 'b.md'), 'utf8')).toBe('note b')
     expect(await readdir(path.join(folder, 'Journal'))).toEqual(['a.md'])
+  })
+
+  it('refuses a read, a write, a remove and both ends of a move with no judge on the call or a judge that refuses the new path', async () => {
+    const made = createLuoshu()
+    made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install'), trash: async () => {} })
+    await writeFile(path.join(folder, 'journal', 'c.md'), 'note c')
+    const tries: [string, unknown][] = [
+      ['luoshu.read', { path: 'journal/b.md' }],
+      ['luoshu.write', { path: 'journal/new.md', text: 'x' }],
+      ['luoshu.remove', { path: 'journal/c.md', baseVersion: sha('note c') }],
+      ['luoshu.move', { from: 'journal/b.md', to: 'out.md' }],
+      ['luoshu.move', { from: 'a.md', to: 'journal/in.md' }],
+    ]
+    for (const judge of ['none', 'refusing'] as const) {
+      for (const [action, args] of tries) {
+        const asked: string[][] = []
+        const plain = callOf(action, args)
+        const call = judge === 'none' ? plain : judging(plain, asked, { code: 'not-granted' })
+        const prepared = await made.provider.prepare(call)
+        await renamed(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+        await expect(made.provider.perform(call, prepared as Prepared), `${judge} ${action}`).rejects.toEqual({ code: 'not-granted' })
+        await renamed(path.join(folder, 'Journal'), path.join(folder, 'journal'))
+        expect(asked).toHaveLength(judge === 'none' ? 0 : 1)
+      }
+    }
+    made.close()
+    expect((await readdir(path.join(folder, 'journal'))).sort()).toEqual(['b.md', 'c.md'])
+    expect((await readdir(folder)).sort()).toEqual(['.git', 'a.md', 'journal'])
   })
 
   // The note's own folder is gone under the renamed one, so the look at the path resolved again finds it gone

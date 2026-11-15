@@ -184,14 +184,14 @@ export function createHistory(options: HistoryOptions = {}): History {
   }
 
   // The folder of a prepared path looked at again just before its note is read, as the luoshu does, with one more look
-  // through canonical on the caller's spelling for a folder that reads as moved. One gone since holds no note. Answers
-  // the path to read and record
-  async function standing(prepared: Canonical): Promise<Canonical> {
+  // through canonical on the caller's spelling for a folder that reads as moved, whose path goes on when it is the one
+  // judged or judged says the gate allows it. One gone since holds no note. Answers the path to read and record
+  async function standing(prepared: Canonical, judged: (now: Canonical) => boolean): Promise<Canonical> {
     const spelled = spelling.get(prepared)
     const now = opening
     const { state, target } = now === null || spelled === undefined
       ? { state: await folderState(prepared.absolute), target: prepared }
-      : await looked(prepared, folderState, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }))
+      : await looked(prepared, folderState, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
     if (state === 'moved') throw refused('not-granted')
     return target
   }
@@ -201,8 +201,15 @@ export function createHistory(options: HistoryOptions = {}): History {
     // Every note is read before git hears of any, so a file over the cap commits none of the call
     const notes: { path: string, bytes: Buffer | null }[] = []
     let total = 0
-    for (const prepared of targets) {
-      const target = await standing(prepared)
+    // The paths as judged, each replaced once the gate allows the path a look resolved again
+    const paths = targets.map(target => target.relative)
+    for (const [at, prepared] of targets.entries()) {
+      const target = await standing(prepared, now => {
+        const next = paths.with(at, now.relative)
+        if (call.judge === undefined || call.judge(next) !== null) return false
+        paths[at] = now.relative
+        return true
+      })
       const bytes = await bytesOf(target)
       total += bytes?.length ?? 0
       // All of a commit sits in memory at once, so the call as a whole has a cap too

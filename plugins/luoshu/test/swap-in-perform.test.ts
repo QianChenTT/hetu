@@ -159,3 +159,48 @@ describe('a folder swapped for a junction while a listing walks it', () => {
     expect(beforeReaddir).toBeNull()
   })
 })
+
+// The folder another program renames in case once the looks before the temp file passed, so only the look before the
+// rename finds the path the write lands on
+describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a folder renamed in case while a write runs', () => {
+  const written = async (answer: { code: 'not-granted' } | null) => {
+    const heard: string[] = []
+    const asked: string[][] = []
+    const made = createLuoshu({ publish: (_topic, at) => heard.push(at) })
+    made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    const call = {
+      callId: `c${++n}`, caller, action: 'luoshu.write', args: { path: 'journal/x.md', text: 'x' }, deadline: Date.now() + 30000,
+      judge: (paths: readonly string[]) => {
+        asked.push([...paths])
+        return answer
+      },
+    }
+    const prepared = await made.provider.prepare(call) as Prepared
+    beforeTemp = () => rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    let got: unknown
+    try {
+      got = await made.provider.perform(call, prepared)
+    } catch (err) {
+      got = { refused: err }
+    } finally {
+      made.close()
+    }
+    return { got, heard, asked }
+  }
+
+  it('lands the note on the path the look before the rename gives and names it by that path', async () => {
+    const { got, heard, asked } = await written(null)
+    expect(got).toHaveProperty('version')
+    expect(asked).toEqual([['Journal/x.md']])
+    expect(heard).toEqual(['Journal/x.md'])
+    expect(await readdir(path.join(folder, 'Journal'))).toEqual(['x.md'])
+  })
+
+  it('refuses the write and leaves no note or temp file when the judge refuses the path', async () => {
+    const { got, heard, asked } = await written({ code: 'not-granted' })
+    expect(got).toEqual({ refused: { code: 'not-granted' } })
+    expect(asked).toEqual([['Journal/x.md']])
+    expect(heard).toEqual([])
+    expect(await readdir(path.join(folder, 'Journal'))).toEqual([])
+  })
+})

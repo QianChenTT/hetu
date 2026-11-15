@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { findProgram } from 'hetu-core/lib/clean-env.ts'
+import type { Call } from 'hetu-core/api/slots.ts'
 import { createHistory } from '../src/history.ts'
 import { ask, callOf, cleanup, commitOf, editor, git, logOf, place, started, type Place } from './helpers.ts'
 
@@ -351,24 +352,53 @@ describe('a folder swapped after prepare', () => {
     expect(await logOf(history, 'journal/b.md')).toEqual([])
   })
 
-  // The caller's spelling resolved again gives the key prepare took, so the commit goes on
+  // The caller's spelling resolved again gives the key prepare took and another path, so the commit asks the gate again
+  // through the call's judge and goes on when it allows the new paths
+  const judging = (call: Call, asked: string[][], answer: { code: 'not-granted' } | null = null): Call => ({
+    ...call,
+    judge: (paths: readonly string[]) => {
+      asked.push([...paths])
+      return answer
+    },
+  })
+
   it.runIf(onWindows || process.platform === 'darwin')('commits a note whose folder another program renamed in case since prepare', async () => {
     const history = await started(where)
-    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'renamed' })
+    const asked: string[][] = []
+    const call = judging(callOf('history.commit', { paths: ['journal/b.md'], message: 'renamed' }), asked)
     const prepared = await history.provider.prepare(call)
     await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'Journal'))
     const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(asked).toEqual([['Journal/b.md']])
     expect(await ask(history, 'history.read', { path: 'journal/b.md', commit: made.commit })).toEqual({ text: 'note b', version: sha256('note b') })
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('refuses and commits nothing for a note whose folder another program renamed in case since prepare when the call has no judge or its judge refuses', async () => {
+    const history = await started(where)
+    const first = await commitOf(history, ['a.md'])
+    for (const judge of ['none', 'refusing'] as const) {
+      const asked: string[][] = []
+      const plain = callOf('history.commit', { paths: ['a.md', 'journal/b.md'], message: 'renamed' })
+      const call = judge === 'none' ? plain : judging(plain, asked, { code: 'not-granted' })
+      const prepared = await history.provider.prepare(call)
+      await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'Journal'))
+      await expect(history.provider.perform(call, prepared as never), judge).rejects.toEqual({ code: 'not-granted' })
+      await rename(path.join(where.notes, 'Journal'), path.join(where.notes, 'journal'))
+      expect(asked).toEqual(judge === 'none' ? [] : [['a.md', 'Journal/b.md']])
+    }
+    expect((await logOf(history, 'a.md')).map(listed => listed.commit)).toEqual([first])
   })
 
   it.runIf(onWindows || process.platform === 'darwin')('commits a note once when two spellings of its new folder are one folder by perform', async () => {
     const history = await started(where)
-    const call = callOf('history.commit', { paths: ['inbox/x.md', 'Inbox/x.md'], message: 'one folder' })
+    const asked: string[][] = []
+    const call = judging(callOf('history.commit', { paths: ['inbox/x.md', 'Inbox/x.md'], message: 'one folder' }), asked)
     const prepared = await history.provider.prepare(call)
     expect((prepared as { scope: { paths: string[] } }).scope.paths).toEqual(['inbox/x.md', 'Inbox/x.md'])
     await mkdir(path.join(where.notes, 'Inbox'))
     await note(where, 'Inbox/x.md', 'note x')
     const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(asked).toEqual([['Inbox/x.md', 'Inbox/x.md']])
     expect(await ask(history, 'history.read', { path: 'inbox/x.md', commit: made.commit })).toEqual({ text: 'note x', version: sha256('note x') })
     const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => name !== 'empty')!, 'shadow.git')
     const { stdout } = await promisify(execFile)('git', [`--git-dir=${repo}`, 'ls-tree', '-r', '--name-only', made.commit])

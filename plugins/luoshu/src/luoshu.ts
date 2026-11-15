@@ -9,6 +9,11 @@ import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, Prov
 import { canonical, folderState, listedState, looked, type Canonical, type FolderState, type NotCanonical } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
+// Whether the gate allows a call to act on the path a look resolved again, which differs from the one it judged
+type Judged = (now: Canonical) => boolean
+// The same for every path of a call at once, in the order prepare gave them
+type Ask = (paths: string[]) => boolean
+
 export type Luoshu = {
   provider: Provider
   role: LuoshuRole
@@ -122,10 +127,10 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // The note is opened once and checked and read through that one handle, so what is answered is what was checked: a
   // name swapped for a link to a file outside the notes folder between a check and a read by name would have handed
   // the caller that file. Anything but a regular file is no note
-  async function read(prepared: Canonical): Promise<unknown> {
+  async function read(prepared: Canonical, judged: Judged): Promise<unknown> {
     // The folder looked at again just before the open, as before a write. One gone since holds no note and the open
     // answers so
-    const { state, target } = await lookAt(prepared)
+    const { state, target } = await lookAt(prepared, folderState, judged)
     if (state === 'moved') throw refused('not-granted')
     let handle
     try {
@@ -178,15 +183,15 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   // The version is checked under the lock. The bytes go to a temp file beside the note, synced, then a rename over it,
   // so a crash leaves the old note or the new one
-  async function write(prepared: Canonical, text: string, baseVersion: string | undefined): Promise<unknown> {
+  async function write(prepared: Canonical, text: string, baseVersion: string | undefined, judged: Judged): Promise<unknown> {
     // The version check reads the note, so the folder is looked at before it as before a read, then again once the
     // folders the note needs exist
-    const first = await lookAt(prepared)
+    const first = await lookAt(prepared, folderState, judged)
     if (first.state === 'moved') throw refused('not-granted')
     if ((await current(first.target.absolute)) !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(prepared)) throw refused('not-granted')
     const bytes = Buffer.from(text, 'utf8')
-    const target = await unmoved(await madeUnder(first.target))
+    let target = await unmoved(await madeUnder(first.target, judged), judged)
     const dir = path.dirname(target.absolute)
     const temp = path.join(dir, `.${path.basename(target.absolute)}.${randomBytes(6).toString('hex')}${TEMP}`)
     try {
@@ -198,14 +203,14 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         await handle.close()
       }
       // Once more with the temp file written, so a folder swapped since the look before the temp file was made carries
-      // no note where it leads. The temp file is removed by the same path
-      await unmoved(target)
+      // no note where it leads. The note lands on the path this look gives. The temp file is removed by the same path
+      target = await unmoved(target, judged)
       await retried(() => rename(temp, target.absolute), target.absolute)
     } catch (err) {
       await rm(temp, { force: true }).catch(() => {})
       throw err
     }
-    await syncDir(dir)
+    await syncDir(path.dirname(target.absolute))
     const made = version(bytes)
     own.set(target.key, made)
     // Not awaited: the walk taken when the watch began can still be running on a large folder, and a save doesn't wait
@@ -217,19 +222,20 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
 
   // The folder a name sits in, looked at again just before a write, a remove or a move changes the disk. One that no
   // longer resolves to itself, or is gone, is refused. Answers the path to act on
-  async function unmoved(prepared: Canonical): Promise<Canonical> {
-    const { state, target } = await lookAt(prepared)
+  async function unmoved(prepared: Canonical, judged: Judged): Promise<Canonical> {
+    const { state, target } = await lookAt(prepared, folderState, judged)
     if (state !== 'held') throw refused('not-granted')
     return target
   }
 
   // The folder of a prepared path looked at again. One that reads as moved gets one more look through canonical on the
-  // caller's spelling. A path that stands for a name leading to a dot name is never resolved again
-  async function lookAt(prepared: Canonical, look: (absolute: string) => Promise<FolderState> = folderState): Promise<{ state: FolderState, target: Canonical }> {
+  // caller's spelling, whose path goes on when it is the one judged or judged says the gate allows it. A path that
+  // stands for a name leading to a dot name is never resolved again
+  async function lookAt(prepared: Canonical, look: (absolute: string) => Promise<FolderState>, judged: Judged): Promise<{ state: FolderState, target: Canonical }> {
     const spelled = spelling.get(prepared)
     const now = opening
     if (now === null || spelled === undefined || nowhere.has(prepared)) return { state: await look(prepared.absolute), target: prepared }
-    const found = await looked(prepared, look, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }))
+    const found = await looked(prepared, look, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
     spelling.set(found.target, spelled)
     return found
   }
@@ -252,7 +258,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // itself, made through a folder swapped since the look before or first under another spelling, ends the making there,
   // so a swap that races the call puts at most one empty folder where it leads. The look at the note's folder after this
   // decides whether the call goes on. Answers the path to act on
-  async function madeUnder(prepared: Canonical): Promise<Canonical> {
+  async function madeUnder(prepared: Canonical, judged: Judged): Promise<Canonical> {
     let target = prepared
     for (let again = true; ; again = false) {
       const missing: string[] = []
@@ -270,20 +276,21 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         }
         return target
       }
-      const now = again ? await resolvedAgain(prepared) : null
+      const now = again ? await resolvedAgain(prepared, judged) : null
       if (now === null) throw refused('not-granted')
       target = now
     }
   }
 
-  // canonical once more on the spelling the caller wrote, when it gives the key prepare took. Never for a path that
-  // stands for a name leading to a dot name
-  async function resolvedAgain(prepared: Canonical): Promise<Canonical | null> {
+  // canonical once more on the spelling the caller wrote, when it gives the key prepare took and the path judged or one
+  // judged says the gate allows. Never for a path that stands for a name leading to a dot name
+  async function resolvedAgain(prepared: Canonical, judged: Judged): Promise<Canonical | null> {
     const spelled = spelling.get(prepared)
     const now = opening
     if (now === null || spelled === undefined || nowhere.has(prepared)) return null
     const found = await canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir })
     if (!found.ok || found.key !== prepared.key) return null
+    if (found.relative !== prepared.relative && !judged(found)) return null
     spelling.set(found, spelled)
     return found
   }
@@ -301,9 +308,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // To the bin the runtime hands the luoshu with its folder, so a remove can be undone with hetu closed. A bin that
   // refuses fails the remove and the note stays. Only at the version the remover read, as a write over a note, so no
   // version answers stale
-  async function remove(prepared: Canonical, baseVersion: string | undefined, trash: LuoshuOpening['trash']): Promise<null> {
+  async function remove(prepared: Canonical, baseVersion: string | undefined, trash: LuoshuOpening['trash'], judged: Judged): Promise<null> {
     if (trash === undefined) throw refused('unavailable')
-    const target = await unmoved(prepared)
+    const target = await unmoved(prepared, judged)
     if (!(await isNote(target.absolute))) throw refused('not-found')
     if ((await current(target.absolute)) !== baseVersion) throw refused('stale')
     await trash(target.absolute)
@@ -317,18 +324,26 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // Never onto a name that exists: a hard link at to fails if anything is there, then from is unlinked. One file under a
   // new spelling of its name is a rename in place. A volume with no hard links checks to under both locks and renames,
   // which only a program outside hetu could race
-  async function move(source: Canonical, destination: Canonical, same: boolean): Promise<null> {
-    const from = await unmoved(source)
+  async function move(source: Canonical, destination: Canonical, same: boolean, ask: Ask): Promise<null> {
+    const ends = [source.relative, destination.relative]
+    const end = (at: 0 | 1): Judged => now => {
+      const paths = at === 0 ? [now.relative, ends[1]] : [ends[0], now.relative]
+      if (!ask(paths)) return false
+      ends[at] = now.relative
+      return true
+    }
+    const from = await unmoved(source, end(0))
     if (!(await isNote(from.absolute))) throw refused('not-found')
     if (nowhere.has(destination)) throw refused('not-granted')
     let to = destination
     if (same) {
       // The from end as it was looked at, with the last name as the caller wrote it
       to = respelled(from, spelling.get(destination) ?? destination.relative)
+      if (to.relative !== ends[1] && !end(1)(to)) throw refused('not-granted')
       if (to.absolute !== from.absolute) await retried(() => rename(from.absolute, to.absolute), from.absolute)
     } else {
-      to = await madeUnder(to)
-      to = await unmoved(to)
+      to = await madeUnder(to, end(1))
+      to = await unmoved(to, end(1))
       let linked = true
       try {
         await link(from.absolute, to.absolute)
@@ -473,20 +488,24 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
           // The carrier's canList is what keeps a name from a caller that may not list it, so no listing runs without it
           if (call.canList === undefined) throw refused('failed')
           // The folder listed looked at again before the walk, as before a read. One gone since lists nothing
-          const listed = target === undefined ? undefined : await lookAt(target, listedState)
+          // Every name a listing gives is judged by canList on its own path, so its folder needs no judging again
+          const listed = target === undefined ? undefined : await lookAt(target, listedState, () => true)
           if (listed?.state === 'moved') throw refused('not-granted')
           const root = await realpath(opening.folder)
           const page = await list(root, listed?.target.absolute ?? root, (call.args as { after?: string }).after, call.canList)
           // Once more after the walk, so a folder swapped for a junction while it was walked lists nothing
-          if (listed !== undefined && (await lookAt(listed.target, listedState)).state === 'moved') throw refused('not-granted')
+          if (listed !== undefined && (await lookAt(listed.target, listedState, () => true)).state === 'moved') throw refused('not-granted')
           return page
         }
         if (target === undefined) throw refused('failed')
-        if (call.action === 'luoshu.read') return await read(target)
-        if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion)
-        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash)
+        // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no
+        const ask: Ask = paths => call.judge !== undefined && call.judge(paths) === null
+        const one: Judged = now => ask([now.relative])
+        if (call.action === 'luoshu.read') return await read(target, one)
+        if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
+        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
         const moved = moving.get(call.callId)
-        if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same)
+        if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same, ask)
         throw refused('invalid')
       } finally {
         unlock(call.callId)
