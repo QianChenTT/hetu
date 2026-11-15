@@ -19,6 +19,7 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import { agentHost } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -2194,7 +2195,17 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand] })
+    // Each agent's items by its label, from the agent host's entry while the human has the host on. None of them is the
+    // host's own, so none switches off or asks at first use
+    const agents: Record<string, GrantedItem[]> = Object.create(null)
+    const host = this.state.plugins[agentHost]
+    if (host?.enabled === true && this.known.get(agentHost)?.from !== 'install') {
+      for (const { agent, capability } of host.agents ?? []) {
+        if (!Object.hasOwn(agents, agent)) agents[agent] = []
+        agents[agent].push({ capability: structuredClone(capability), off: false, firstUse: false })
+      }
+    }
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], agents })
   }
 
   // The folder in the state and hetu's own folders, which the luoshu refuses to reach into

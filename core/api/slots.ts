@@ -79,12 +79,15 @@ export type GrantedItem = { readonly capability: Capability, readonly off: boole
 // What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
-// volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists
+// volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
+// agents holds each agent's own grant by its label, the labelled items of the agent host's entry, none of which is in
+// the host's own items. A view with no agents gives every agent nothing
 export type StateView = {
   readonly n: number
   readonly foldCase: boolean
   readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
   readonly execAny: readonly string[]
+  readonly agents?: Readonly<Record<string, readonly GrantedItem[]>>
 }
 
 export type Gate = {
