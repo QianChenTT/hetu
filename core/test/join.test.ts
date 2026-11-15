@@ -827,7 +827,7 @@ describe('the off states', () => {
 // for. A request through a seam that names a client reaches mcp as http's host half on behalf of that client
 describe('the door through the joined core', () => {
   const callMcp = { type: 'plugin.call' as const, targets: ['mcp'] }
-  const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
+  const seam = async (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
 
   async function freePort(): Promise<number> {
     const server = net.createServer()

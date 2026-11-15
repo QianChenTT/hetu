@@ -29,7 +29,7 @@ async function made(options: {
   const passed: Passed[] = []
   const door = await openDoor({
     port: 0,
-    token: options.token ?? (() => null),
+    token: options.token ?? (async () => null),
     serve: async call => {
       passed.push(call)
       return options.serve ? options.serve(call) : { status: 200, body: '{"ok":true}' }
@@ -43,7 +43,7 @@ async function made(options: {
   return { door, port: door.address.port, refused, passed }
 }
 
-const anyToken: TokenSeam = text => (text === 'Bearer good' ? { client: 'https://client.example/metadata' } : null)
+const anyToken: TokenSeam = async text => (text === 'Bearer good' ? { client: 'https://client.example/metadata' } : null)
 
 type Exchange = { raw: string, closed: boolean, closedAfterMs: number | null }
 
@@ -134,7 +134,7 @@ describe('the bind', () => {
   it('rejects when the port is taken and tries no other', async () => {
     const { port } = await made()
     const listen = vi.spyOn(http.Server.prototype, 'listen')
-    await expect(openDoor({ port, token: () => null, serve: async () => ({ status: 200, body: null }), refused: () => {} }))
+    await expect(openDoor({ port, token: async () => null, serve: async () => ({ status: 200, body: null }), refused: () => {} }))
       .rejects.toMatchObject({ code: 'EADDRINUSE' })
     expect(listen).toHaveBeenCalledTimes(1)
   })
@@ -274,11 +274,12 @@ describe('the route table on the wire', () => {
 })
 
 describe('the token check', () => {
-  it('answers 401 with a bare Bearer challenge when no token passes and records token', async () => {
+  // RFC 9728: the challenge names where the resource's metadata is, on the door's own port
+  it('answers 401 with a Bearer challenge naming the resource metadata when no token passes and records token', async () => {
     const { port, refused, passed } = await made()
     const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)
     expect(response.status).toBe(401)
-    expect(header(response, 'www-authenticate')).toBe('Bearer')
+    expect(header(response, 'www-authenticate')).toBe(`Bearer resource_metadata="http://127.0.0.1:${port}/.well-known/oauth-protected-resource/mcp"`)
     expectOnlyOwnHeaders(response, ['www-authenticate', 'connection'])
     expect(refused).toEqual(['token'])
     expect(passed).toEqual([])
@@ -304,6 +305,68 @@ describe('the token check', () => {
     expect(passed[0].client).toBe('https://client.example/metadata')
     expect(passed[0].body.toString('utf8')).toBe('not json at all')
     expect(passed[0].headers).toContain('Mcp-Protocol-Version')
+  })
+})
+
+// The token check takes time once tokens exist, and the socket may be refused or closed while it runs
+describe('a token check that settles later', () => {
+  const later = <T>(ms: number, value: T) => new Promise<T>(resolve => setTimeout(() => resolve(value), ms))
+  const client = { client: 'https://client.example/metadata' }
+
+  // Checked again once the check settles, so neither a 100 Continue nor a read of the body follows
+  it('serves nothing and writes no 100 Continue when the client closed its socket while the check ran', async () => {
+    const continued = vi.spyOn(http.ServerResponse.prototype, 'writeContinue')
+    let settled = 0
+    const { port, passed, refused } = await made({ token: async () => { const answer = await later(300, client); settled++; return answer } })
+    const socket = net.connect({ host: '127.0.0.1', port })
+    sockets.push(socket)
+    socket.on('error', () => {})
+    await new Promise(resolve => socket.once('connect', resolve))
+    socket.write(post(port, ['Authorization: Bearer good', 'Expect: 100-continue']))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    socket.destroy()
+    await vi.waitFor(() => expect(settled).toBe(1), { timeout: 2000 })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(passed).toEqual([])
+    expect(refused).toEqual([])
+    expect(continued).not.toHaveBeenCalled()
+  })
+
+  it('serves nothing and writes no 100 Continue behind a request refused on its socket while the check ran', async () => {
+    const continued = vi.spyOn(http.ServerResponse.prototype, 'writeContinue')
+    let settled = 0
+    const { port, passed, refused } = await made({
+      token: async text => { const answer = await (text === 'Bearer good' ? later(300, client) : later(100, null)); settled++; return answer },
+    })
+    const answered = responses((await exchange(port, post(port, ['Authorization: Bearer bad']) + post(port, ['Authorization: Bearer good', 'Expect: 100-continue']))).raw)
+    await vi.waitFor(() => expect(settled).toBe(2), { timeout: 2000 })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(answered.map(response => response.status)).toEqual([401])
+    expect(refused).toEqual(['token'])
+    expect(passed).toEqual([])
+    expect(continued).not.toHaveBeenCalled()
+  })
+
+  it('writes the answers of two requests on one socket in the order they came, whichever check settled first', async () => {
+    const { port, passed } = await made({
+      token: async text => (text === 'Bearer slow' ? later(300, { client: 'slow' }) : later(10, { client: 'fast' })),
+      serve: async call => ({ status: 200, body: JSON.stringify({ client: call.client }) }),
+    })
+    const answered = responses((await exchange(port, post(port, ['Authorization: Bearer slow']) + post(port, ['Authorization: Bearer fast', 'Connection: close']))).raw)
+    expect(answered.map(response => [response.status, response.body])).toEqual([[200, '{"client":"slow"}'], [200, '{"client":"fast"}']])
+    expect(passed.map(call => call.client).sort()).toEqual(['fast', 'slow'])
+  })
+
+  it('hands on no Authorization header in any spelling, so nothing behind the door can pass it on', async () => {
+    const { port, passed } = await made({ token: anyToken })
+    await exchange(port, post(port, ['Authorization: Bearer good', 'Mcp-Session-Id: s-1', 'Connection: close']))
+    await exchange(port, request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Content-Length: 2', 'AUTHORIZATION: Bearer good', 'Connection: close'], '{}'))
+    expect(passed).toHaveLength(2)
+    for (const call of passed) {
+      expect(call.headers.filter((_, i) => i % 2 === 0).map(name => name.toLowerCase())).not.toContain('authorization')
+      expect(call.headers.join('\n')).not.toContain('Bearer good')
+    }
+    expect(passed[0].headers).toEqual(expect.arrayContaining(['Mcp-Session-Id', 's-1']))
   })
 })
 

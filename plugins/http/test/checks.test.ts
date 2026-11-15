@@ -189,7 +189,9 @@ describe('the token seam', () => {
     expect(authorizationOf(seen(['Authorization', 'Bearer abc', 'Authorization', 'Bearer abc']))).toBe(null)
   })
 
-  it('refuses every token in the build that ships, since none is issued yet', () => {
-    for (const value of [null, '', 'Bearer abc', 'Bearer ' + 'a'.repeat(64), 'Basic YTpi']) expect(refuseEveryToken(value)).toBe(null)
+  it('refuses every token in the build that ships, since none is issued yet', async () => {
+    // The seam settles later, as a check that reads a store does
+    expect(refuseEveryToken(null)).toBeInstanceOf(Promise)
+    for (const value of [null, '', 'Bearer abc', 'Bearer ' + 'a'.repeat(64), 'Basic YTpi']) expect(await refuseEveryToken(value)).toBe(null)
   })
 })

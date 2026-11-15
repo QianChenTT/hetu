@@ -92,11 +92,12 @@ export function checkDoor(seen: Seen, port: number): Route | Refusal {
   return routeOf(seen)
 }
 
-// The token check: from the Authorization header's text to the client it names, or null for no client
-export type TokenSeam = (authorization: string | null) => { client: string } | null
+// The token check: from the Authorization header's text to the client it names, or null for no client. It settles
+// later, since a check reads what is stored
+export type TokenSeam = (authorization: string | null) => Promise<{ client: string } | null>
 
 // The build that ships issues no token yet, so every request is refused at the token check
-export const refuseEveryToken: TokenSeam = () => null
+export const refuseEveryToken: TokenSeam = async () => null
 
 // The Authorization header's text when exactly one was sent, else null, which no seam takes
 export function authorizationOf(seen: Seen): string | null {

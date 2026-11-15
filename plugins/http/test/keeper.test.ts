@@ -63,7 +63,7 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
   })
 }
 
-const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
+const goodToken: TokenSeam = async text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
 
 // http on the fake core with mcp as a stand-in whose handle echoes what reached it, or no mcp at all. The port reaches
 // http in its init, as the loader tells it the human's setting
@@ -155,12 +155,12 @@ describe('http on the fake core', () => {
     expect(listens).toHaveBeenCalledTimes(1)
   })
 
-  it('answers the shipped seam\'s 401 with a bare WWW-Authenticate and reaches nothing', async () => {
+  it('answers the shipped seam 401 with a Bearer challenge naming the resource metadata on its port and reaches nothing', async () => {
     const { mcp, port } = await started({ token: refuseEveryToken })
     await until(() => canConnect(port))
     const reply = await post(port, { headers: { Authorization: 'Bearer good-token' } })
     expect(reply.status).toBe(401)
-    expect(reply.headers['www-authenticate']).toBe('Bearer')
+    expect(reply.headers['www-authenticate']).toBe(`Bearer resource_metadata="http://127.0.0.1:${port}/.well-known/oauth-protected-resource/mcp"`)
     expect(mcp.delivered).toEqual([])
   })
 

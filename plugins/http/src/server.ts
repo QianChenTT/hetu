@@ -5,14 +5,15 @@ import {
 } from './checks.ts'
 
 // The door: Node's own HTTP/1.1 server on 127.0.0.1 and one port, every request through the checks of checks.ts in
-// their order, then the rate, the size, whether what serves is there, the token and only then the body. Nothing a request sent reaches a response
-// header and nothing is written to any log or console. A refusal is told by its fixed reason alone
+// their order, then the rate, the size, whether what serves is there, the token, which settles later, and only then the
+// body. Nothing a request sent reaches a response header and nothing is written to any log or console. A refusal is
+// told by its fixed reason alone
 
 // What serving a request that passed every check answers. Only these two fields are read
 export type Answer = { status: number, body: string | null }
 
-// A request that passed every check: the client the token named, the body as bytes and the raw header list. signal
-// aborts when the client goes before the answer
+// A request that passed every check: the client the token named, the body as bytes and the raw header list with no
+// Authorization in it. signal aborts when the client goes before the answer
 export type Passed = { client: string, body: Buffer, headers: readonly string[], signal: AbortSignal }
 
 // The times a test may shorten, with how often Node checks them
@@ -47,11 +48,20 @@ const FIXED: Readonly<Record<string, string>> = Object.freeze({
 // What the door answers while nothing serves behind it, the body the serving part gives a refused call
 export const UNAVAILABLE = '{"error":"unavailable"}'
 
-// The headers a refusal adds to the fixed ones
-const added: Readonly<Partial<Record<number, Readonly<Record<string, string>>>>> = Object.freeze({
-  401: Object.freeze({ 'WWW-Authenticate': 'Bearer' }),
-  405: Object.freeze({ Allow: 'POST' }),
-})
+// The headers a refusal adds to the fixed ones. The 401 names where the resource's metadata is, on the door's own port
+// (RFC 9728), the only text in a header the door builds and never from the request
+function added(status: number, port: number): Readonly<Record<string, string>> {
+  if (status === 401) return { 'WWW-Authenticate': `Bearer resource_metadata="http://${HOST}:${port}/.well-known/oauth-protected-resource/mcp"` }
+  if (status === 405) return { Allow: 'POST' }
+  return {}
+}
+
+// The raw header list with every Authorization header taken out, so nothing behind the door can pass a token on
+function withoutAuthorization(raw: readonly string[]): string[] {
+  const kept: string[] = []
+  for (let i = 0; i + 1 < raw.length; i += 2) if (raw[i].toLowerCase() !== 'authorization') kept.push(raw[i], raw[i + 1])
+  return kept
+}
 
 // A status line and the fixed headers for an answer written straight to the socket, when Node's parser refused the
 // request before it was one
@@ -162,7 +172,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   const refuse = (req: http.IncomingMessage, res: http.ServerResponse, refusal: Refusal) => {
     shutBehind(req)
     options.refused(refusal.reason)
-    answer(res, refusal.status, null, true, added[refusal.status] ?? {})
+    answer(res, refusal.status, null, true, added(refusal.status, bound))
   }
 
   // Nothing serves behind the door: the fixed 503, unrecorded, since the request did nothing wrong, and the connection
@@ -189,7 +199,10 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     const declared = req.headers['content-length']
     if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(req, res, { status: 413, reason: 'size' })
     if (options.ready?.() === false) return away(req, res)
-    const client = options.token(authorizationOf(seen))
+    // A check that throws names no client
+    const client = await options.token(authorizationOf(seen)).catch(() => null)
+    // The socket may have been refused or closed while the check ran, so nothing more is written or read for it
+    if (behindRefusal(req) || req.socket.destroyed) return
     if (client === null) return refuse(req, res, { status: 401, reason: 'token' })
     if (expects === 'continue') res.writeContinue()
     const chunks: Buffer[] = []
@@ -225,7 +238,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     calls.add(gone)
     let given: Answer | Refusal
     try {
-      given = await options.serve({ client: client.client, body: Buffer.concat(chunks), headers: req.rawHeaders, signal: gone.signal })
+      given = await options.serve({ client: client.client, body: Buffer.concat(chunks), headers: withoutAuthorization(req.rawHeaders), signal: gone.signal })
     } catch {
       return answer(res, 502, null, true)
     } finally {
@@ -258,7 +271,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     const checked = checkDoor(seen, bound)
     const refusal: Refusal = 'status' in checked ? checked : { status: 405, reason: 'method', allow: 'POST' }
     options.refused(refusal.reason)
-    endRaw(socket, rawAnswer(refusal.status, added[refusal.status] ?? {}))
+    endRaw(socket, rawAnswer(refusal.status, added(refusal.status, bound)))
   })
   server.keepAliveTimeout = times.keepAliveMs
   server.maxRequestsPerSocket = doorLimits.requestsPerSocket
