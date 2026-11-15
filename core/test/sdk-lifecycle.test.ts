@@ -72,6 +72,18 @@ describe('a plugin\'s life through the SDK', () => {
     expect(seen).toEqual([5123, null, null, null, null, null])
   })
 
+  // has folds starting into there, since a call retries it. state tells them apart, so a half can answer at once while
+  // a target starts
+  it('reads the state of each of its requires and plugin.call targets, unavailable for an id it doesn\'t hold', async () => {
+    let ctx: PluginContext | null = null
+    const { send } = running({ start: given => { ctx = given } }, init({ deps: { luoshu: 'ready', mcp: 'starting', git: 'unavailable' } }))
+    await until(() => ctx !== null)
+    expect(['luoshu', 'mcp', 'git', 'other', 'constructor', '__proto__'].map(id => ctx!.state(id))).toEqual(['ready', 'starting', 'unavailable', 'unavailable', 'unavailable', 'unavailable'])
+    send({ v: 1, kind: 'deps', deps: { luoshu: 'unavailable', mcp: 'ready', git: 'bogus' } })
+    await until(() => ctx!.state('mcp') === 'ready')
+    expect(['luoshu', 'mcp', 'git'].map(id => ctx!.state(id))).toEqual(['unavailable', 'ready', 'unavailable'])
+  })
+
   it('reads its requires and plugin.call targets from deps', async () => {
     let ctx: PluginContext | null = null
     const { send } = running({ start: given => { ctx = given } }, init({ deps: { luoshu: 'ready', mcp: 'starting', git: 'unavailable' } }))

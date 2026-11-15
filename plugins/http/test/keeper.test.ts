@@ -65,20 +65,22 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
 
 const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
 
-// http on the fake core with mcp as a stand-in whose handle echoes what reached it
-// The port reaches http in its init, as the loader tells it the human's setting
-async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number | null, answer?: (call: Delivered) => unknown } = {}) {
+// http on the fake core with mcp as a stand-in whose handle echoes what reached it, or no mcp at all. The port reaches
+// http in its init, as the loader tells it the human's setting
+async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable' | 'none', port?: number | null, answer?: (call: Delivered) => unknown } = {}) {
   const port = options.port === undefined ? await freePort() : options.port
   const core = fakeCore({ manifest, ...(port === null ? {} : { port }) })
   cores.push(core)
-  const mcp: StandIn = core.standIn('mcp', {
+  const mcp: StandIn | null = options.mcp === 'none' ? null : core.standIn('mcp', {
     actions: { handle: { from: ['http'] } },
     handle: options.answer ?? (call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null, args: call.args }) })),
     state: options.mcp ?? 'ready',
   })
   const state = await core.start(httpPlugin({ token: options.token ?? goodToken }))
-  return { core, mcp, port: port ?? 0, state }
+  return { core, mcp: mcp!, port: port ?? 0, state }
 }
+
+const unavailable = '{"error":"unavailable"}'
 
 describe('http on the fake core', () => {
   it('reads ready and opens the door once mcp is there, a request reaching mcp.handle as http\'s host half on behalf of the token\'s client', async () => {
@@ -99,24 +101,58 @@ describe('http on the fake core', () => {
     expect(mcp.delivered).toHaveLength(1)
   })
 
-  it('opens no door while mcp is not there, opens it when mcp turns ready, closes it when mcp goes and opens it again', async () => {
-    const { core, port, state } = await started({ mcp: 'unavailable' })
+  // The port is held for the whole run, so no other program can take it while mcp is away
+  it('binds on start with no mcp in the install, reads ready and answers 503 with the fixed body', async () => {
+    const { core, port, state } = await started({ mcp: 'none' })
     expect(state).toEqual({ state: 'ready' })
-    await tick(100)
-    expect(await canConnect(port)).toBe(false)
-    core.setState('mcp', 'ready')
-    await until(() => canConnect(port))
-    core.setState('mcp', 'unavailable')
-    await until(async () => !(await canConnect(port)))
-    core.setState('mcp', 'ready')
-    await until(() => canConnect(port))
+    expect(await canConnect(port)).toBe(true)
+    const reply = await post(port, { headers: { Authorization: 'Bearer good-token' } })
+    expect([reply.status, reply.body, reply.headers['content-type']]).toEqual([503, unavailable, 'application/json'])
     expect(core.coreCalls).toEqual([])
   })
 
-  // has reads a requirement that is starting as there, since the SDK retries a call that meets starting
-  it('opens the door while mcp is starting', async () => {
-    const { port } = await started({ mcp: 'starting' })
-    await until(() => canConnect(port))
+  it('holds the port while mcp is away, starting or stopped, answering 503, and serves once it is ready, bound once', async () => {
+    const port = await freePort()
+    const listens = vi.spyOn(net.Server.prototype, 'listen')
+    const { core, mcp } = await started({ mcp: 'unavailable', port })
+    expect(await canConnect(port)).toBe(true)
+    expect((await post(port, { headers: { Authorization: 'Bearer good-token' } })).status).toBe(503)
+    core.setState('mcp', 'ready')
+    await until(async () => (await post(port, { headers: { Authorization: 'Bearer good-token' } })).status === 200)
+    core.setState('mcp', 'unavailable')
+    await until(async () => (await post(port, { headers: { Authorization: 'Bearer good-token' } })).status === 503)
+    expect(await canConnect(port)).toBe(true)
+    core.setState('mcp', 'starting')
+    await tick(50)
+    expect((await post(port, { headers: { Authorization: 'Bearer good-token' } })).status).toBe(503)
+    core.setState('mcp', 'ready')
+    await until(async () => (await post(port, { headers: { Authorization: 'Bearer good-token' } })).status === 200)
+    expect(listens).toHaveBeenCalledTimes(1)
+    expect(mcp.delivered).toHaveLength(2)
+    expect(core.coreCalls).toEqual([])
+  })
+
+  // has folds starting into there, since a call retries it. The door reads the state itself and answers at once
+  it('answers 503 at once while mcp is starting, never waiting out the call\'s retries', async () => {
+    const { mcp, port } = await started({ mcp: 'starting' })
+    const asked = performance.now()
+    const reply = await post(port, { headers: { Authorization: 'Bearer good-token' } })
+    expect([reply.status, reply.body]).toEqual([503, unavailable])
+    expect(performance.now() - asked).toBeLessThan(1000)
+    expect(mcp.delivered).toEqual([])
+  })
+
+  it('lets the port go on stop and binds nothing after', async () => {
+    const port = await freePort()
+    const listens = vi.spyOn(net.Server.prototype, 'listen')
+    const { core } = await started({ mcp: 'unavailable', port })
+    expect(await canConnect(port)).toBe(true)
+    await core.stop()
+    expect(await canConnect(port)).toBe(false)
+    core.setState('mcp', 'ready')
+    await tick(100)
+    expect(await canConnect(port)).toBe(false)
+    expect(listens).toHaveBeenCalledTimes(1)
   })
 
   it('answers the shipped seam\'s 401 with a bare WWW-Authenticate and reaches nothing', async () => {
@@ -138,7 +174,10 @@ describe('http on the fake core', () => {
     await until(() => core.coreCalls.length === 1)
     expect(core.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
     expect(core.status()).toEqual({ state: 'failed', reason: 'port-taken' })
-    await tick(100)
+    // A failed bind stays failed: no change the core tells and no time tries it again
+    core.setState('mcp', 'unavailable')
+    core.setState('mcp', 'ready')
+    await tick(300)
     expect(listens.mock.calls.map(([given]) => given)).toEqual([{ host: '127.0.0.1', port, exclusive: true }])
   })
 

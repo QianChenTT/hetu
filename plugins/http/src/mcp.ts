@@ -1,6 +1,6 @@
 import { Refused } from '@hetu/sdk'
 import { doorLimits, type Refusal } from './checks.ts'
-import type { Answer, Passed } from './server.ts'
+import { type Answer, type Passed, UNAVAILABLE } from './server.ts'
 
 // The serving part behind the door: a request that passed every check becomes one mcp.handle call. The body goes as
 // text and is never parsed, only the mcp- headers go with it and the call is made on behalf of the client the token
@@ -18,7 +18,7 @@ const STATUSES: ReadonlySet<unknown> = new Set([200, 202, 400, 404])
 // What a refused call answers. MCP's refusals are no refusals at the door: none is recorded and the connection stays.
 // The body is fixed by the status and never names the code
 const BODIES: Readonly<Record<number, string>> = Object.freeze({
-  503: '{"error":"unavailable"}',
+  503: UNAVAILABLE,
   504: '{"error":"timeout"}',
   429: '{"error":"throttled"}',
   413: '{"error":"too large"}',

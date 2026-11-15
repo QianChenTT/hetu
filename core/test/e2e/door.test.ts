@@ -125,12 +125,14 @@ const utilityFolders = async () => (await readdir(tmpdir())).filter(name => name
 const PAST_DELAY = 2000
 
 describe('the door', () => {
-  it('stays closed with no mcp in the install, http reading ready', async () => {
+  // The port is held for the whole run, so no other program takes it while mcp is away
+  it('holds its port with no mcp in the install, answering 503 and reaching nothing, http reading ready', async () => {
     const { dataDir, port } = await started(false)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'http' }))
-    await tick(500)
-    expect(await canConnect(port)).toBe(false)
+    expect(await canConnect(port)).toBe(true)
+    expect(await post(port, [`Host: 127.0.0.1:${port}`, 'Authorization: Bearer any'])).toBe(503)
     expect(await logged(dataDir, 'plugin.failed', { plugin: 'http' })).toBe(false)
+    expect((await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'mcp.handle')).toEqual([])
   })
 
   it('refuses another Host and an Origin with 403, reaching nothing, each reason in one http.refused with its count', async () => {

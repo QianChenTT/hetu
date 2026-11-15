@@ -6,55 +6,45 @@ import { type Door, type DoorTimes, openDoor } from './server.ts'
 
 export type HttpOptions = { token: TokenSeam, limits?: Partial<DoorTimes> }
 
-// http's host half: the door is open exactly while mcp is there, opened on start and on every change the core tells, on
-// the port the core names in init and no other. A bind that fails tells the core why, port-taken when the port is held
-// and bind-failed otherwise, bind-failed too with no port named, and no other port is tried, since every URL a harness
-// keeps names this one. The core then ends the half and http reads failed. Refusals at the door go to the core counted
-// by reason, at most one report a reason a second
+// http's host half: the door binds once on start, on the port the core names in init and no other, and holds it until
+// stop whatever mcp does, so no other program takes the port while mcp is away. While mcp is not ready the door answers
+// 503, read from the state the core tells at each request, so a request meets no wait while mcp starts. A bind that
+// fails tells the core why, port-taken when the port is held and bind-failed otherwise, bind-failed too with no port
+// named, and is never tried again, since every URL a harness keeps names this port. The core then ends the half and
+// http reads failed. Refusals at the door go to the core counted by reason, at most one report a reason a second
 export function httpPlugin(options: HttpOptions): Plugin {
   return definePlugin({
-    start(ctx) {
+    async start(ctx) {
       const counter = refusalCounter((reason, count) => ctx.call('core', 'agentRefused', { reason, count }))
       const serve = mcpServe((args, call) => ctx.call('mcp', 'handle', args, call))
       let door: Door | null = null
-      let failed = false
       let stopping = false
-      // One change at a time, so an open still under way when mcp goes is closed once it lands
-      let turn: Promise<void> = Promise.resolve()
 
-      const step = async () => {
-        if (failed || stopping) return
-        const wanted = ctx.has('mcp')
-        if (wanted && door === null) {
-          try {
-            if (ctx.port === null) throw new Error('no port named')
-            door = await openDoor({ port: ctx.port, token: options.token, serve, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })
-          } catch (error) {
-            failed = true
-            const reason = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
-            // The core ends this half before it answers, so the call never settles
-            void ctx.bindFailed(reason).catch(() => {})
-          }
-        } else if (!wanted && door !== null) {
-          const open = door
-          door = null
-          await open.close()
+      const bind = async () => {
+        try {
+          if (ctx.port === null) throw new Error('no port named')
+          const opened = await openDoor({
+            port: ctx.port, token: options.token, serve, refused: reason => counter.hit(reason), ready: () => ctx.state('mcp') === 'ready',
+            ...(options.limits === undefined ? {} : { limits: options.limits }),
+          })
+          if (stopping) await opened.close()
+          else door = opened
+        } catch (error) {
+          const reason = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
+          // The core ends this half before it answers, so the call never settles
+          void ctx.bindFailed(reason).catch(() => {})
         }
       }
-      const sync = () => {
-        turn = turn.then(step, step)
-        return turn
-      }
+      const bound = bind()
 
-      ctx.onDeps(() => sync())
       ctx.onStop(async () => {
         stopping = true
-        await turn.catch(() => {})
+        await bound
         if (door !== null) await door.close()
         door = null
         counter.close()
       })
-      void sync()
+      await bound
     },
   })
 }

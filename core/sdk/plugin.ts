@@ -24,6 +24,8 @@ export type PluginContext = Client & {
   readonly port: number | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean
+  // The state of one of its own requires or plugin.call targets, unavailable for any other id
+  state(id: string): DepState
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
   onStop(fn: () => void | Promise<void>): void
   // Runs each time the core tells a change to the state of its requires and plugin.call targets, a key or a state,
@@ -162,6 +164,10 @@ class Half {
       has: dep => {
         const state = this.deps[dep] as DepState | undefined
         return state === 'ready' || state === 'starting'
+      },
+      state: dep => {
+        const state = Object.hasOwn(this.deps, dep) ? this.deps[dep] : undefined
+        return state === 'ready' || state === 'starting' ? state : 'unavailable'
       },
       onStop: fn => { this.stops.push(fn) },
       onDeps: fn => { this.depHooks.push(fn) },

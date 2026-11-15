@@ -23,6 +23,7 @@ async function made(options: {
   serve?: (passed: Passed) => Promise<Answer | Refusal>
   limits?: Parameters<typeof openDoor>[0]['limits']
   clock?: () => number
+  ready?: () => boolean
 } = {}): Promise<Made> {
   const refused: RefusalReason[] = []
   const passed: Passed[] = []
@@ -36,6 +37,7 @@ async function made(options: {
     refused: reason => void refused.push(reason),
     ...(options.limits !== undefined ? { limits: options.limits } : {}),
     ...(options.clock !== undefined ? { clock: options.clock } : {}),
+    ...(options.ready !== undefined ? { ready: options.ready } : {}),
   })
   doors.push(door)
   return { door, port: door.address.port, refused, passed }
@@ -811,6 +813,69 @@ describe('counts', () => {
     expect(passed).toHaveLength(50)
     now = 1000
     expect(responses((await exchange(port, good)).raw)[0].status).toBe(200)
+  })
+})
+
+// The port is held for the whole run, so the door answers while nothing behind it can serve: 503 with the fixed body
+// after the door's own checks and the rate and before the token is looked at, whatever token came
+describe('while what serves is away', () => {
+  it('answers 503 with the fixed body to any token or none, never asking the seam, recording nothing and closing', async () => {
+    const asked: (string | null)[] = []
+    const { port, refused, passed } = await made({ token: text => (asked.push(text), anyToken(text)), ready: () => false })
+    for (const extra of [['Authorization: Bearer good'], ['Authorization: Bearer bad'], []]) {
+      const answered = await exchange(port, post(port, extra))
+      const [response] = responses(answered.raw)
+      expect(response.status).toBe(503)
+      expect(response.body).toBe('{"error":"unavailable"}')
+      expect(header(response, 'content-type')).toBe('application/json')
+      expectOnlyOwnHeaders(response, ['content-type', 'connection'])
+      expect(answered.closed).toBe(true)
+    }
+    expect(asked).toEqual([])
+    expect(passed).toEqual([])
+    expect(refused).toEqual([])
+  })
+
+  it("refuses at the door's own checks first, each recorded", async () => {
+    const { port, refused } = await made({ token: anyToken, ready: () => false })
+    const statuses: number[] = []
+    for (const text of [
+      post(port, ['Authorization: Bearer good']).replace(`Host: 127.0.0.1:${port}`, 'Host: evil.example'),
+      post(port, ['Authorization: Bearer good', 'Origin: https://evil.example']),
+      request(['GET /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Authorization: Bearer good']),
+      post(port, ['Authorization: Bearer good', 'Expect: something-else']),
+      request(['POST /mcp HTTP/1.1', `Host: 127.0.0.1:${port}`, `Content-Length: ${doorLimits.mcpBodyBytes + 1}`, 'Authorization: Bearer good']),
+    ]) statuses.push(responses((await exchange(port, text)).raw)[0].status)
+    expect(statuses).toEqual([403, 403, 405, 417, 413])
+    expect(refused).toEqual(['host', 'origin', 'method', 'malformed', 'size'])
+  })
+
+  it('answers 429 past the rate before 503, the rate spent as for a request served', async () => {
+    const { port, refused } = await made({ token: anyToken, clock: () => 0, ready: () => false })
+    const answered = responses((await exchange(port, post(port, ['Authorization: Bearer good']).repeat(51), 4000)).raw)
+    expect(answered.map(response => response.status)).toEqual([503])
+    const rest: number[] = []
+    for (let i = 0; i < 50; i++) rest.push(responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)[0].status)
+    expect(rest).toEqual([...Array(49).fill(503), 429])
+    expect(refused).toEqual(['rate'])
+  })
+
+  it('serves again once what serves is back, read at each request', async () => {
+    let ready = false
+    const { port, passed } = await made({ token: anyToken, ready: () => ready })
+    expect(responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)[0].status).toBe(503)
+    ready = true
+    expect(responses((await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))).raw)[0].status).toBe(200)
+    ready = false
+    expect(responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)[0].status).toBe(503)
+    expect(passed).toHaveLength(1)
+  })
+
+  it('serves nothing pipelined behind a 503 on its socket', async () => {
+    const { port, passed } = await made({ token: anyToken, ready: () => false })
+    const answered = responses((await exchange(port, post(port, ['Authorization: Bearer good']).repeat(3))).raw)
+    expect(answered.map(response => response.status)).toEqual([503])
+    expect(passed).toEqual([])
   })
 })
 

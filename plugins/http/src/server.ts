@@ -5,7 +5,7 @@ import {
 } from './checks.ts'
 
 // The door: Node's own HTTP/1.1 server on 127.0.0.1 and one port, every request through the checks of checks.ts in
-// their order, then the rate, the size, the token and only then the body. Nothing a request sent reaches a response
+// their order, then the rate, the size, whether what serves is there, the token and only then the body. Nothing a request sent reaches a response
 // header and nothing is written to any log or console. A refusal is told by its fixed reason alone
 
 // What serving a request that passed every check answers. Only these two fields are read
@@ -25,6 +25,9 @@ export type DoorOptions = {
   // no body and the connection closed
   serve: (passed: Passed) => Promise<Answer | Refusal>
   refused: (reason: RefusalReason) => void
+  // Whether what serves a request that passed is there, read at each request. While it isn't the door answers 503
+  // with the fixed body before the token is looked at, nothing recorded. Left out, it is always there
+  ready?: () => boolean
   limits?: Partial<DoorTimes>
   clock?: () => number
 }
@@ -40,6 +43,9 @@ const FIXED: Readonly<Record<string, string>> = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy': 'default-src \'none\'; frame-ancestors \'none\'',
 })
+
+// What the door answers while nothing serves behind it, the body the serving part gives a refused call
+export const UNAVAILABLE = '{"error":"unavailable"}'
 
 // The headers a refusal adds to the fixed ones
 const added: Readonly<Partial<Record<number, Readonly<Record<string, string>>>>> = Object.freeze({
@@ -149,11 +155,21 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     res.end(text)
   }
 
+  // Nothing Node read behind this request on its socket is served
+  const shutBehind = (req: http.IncomingMessage) => shut.set(req.socket, Math.min(shut.get(req.socket) ?? Infinity, placed.get(req) ?? 0))
+
   // A refusal is recorded by its reason, answered with no body and ends the connection, so nothing it sent after is read
   const refuse = (req: http.IncomingMessage, res: http.ServerResponse, refusal: Refusal) => {
-    shut.set(req.socket, Math.min(shut.get(req.socket) ?? Infinity, placed.get(req) ?? 0))
+    shutBehind(req)
     options.refused(refusal.reason)
     answer(res, refusal.status, null, true, added[refusal.status] ?? {})
+  }
+
+  // Nothing serves behind the door: the fixed 503, unrecorded, since the request did nothing wrong, and the connection
+  // ended, since its body was never read
+  const away = (req: http.IncomingMessage, res: http.ServerResponse) => {
+    shutBehind(req)
+    answer(res, 503, UNAVAILABLE, true)
   }
 
   // expects is the Expect header Node met: none, 100-continue or another, which the door answers 417 once the checks
@@ -172,6 +188,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     if (!take()) return refuse(req, res, { status: 429, reason: 'rate' })
     const declared = req.headers['content-length']
     if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(req, res, { status: 413, reason: 'size' })
+    if (options.ready?.() === false) return away(req, res)
     const client = options.token(authorizationOf(seen))
     if (client === null) return refuse(req, res, { status: 401, reason: 'token' })
     if (expects === 'continue') res.writeContinue()
