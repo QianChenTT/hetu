@@ -144,6 +144,41 @@ describe('building a host half', () => {
     expect(module.provider.name).toBe('b')
   })
 
+  // CommonJS dependencies: esbuild turns their require into a stub that throws without a require in scope, and a data:
+  // module has none
+  const cjs = {
+    'node_modules/cjs-dep/package.json': JSON.stringify({ name: 'cjs-dep', version: '1.0.0', main: 'index.js' }),
+    'node_modules/cjs-dep/index.js': "const util = require('util')\nconst path = require('node:path')\nmodule.exports = { kind: typeof util.format, base: path.basename('a/b'), load: name => require(name) }\n",
+  }
+  const cjsHost = `import dep from 'cjs-dep'\nimport { definePlugin } from '${sdk}'\nexport default definePlugin({ start() {} })\nexport const facts = dep\n`
+  const load = (text: string) => import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Promise<{ facts: { kind: string, base: string, load(name: string): unknown } }>
+
+  it('runs a host half with a CommonJS dependency as a data: module, its require answering the built-ins the bundle names', async () => {
+    const dir = await folder({ ...cjs, 'src/host.ts': cjsHost })
+    const built = await buildHost(dir, 'src/host.ts', ['util', 'path'])
+    expect(built.imports.sort()).toEqual(['node:path', 'util'])
+    const { facts } = await load(built.text)
+    expect(facts.kind).toBe('function')
+    expect(facts.base).toBe('b')
+    expect(facts.load('util')).toBe((await import('node:util')).default)
+    expect(facts.load('node:util')).toBe((await import('node:util')).default)
+  })
+
+  it('has that require refuse every other name, a built-in the node list allows but the bundle never names among them', async () => {
+    const dir = await folder({ ...cjs, 'src/host.ts': cjsHost })
+    const built = await buildHost(dir, 'src/host.ts', ['util', 'path', 'fs'])
+    const { facts } = await load(built.text)
+    for (const name of ['child_process', 'node:child_process', 'fs', 'electron', 'cjs-dep', './index.js']) {
+      expect(() => facts.load(name), name).toThrow('is not among the built-ins this host half imports')
+    }
+  })
+
+  it('adds nothing to a bundle with no CommonJS in it, which already ran as a data: module', async () => {
+    const dir = await folder({ 'src/host.ts': host("import { basename } from 'node:path'") })
+    const built = await buildHost(dir, 'src/host.ts', ['path'])
+    expect(built.text).not.toContain('__hetu_builtins')
+  })
+
   it('refuses a Node built-in the manifest\'s node list doesn\'t name, and a package it would have to load at run time', async () => {
     // A bare import of a built-in nothing uses is dropped from the bundle, so this one is used
     const dir = await folder({ 'src/host.ts': `${host("import { basename } from 'node:path'\nimport { execFile } from 'node:child_process'")}export const run = execFile\n` })

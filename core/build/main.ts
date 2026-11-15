@@ -34,6 +34,7 @@ function external(metafile: Metafile | undefined): string[] {
 
 export type Built = {
   imports: string[]
+  utilityImports: string[]
   pageImports: string[]
   preloadImports: string[]
   prelude: string
@@ -57,6 +58,16 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     target: NODE,
     external: ['electron'],
     define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
+  })
+  // The bootstrap each utility process runs, beside main.js: it imports a utility half's verified bytes and runs them on
+  // the port main hands it
+  const utility = await build({
+    ...shared,
+    entryPoints: [path.join(core, 'backend', 'runtime', 'utility-child.ts')],
+    outfile: path.join(outDir, 'utility.js'),
+    platform: 'node',
+    format: 'esm',
+    target: NODE,
   })
   // The install plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
   // before it starts the host half
@@ -152,7 +163,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     preloadImports.push(...external(preload.metafile))
   }
 
-  return { imports: external(main.metafile), pageImports, preloadImports: [...new Set(preloadImports)].sort(), prelude }
+  return { imports: external(main.metafile), utilityImports: external(utility.metafile), pageImports, preloadImports: [...new Set(preloadImports)].sort(), prelude }
 }
 
 if (import.meta.main) await buildMain()

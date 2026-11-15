@@ -135,6 +135,14 @@ describe('the main bundle', () => {
     expect(built.pageImports).toEqual([])
   })
 
+  it('bundles the utility bootstrap beside main.js as one module that imports nothing', async () => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    expect((await stat(path.join(out, 'utility.js'))).isFile()).toBe(true)
+    expect(built.utilityImports).toEqual([])
+    expect(await readFile(path.join(out, 'utility.js'), 'utf8')).toContain('data:text/javascript;base64,')
+  })
+
   it('bundles the workers and window preloads as scripts whose only import is electron', async () => {
     const out = await outDir()
     const built = await buildMain(out)

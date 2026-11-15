@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, shell, type Session, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, shell, type Session, utilityProcess, type WebContents } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
@@ -9,6 +9,7 @@ import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
+import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
@@ -134,7 +135,14 @@ async function start(): Promise<void> {
         if (!page.isDestroyed()) page.postMessage('hetu:drawer-end', { plugin, incarnation })
       },
     })
-    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, { freeze: freezeIntrinsics, importer: url => import(url) })
+    // A utility half forks from utility.js beside main.js, paced to the same limits main holds it to
+    const utility = utilityRuntime({
+      fork: (modulePath, args, options) => utilityProcess.fork(modulePath, args, options),
+      bootstrap: path.join(here, 'utility.js'),
+      locked: LOCKED,
+      limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])) as Record<typeof RELAY_LIMITS[number], number>,
+    })
+    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, { freeze: freezeIntrinsics, importer: url => import(url) }, utility)
 
     // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
     // main, so a Confirm counts only once it armed
