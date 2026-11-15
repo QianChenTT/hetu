@@ -711,6 +711,9 @@ describe('a failing log', () => {
 // off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {
+  // The time each core joined here may take. Starting one took up to about 5 s on a shared Windows runner against
+  // vitest's 5 s, so each gets four times that
+  const JOIN_MS = 20_000
   async function switchedOff(off: string[], decides: 'refuses' | 'item-off' | 'allows' = 'refuses') {
     const luoshu = new FakeLuoshu()
     luoshu.files.set('notes/a.md', 'x')
@@ -738,18 +741,18 @@ describe('the off states', () => {
     ['the gate and the luoshu: unavailable, since no switch gives a power the framework lacks', ['gate', 'luoshu'], 'unavailable'],
   ])('with %s', async (_name, off, answer) => {
     expect(await read(await switchedOff(off))).toBe(answer)
-  })
+  }, JOIN_MS)
 
   // The gate is asked first, so the luoshu's own state shows once the gate allows
   it('with the luoshu: its calls answer unavailable once the gate allowed them', async () => {
     expect(await read(await switchedOff(['luoshu'], 'allows'))).toBe('unavailable')
-  })
+  }, JOIN_MS)
 
   // Decision 12: allowing all means all, so a per-item switch lapses while the gate is off
   it('lets the per-item switches lapse with the gate off', async () => {
     expect(await read(await switchedOff([], 'item-off'))).toBe('switched-off')
     expect(await read(await switchedOff(['gate'], 'item-off'))).toBe('passes')
-  })
+  }, 2 * JOIN_MS)
 
   it('records the call that passed with the gate off', async () => {
     const parts = await switchedOff(['gate'])
@@ -757,5 +760,5 @@ describe('the off states', () => {
     await parts.carrier.flush()
     const records = await floorRecords(parts.dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read')).toMatchObject([{ gate: 'off', code: null }])
-  })
+  }, JOIN_MS)
 })
