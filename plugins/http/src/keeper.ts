@@ -6,11 +6,11 @@ import { type Door, type DoorTimes, openDoor } from './server.ts'
 
 export type HttpOptions = { token: TokenSeam, limits?: Partial<DoorTimes> }
 
-// http's host half: the door binds once on start, on the port the core names in init and no other, and holds it until
-// stop whatever mcp does, so no other program takes the port while mcp is away. While mcp is not ready the door answers
+// http's host half: the door binds once on start, on the port the core names in init and no other. It holds the port
+// until stop whatever mcp does, so no other program takes it while mcp is away. While mcp is not ready the door answers
 // 503, read from the state the core tells at each request, so a request meets no wait while mcp starts. A bind that
 // fails tells the core why, port-taken when the port is held and bind-failed otherwise, bind-failed too with no port
-// named, and is never tried again, since every URL a harness keeps names this port. The core then ends the half and
+// named. It is never tried again, since every URL a harness keeps names this port. The core then ends the half and
 // http reads failed. Refusals at the door go to the core counted by reason, at most one report a reason a second
 export function httpPlugin(options: HttpOptions): Plugin {
   return definePlugin({

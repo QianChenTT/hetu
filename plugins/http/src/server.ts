@@ -182,8 +182,8 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     answer(res, refusal.status, null, true, added(refusal.status, bound))
   }
 
-  // Nothing serves behind the door: the fixed 503, unrecorded, since the request did nothing wrong, and the connection
-  // ended, since its body was never read
+  // Nothing serves behind the door: the fixed 503, unrecorded since the request did nothing wrong. The connection ends,
+  // since its body was never read
   const away = (req: http.IncomingMessage, res: http.ServerResponse) => {
     shutBehind(req)
     answer(res, 503, UNAVAILABLE, true)
@@ -286,7 +286,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   server.keepAliveTimeout = times.keepAliveMs
   server.maxRequestsPerSocket = doorLimits.requestsPerSocket
   server.maxConnections = doorLimits.connections
-  // A connection past the cap is dropped by Node unanswered, and recorded
+  // A connection past the cap is dropped by Node unanswered and recorded
   server.on('drop', () => options.refused('full'))
   // A connection that sends nothing within silentMs is let go with the door's 408, recorded timeout, so connections
   // that never speak can't hold the cap. One that sent part of a request is left to the headers time

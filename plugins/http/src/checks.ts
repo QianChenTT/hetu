@@ -3,7 +3,7 @@
 // route and method, then size and rate, then the token
 
 // The one address the door listens on. The port is the human's per-machine switch, which the core hands the half in its
-// init, and part of every URL a harness keeps, so it moves only with a Confirm
+// init. It is part of every URL a harness keeps, so it moves only with a Confirm
 export const HOST = '127.0.0.1'
 
 // The door's own policy, fixed in the plugin

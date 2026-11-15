@@ -437,8 +437,8 @@ describe('the fake core playing another plugin', () => {
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
   })
 
-  // As the loader tells http the door's port from the switches, the fake core tells it the port a test names, and none
-  // when the test names none, so no test binds a port it didn't pick
+  // As the loader tells http the door's port from the switches, the fake core tells it the port a test names. With none
+  // named it tells none, so no test binds a port it didn't pick
   it('tells http under test the port the test names in its init, none when it names none, and no other plugin any', async () => {
     const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const ports: (number | null)[] = []

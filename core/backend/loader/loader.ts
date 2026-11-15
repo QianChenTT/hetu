@@ -2047,7 +2047,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'plugin.reset':
         return this.reset(change.plugin, confirm)
       // 4747 leaves the field out, so a build from before it reads the file again. http starts again on the new port,
-      // a failed or crashed one included, and one the human stopped or switched off reads it at its next start
+      // a failed or crashed one included. One the human stopped or switched off reads it at its next start
       case 'port.set': {
         const { port: _, ...rest } = this.state.switches
         await this.writeSwitches(change.port === DOOR_PORT ? rest : { ...rest, port: change.port })

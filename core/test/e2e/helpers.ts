@@ -71,7 +71,7 @@ export async function freePort(): Promise<number> {
 
 // http binds the door for its whole run, so every start gets a port of its own in its switches and none binds 4747,
 // whatever else runs on the machine. A data folder whose switches don't check out reads 4747, so it starts the shipped
-// install with http left out, and a test that hands an install of its own must give it switches that check out
+// install with http left out. A test that hands an install of its own must give it switches that check out
 async function doorFor(dataDir: string, extra: Record<string, string>): Promise<Record<string, string>> {
   const loaded = await new StateStore(dataDir).load()
   if (loaded.checks.find(check => check.check === 'switches')?.result === 'ok') {
