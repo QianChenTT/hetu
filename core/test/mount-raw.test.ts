@@ -10,7 +10,7 @@ function started(files: Record<string, string>) {
     'storage.get': () => ({ ok: true, result: null }),
     'luoshu.read': args => {
       const path = (args as { path: string }).path
-      return path in files ? { ok: true, result: { text: files[path], version: `v-${files[path]}` } } : { ok: false, refusal: { code: 'not-found' } }
+      return path in files ? { ok: true, result: { text: files[path], version: `v-${files[path]}`, path } } : { ok: false, refusal: { code: 'not-found' } }
     },
   })
   const link = new CoreLink(core.bridge)

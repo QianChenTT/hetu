@@ -15,6 +15,8 @@ export function capabilityText(granted: Capability): string {
     case 'luoshu.read':
     case 'luoshu.write':
     case 'luoshu.list':
+    case 'ui.edit':
+    case 'ui.read':
       return `${granted.type} on ${granted.paths.map(quoted).join(', ')}`
     case 'history':
       return `history ${granted.access} on ${granted.paths.map(quoted).join(', ')}`

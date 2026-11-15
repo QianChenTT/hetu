@@ -8,24 +8,24 @@ import { VERSION } from './version.ts'
 
 // The editor bridge: what a plugin's worker sends the drawer on its port and what comes back, shaped like CodeMirror.
 // The drawer serves it in the editor window and asks the core what each plugin may do with each note. A verb reaches
-// a note only with the plugin's luoshu.read covering its path, an edit with luoshu.write too, and the ui item named
-// here. Instances and versions are the drawer's: an instance is one open note and its version counts the changes made
+// a note only with the plugin's luoshu.read covering its path, an edit with ui.edit too and never on luoshu.write, and
+// the ui item named here. Instances and versions are the drawer's: an instance is one open note and its version counts the changes made
 // to it since it opened
 
 export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys'] as const)
 export type EditorVerb = typeof editorVerbs[number]
 
-export type VerbNeeds = { readonly read: boolean, readonly write: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keys' | null }
+export type VerbNeeds = { readonly read: boolean, readonly edit: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keys' | null }
 
 // instances lists only notes the plugin reads, so it needs no read of its own. bind and keys name no note: a command
 // says which instance it came from and a key event goes only to a plugin that reads the focused note
 export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
-  'editor.instances': { read: false, write: false, ui: null },
-  'editor.read': { read: true, write: false, ui: null },
-  'editor.decorate': { read: true, write: false, ui: 'ui.decoration' },
-  'editor.edit': { read: true, write: true, ui: null },
-  'editor.bind': { read: false, write: false, ui: 'ui.command' },
-  'editor.keys': { read: false, write: false, ui: 'ui.keys' },
+  'editor.instances': { read: false, edit: false, ui: null },
+  'editor.read': { read: true, edit: false, ui: null },
+  'editor.decorate': { read: true, edit: false, ui: 'ui.decoration' },
+  'editor.edit': { read: true, edit: true, ui: null },
+  'editor.bind': { read: false, edit: false, ui: 'ui.command' },
+  'editor.keys': { read: false, edit: false, ui: 'ui.keys' },
 })
 
 // The looks a mark may ask for, drawn with the drawer's own classes. A plugin sends no class and no CSS

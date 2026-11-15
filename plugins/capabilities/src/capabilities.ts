@@ -1,5 +1,5 @@
-import type { Capability } from 'hetu-core/api/capabilities.ts'
-import { classNames, type Capabilities, type ScreenSubject } from 'hetu-core/api/slots.ts'
+import { capabilityKey, type Capability } from 'hetu-core/api/capabilities.ts'
+import { classNames, type Capabilities, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
 import { capabilityText } from 'hetu-core/api/trusted.ts'
 
 // A scope stays inside one place when its first part is a plain folder or note name. One with a wildcard there, **
@@ -23,11 +23,14 @@ function classOf(granted: Capability): number {
     case 'plugin.call':
       return 0
     case 'ui.keys':
+    case 'ui.read':
     case 'luoshu.read':
     case 'luoshu.list':
       return 1
     case 'luoshu.write':
       return granted.paths.every(confined) ? 2 : 4
+    // Each edit waits in the editor for the human's save, so every scope is a writer's, ** included
+    case 'ui.edit':
     case 'history':
       return 2
     case 'net.fetch':
@@ -41,14 +44,23 @@ function classOf(granted: Capability): number {
   }
 }
 
-// What tells a plugin a note's content: reading it, listing it, the key stream and history read, and a write, whose
-// version check answers whether a guessed text is the note's
+// What tells a plugin a note's content: reading it, through the luoshu or through the editor, listing it, the key
+// stream and history read, and a write, whose version check answers whether a guessed text is the note's
 const reads = (granted: Capability) => granted.type === 'luoshu.read' || granted.type === 'luoshu.list' || granted.type === 'ui.keys'
+  || granted.type === 'ui.read'
   || granted.type === 'luoshu.write' || (granted.type === 'history' && granted.access === 'read')
 const network = (granted: Capability) => granted.type === 'net.fetch'
 
-// Reading and network anywhere in what a plugin holds and reaches, which together could send notes out
-const paired = (all: readonly Capability[]) => all.some(reads) && all.some(network)
+// With no flow given the links are plugin.call's alone, each both ways, so what lies upstream and downstream is what
+// plugin.call reaches
+const flowOf = (reachable: readonly Capability[], flow: Flow | undefined): Flow =>
+  flow ?? { upstream: [{ id: '', granted: reachable }], downstream: [{ id: '', granted: reachable }], heard: [] }
+const holdings = (peers: Flow['upstream']) => peers.flatMap(peer => [...peer.granted])
+
+// A read that can reach the plugin and network it can reach, which together could send notes out: a read here or
+// upstream, and network here or downstream
+const paired = (granted: readonly Capability[], flow: Flow) =>
+  [...granted, ...holdings(flow.upstream)].some(reads) && [...granted, ...holdings(flow.downstream)].some(network)
 
 // Programs that run another program or code they are handed: shells, interpreters, package runners, fetchers and the
 // Windows hosts for scripts. An exact command with one of these runs whatever its arguments or its config name, so
@@ -77,35 +89,64 @@ function runsOthers(all: readonly Capability[]): string[] {
 }
 
 export function createCapabilities(): Capabilities {
-  const classify = (granted: readonly Capability[], reachable: readonly Capability[]): number => {
-    const all = [...granted, ...reachable]
-    return paired(all) ? 4 : Math.max(0, ...all.map(classOf))
-  }
+  // The highest of its grants and what plugin.call reaches, or 4 for a pair. What it hears gives it none of the
+  // speaker's grants, so the flow counts for the pair alone
+  const classify = (granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number =>
+    paired(granted, flowOf(reachable, flow)) ? 4 : Math.max(0, ...[...granted, ...reachable].map(classOf))
 
   return {
     classify,
 
     // The items whose own class is 4, and for a pair the items that close it: the plugin's network items, or with none of
-    // its own the plugin.call items that bring the network in
-    firstUse(granted: readonly Capability[], reachable: readonly Capability[]): Capability[] {
-      const pair = paired([...granted, ...reachable])
-      const closing = granted.some(network) ? network : (item: Capability) => item.type === 'plugin.call'
-      return granted.filter(item => classOf(item) === 4 || (pair && closing(item)))
+    // its own the plugin.call items that bring the network in, and for a plugin that reads nothing itself the
+    // subscriptions a read moves in through
+    firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[] {
+      const moves = flowOf(reachable, flow)
+      const pair = paired(granted, moves)
+      const bringsNetwork = granted.some(network) ? network : (item: Capability) => item.type === 'plugin.call'
+      const bringsRead = new Set(granted.some(reads) ? [] : moves.heard.filter(heard => heard.upstream.some(reads)).map(heard => capabilityKey(heard.item)))
+      return granted.filter(item => classOf(item) === 4 || (pair && (bringsNetwork(item) || bringsRead.has(capabilityKey(item)))))
     },
 
-    // A plugin with network, its own or through the plugins it is connected to, names the connected plugins that read
-    screen({ granted, reachable, callers }: ScreenSubject): string[] {
-      const n = classify(granted, reachable)
+    // A plugin with network, its own or through the plugins it is connected to through plugin.call, names the connected
+    // plugins that read. Past plugin.call, one with network here or downstream names the readers upstream, and one with a
+    // read here or upstream names the network plugins downstream
+    screen({ granted, reachable, callers, flow }: ScreenSubject): string[] {
+      const n = classify(granted, reachable, flow)
+      const moves = flowOf(reachable, flow)
       const readers = [...granted, ...reachable].some(network) ? callers.filter(caller => caller.granted.some(reads)).map(caller => caller.id) : []
+      const called = new Set(callers.map(caller => caller.id))
+      const beyond = (peers: Flow['upstream'], holds: (item: Capability) => boolean) =>
+        flow === undefined ? [] : peers.filter(peer => !called.has(peer.id) && peer.granted.some(holds)).map(peer => peer.id)
+      const readersUp = [...granted, ...holdings(moves.downstream)].some(network) ? beyond(moves.upstream, reads) : []
+      const sendersDown = [...granted, ...holdings(moves.upstream)].some(reads) ? beyond(moves.downstream, network) : []
       let head = `Class ${n}, ${classNames[n]}`
-      if (n === 4 && paired([...granted, ...reachable])) head += ': it can read notes and reach the network, so it could send notes out'
+      if (n === 4 && paired(granted, moves)) head += ': it can read notes and reach the network, so it could send notes out'
       else if (n === 4) head += `: ${granted.filter(item => classOf(item) === 4).map(capabilityText).join(', ')}`
       const lines = [head]
       if (reachable.length > 0) lines.push(`Through plugin.call it is connected to: ${[...new Set(reachable.map(capabilityText))].join(', ')}`)
       if (readers.length > 0) lines.push(`Plugins that read and are connected to it through plugin.call: ${readers.join(', ')}`)
+      if (readersUp.length > 0) lines.push(`Plugins that read and can reach it through events: ${readersUp.join(', ')}`)
+      if (sendersDown.length > 0) lines.push(`Plugins with network it can reach through events: ${sendersDown.join(', ')}`)
       const runners = runsOthers([...granted, ...reachable])
       if (runners.length > 0) lines.push(`It can run programs that run other programs or code: ${runners.join(', ')}`)
       return lines
+    },
+
+    // Each move up, named with the class the plugin held and the one it moves to. A move down asks nothing new, so it
+    // shows nothing. A class not known counts as 4
+    moves(moves: readonly ClassMove[]): string[] {
+      const named = (n: number | null) => (n === null ? 'a class not known, counted as 4' : `class ${n}, ${classNames[n]}`)
+      return moves.filter(move => (move.to ?? 4) > (move.from ?? 4)).map(move => `Raises ${move.id} from ${named(move.from)} to ${named(move.to)}`)
+    },
+
+    // A move up nobody confirmed alerts where the class changes what hetu does: leaving 0, whose updates apply on their
+    // own, or entering 4, whose items ask at first use. A move inside 1 to 3 changes a label only. A class not known
+    // counts as 4
+    alerts(move: ClassMove): boolean {
+      const from = move.from ?? 4
+      const to = move.to ?? 4
+      return to > from && (from === 0 || to === 4)
     },
   }
 }

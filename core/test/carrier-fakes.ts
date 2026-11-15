@@ -69,7 +69,7 @@ export class FakeLoader implements Loader {
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list' || item.type === 'ui.edit' || item.type === 'ui.read') {
       const paths = access.scope.paths ?? []
       return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
     }
@@ -134,7 +134,9 @@ export class FakeGate implements Gate {
   // The ui items in the plugin's grant table, for the editor window only
   verbs(plugin: string, window: string): string[] {
     if (window !== 'editor') return []
-    return [...new Set((this.grants[plugin] ?? []).filter(granted => granted.type.startsWith('ui.')).map(granted => granted.type))]
+    // A ui item scoped by paths reaches only the notes it names, so it is never a verb held whole
+    const whole = (granted: Capability) => granted.type.startsWith('ui.') && !('paths' in granted)
+    return [...new Set((this.grants[plugin] ?? []).filter(whole).map(granted => granted.type))]
   }
 
   stateChanged(): void {}
@@ -166,8 +168,14 @@ export class FakeLuoshu implements Provider {
     this.prepared.push(call)
     await this.hold.prepare
     if (call.action === 'luoshu.list') return { scope: {} }
+    const resolve = (path: string) => path.split('/').map(name => this.short.get(name) ?? name).join('/')
+    // A move's two ends, in the order the carrier built its raw scope
+    if (call.action === 'luoshu.move') {
+      const { from, to } = call.args as { from: string, to: string }
+      return { scope: { paths: [resolve(from), resolve(to)] } }
+    }
     const { path, baseVersion } = call.args as { path: string, baseVersion?: string }
-    const scope = { paths: [path.split('/').map(name => this.short.get(name) ?? name).join('/')] }
+    const scope = { paths: [resolve(path)] }
     return baseVersion === undefined ? { scope } : { scope, baseVersion }
   }
 
@@ -179,6 +187,17 @@ export class FakeLuoshu implements Provider {
     // Every name the carrier's canList lets through, as the luoshu lists them
     if (call.action === 'luoshu.list') return { paths: [...this.files.keys()].sort().filter(name => call.canList?.(name) === true), next: null }
     const path = prepared.scope.paths![0]
+    if (call.action === 'luoshu.move') {
+      const to = prepared.scope.paths![1]
+      if (!this.files.has(path)) throw { code: 'not-found' }
+      this.files.set(to, this.files.get(path)!)
+      this.files.delete(path)
+      return null
+    }
+    if (call.action === 'luoshu.remove') {
+      if (!this.files.delete(path)) throw { code: 'not-found' }
+      return null
+    }
     if (call.action === 'luoshu.write') {
       this.files.set(path, (call.args as { text: string }).text)
       return { written: path }

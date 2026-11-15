@@ -98,6 +98,25 @@ describe('the watcher', () => {
     expect(luoshu.heard).toEqual([])
   })
 
+  // So no event names a path the dot rule keeps from every plugin, the gate on or off. The plain save after shows the
+  // watch was hearing
+  it('publishes nothing for a save or a delete in a dot folder or of a dot file at any depth', async () => {
+    await mkdir(path.join(folder, '.obsidian'))
+    await writeFile(path.join(folder, '.obsidian', 'gone.json'), '{}')
+    const luoshu = await watching()
+    await writeFile(path.join(folder, '.obsidian', 'workspace.json'), '{}')
+    await unlink(path.join(folder, '.obsidian', 'gone.json'))
+    await mkdir(path.join(folder, 'journal', 'deep', '.config'), { recursive: true })
+    await writeFile(path.join(folder, 'journal', 'deep', '.config', 'x.md'), 'x')
+    await writeFile(path.join(folder, 'journal', '.todo.md'), 'todo')
+    await writeFile(path.join(folder, '.hidden.md'), 'hidden')
+    await tick(600)
+    await writeFile(path.join(folder, 'a.md'), 'from obsidian')
+    await until(() => luoshu.heard.length > 0)
+    await tick(300)
+    expect(luoshu.heard).toEqual([['outside', 'a.md']])
+  })
+
   // macOS hands the watch changes from just before it began, such as the setup's own writes. Only a note that differs
   // from what was on disk once the watch began is news
   it('publishes nothing for an event on a note whose size and modified time are as they were when the watch began', async () => {

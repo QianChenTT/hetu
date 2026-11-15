@@ -25,6 +25,22 @@ describe('the luoshu\'s folder', () => {
     expect(luoshu.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir }])
   })
 
+  // A remove goes to the bin the runtime gave. History reads the same folder and gets no way to delete anything
+  it('hands the luoshu the bin the runtime gave the loader, and history the folders alone', async () => {
+    const luoshu = role()
+    const history = role()
+    const trash = async () => {}
+    const made = await harness({
+      install: { ...install(), history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) } },
+      behave: { luoshu: { exports: { luoshu } }, history: { exports: { history } } },
+      loader: { trash },
+    })
+    await made.loader.start()
+    await until(() => stateOf(made.loader, 'history') === 'ready')
+    expect(luoshu.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir, trash }])
+    expect(history.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir }])
+  })
+
   it('is the state\'s at ready and the new one each time luoshu.set applies', async () => {
     const luoshu = role()
     let first = ''

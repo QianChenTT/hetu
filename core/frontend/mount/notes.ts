@@ -1,8 +1,10 @@
 import type { CoreLink } from './link.ts'
 
 // The editor's open notes: each read through luoshu.read into an instance with an opaque id, saved through luoshu.write
-// with the version it was read at, and kept as a draft in the window's own storage space until a save lands. The
-// views themselves are the page's, reached through Editors so this runs in the tests
+// with the version it was read at, and kept as a draft in the window's own storage space until a save lands. A note is
+// named by the path the luoshu answered the read with, where the note is, so a note opened under two spellings is one
+// note and a plugin's reach to it is judged on where it is. The views themselves are the page's, reached through
+// Editors so this runs in the tests
 
 export type Editors = {
   create(instance: string, text: string, path: string): void
@@ -22,6 +24,7 @@ type Draft = { path: string, base: string, text: string, at: number, edits: stri
 
 export type OpenNote = {
   readonly instance: string
+  // The path the luoshu resolved, never the spelling it was opened under
   readonly path: string
   // Where its draft is kept, worked out once
   readonly key: string
@@ -68,7 +71,7 @@ function draftOf(value: unknown): Draft | null {
   return { path, base, text, at, edits: named }
 }
 
-type Read = { text: string, version: string }
+type Read = { text: string, version: string, path: string }
 
 export class Notes {
   readonly opened = new Map<string, OpenNote>()
@@ -102,27 +105,42 @@ export class Notes {
     void this.link.subscribe(['luoshu.changed', 'luoshu.outside'])
   }
 
-  // The instance holding the note, read into a new one the first time. Rejects with NoteRefused when it can't be read
-  open(path: string): Promise<string> {
+  // The instance holding the note, read into a new one the first time. Rejects with NoteRefused when it can't be read,
+  // or with not-granted when reads, a plugin's open, says no to the path the luoshu resolved. A path an open note is
+  // named by is that note with no read
+  open(path: string, reads?: (resolved: string) => Promise<boolean>): Promise<string> {
     const known = this.byPath.get(path)
-    if (known !== undefined) return Promise.resolve(known)
+    if (known !== undefined) return this.allowed(path, reads).then(() => known)
     const pending = this.opening.get(path)
-    if (pending !== undefined) return pending
+    if (pending !== undefined) {
+      return pending.then(async instance => {
+        await this.allowed(this.opened.get(instance)?.path ?? path, reads)
+        return instance
+      })
+    }
     const opening = (async () => {
       const read = await this.read(path)
-      const key = await draftKey(path)
+      await this.allowed(read.path, reads)
+      const key = await draftKey(read.path)
+      // Another spelling of the note may have opened it while this one read
+      const held = this.byPath.get(read.path)
+      if (held !== undefined) return held
       const instance = `n${++this.n}`
-      this.editors.create(instance, read.text, path)
+      this.editors.create(instance, read.text, read.path)
       const note: OpenNote = {
-        instance, path, key, version: read.version, dirty: false, changes: 0, edits: new Set(), draft: null, saving: null,
+        instance, path: read.path, key, version: read.version, dirty: false, changes: 0, edits: new Set(), draft: null, saving: null,
       }
       this.opened.set(instance, note)
-      this.byPath.set(path, instance)
+      this.byPath.set(read.path, instance)
       await this.offerDraft(note)
       return instance
     })().finally(() => this.opening.delete(path))
     this.opening.set(path, opening)
     return opening
+  }
+
+  private async allowed(resolved: string, reads: ((resolved: string) => Promise<boolean>) | undefined): Promise<void> {
+    if (reads !== undefined && !(await reads(resolved))) throw new NoteRefused('not-granted')
   }
 
   // The human typed or a plugin edited: the note is dirty and a draft is kept a pause after the last change
@@ -244,7 +262,10 @@ export class Notes {
   private async read(path: string): Promise<Read> {
     const got = await this.link.call('luoshu.read', { path })
     if (!got.ok) throw new NoteRefused(got.refusal?.code ?? 'failed', got.refusal?.reason)
-    return got.result as Read
+    const read = got.result as Read
+    // With no path the window couldn't say where the note is
+    if (typeof read.path !== 'string') throw new NoteRefused('failed')
+    return read
   }
 
   // A dirty note's text as its draft. False when the draft couldn't be kept, which the human is told

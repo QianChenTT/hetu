@@ -45,7 +45,7 @@ async function started(setup: { notes?: Record<string, string>, plugins: Record<
   for (const [id, granted] of Object.entries(setup.plugins)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }))
-    await store.writePlugin(id, await entryFor(root, { granted, class: 4, off: setup.off?.[id] ?? [] }))
+    await store.writePlugin(id, await entryFor(root, { granted, class: 4, confirmed: granted, off: setup.off?.[id] ?? [] }))
   }
   const app = await launch(dataDir)
   const editor = await editorPage(app)

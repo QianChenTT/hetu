@@ -45,7 +45,7 @@ function manifestOf(files: readonly PluginFile[], id: string, from: 'install' | 
   }
   // The state's id wins, so a manifest naming another one is refused rather than believed
   if (manifest.id !== id) return { manifest, problem: 'id' }
-  if (!supportsApi(manifest.api)) return { manifest, problem: 'api' }
+  if (!supportsApi(manifest.api, (manifest.capabilities ?? []).map(granted => granted.type))) return { manifest, problem: 'api' }
   // Entry paths resolve only against the hashed file map
   const held = new Set(files.map(candidate => candidate.path))
   if (!entryPaths(manifest).every(entry => held.has(entry))) return { manifest, problem: 'invalid' }

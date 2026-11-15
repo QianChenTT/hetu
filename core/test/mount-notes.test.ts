@@ -7,9 +7,13 @@ import { type Answer, fakeCore } from './mount-fakes.ts'
 // The editor views as the notes see them: each instance's text, and each replace with whether it came from outside
 function fakeEditors() {
   const texts = new Map<string, string>()
+  const paths = new Map<string, string>()
   const replaced: { instance: string, text: string, remote: boolean }[] = []
   const editors: Editors = {
-    create: (instance, text) => void texts.set(instance, text),
+    create: (instance, text, path) => {
+      texts.set(instance, text)
+      paths.set(instance, path)
+    },
     text: instance => texts.get(instance) ?? '',
     replace(instance, text, remote) {
       texts.set(instance, text)
@@ -17,19 +21,22 @@ function fakeEditors() {
     },
     destroy: instance => void texts.delete(instance),
   }
-  return { editors, texts, replaced, type: (instance: string, text: string) => texts.set(instance, text) }
+  return { editors, texts, paths, replaced, type: (instance: string, text: string) => texts.set(instance, text) }
 }
 
-// A luoshu of notes by path, each with its version, and the window's storage space
-function started(files: Record<string, string> = { 'a.md': 'note a' }) {
+// A luoshu of notes by path, each with its version, and the window's storage space. A read answers the path the note
+// is at, and links names other spellings that resolve to a note, as a junction or another case does
+function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Record<string, string> = {}) {
   const notes = new Map(Object.entries(files).map(([path, text]) => [path, { text, version: `v-${text}` }]))
   const space = new Map<string, unknown>()
   const ok = (result?: unknown): Answer => ({ ok: true, result })
   const core = fakeCore({
     'events.subscribe': () => ok({ standing: [] }),
     'luoshu.read': args => {
-      const note = notes.get((args as { path: string }).path)
-      return note === undefined ? { ok: false, refusal: { code: 'not-found' } } : ok(note)
+      const spelled = (args as { path: string }).path
+      const path = links[spelled] ?? spelled
+      const note = notes.get(path)
+      return note === undefined ? { ok: false, refusal: { code: 'not-found' } } : ok({ ...note, path })
     },
     'luoshu.write': args => {
       const { path, text, baseVersion } = args as { path: string, text: string, baseVersion?: string }
@@ -90,6 +97,60 @@ describe('opening a note', () => {
     expect(notes.opened.get(instance)).toMatchObject({ path: 'a.md', version: 'v-note a', dirty: false })
     expect(await notes.open('a.md')).toBe(instance)
     expect(core.calls('luoshu.read')).toHaveLength(1)
+  })
+
+  it('names the note by the path the luoshu answered, one instance for every spelling of it', async () => {
+    const { notes, views, core } = started({ 'private/x.md': 'secret' }, { 'public/link/x.md': 'private/x.md', 'Private/X.md': 'private/x.md' })
+    const instance = await notes.open('public/link/x.md')
+    expect(notes.opened.get(instance)).toMatchObject({ path: 'private/x.md', key: keyOf('private/x.md') })
+    expect(views.paths.get(instance)).toBe('private/x.md')
+    expect(await notes.open('Private/X.md')).toBe(instance)
+    expect(await notes.open('private/x.md')).toBe(instance)
+    expect(notes.opened.size).toBe(1)
+    // The path it is named by needs no read
+    expect(core.calls('luoshu.read')).toHaveLength(2)
+  })
+
+  it('opens one instance for two spellings opened at once', async () => {
+    const { notes } = started({ 'private/x.md': 'secret' }, { 'public/link/x.md': 'private/x.md' })
+    const [one, two] = await Promise.all([notes.open('public/link/x.md'), notes.open('private/x.md')])
+    expect(one).toBe(two)
+    expect(notes.opened.size).toBe(1)
+  })
+
+  it('opens nothing when reads says no to the path the luoshu resolved, whatever the spelling', async () => {
+    const { notes } = started({ 'private/x.md': 'secret', 'public/a.md': 'a' }, { 'public/link/x.md': 'private/x.md' })
+    const asked: string[] = []
+    const reads = async (resolved: string) => {
+      asked.push(resolved)
+      return resolved.startsWith('public/')
+    }
+    await expect(notes.open('public/link/x.md', reads)).rejects.toMatchObject({ code: 'not-granted' })
+    expect(notes.opened.size).toBe(0)
+    expect(await notes.open('public/a.md', reads)).toMatch(/^n[0-9]+$/)
+    // A note open already is judged too
+    await notes.open('private/x.md')
+    await expect(notes.open('private/x.md', reads)).rejects.toMatchObject({ code: 'not-granted' })
+    await expect(notes.open('public/link/x.md', reads)).rejects.toMatchObject({ code: 'not-granted' })
+    expect(asked).toEqual(['private/x.md', 'public/a.md', 'private/x.md', 'private/x.md'])
+  })
+
+  it('takes a change event on the path the luoshu resolved for a note opened under another spelling', async () => {
+    const { notes, views, core, saveOutside } = started({ 'private/x.md': 'secret' }, { 'public/link/x.md': 'private/x.md' })
+    notes.start()
+    const instance = await notes.open('public/link/x.md')
+    saveOutside('private/x.md', 'changed')
+    core.event('luoshu.outside', 'private/x.md')
+    await flush()
+    await flush()
+    expect(views.texts.get(instance)).toBe('changed')
+  })
+
+  it('refuses a read that answers no path, since the window could not say where the note is', async () => {
+    const { notes, core } = started()
+    core.answers['luoshu.read'] = () => ({ ok: true, result: { text: 'note a', version: 'v-note a' } })
+    await expect(notes.open('a.md')).rejects.toMatchObject({ code: 'failed' })
+    expect(notes.opened.size).toBe(0)
   })
 
   it('rejects with the refusal code when the note can not be read', async () => {

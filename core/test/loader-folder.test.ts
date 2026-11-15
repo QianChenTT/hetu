@@ -91,6 +91,27 @@ describe('where a plugin\'s code came from', () => {
     expect(made.loader.plugin('tagger')).toBe(null)
   })
 
+  // A plugin written for version 2 loads under version 3, which only added, unless it names a type version 3 added
+  it('loads a plugin of an older major every major since only added to, and refuses one naming a type added since', async () => {
+    const edits = { type: 'ui.edit', paths: ['**'] }
+    const made = await harness({
+      folder: {
+        older: filesFor(workerManifest('older', { api: '^2', capabilities: [{ type: 'luoshu.read', paths: ['**'] }] })),
+        mixed: filesFor(workerManifest('mixed', { api: '^2', capabilities: [edits] })),
+        newer: filesFor(workerManifest('newer', { api: '^3', capabilities: [edits] })),
+      },
+      entries: {
+        older: signed({ granted: [{ type: 'luoshu.read', paths: ['**'] }] }),
+        mixed: signed({ granted: [edits] }),
+        newer: signed({ granted: [edits] }),
+      },
+    })
+    await made.loader.start()
+    expect(reasonOf(made.loader, 'older')).toBe(null)
+    expect(reasonOf(made.loader, 'mixed')).toBe('api')
+    expect(reasonOf(made.loader, 'newer')).toBe(null)
+  })
+
   it('refuses an api range outside this core with api, and its dependents wait on that', async () => {
     const made = await harness({
       folder: { outline: filesFor(workerManifest('outline', { api: '^1' })), tagger: filesFor(workerManifest('tagger', { requires: ['outline'] })) },

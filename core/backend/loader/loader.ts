@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
-import { change as changeSchema, changeEffect, mustType, type Change } from '../../api/changes.ts'
+import { change as changeSchema, changeEffect, mustType, type Change, type ClassRaised } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
@@ -17,8 +17,8 @@ import {
 import type { DepState, Init } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
-import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, ExecGrant, ExecView, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
+import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -56,6 +56,8 @@ export type LoaderOptions = {
   confirmDelayMs?: number
   // How long a Confirm waits for its record to land, 10 s unless a test names another
   confirmRecordMs?: number
+  // The OS's bin the runtime gives, handed to the luoshu alone
+  trash?: (absolute: string) => Promise<void>
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -132,6 +134,57 @@ type Known = {
 
 type Staged = { dir: string, read: Read }
 
+// A change to one plugin not applied yet: what that plugin would hold, null once it is gone
+type Pending = { readonly id: string, readonly granted: readonly Capability[] | null }
+
+// What moves a class, in three groups. Install: a first approval, a first-party copy at start, an update. Running: a
+// widen, a narrow, a restore, a remove, a reset, another plugin's change that moves this one, the capabilities plugin
+// switched on again. Stationary: the pass at start, which finds what changed while hetu was not running
+type Cause = ClassRaised['cause'] | 'moved'
+
+// The capabilities slot as classing reads it: on with its role ready, off once the human switched it off, down any
+// other way
+type Classing = 'on' | 'off' | 'down'
+
+// One class change: the plugin, its entry before, null for a first approval, the entry the change leaves before it is
+// classed, null once the plugin goes, the cause, whether a Confirm for the change is on screen and the change to one
+// plugin whose state it is classed under
+type ClassChange = {
+  readonly id: string
+  readonly before: Plugin | null
+  readonly after: Plugin | null
+  readonly cause: Cause
+  readonly confirm: boolean
+  readonly pending?: Pending
+  // What a notice for this change says moved it: the cause of the change and the plugin it changed, null for a pass
+  readonly notice: { readonly cause: ClassRaised['cause'], readonly by: string | null }
+}
+
+// What a class change comes to: the entry stored, null once the plugin goes, whether its class, first-use list,
+// confirmed record or mark differ from the entry before, the move shown on the Confirm on screen, the move a notice of
+// its own names with no Confirm on screen, the items that start to ask, whether the entry rises and so is written before
+// the change that causes it and the slot's state it was decided under
+type Decided = {
+  readonly id: string
+  readonly entry: Plugin | null
+  readonly changed: boolean
+  readonly move: ClassMove | null
+  readonly raised: ClassMove | null
+  readonly asks: readonly Capability[]
+  readonly rises: boolean
+  readonly slot: Classing
+}
+
+// Whether a pass over every entry leaves each as stored: only with the slot switched off by the human, or absent from an
+// install that doesn't name it, as in tests and dev. A role that fails or any other state classes an entry strictly
+const standsInPass = (state: SlotState) => state === 'off' || state === 'absent'
+
+// The same items whatever their order, an item being its type with its scope
+function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
+  const keys = new Set(others.map(capabilityKey))
+  return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
+}
+
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
@@ -144,23 +197,28 @@ const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const isOne = (list: readonly string[], value: string) => list.includes(value)
 const refused = (reason: string): Status => ({ kind: 'refused', reason })
 
+const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
+// The plugins whose topics a grant hears, each topic published as <id>.<name> by that plugin alone
+const publishersOf = (granted: readonly Capability[]) =>
+  granted.flatMap(item => (item.type === 'events.subscribe' ? item.topics.map(topic => topic.slice(0, topic.indexOf('.'))) : []))
+
+// Every plugin the links lead to from the plugins in start, followed in turn and never through the one asking
+function followed(links: ReadonlyMap<string, ReadonlySet<string>>, start: readonly string[], asking: string): Set<string> {
+  const seen = new Set<string>([asking])
+  const queue = start.flatMap(from => [...(links.get(from) ?? [])])
+  while (queue.length > 0) {
+    const other = queue.shift()!
+    if (seen.has(other)) continue
+    seen.add(other)
+    queue.push(...(links.get(other) ?? []))
+  }
+  seen.delete(asking)
+  return seen
+}
+
 // The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
 // off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
 // off unless it is exactly an item that was on. An item no longer granted goes with its switch
-// The items of a new copy that ask at first use, less those the human already confirmed in the copy before: items
-// that asked under the old grants and no longer do. An item that never asked isn't confirmed, so one the new grants
-// make ask, such as network once reading joins it, asks. With the slot down for the old grants nothing counts as
-// confirmed
-function carriedFirstUse(old: Plugin | null, asking: readonly Capability[], askedBefore: readonly Capability[] | null): Capability[] {
-  if (old === null || askedBefore === null) return [...asking]
-  const asked = new Set(askedBefore.map(capabilityKey))
-  const stillAsking = new Set((old.firstUse ?? []).map(capabilityKey))
-  const confirmed = new Set(old.granted.map(capabilityKey).filter(key => asked.has(key) && !stillAsking.has(key)))
-  return asking.filter(item => !confirmed.has(capabilityKey(item)))
-}
-
-const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
-
 function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capability[] {
   const off = old?.off ?? []
   if (off.length === 0) return []
@@ -256,6 +314,7 @@ export class Loader implements Seam {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
   private readonly onFailure: LoaderOptions['onFailure']
+  private readonly trash: LoaderOptions['trash']
   // controls while only the security controls may start, all once they are up, stopped once one failed
   private phase: 'controls' | 'all' | 'stopped' = 'controls'
   private stoppedMode: StoppedMode | null = null
@@ -264,6 +323,8 @@ export class Loader implements Seam {
   private failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
   private readonly declinedAsks = new Set<string>()
+  // The pass at start has classed every entry, so the capabilities plugin coming up from here on is the human's switch-on
+  private classedAtStart = false
 
   constructor(options: LoaderOptions) {
     const { booted } = options
@@ -277,6 +338,7 @@ export class Loader implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
+    this.trash = options.trash
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -289,9 +351,11 @@ export class Loader implements Seam {
       .map(kind => (kind === 'plugin-entry' ? 'plugins' : kind))
     this.requests = new Requests({
       effect: change => changeEffect(change),
-      fingerprint: change => this.store.fingerprint('plugin' in change ? change.plugin : null),
+      // A notice of a class moved up changes nothing when answered, so no state it read can go stale under it
+      fingerprint: change => (change.kind === 'class.raised' ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
-      applyNow: change => this.applyNow(change),
+      applyNow: (change, confirmed) => this.applyNow(change, confirmed),
+      cancelled: change => (change.kind === 'class.raised' ? this.answered(change.plugin) : Promise.resolve()),
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
@@ -492,25 +556,43 @@ ${capabilityKey(change.capability)}`)
   }
 
   // What an approval or an update would load, from the one read it was found or staged with: the version and every
-  // grant an approval takes from the manifest, the versions an update goes from and to
+  // grant an approval takes from the manifest, the versions an update goes from and to. A change to what one plugin
+  // holds adds the classes it moves, from the state the change asks for, with the Confirm on screen
   private what(change: Change): string[] {
     if (change.kind === 'plugin.approve') {
-      const manifest = this.known.get(change.plugin)?.read.manifest
-      if (manifest === undefined || manifest === null) return []
+      const k = this.known.get(change.plugin)
+      const manifest = k?.read.manifest
+      if (k === undefined || manifest === undefined || manifest === null) return []
       const asks = manifest.capabilities ?? []
       return [
         `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
-        ...this.screen(change.plugin, asks),
+        ...this.screen(change.plugin, asks), ...this.shown(this.changeOf('approve', change.plugin, this.approval(k), true)),
       ]
     }
     if (change.kind === 'plugin.update') {
-      const to = this.staged.get(change.plugin)?.read.manifest?.version
+      const read = this.staged.get(change.plugin)?.read
+      const to = read?.manifest?.version
       const entry = this.known.get(change.plugin)?.entry
-      return to === undefined || entry === undefined || entry === null ? [] : [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted)]
+      if (read === undefined || to === undefined || entry === undefined || entry === null) return []
+      const after: Plugin = { ...entry, version: to, contentHash: read.hash! }
+      return [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted), ...this.shown(this.changeOf('update', change.plugin, after, true))]
     }
     if (change.kind === 'grant.widen') {
-      const granted = this.known.get(change.plugin)?.entry?.granted ?? []
-      return this.screen(change.plugin, [...granted, change.capability])
+      const entry = this.known.get(change.plugin)?.entry
+      if (entry === undefined || entry === null) return []
+      const after: Plugin = { ...entry, granted: [...entry.granted, change.capability] }
+      return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('widen', change.plugin, after, true))]
+    }
+    if (change.kind === 'plugin.restore') {
+      const read = this.bundled.get(change.plugin)
+      const listed = this.install?.plugins[change.plugin]
+      if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
+      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
+      return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('restore', change.plugin, after, true))]
+    }
+    if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
+      const k = this.known.get(change.plugin)
+      return k?.from === 'folder' && k.entry !== null ? this.shown(this.changeOf(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true)) : []
     }
     return []
   }
@@ -545,12 +627,23 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
+  // Every plugin the loader knows and what each holds, id's own being granted, which may be a change not applied yet,
+  // and another plugin's as a pending change to it would leave it
+  private holders(id: string, granted: readonly Capability[], pending?: Pending) {
+    const gone = pending?.granted === null ? pending.id : null
+    const ids = [...new Set([
+      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id,
+      ...(pending === undefined ? [] : [pending.id]),
+    ])].filter(other => other === id || other !== gone)
+    const held = (other: string) => (other === id ? granted : other === pending?.id ? pending.granted ?? [] : this.grantsOf(other))
+    return { ids, held }
+  }
+
   // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
   // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
-  // can pass notes out through it. granted is id's own, which may be a change not applied yet
-  private connected(id: string, granted: readonly Capability[]): { id: string, granted: readonly Capability[] }[] {
-    const ids = [...new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id])]
-    const held = (other: string) => (other === id ? granted : this.grantsOf(other))
+  // can pass notes out through it
+  private connected(id: string, granted: readonly Capability[], pending?: Pending): { id: string, granted: readonly Capability[] }[] {
+    const { ids, held } = this.holders(id, granted, pending)
     const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
     for (const from of ids) {
       for (const to of targetsOf(held(from))) {
@@ -560,57 +653,284 @@ ${capabilityKey(change.capability)}`)
         links.get(to)!.add(from)
       }
     }
-    const seen = new Set<string>([id])
-    const queue = [...links.get(id)!]
-    while (queue.length > 0) {
-      const other = queue.shift()!
-      if (seen.has(other)) continue
-      seen.add(other)
-      queue.push(...links.get(other)!)
+    return [...followed(links, [id], id)].sort().map(other => ({ id: other, granted: held(other) }))
+  }
+
+  // Where data can move to and from id, for the pair rule: along plugin.call both ways, and along a subscription to
+  // another plugin's topics from the plugin that owns the topic to id, never back. Publishing needs no grant, so a
+  // plugin can signal every plugin that hears its topics by what and when it publishes, while a plugin that hears
+  // another passes it nothing. Two plugins hearing one topic share nothing through it
+  private flow(id: string, granted: readonly Capability[], pending?: Pending): Flow {
+    const { ids, held } = this.holders(id, granted, pending)
+    const out = new Map<string, Set<string>>()
+    const into = new Map<string, Set<string>>()
+    const link = (from: string, to: string) => {
+      if (from === to) return
+      if (!out.has(from)) out.set(from, new Set())
+      if (!into.has(to)) into.set(to, new Set())
+      out.get(from)!.add(to)
+      into.get(to)!.add(from)
     }
-    seen.delete(id)
-    return [...seen].sort().map(other => ({ id: other, granted: held(other) }))
+    for (const from of ids) {
+      for (const to of targetsOf(held(from))) {
+        link(from, to)
+        link(to, from)
+      }
+      for (const owner of publishersOf(held(from))) link(owner, from)
+    }
+    const peers = (others: Set<string>) => [...others].sort().map(other => ({ id: other, granted: held(other) }))
+    const heard = granted.flatMap(item => {
+      const owners = publishersOf([item]).filter(owner => owner !== id)
+      if (owners.length === 0) return []
+      const upstream = new Set([...owners, ...followed(into, owners, id)])
+      upstream.delete(id)
+      return [{ item, upstream: peers(upstream).flatMap(peer => [...peer.granted]) }]
+    })
+    return { upstream: peers(followed(into, [id], id)), downstream: peers(followed(out, [id], id)), heard }
   }
 
-  private reachable(id: string, granted: readonly Capability[]): Capability[] {
-    return this.connected(id, granted).flatMap(other => [...other.granted])
+  private reachable(id: string, granted: readonly Capability[], pending?: Pending): Capability[] {
+    return this.connected(id, granted, pending).flatMap(other => [...other.granted])
   }
 
-  // A plugin's class and the items that ask at first use, from the slot. With the slot down the class is null, which
-  // counts as 4, and every item asks
-  private classed(id: string, granted: readonly Capability[]): { class: number | null, firstUse: Capability[] } {
+  // What a plugin's class rests on past its own grants: what it reaches through plugin.call and where data moves to and
+  // from it
+  private links(id: string, granted: readonly Capability[], pending?: Pending): string {
+    return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
+  }
+
+  // The capabilities slot as classing reads it: on while its plugin is ready with its role, off only once the human
+  // switched it off and down for anything else, a failed, absent or tampered plugin included
+  private classing(): Classing {
+    const state = this.slot('capabilities')
+    if (state === 'off') return 'off'
+    return this.capabilities() !== null ? 'on' : 'down'
+  }
+
+  // The one function every class change goes through, whatever causes it. With the slot on the policy classes the
+  // plugin under the state the change asks for and an item asks unless the entry records the human confirmed it. With
+  // the slot switched off by the human the change passes: the class stays the last one classed, the entry is marked as
+  // not classed and lists every item not confirmed, which the gate is handed only once the slot is on again. Down any
+  // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
+  // stored only with the slot switched off or absent from the install. With the slot on a move goes on the Confirm on screen. With none on screen it gets a
+  // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
+  // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
+  private decide(change: ClassChange): Decided {
+    const { id, before, after, cause, confirm, pending, notice } = change
+    let slot = this.classing()
+    if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, slot }
+    const held = new Set(after.granted.map(capabilityKey))
+    // New code that applied with no Confirm on screen inherits no confirmation the old code was given
+    const carried = cause === 'update' && !confirm ? [] : before?.confirmed ?? []
+    const confirmed = carried.filter(item => held.has(capabilityKey(item)))
+    const known = new Set(confirmed.map(capabilityKey))
+    const classed = slot === 'on' ? this.classed(id, after.granted, pending) : null
+    if (classed === null && slot === 'on') slot = 'down'
+    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.slot('capabilities'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
+    const n = classed !== null ? classed.class : slot === 'off' ? before?.class ?? null : null
+    const asking = classed !== null
+      ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))
+      : after.granted.filter(item => slot === 'down' || !known.has(capabilityKey(item)))
+    const next: Plugin = { ...after, class: n }
+    delete next.firstUse
+    delete next.confirmed
+    delete next.unclassed
+    if (asking.length > 0) next.firstUse = asking
+    if (confirmed.length > 0) next.confirmed = confirmed
+    if (slot === 'off' || (slot === 'down' && after.unclassed === true)) next.unclassed = true
+    const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
+    const asks = asking.filter(item => !listed.has(capabilityKey(item)))
+    // A plugin never classed, approved while the slot was off or approved now, moves from a class not known. For its
+    // notice that class counts as 0, since nothing showed the human any class. Everywhere else it counts as 4
+    const unknown = before === null ? cause === 'approve' : before.class === null && before.unclassed === true
+    const moving: ClassMove | null = slot === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
+    const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: 0 } : moving) ? moving : null
+    // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer
+    const was = before?.owed
+    const owed = slot !== 'on' ? was
+      : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
+        : was !== undefined && n !== null && this.alerts({ id, from: was.from ?? 0, to: n }) ? was : undefined
+    delete next.owed
+    if (owed !== undefined) next.owed = owed
+    const changed = before === null || n !== before.class || !sameItems(asking, before.firstUse) || !sameItems(confirmed, before.confirmed)
+      || next.unclassed !== before.unclassed || JSON.stringify(owed) !== JSON.stringify(before.owed)
+    return {
+      id, entry: next, changed, asks, slot,
+      rises: asks.length > 0 || (next.unclassed === true && before?.unclassed !== true) || (n ?? 4) > (before?.class ?? 4),
+      move: confirm ? moving : null,
+      raised,
+    }
+  }
+
+  // Whether a move made with no Confirm on screen alerts, as the policy says, or for a slot that doesn't say, whether it
+  // would show the move on a Confirm. A slot that fails alerts
+  private alerts(move: ClassMove): boolean {
     const slot = this.capabilities()
-    if (slot !== null) {
-      try {
-        const reachable = this.reachable(id, granted)
-        const n = slot.classify(granted, reachable)
-        const asking = slot.firstUse(granted, reachable)
-        if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
-      } catch {}
-      this.note('fault', { plugin: 'capabilities', step: 'classify' })
-    }
-    return { class: null, firstUse: [...granted] }
+    if (slot === null) return false
+    try {
+      if (typeof slot.alerts === 'function') {
+        const answer = slot.alerts(move)
+        if (typeof answer === 'boolean') return answer
+      } else {
+        const lines = typeof slot.moves === 'function' ? slot.moves([move]) : []
+        if (Array.isArray(lines)) return lines.length > 0
+      }
+    } catch {}
+    this.note('fault', { plugin: 'capabilities', step: 'alerts' })
+    return true
   }
 
-  // What asks at first use under granted as the slot says, null when it can't say
-  private askingFor(id: string, granted: readonly Capability[]): Capability[] | null {
+  // The plugins a change decided for
+  private touched(change: { own: Decided, others: readonly Decided[] }): string[] {
+    return [change.own, ...change.others].map(decided => decided.id)
+  }
+
+  // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
+  // it holds, naming the cause and the plugin whose change it was. Notices take places of their own. One that finds no
+  // place stays owed and is raised again once a notice is answered or at the next start, and a notice that says what is
+  // no longer owed goes. The class and its asks are stored already, so a notice holds nothing back
+  private raiseOwed(ids: Iterable<string>): void {
+    for (const id of ids) {
+      const entry = this.state.plugins[id]
+      const owed = entry?.owed
+      // A class not known while the slot is down: the notice held stays as it was until the class is known again
+      if (owed !== undefined && entry!.class === null) continue
+      const notice: ClassRaised | null = owed === undefined
+        ? null : { kind: 'class.raised', plugin: id, from: owed.from, to: entry!.class!, cause: owed.cause, by: owed.by }
+      this.requests.withdraw(held => held.kind === 'class.raised' && held.plugin === id
+        && (notice === null || held.from !== notice.from || held.to !== notice.to || held.cause !== notice.cause || held.by !== notice.by))
+      if (notice === null) continue
+      if (typeof this.requests.raise(notice, null, MAX_PENDING, 'class.raised') !== 'string') this.note('fault', { plugin: id, step: 'class.raised' })
+    }
+  }
+
+  // The human answered a plugin's notice, with Confirm or Cancel: its entry owes it no longer, and a notice that found
+  // no place before can take the one freed
+  private async answered(id: string): Promise<void> {
+    const entry = this.state.plugins[id]
+    if (entry?.owed !== undefined) {
+      const next: Plugin = { ...entry }
+      delete next.owed
+      await this.store.writePlugin(id, next)
+      this.putEntry(id, next)
+    }
+    this.raiseOwed([id])
+    this.raiseOwed(Object.keys(this.state.plugins))
+  }
+
+  // A change to one plugin as class changes: its own, then one for every other plugin-folder plugin whose links it
+  // moves and whose entry it changes, each decided under the state the change asks for
+  private changeOf(cause: ClassRaised['cause'], id: string, after: Plugin | null, confirm: boolean): { own: Decided, others: Decided[] } {
+    const pending: Pending = { id, granted: after?.granted ?? null }
+    const notice = { cause, by: id }
+    const own = this.decide({ id, before: this.state.plugins[id] ?? null, after, cause, confirm, pending, notice })
+    const others: Decided[] = []
+    for (const [other, entry] of Object.entries(this.state.plugins)) {
+      if (other === id || this.known.get(other)?.from === 'install') continue
+      if (this.links(other, entry.granted) === this.links(other, entry.granted, pending)) continue
+      const decided = this.decide({ id: other, before: entry, after: entry, cause: 'moved', confirm, pending, notice })
+      if (decided.changed) others.push(decided)
+    }
+    return { own, others }
+  }
+
+  // An approval's entry before it is classed, from the one read the request was made on: its hash, version and the
+  // manifest's grants
+  private approval(k: Known): Plugin {
+    const manifest = k.read.manifest!
+    return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
+  }
+
+  // A first-party copy's entry before it is classed, with the human's item switches carried over
+  private copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
+    const granted = read.manifest!.capabilities ?? []
+    const before = this.state.plugins[id] ?? null
+    const off = carriedOff(before, granted)
+    return {
+      version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
+      ...(off.length > 0 ? { off } : {}),
+    }
+  }
+
+  // Every plugin-folder entry classed again at start from the graph as it stands, before any plugin-folder plugin runs:
+  // an app update can change what an install plugin holds with no change to any entry and an entry can be out of date.
+  // Only an entry that comes out different is written. One that rises and can't be written still asks in the run, one
+  // that lowers keeps its entry. The same pass runs once the human switches the capabilities plugin on again in the run.
+  // A move up there that alerts gets its notice
+  private async classAll(cause: 'start' | 'slot-on'): Promise<void> {
+    let changed = false
+    for (const [id, entry] of Object.entries(this.state.plugins)) {
+      if (this.known.get(id)?.from === 'install') continue
+      const decided = this.decide({ id, before: entry, after: entry, cause, confirm: false, notice: { cause, by: null } })
+      if (!decided.changed || decided.entry === null) continue
+      try {
+        await this.store.writePlugin(id, decided.entry)
+      } catch {
+        this.note('fault', { plugin: id, step: 'reclass' })
+        if (!decided.rises) continue
+      }
+      this.putEntry(id, decided.entry)
+      changed = true
+    }
+    if (changed) this.bump()
+    // Every notice an entry owes, a new one or one a run before never saw answered
+    this.raiseOwed(Object.keys(this.state.plugins))
+  }
+
+  // Writes the entries of the other plugins a change moves: those that rise before the change's own write and the rest
+  // after it, so a write that fails between them leaves a class too high or an item asking, never a class too low. A
+  // write after the change that fails leaves that entry as it was, higher
+  private async settle(others: readonly Decided[], rises: boolean): Promise<void> {
+    for (const other of others) {
+      if (other.rises !== rises || other.entry === null) continue
+      const written = this.store.writePlugin(other.id, other.entry)
+      if (rises) await written
+      else if (!await written.then(() => true, () => false)) {
+        this.note('fault', { plugin: other.id, step: 'reclass' })
+        continue
+      }
+      this.putEntry(other.id, other.entry)
+    }
+  }
+
+  // The lines a request's Confirm shows for the classes its change moves, the changed plugin's own first, each as the
+  // slot words it. A slot without moves shows none
+  private shown(change: { own: Decided, others: readonly Decided[] }): string[] {
+    const moves = [change.own, ...change.others].flatMap(decided => (decided.move === null ? [] : [decided.move]))
+    const slot = this.capabilities()
+    if (moves.length === 0 || slot === null || typeof slot.moves !== 'function') return []
+    try {
+      const lines = slot.moves(moves)
+      if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
+    } catch {}
+    this.note('fault', { plugin: 'capabilities', step: 'moves' })
+    return []
+  }
+
+  // A plugin's class and the items that ask at first use, from the slot. Null with the slot down or a role that fails
+  private classed(id: string, granted: readonly Capability[], pending?: Pending): { class: number, firstUse: Capability[] } | null {
     const slot = this.capabilities()
     if (slot === null) return null
     try {
-      const asking = slot.firstUse(granted, this.reachable(id, granted))
-      return Array.isArray(asking) ? asking : null
-    } catch {
-      return null
-    }
+      const reachable = this.reachable(id, granted, pending)
+      const flow = this.flow(id, granted, pending)
+      const n = slot.classify(granted, reachable, flow)
+      const asking = slot.firstUse(granted, reachable, flow)
+      if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
+    } catch {}
+    this.note('fault', { plugin: 'capabilities', step: 'classify' })
+    return null
   }
 
-  // The slot's lines under the core's words, or with the slot down what that means
+  // The slot's lines under the core's words, or with the slot down what that means. Nothing with the slot switched off
+  // by the human, who chose to see nothing about classes
   private screen(id: string, granted: readonly Capability[]): string[] {
+    if (this.classing() === 'off') return []
     const slot = this.capabilities()
     if (slot !== null) {
       try {
         const connected = this.connected(id, granted)
-        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected })
+        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
         if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
       } catch {}
       this.note('fault', { plugin: 'capabilities', step: 'screen' })
@@ -656,9 +976,9 @@ ${capabilityKey(change.capability)}`)
 
   // ---- boot
 
-  // In boot's order: the install checked and its host tier started, the first-party reconcile, the plugin folder
-  // scanned and the sandboxed tier started in graph order. core.ready closes it with every slot's state, unless a
-  // shutdown began on the way
+  // In boot's order: the install checked and its host tier started, the first-party reconcile, every plugin-folder
+  // entry classed again, the plugin folder scanned and the sandboxed tier started in graph order. core.ready closes it
+  // with every slot's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
@@ -672,6 +992,9 @@ ${capabilityKey(change.capability)}`)
     await this.settled()
     await this.saveInstalled()
     await this.reconcile()
+    // In the changes' turn, since a restore needs no plugin the scan found and could write an entry under the pass
+    await this.serial(() => this.classAll('start'))
+    this.classedAtStart = true
     await this.scan()
     this.replan()
     await this.settled()
@@ -872,11 +1195,11 @@ ${capabilityKey(change.capability)}`)
           this.note('plugin.collision', { plugin: id })
           continue
         }
-        await this.copy(id, read, listed, 'plugin.copied', true, null).catch(() => this.note('fault', { plugin: id, step: 'copy' }))
+        await this.copy(id, read, listed, 'copy', true, null).catch(() => this.note('fault', { plugin: id, step: 'copy' }))
       } else if (entry.signer !== FIRST_PARTY_SIGNER) {
         this.note('plugin.collision', { plugin: id })
       } else if (isNewer(listed.version, entry.version)) {
-        await this.copy(id, read, listed, 'plugin.copied', entry.enabled, entry.version)
+        await this.copy(id, read, listed, 'copy', entry.enabled, entry.version)
           .catch(() => this.note('fault', { plugin: id, step: 'copy' }))
       }
     }
@@ -889,33 +1212,24 @@ ${capabilityKey(change.capability)}`)
     return found.hash !== null && found.hash !== hash
   }
 
-  // Applies only once its record has landed, so the copy's floor record is on disk before the entry widens anything
-  private async copy(id: string, read: Read, listed: Listed, event: string, enabled: boolean, previous: string | null): Promise<boolean> {
+  // Applies only once its record has landed, so the copy's floor record is on disk before the entry widens anything. A
+  // restore is asked for on a Confirm, a copy at start has none
+  private async copy(id: string, read: Read, listed: Listed, cause: 'copy' | 'restore', enabled: boolean, previous: string | null, confirm = false): Promise<boolean> {
     const dir = await stage(this.dataDir, id, read.files)
-    const landing = await this.landing(id, event, { plugin: id, version: listed.version })
+    const landing = await this.landing(id, cause === 'restore' ? 'plugin.restored' : 'plugin.copied', { plugin: id, version: listed.version })
     if (landing === 'lost') {
       await clear(dir).catch(() => {})
       return false
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
-    const granted = read.manifest!.capabilities ?? []
-    const before = this.state.plugins[id] ?? null
-    const off = carriedOff(before, granted)
-    const classed = this.classed(id, granted)
-    const firstUse = carriedFirstUse(before, classed.firstUse, before === null ? null : this.askingFor(id, before.granted))
-    const entry: Plugin = {
-      version: listed.version,
-      contentHash: listed.hash,
-      signer: FIRST_PARTY_SIGNER,
-      granted,
-      class: classed.class,
-      enabled,
-      ...(off.length > 0 ? { off } : {}),
-      ...(firstUse.length > 0 ? { firstUse } : {}),
-    }
+    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled), confirm)
+    const entry = change.own.entry!
+    await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
     this.bump()
     return true
@@ -1402,6 +1716,10 @@ ${capabilityKey(change.capability)}`)
     this.beat(k, live)
     void this.unmark(k, live)
     this.replan()
+    // The capabilities plugin up again in the run, which only the human's switch-on brings: every entry is classed at once
+    if (k.id === 'capabilities' && k.from === 'install' && this.classedAtStart) {
+      void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'capabilities', step: 'reclass' }))
+    }
   }
 
   // ---- stopping
@@ -1594,7 +1912,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
   // directly
   apply(input: Change): Promise<void> {
-    return this.serial(() => this.applyNow(changeSchema.parse(input)))
+    return this.serial(() => this.applyNow(changeSchema.parse(input), true))
   }
 
   // One change or update at a time, so no two read the state and write it back over each other
@@ -1604,7 +1922,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return run
   }
 
-  private async applyNow(change: Change): Promise<void> {
+  // confirm is whether the human clicked the change's Confirm, false for one Confirm-off or its narrowing applied at once
+  private async applyNow(change: Change, confirm: boolean): Promise<void> {
     // The human chose in the stopped mode, so the next failure restarts hetu again
     if (this.phase === 'stopped') await clearFailedOnce(this.dataDir).catch(() => {})
     switch (change.kind) {
@@ -1612,13 +1931,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'plugin.off':
         return this.switchPlugin(change.plugin, change.kind === 'plugin.on')
       case 'plugin.approve':
-        return this.approve(change.plugin)
+        return this.approve(change.plugin, confirm)
       case 'plugin.remove':
-        return this.remove(change.plugin)
+        return this.remove(change.plugin, confirm)
       case 'plugin.restore':
-        return this.restore(change.plugin)
+        return this.restore(change.plugin, confirm)
       case 'plugin.update':
-        return this.applyStaged(change.plugin)
+        return this.applyStaged(change.plugin, confirm)
       case 'devMode':
         return this.writeSwitches({ ...this.state.switches, devMode: toggled(this.state.switches.devMode, change.plugin, change.on) })
       case 'exec.anyCommand':
@@ -1657,16 +1976,19 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.switchItem(change.plugin, change.capability, change.kind === 'item.on')
       case 'grant.widen':
       case 'grant.narrow':
-        return this.grant(change.plugin, change.capability, change.kind === 'grant.widen')
+        return this.grant(change.plugin, change.capability, change.kind === 'grant.widen', confirm)
       case 'plugin.clearStorage':
         return this.clearStorage(change.plugin)
       case 'plugin.reset':
-        return this.reset(change.plugin)
+        return this.reset(change.plugin, confirm)
+      // Answered: the class and its asks were stored when the notice was raised
+      case 'class.raised':
+        return this.answered(change.plugin)
     }
   }
 
   // A capability added to a folder plugin's entry or taken out with its switch. Adding one it holds changes nothing
-  private async grant(id: string, capability: Capability, add: boolean): Promise<void> {
+  private async grant(id: string, capability: Capability, add: boolean, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     const entry = k?.from === 'folder' ? k.entry : null
     if (entry === null) throw new Error(`no plugin entry for ${id}`)
@@ -1674,16 +1996,17 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const has = entry.granted.some(granted => capabilityKey(granted) === key)
     if (add && has) return
     const granted = add ? [...entry.granted, capability] : entry.granted.filter(item => capabilityKey(item) !== key)
-    // The class follows, and a new item asks at first use when the slot says so or can't say
-    const classed = this.classed(id, granted)
-    const asking = (entry.firstUse ?? []).filter(item => capabilityKey(item) !== key)
-    if (add && classed.firstUse.some(item => capabilityKey(item) === key)) asking.push(capability)
-    const next: Plugin = { ...entry, granted, class: classed.class }
-    delete next.firstUse
-    if (asking.length > 0) next.firstUse = asking
-    if (entry.off !== undefined) next.off = entry.off.filter(item => capabilityKey(item) !== key)
+    const changed: Plugin = { ...entry, granted }
+    if (entry.off !== undefined) changed.off = entry.off.filter(item => capabilityKey(item) !== key)
+    // Classed whole as any other entry is, since one item's ask rests on every item and every link: a widened read makes
+    // the plugin's own network ask. A widen is asked for on a Confirm, a narrow applies at once
+    const change = this.changeOf(add ? 'widen' : 'narrow', id, changed, confirm)
+    const next = change.own.entry!
+    await this.settle(change.others, true)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
     this.bump()
   }
 
@@ -1712,7 +2035,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
   // again with the code it has. An install plugin waits for Restart hetu, since a host half starts once per run and
   // the reset may follow a start that froze main
-  private async reset(id: string): Promise<void> {
+  private async reset(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
     await this.stoppedWhile(k, async () => {
@@ -1727,8 +2050,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
       }
       if (k.from === 'folder' && k.entry !== null) {
+        const change = this.changeOf('reset', id, null, confirm)
+        await this.settle(change.others, true)
         await this.store.removePlugin(id)
         delete this.state.plugins[id]
+        await this.settle(change.others, false)
+        this.raiseOwed(this.touched(change))
         this.entryChecks.set(id, 'absent')
         k.entry = null
         this.bump()
@@ -1769,8 +2096,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (item === undefined) throw new Error(`${id} wasn't granted that item`)
     const others = (entry.off ?? []).filter(off => capabilityKey(off) !== key)
     const next: Plugin = { ...entry, off: on ? others : [...others, item] }
-    // Switching an item on is the human's Confirm of its first use too
-    if (on && entry.firstUse !== undefined) next.firstUse = entry.firstUse.filter(asked => capabilityKey(asked) !== key)
+    // Switching on an item that asks is the human's Confirm of its first use too, which the entry records
+    if (on && (entry.firstUse ?? []).some(asked => capabilityKey(asked) === key)) {
+      next.firstUse = entry.firstUse!.filter(asked => capabilityKey(asked) !== key)
+      if (!(entry.confirmed ?? []).some(done => capabilityKey(done) === key)) next.confirmed = [...entry.confirmed ?? [], item]
+    }
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
     this.bump()
@@ -1779,9 +2109,10 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
   // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
-  // switched off is off. An item in the entry's firstUse list asks at its first use, which nothing writes until the
-  // capabilities plugin at step 17. An install plugin's items never ask
+  // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the
+  // capabilities plugin switched off, when nothing asks. An install plugin's items never ask
   private stateView(): StateView {
+    const asks = this.classing() !== 'off'
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
     const items = (granted: readonly Capability[], switchedOff: readonly Capability[], asking: readonly Capability[] = []) => {
       const off = new Set(switchedOff.map(capabilityKey))
@@ -1795,7 +2126,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     // no grant
     for (const [id, entry] of Object.entries(this.state.plugins)) {
       if (this.known.get(id)?.from === 'install' || !entry.enabled || entry.granted.length === 0) continue
-      plugins[id] = items(entry.granted, entry.off ?? [], entry.firstUse ?? [])
+      plugins[id] = items(entry.granted, entry.off ?? [], asks ? entry.firstUse ?? [] : [])
     }
     for (const k of this.known.values()) {
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
@@ -1813,7 +2144,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const target = luoshu.live?.exports?.luoshu
     if (target === undefined) return true
     try {
-      target.open(this.opening())
+      target.open(this.trash === undefined ? this.opening() : { ...this.opening(), trash: this.trash })
       return true
     } catch {
       this.die(luoshu, 'state-changed')
@@ -1905,34 +2236,36 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // The entry from the one read the request was made on: its hash, version and the manifest's grants
-  private async approve(id: string): Promise<void> {
+  private async approve(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder' || k.entry !== null || this.status(k).kind !== 'found') {
       throw new Error(`nothing to approve for ${id}`)
     }
-    const manifest = k.read.manifest!
-    const granted = manifest.capabilities ?? []
-    const classed = this.classed(id, granted)
-    const entry: Plugin = {
-      version: manifest.version, contentHash: k.read.hash!, signer: null, granted, class: classed.class, enabled: true,
-      ...(classed.firstUse.length > 0 ? { firstUse: classed.firstUse } : {}),
-    }
+    const change = this.changeOf('approve', id, this.approval(k), confirm)
+    const entry = change.own.entry!
+    await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
     this.bump()
     this.replan()
   }
 
   // The entry goes first so nothing can run, then the plugin stops with its dependents, then its code, storage and
   // cache. A first-party plugin leaves a tombstone, written before anything else
-  private async remove(id: string): Promise<void> {
+  private async remove(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
+    const change = this.changeOf('remove', id, null, confirm)
+    await this.settle(change.others, true)
     if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
       await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
     }
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
     // What the human let this plugin do goes with it, so a plugin added later under the id asks again
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })
@@ -1958,7 +2291,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Copies the install's bytes again and clears the tombstone. Never over a community plugin holding the id
-  private async restore(id: string): Promise<void> {
+  private async restore(id: string, confirm: boolean): Promise<void> {
     const read = this.bundled.get(id)
     const listed = this.install?.plugins[id]
     if (read === undefined || listed === undefined || read.problem !== null || read.hash !== listed.hash) {
@@ -1975,7 +2308,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       this.replan()
       await this.pumped()
     }
-    const copied = await this.copy(id, read, listed, 'plugin.restored', entry?.enabled ?? true, entry?.version ?? null)
+    const copied = await this.copy(id, read, listed, 'restore', entry?.enabled ?? true, entry?.version ?? null, confirm)
     if (!copied) throw new Error('the restore record did not land')
     const now = this.know(id, 'folder', folders.plugins(this.dataDir, id), read, null, this.state.plugins[id])
     if (k !== undefined) now.lastStop = k.lastStop
@@ -2019,11 +2352,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
     // Only a class 0 update loads on its own, and only while the slot can say so, with no grant asked for that the
-    // entry doesn't hold. Its record lands first as any update's does
+    // entry doesn't hold and none that always asks. Its record lands first as any update's does
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
-    if (k.entry.class === 0 && asksNothingNew && this.capabilities() !== null && this.classed(id, k.entry.granted).class === 0) {
-      await this.applyStaged(id)
+    const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
+    const now = this.decide({ id, before: k.entry, after: k.entry, cause: 'update', confirm: false, notice: { cause: 'update', by: id } })
+    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.slot === 'on' && now.entry?.class === 0) {
+      await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }
     // A newer update replaces the staged one, so the request the human may have seen for the older one goes
@@ -2036,8 +2371,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // dependents and the new one starts. A crash between the swap and the entry leaves bytes the entry doesn't name,
   // which the next boot reads as a failed check. A failed write leaves the old incarnation running on the bytes it was
   // started from. The plugin keeps its old entry in memory until it runs the new bytes, so the old incarnation is never
-  // judged against the new hash
-  private async applyStaged(id: string): Promise<void> {
+  // judged against the new hash. Only a class 0 update that applies on its own has no Confirm
+  private async applyStaged(id: string, confirm = true): Promise<void> {
     const staged = this.staged.get(id)
     const k = this.known.get(id)
     if (staged === undefined || k === undefined || k.entry === null) throw new Error(`no update staged for ${id}`)
@@ -2052,10 +2387,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
     const relative = path.relative(folders.staging(this.dataDir), staged.dir)
     if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
-    const entry: Plugin = { ...old, version: to, contentHash: read.hash!, class: this.classed(id, old.granted).class }
+    const change = this.changeOf('update', id, { ...old, version: to, contentHash: read.hash! }, confirm)
+    const entry = change.own.entry!
+    await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.state.plugins[id] = entry
     this.entryChecks.set(id, 'ok')
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
     if (k.live !== null) {
       k.held = { kind: 'held', state: 'stopped', reason: 'update' }
       this.replan()

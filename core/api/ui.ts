@@ -464,14 +464,14 @@ export const uiCall = z.discriminatedUnion('verb', [
     args: z.strictObject({ bindings: z.array(z.strictObject({ key, command: localName })).max(MAX_VIEW_BINDINGS) }),
   }),
   z.strictObject({ ...head, verb: z.literal('layout.draw'), args: z.strictObject({ ops }) }),
-  // Opens a note in the editor, only inside the plugin's read or list scope. A drawer verb, since the drawer holds
-  // the open notes and the plugin's port names its owner
+  // Opens a note in the editor, only inside the plugin's luoshu.read scope. A drawer verb, since the drawer holds the
+  // open notes and the plugin's port names its owner
   z.strictObject({ ...head, verb: z.literal('editor.open'), args: z.strictObject({ path: note }) }),
 ])
 export type UiCall = z.infer<typeof uiCall>
 export type UiVerb = UiCall['verb']
 
-// The item each ui verb needs. editor.open needs the note inside the read or list scope too
+// The item each ui verb needs. editor.open needs the note inside the luoshu.read scope too
 export const uiNeeds: Readonly<Record<UiVerb, 'ui.view' | 'ui.layout'>> = Object.freeze({
   'view.open': 'ui.view',
   'view.close': 'ui.view',

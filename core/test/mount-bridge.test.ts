@@ -7,7 +7,8 @@ import { CoreLink } from '../frontend/mount/link.ts'
 import { Versions } from '../frontend/mount/versions.ts'
 import { fakeCore, settle } from './mount-fakes.ts'
 
-type Reach = { read?: string[], write?: string[], verbs?: string[] }
+// write is what the core no longer answers, kept so a test shows the drawer never edits on it
+type Reach = { read?: string[], write?: string[], edit?: string[], uiRead?: string[], list?: string[], verbs?: string[] }
 
 // An open note as the drawer sees it, on a real text and real versions
 function note(id: string, path: string, text: string) {
@@ -81,6 +82,9 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
         result: {
           read: path !== undefined && (held.read ?? []).includes(path),
           write: path !== undefined && (held.write ?? []).includes(path),
+          edit: path !== undefined && (held.edit ?? []).includes(path),
+          uiRead: path !== undefined && (held.uiRead ?? []).includes(path),
+          list: path !== undefined && (held.list ?? []).includes(path),
           verbs: held.verbs ?? [],
         },
       }
@@ -95,6 +99,54 @@ function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hell
 }
 
 const reader: Reach = { read: ['a.md'], verbs: ['ui.decoration'] }
+
+// The read twin of ui.edit: a note the human opened, through the bridge alone. A note a plugin opened isn't counted,
+// and neither is one opened from a plugin's node naming a note that plugin can't reach itself
+describe('ui.read', () => {
+  const shown: Reach = { uiRead: ['a.md'], verbs: ['ui.decoration'] }
+
+  it('reaches a note the human opened through the bridge alone, with its events', async () => {
+    const { drawer, notes } = started({ alpha: shown })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await drawer.humanOpened(notes[0].instance)
+    await settle()
+    expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }])
+    expect(await alpha.call('editor.instances')).toMatchObject({ ok: true, result: { instances: [{ instance: 'n1', path: 'a.md' }] } })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true, result: { text: 'hello world' } })
+    expect(await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] })).toMatchObject({ ok: true })
+  })
+
+  it('reaches no note the human didn\'t open, one a plugin opened included', async () => {
+    const { drawer } = started({ alpha: shown })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await settle()
+    expect(alpha.events()).toEqual([])
+    expect(await alpha.call('editor.instances')).toMatchObject({ ok: true, result: { instances: [] } })
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
+  it('counts a note opened from a plugin\'s node as the human\'s only when that plugin reads or lists it itself', async () => {
+    const { drawer, notes } = started({ alpha: shown, lure: { uiRead: ['a.md'] }, explorer: { list: ['a.md'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await drawer.humanOpened(notes[0].instance, 'lure')
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    await drawer.humanOpened(notes[0].instance, 'explorer')
+    expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: true })
+  })
+
+  it('edits a note the human opened on ui.read and ui.edit, holding no luoshu grant', async () => {
+    const { drawer, notes } = started({ alpha: { uiRead: ['a.md'], edit: ['a.md'] } })
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    await drawer.humanOpened(notes[0].instance)
+    expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: true })
+    expect(notes[0].text()).toBe('hello world!')
+  })
+})
 
 describe("the bridge's drawer end", () => {
   it('answers a call on the plugin\'s own port only', async () => {
@@ -125,7 +177,9 @@ describe("the bridge's drawer end", () => {
     ['editor.read', { instance: 'n1' }, { verbs: ['ui.decoration'] }],
     ['editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] }, { read: ['a.md'] }],
     ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'] }],
-    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { write: ['a.md'] }],
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { edit: ['a.md'] }],
+    // A plugin that writes the note on disk still edits it in the editor only with ui.edit
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], write: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
     ['editor.keys', { on: true }, { read: ['a.md'], verbs: ['ui.command'] }],
   ])('refuses %s %j without what it needs', async (verb, args, held) => {
@@ -137,7 +191,7 @@ describe("the bridge's drawer end", () => {
 
   it.each([
     ['editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [] }, { read: ['a.md'], verbs: ['ui.decoration'] }],
-    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], write: ['a.md'] }],
+    ['editor.edit', { instance: 'n1', version: 0, changes: [11] }, { read: ['a.md'], edit: ['a.md'] }],
     ['editor.bind', { bindings: [] }, { verbs: ['ui.command'] }],
     ['editor.keys', { on: true }, { verbs: ['ui.keys'] }],
   ])('answers %s with what it needs', async (verb, args, held) => {
@@ -199,7 +253,7 @@ describe("the bridge's drawer end", () => {
 
   it('rebases an edit, refuses one touching changed text as stale and names the plugin as its author', async () => {
     const made = note('n1', 'a.md', 'first line')
-    const { drawer, edited } = started({ alpha: { read: ['a.md'], write: ['a.md'] } }, [made])
+    const { drawer, edited } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } }, [made])
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     made.type(10, '!')
@@ -216,7 +270,7 @@ describe("the bridge's drawer end", () => {
   })
 
   it('refuses an edit made against another length as stale', async () => {
-    const { drawer } = started({ alpha: { read: ['a.md'], write: ['a.md'] } })
+    const { drawer } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } })
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [[0, 'a', 'b'], 999] }))
@@ -228,7 +282,7 @@ describe("the bridge's drawer end", () => {
     made.instance.apply = () => {
       throw new Error('broken')
     }
-    const { drawer } = started({ alpha: { read: ['a.md'], write: ['a.md'] } }, [made])
+    const { drawer } = started({ alpha: { read: ['a.md'], edit: ['a.md'] } }, [made])
     const alpha = port()
     drawer.connect('alpha', 1, alpha.port)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [3, [0, '!']] }))

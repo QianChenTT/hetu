@@ -155,7 +155,7 @@ describe('the drawer', () => {
   })
 
   it('lets a plugin read, decorate and edit an open note, and names it on the save that carries its edit', async () => {
-    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }, { type: 'ui.decoration' }]
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }, { type: 'ui.decoration' }]
     const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': 'mark this word' }, plugins: { marker: granted } })
     await open(editor, 'a.md')
     const worker = await pluginWorker(app, 'marker')

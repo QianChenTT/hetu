@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, type Session, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, shell, type Session, type WebContents } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
@@ -176,6 +176,8 @@ async function start(): Promise<void> {
       runtime,
       limited: plugin => renderer.limited(plugin),
       onFailure,
+      // A removed note goes to the OS's bin, so it can be put back with hetu closed. A bin that refuses rejects
+      trash: absolute => shell.trashItem(absolute),
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {

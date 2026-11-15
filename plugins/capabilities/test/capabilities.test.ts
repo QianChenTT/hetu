@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from 'hetu-core/api/capabilities.ts'
+import type { Flow } from 'hetu-core/api/slots.ts'
 import { createCapabilities } from '../src/capabilities.ts'
 
 const caps = createCapabilities()
@@ -34,6 +35,11 @@ describe('the class of one grant', () => {
     ['luoshu.write on a wildcard top folder', { type: 'luoshu.write', paths: ['*/journal/**'] }, 4],
     ['luoshu.write on two named folders', { type: 'luoshu.write', paths: ['notes/**', '04 - Daily/**'] }, 2],
     ['luoshu.write on one named note', { type: 'luoshu.write', paths: ['inbox.md'] }, 2],
+    // The human sees each edit and saves it, so ui.edit stays a scoped writer on every note too
+    ['ui.edit on a named folder', { type: 'ui.edit', paths: ['notes/**'] }, 2],
+    ['ui.edit on every note', { type: 'ui.edit', paths: ['**'] }, 2],
+    // It reads what the human opened, so it is a reader
+    ['ui.read on every note', { type: 'ui.read', paths: ['**'] }, 1],
     ['exec', { type: 'exec', commands: [['git', 'status']], env: [] }, 4],
     ['guard.hook', { type: 'guard.hook' }, 4],
     ['log.read', { type: 'log.read' }, 4],
@@ -60,6 +66,8 @@ describe('a plugin\'s class', () => {
     ['luoshu.read', [read, fetchOne], []],
     ['luoshu.list', [list, fetchOne], []],
     ['ui.keys', [{ type: 'ui.keys' }, fetchOne], []],
+    ['ui.read', [{ type: 'ui.read', paths: ['**'] }, fetchOne], []],
+    ['ui.read here and network reached', [{ type: 'ui.read', paths: ['**'] }, call], [fetchOne]],
     ['history read', [{ type: 'history', access: 'read', paths: ['**'] }, fetchOne], []],
     ['reading here and network reached', [read, call], [fetchOne]],
     ['network here and reading reached', [fetchOne, call], [list]],
@@ -70,6 +78,15 @@ describe('a plugin\'s class', () => {
 
   it('stays 3 for network beside a commit, which reads nothing', () => {
     expect(caps.classify([{ type: 'history', access: 'commit', paths: ['**'] }, fetchOne], [])).toBe(3)
+  })
+
+  // An edit is served only beside a read, which the pair rule counts
+  it('stays 3 for network beside ui.edit, which reads nothing, and asks at no first use of it', () => {
+    const edits: Capability = { type: 'ui.edit', paths: ['**'] }
+    expect(caps.classify([edits, fetchOne], [])).toBe(3)
+    expect(caps.classify([call], [edits, fetchOne])).toBe(3)
+    expect(caps.firstUse([edits], [])).toEqual([])
+    expect(caps.screen({ granted: [edits], reachable: [], callers: [] })).toEqual(['Class 2, Writer'])
   })
 
   it('counts a type it doesn’t know as 4, so nothing new is ever class 0 by default', () => {
@@ -96,6 +113,66 @@ describe('the items that ask at first use', () => {
 
   it('are the plugin.call items that bring the network in, for a plugin with none of its own', () => {
     expect(caps.firstUse([read, call], [fetchOne])).toEqual([call])
+  })
+
+})
+
+// Data moves along plugin.call both ways and along a subscription from the plugin that owns the topic to the one that
+// hears it. The loader hands what lies upstream and downstream that way, and the class reached stays plugin.call's
+describe('the pair rule over where data moves', () => {
+  const hears: Capability = { type: 'events.subscribe', topics: ['notes.done'] }
+  const hearsMore: Capability = { type: 'events.subscribe', topics: ['luoshu.changed'] }
+  const flow = (part: Partial<Flow>): Flow => ({ upstream: [], downstream: [], heard: [], ...part })
+  const reader = { id: 'notes', granted: [read] }
+  const sender = { id: 'sync', granted: [fetchOne] }
+
+  it('is 4 for a read upstream and network here, and for a read here and network downstream', () => {
+    expect(caps.classify([fetchOne, hears], [], flow({ upstream: [reader] }))).toBe(4)
+    expect(caps.classify([read], [], flow({ downstream: [sender] }))).toBe(4)
+    expect(caps.classify([hears], [], flow({ upstream: [reader], downstream: [sender] }))).toBe(4)
+  })
+
+  it('keeps each plugin\'s own class for network upstream and a read downstream, which carries nothing out', () => {
+    expect(caps.classify([read, hears], [], flow({ upstream: [sender] }))).toBe(1)
+    expect(caps.classify([fetchOne], [], flow({ downstream: [reader] }))).toBe(3)
+  })
+
+  it('takes no class from what lies upstream or downstream, only from what plugin.call reaches', () => {
+    const writer = { id: 'writer', granted: [writeAll] }
+    expect(caps.classify([{ type: 'ui.view' }, hears], [], flow({ upstream: [writer], downstream: [writer] }))).toBe(0)
+  })
+
+  it('asks at the subscriptions that bring a read in, beside the network items, for a plugin reading nothing itself', () => {
+    const heard = [{ item: hears, upstream: [read] }, { item: hearsMore, upstream: [] }]
+    expect(caps.firstUse([fetchOne, hears, hearsMore], [], flow({ upstream: [reader], heard }))).toEqual([fetchOne, hears])
+    expect(caps.firstUse([hears], [], flow({ upstream: [reader], downstream: [sender], heard }))).toEqual([hears])
+  })
+
+  it('asks at no subscription for a plugin that reads itself, nor for one that isn\'t paired', () => {
+    const heard = [{ item: hears, upstream: [list] }]
+    expect(caps.firstUse([read, fetchOne, hears], [], flow({ upstream: [reader], heard }))).toEqual([fetchOne])
+    expect(caps.firstUse([hears], [], flow({ upstream: [reader], heard }))).toEqual([])
+  })
+
+  it('names the readers upstream of a plugin with network and the network plugins downstream of one that reads', () => {
+    expect(caps.screen({ granted: [fetchOne, hears], reachable: [], callers: [], flow: flow({ upstream: [reader] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Plugins that read and can reach it through events: notes',
+    ])
+    expect(caps.screen({ granted: [read], reachable: [], callers: [], flow: flow({ downstream: [sender] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Plugins with network it can reach through events: sync',
+    ])
+    expect(caps.screen({ granted: [read, hears], reachable: [], callers: [], flow: flow({ upstream: [sender] }) })).toEqual(['Class 1, Reader'])
+  })
+
+  it('names in those lines no plugin plugin.call already connects', () => {
+    const callers = [reader]
+    expect(caps.screen({ granted: [fetchOne, call], reachable: [read], callers, flow: flow({ upstream: [reader], downstream: [reader] }) })).toEqual([
+      'Class 4, Powerful: it can read notes and reach the network, so it could send notes out',
+      'Through plugin.call it is connected to: luoshu.read on "notes/**"',
+      'Plugins that read and are connected to it through plugin.call: notes',
+    ])
   })
 })
 
@@ -150,5 +227,41 @@ describe('the screen\'s line on programs that run other programs', () => {
   it('names a program reached through plugin.call too', () => {
     const lines = caps.screen({ granted: [call], reachable: [exec(['bash', '-c', 'x'])], callers: [] })
     expect(lines.at(-1)).toBe(line('bash'))
+  })
+})
+
+// The loader hands every plugin a change moves to another class, with the class stored and the one the change gives
+describe('the classes a change moves', () => {
+  it('shows each move up by the plugin with both classes, into 4 and below it', () => {
+    expect(caps.moves!([
+      { id: 'sync', from: 3, to: 4 },
+      { id: 'calc', from: 0, to: 2 },
+      { id: 'notes', from: 1, to: 3 },
+    ])).toEqual([
+      'Raises sync from class 3, Network to class 4, Powerful',
+      'Raises calc from class 0, Contained to class 2, Writer',
+      'Raises notes from class 1, Reader to class 3, Network',
+    ])
+  })
+
+  it('shows no move down', () => {
+    expect(caps.moves!([{ id: 'sync', from: 4, to: 3 }, { id: 'calc', from: 2, to: 0 }])).toEqual([])
+  })
+
+  it('counts a class not known as 4, so a move from one is never up and a move to one is', () => {
+    expect(caps.moves!([{ id: 'sync', from: null, to: 4 }, { id: 'calc', from: null, to: 1 }])).toEqual([])
+    expect(caps.moves!([{ id: 'sync', from: 3, to: null }])).toEqual(['Raises sync from class 3, Network to a class not known, counted as 4'])
+  })
+})
+
+// A move up nobody confirmed alerts only where the class changes what hetu does: leaving 0, whose updates apply on their
+// own, or entering 4, whose items ask at first use. A move inside 1 to 3 is a label
+describe('the moves that alert with no Confirm on screen', () => {
+  it.each([
+    [0, 1, true], [0, 3, true], [0, 4, true], [3, 4, true], [1, 4, true],
+    [1, 3, false], [2, 3, false], [1, 2, false], [4, 0, false], [3, 1, false], [2, 2, false],
+    [0, 0, false], [4, 4, false], [null, 4, false], [null, 1, false], [2, null, true], [0, null, true],
+  ] as [number | null, number | null, boolean][])('from %s to %s: %s', (from, to, alerts) => {
+    expect(caps.alerts!({ id: 'sync', from, to })).toBe(alerts)
   })
 })

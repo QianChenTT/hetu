@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeKinds, mustType } from '../api/changes.ts'
+import { change, changeKinds, classRaised, mustType, type ClassRaised } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
 
 const HASH = 'a'.repeat(64)
@@ -94,5 +94,42 @@ describe('typing to prove attention', () => {
     expect(asked).toEqual(['plugin.off', 'recordNothing'])
     expect(mustType(one({ kind: 'plugin.off', plugin: 'search' }))).toBeNull()
     expect(mustType(one({ kind: 'recordNothing', on: false }))).toBeNull()
+  })
+})
+
+// The notice the core raises for a move up nobody confirmed: the plugin in quotes as data, both classes and why
+describe("the core's words for a class moved up with no Confirm", () => {
+  const raised = (cause: ClassRaised['cause'], by: string | null): ClassRaised =>
+    classRaised.parse({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause, by })
+
+  it('names the plugin, the class it held and the one it holds now and says it is answered, not approved', () => {
+    expect(describeChange(raised('start', null))).toEqual({
+      text: '"sync" moved from class 0, Contained to class 4, Powerful with no Confirm on screen',
+      notes: [
+        'Why: the classing at start, which found what changed while hetu was not running',
+        'Its new class and the items that ask at first use are in place already. Confirm only says you saw it',
+      ],
+    })
+  })
+
+  it.each([
+    ['approve', 'the approval of "reader" without a Confirm'],
+    ['copy', 'the copy of "reader" hetu ships, made at start'],
+    ['update', 'the update of "reader" without a Confirm'],
+    ['widen', 'a grant given to "reader" without a Confirm'],
+    ['restore', 'the restore of "reader" without a Confirm'],
+    ['slot-on', 'the capabilities plugin switched on again'],
+  ] as [ClassRaised['cause'], string][])('says why for %s', (cause, why) => {
+    expect(describeChange(raised(cause, cause === 'slot-on' ? null : 'reader')).notes[0]).toBe(`Why: ${why}`)
+  })
+
+  it('takes a class not known as where the plugin moved from', () => {
+    expect(describeChange(classRaised.parse({ kind: 'class.raised', plugin: 'sync', from: null, to: 4, cause: 'start', by: null })).text)
+      .toBe('"sync" moved from a class not known to class 4, Powerful with no Confirm on screen')
+  })
+
+  it('is no change a window can ask for', () => {
+    expect(change.safeParse({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause: 'start', by: null }).success).toBe(false)
+    expect(changeKinds).not.toContain('class.raised')
   })
 })
