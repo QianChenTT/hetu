@@ -835,25 +835,25 @@ export class Carrier {
 
   // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
   // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
-  // needs-confirm with the request the prompt holds
-  private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
+  // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
+  private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
     if (stage === 'raw') pending.gate = this.slot('gate')
-    return this.decideFor(pending, stage, capability, scope)
+    return this.decideFor(pending, stage, capability, scope, prompt)
   }
 
   // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
   // scope that lacks one of those places fails, since the second requirement would judge nothing
-  private judgeAll(pending: Pending, stage: Access['stage'], kind: Extract<Kind, { kind: 'power' }>, scope: Scope): No | null {
-    const refused = this.judge(pending, stage, kind.capability, scope)
+  private judgeAll(pending: Pending, stage: Access['stage'], kind: Extract<Kind, { kind: 'power' }>, scope: Scope, prompt = true): No | null {
+    const refused = this.judge(pending, stage, kind.capability, scope, prompt)
     if (refused !== null || kind.also === undefined) return refused
     const paths = kind.also.at.map(at => scope.paths?.[at])
     if (paths.length === 0 || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
-    return this.judge(pending, stage, kind.also.capability, frozen({ paths }))
+    return this.judge(pending, stage, kind.also.capability, frozen({ paths }), prompt)
   }
 
   // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
   // since a live subscription is its item in use
-  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope): No | null {
+  private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
     const open = this.gateOpen()
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
@@ -885,6 +885,7 @@ export class Carrier {
     if (view !== current) return { code: 'stale' }
     if (allow === true) return null
     if (stage === 'canonical' && allow === undefined && typeof ask === 'string') {
+      if (!prompt) return { code: 'not-granted' }
       const request = this.raise(ask, access)
       if (typeof request === 'string') return { code: 'needs-confirm', request }
       return request ?? { code: 'not-granted' }
@@ -1138,7 +1139,12 @@ export class Carrier {
     const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
     if (provider === null) return this.finish(pending, no(this.down('unavailable')))
     const lister = listing ? this.lister(pending) : null
-    const call = lister === null ? this.callOf(pending, args) : frozen({ ...this.callOf(pending, args), canList: lister.canList })
+    // Set once the gate and the guards let the call on, so a judge asked before then answers no
+    let judged: Prepared | null = null
+    const judge = kind.kind === 'power' ? (paths: readonly string[]) => this.judgeAgain(pending, kind, judged, paths) : undefined
+    const call = frozen({
+      ...this.callOf(pending, args), ...(lister === null ? {} : { canList: lister.canList }), ...(judge === undefined ? {} : { judge }),
+    })
     // The provider's own handle may name this call as the parent of its sub-calls
     const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
     if (host?.open) {
@@ -1165,20 +1171,12 @@ export class Carrier {
 
     // Nothing awaits from here to perform, and perform gets the frozen copy the gate and the guards judge, never the
     // object prepare gave, which could answer another path when read again
-    if (kind.kind === 'power') {
-      // Each end the caller named stays one end, so the second requirement judges the end it was asked about
-      const reshaped = kind.also !== undefined && prepared.scope.paths?.length !== kind.scope.paths?.length
-      const refused = reshaped ? { code: 'failed' as const } : this.judgeAll(pending, 'canonical', kind, prepared.scope)
-      if (refused !== null) {
-        release()
-        return this.finish(pending, { ok: false, ...refused })
-      }
-    }
-    const guarded = this.guard(pending, prepared)
-    if (guarded !== null) {
+    const refused = this.judged(pending, kind, prepared, true)
+    if (refused !== null) {
       release()
-      return this.finish(pending, no(guarded))
+      return this.finish(pending, { ok: false, ...refused })
     }
+    judged = prepared
     // A gate or a guard that ran past the deadline leaves the call no time to act in
     if (this.clock() >= pending.due) {
       release()
@@ -1198,6 +1196,34 @@ export class Carrier {
       return this.finish(pending, this.listed(lister, result))
     }
     this.result(pending, id, result)
+  }
+
+  // 8 decide on a call with power and 9 guard, for the call's first judgement and for every second ask, so the two
+  // can't judge a call differently. Each end the caller named stays one end, so the second requirement judges the end
+  // it was asked about
+  private judged(pending: Pending, kind: Kind, prepared: Prepared, prompt: boolean): No | null {
+    if (kind.kind === 'power') {
+      const reshaped = kind.also !== undefined && prepared.scope.paths?.length !== kind.scope.paths?.length
+      const refused = reshaped ? { code: 'failed' as const } : this.judgeAll(pending, 'canonical', kind, prepared.scope, prompt)
+      if (refused !== null) return refused
+    }
+    const guarded = this.guard(pending, prepared)
+    return guarded === null ? null : { code: guarded }
+  }
+
+  // A provider's second ask, when a look at the disk after the first judgement reads a path otherwise: the paths it
+  // would act on now, one for each path prepare gave, judged as the first were. Never once the call has ended. No prompt
+  // is raised from here, so an item that still asks at first use answers not-granted. A call let on acts on these
+  // paths, so its record names them
+  private judgeAgain(pending: Pending, kind: Extract<Kind, { kind: 'power' }>, prepared: Prepared | null, paths: readonly string[]): No | null {
+    if (prepared === null || pending.done) return { code: 'not-granted' }
+    const given = prepared.scope.paths
+    if (!Array.isArray(paths) || given === undefined || paths.length !== given.length || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
+    const now: Prepared = frozen({ ...prepared, scope: { ...prepared.scope, paths: [...paths] } })
+    const refused = this.judged(pending, kind, now, false)
+    if (refused !== null) return refused
+    pending.scope = now.scope
+    return null
   }
 
   // 9 guard: every expected guard on the action, in core/api's order, unless the human switched it off. A GuardCall
