@@ -60,6 +60,18 @@ describe('a plugin\'s life through the SDK', () => {
     expect(other!.dataDir).toBeNull()
   })
 
+  // The door's port reaches http's utility half in its init. Any other half hears none
+  it('hands start the port init carries and null when it carries none or one that is no port', async () => {
+    const seen: (number | null)[] = []
+    for (const first of [init({ port: 5123 }), init(), init({ port: 0 }), init({ port: 65536 }), init({ port: 4747.5 }), init({ port: '4747' })]) {
+      let ctx: PluginContext | null = null
+      running({ start: given => { ctx = given } }, first)
+      await until(() => ctx !== null)
+      seen.push(ctx!.port)
+    }
+    expect(seen).toEqual([5123, null, null, null, null, null])
+  })
+
   it('reads its requires and plugin.call targets from deps', async () => {
     let ctx: PluginContext | null = null
     const { send } = running({ start: given => { ctx = given } }, init({ deps: { luoshu: 'ready', mcp: 'starting', git: 'unavailable' } }))

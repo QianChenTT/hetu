@@ -437,6 +437,31 @@ describe('the fake core playing another plugin', () => {
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
   })
 
+  // As the loader tells http the door's port from the switches, the fake core tells it the port a test names, and none
+  // when the test names none, so no test binds a port it didn't pick
+  it('tells http under test the port the test names in its init, none when it names none, and no other plugin any', async () => {
+    const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const ports: (number | null)[] = []
+    for (const [manifest, port] of [[http, 5123], [http, undefined], [{ ...http, id: 'net', node: undefined }, 5123]] as const) {
+      const made = fakeCore({ manifest, ...(port === undefined ? {} : { port }) })
+      cores.push(made)
+      const box: { ctx: PluginContext | null } = { ctx: null }
+      await made.start(definePlugin({ start(ctx) { box.ctx = ctx } }))
+      ports.push(box.ctx!.port)
+    }
+    expect(ports).toEqual([5123, null, null])
+  })
+
+  // The loader ends a starting half that tells core.bindFailed too, so the fake core does
+  it('ends http as failed when it tells core.bindFailed before it is ready', async () => {
+    const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const made = fakeCore({ manifest: http })
+    cores.push(made)
+    const state = await made.start(definePlugin({ start(ctx) { void ctx.bindFailed('bind-failed').catch(() => {}) } }))
+    expect(state).toEqual({ state: 'failed', reason: 'bind-failed' })
+    expect(made.status()).toEqual({ state: 'failed', reason: 'bind-failed' })
+  })
+
   it('places any other host plugin in main, where the floor refuses both', async () => {
     const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
     const { made, ctx } = await started(net)

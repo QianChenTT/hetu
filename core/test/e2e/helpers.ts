@@ -1,9 +1,12 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { createRequire } from 'node:module'
+import net, { type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
+import { DOOR_PORT } from '../../api/changes.ts'
+import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
 
@@ -46,12 +49,45 @@ export function env(extra: Record<string, string>): Record<string, string> {
 // install folder of the test's own among it
 // switches are Chromium's, placed before the app
 export async function launch(dataDir: string, extra: Record<string, string> = {}, switches: string[] = []): Promise<ElectronApplication> {
-  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: process.env.HETU_QUIET_WINDOWS === '1' ? '1' : 'hidden', ...extra })
+  const own = await doorFor(dataDir, extra)
+  const environment = env({ HETU_DATA_DIR: dataDir, HETU_QUIET_WINDOWS: process.env.HETU_QUIET_WINDOWS === '1' ? '1' : 'hidden', ...extra, ...own })
   const app = await (drivenApp === undefined
     ? electron.launch({ args: [...switches, repo], env: environment })
     : electron.launch({ executablePath: drivenApp, args: switches, env: environment }))
   running.push(app)
   return app
+}
+
+// A port on 127.0.0.1 that was free a moment ago, never the door's own 4747
+export async function freePort(): Promise<number> {
+  for (;;) {
+    const server = net.createServer()
+    await new Promise<void>(resolve => server.listen({ host: '127.0.0.1', port: 0 }, resolve))
+    const { port } = server.address() as AddressInfo
+    await new Promise(resolve => server.close(resolve))
+    if (port !== DOOR_PORT) return port
+  }
+}
+
+// http binds the door for its whole run, so every start gets a port of its own in its switches and none binds 4747,
+// whatever else runs on the machine. A data folder whose switches don't check out reads 4747, so it starts the shipped
+// install with http left out, and a test that hands an install of its own must give it switches that check out
+async function doorFor(dataDir: string, extra: Record<string, string>): Promise<Record<string, string>> {
+  const loaded = await new StateStore(dataDir).load()
+  if (loaded.checks.find(check => check.check === 'switches')?.result === 'ok') {
+    const { port } = loaded.state.switches
+    if (port === DOOR_PORT) throw new Error('a test start names the door port 4747')
+    if (port === undefined) await new StateStore(dataDir).writeSwitches({ ...loaded.state.switches, port: await freePort() })
+    return {}
+  }
+  if (extra.HETU_INSTALL_DIR !== undefined) throw new Error('a test install started on switches that name no port')
+  const dir = await temp()
+  const dist = path.join(repo, 'core', 'dist')
+  await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true, filter: source => path.relative(path.join(dist, 'plugins'), source).split(path.sep)[0] !== 'http' })
+  const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { plugins: Record<string, unknown> }
+  delete list.plugins.http
+  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
+  return { HETU_INSTALL_DIR: dir }
 }
 
 export const exists = (file: string) => stat(file).then(() => true, () => false)

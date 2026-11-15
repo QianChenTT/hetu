@@ -1,9 +1,11 @@
-import { stat } from 'node:fs/promises'
+import { rm, stat, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
+import { StateStore } from '../backend/boot/state.ts'
 import { folders } from '../backend/loader/folders.ts'
 import {
-  cleanup, coreInstall, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tick, until, type Listing,
+  cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tick, until, workerManifest, type Listing,
 } from './loader-fakes.ts'
 
 afterEach(cleanup)
@@ -289,6 +291,102 @@ describe('a utility half whose bind failed', () => {
     expect(stateOf(made.loader, 'http')).toBe('ready')
     expect(stateOf(made.loader, 'storage')).toBe('ready')
     expect(made.runtime.killed).toEqual([])
+  })
+})
+
+// The door's port is a per-machine switch the human moves with a Confirm. http hears it in its init, read as 4747 while
+// none is set
+describe("the door's port", () => {
+  const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
+  const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
+  const portOf = (made: Awaited<ReturnType<typeof harness>>, incarnation: number) =>
+    (made.runtime.half('http', incarnation, 'utility').got('init')[0] as { port?: unknown }).port
+  const held = (answer: { applied: true } | { held: string }) => {
+    if (!('held' in answer)) throw new Error('applied, not held')
+    return answer.held
+  }
+  const switchesFile = (dataDir: string) => path.join(dataDir, 'state', 'switches.json')
+
+  it('reaches http in its init as 4747 while the switches name none, and no other half', async () => {
+    const made = await harness({
+      install: install(), folder: { alpha: filesFor(workerManifest('alpha')) }, entries: { alpha: root => entryFor(root) },
+    })
+    await made.loader.start()
+    expect(portOf(made, 1)).toBe(4747)
+    expect(Object.hasOwn(made.runtime.half('storage', 1, 'host').got('init')[0], 'port')).toBe(false)
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    expect(Object.hasOwn(made.runtime.half('alpha', 1, 'worker').got('init')[0], 'port')).toBe(false)
+  })
+
+  it('reaches http as the switches hold it', async () => {
+    const made = await harness({ install: install(), switches: { port: 5123 } })
+    await made.loader.start()
+    expect(portOf(made, 1)).toBe(5123)
+  })
+
+  it.each([
+    ['failed its check', (file: string) => writeFile(file, '{"format":2,"port":5123}\n0000\n')],
+    ['is missing', (file: string) => rm(file)],
+  ])('reads 4747 when the switches file %s', async (_name, spoil) => {
+    const made = await harness({ install: install(), switches: { port: 5123 }, before: ({ dataDir }) => spoil(switchesFile(dataDir)) })
+    await made.loader.start()
+    expect(portOf(made, 1)).toBe(4747)
+  })
+
+  it("moves on the trusted window's Confirm: written, then http started again on the new port", async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    const id = held(await made.loader.request({ kind: 'port.set', port: 5123 }, trusted))
+    expect((await new StateStore(made.dataDir).load()).state.switches.port).toBe(undefined)
+    expect(made.runtime.started.filter(start => start.id === 'http')).toHaveLength(1)
+    await made.loader.confirm(id, {})
+    expect((await new StateStore(made.dataDir).load()).state.switches.port).toBe(5123)
+    await until(() => stateOf(made.loader, 'http') === 'ready' && made.loader.plugin('http')?.incarnation === 2)
+    expect(portOf(made, 2)).toBe(5123)
+    expect(made.runtime.killed).toContainEqual({ id: 'http', incarnation: 1 })
+    expect(made.link.events('security.applied')).toMatchObject([{ kind: 'port.set', window: 'trusted' }])
+  })
+
+  // Only the trusted window's Confirm moves the door, Confirm off included, which covers that window's own changes alone
+  it('waits for the Confirm when the editor window asks, Confirm off or not', async () => {
+    const made = await harness({ install: install(), switches: { confirmOff: true } })
+    await made.loader.start()
+    held(await made.loader.request({ kind: 'port.set', port: 5123 }, editor))
+    await tick(30)
+    expect((await new StateStore(made.dataDir).load()).state.switches.port).toBe(undefined)
+    expect(made.runtime.started.filter(start => start.id === 'http')).toHaveLength(1)
+  })
+
+  it('takes 4747 back by leaving the port out of the file', async () => {
+    const made = await harness({ install: install(), switches: { port: 5123 } })
+    await made.loader.start()
+    await made.loader.confirm(held(await made.loader.request({ kind: 'port.set', port: 4747 }, trusted)), {})
+    expect(Object.hasOwn((await new StateStore(made.dataDir).load()).state.switches, 'port')).toBe(false)
+    await until(() => made.loader.plugin('http')?.incarnation === 2)
+    expect(portOf(made, 2)).toBe(4747)
+  })
+
+  it('starts a failed http again on the new port, the way out of a port another program holds', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve({ callId: 'c', caller: utilityCaller(), action: 'core.bindFailed', args: { reason: 'port-taken' }, deadline: Date.now() + 1000 })
+    expect(stateOf(made.loader, 'http')).toBe('failed')
+    await made.loader.confirm(held(await made.loader.request({ kind: 'port.set', port: 5123 }, trusted)), {})
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(portOf(made, 2)).toBe(5123)
+  })
+
+  it('leaves an http the human stopped stopped, the new port read at its next start', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve(windowCall('core.stop', 'http'))
+    await made.loader.confirm(held(await made.loader.request({ kind: 'port.set', port: 5123 }, trusted)), {})
+    await tick(30)
+    expect(stateOf(made.loader, 'http')).toBe('stopped')
+    expect(made.runtime.started.filter(start => start.id === 'http')).toHaveLength(1)
+    await made.loader.serve(windowCall('core.restart', 'http'))
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(portOf(made, 2)).toBe(5123)
   })
 })
 

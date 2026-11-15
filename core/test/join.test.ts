@@ -872,12 +872,17 @@ describe('the door through the joined core', () => {
       },
       folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
       entries: { beta: { granted: [callMcp] } },
+      // The door's port in the switches, which the loader hands http in its init
+      prepare: async dataDir => {
+        const store = new StateStore(dataDir)
+        await store.writeSwitches({ ...(await store.load()).state.switches, port })
+      },
       behave: {
         gate: { exports: { gate } },
         http: {
           utility: start => {
             const port_ = start.port as MessagePort
-            run(httpPlugin({ port, token: seam }), { post: message => port_.postMessage(message), listen: next => { port_.on('message', next) } })
+            run(httpPlugin({ token: seam }), { post: message => port_.postMessage(message), listen: next => { port_.on('message', next) } })
           },
         },
       },

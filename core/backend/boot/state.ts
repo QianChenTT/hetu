@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
-import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
+import { classCauses, doorPort, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
 import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
@@ -77,6 +77,9 @@ const switches = z.strictObject({
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
   recordNothing: z.boolean(),
+  // The door's port, left out while it reads 4747, so a file that never moved the door reads in a build from before
+  // the field. A build from before it reads a file holding one as invalid, its defaults loosening nothing
+  port: doorPort.optional(),
 })
 const plugin = z.strictObject({
   version: text,

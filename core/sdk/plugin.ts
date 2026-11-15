@@ -20,6 +20,8 @@ export type PluginContext = Client & {
   readonly previousVersion: string | null
   // hetu's data folder, for an install plugin's host half only, null for every other half
   readonly dataDir: string | null
+  // The port of the door on 127.0.0.1, for http's host half in its utility process only, null for every other half
+  readonly port: number | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
@@ -140,7 +142,7 @@ class Half {
   }
 
   private init(message: Record<string, unknown>): void {
-    const { id, incarnation, lastStop, previousVersion, dataDir } = message
+    const { id, incarnation, lastStop, previousVersion, dataDir, port } = message
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     this.readDeps(message.deps)
     this.phase = 'starting'
@@ -156,6 +158,7 @@ class Half {
       lastStop: typeof lastStop === 'string' ? lastStop : null,
       previousVersion: typeof previousVersion === 'string' ? previousVersion : null,
       dataDir: typeof dataDir === 'string' && dataDir !== '' ? dataDir : null,
+      port: Number.isInteger(port) && (port as number) >= 1024 && (port as number) <= 65535 ? port as number : null,
       has: dep => {
         const state = this.deps[dep] as DepState | undefined
         return state === 'ready' || state === 'starting'

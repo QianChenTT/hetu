@@ -4,15 +4,17 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DOOR_PORT } from '../../api/changes.ts'
 import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, freePort, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
-// The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the test install
-// only. The shipped token seam refuses every token, so a request that passes the token check runs in the join test
+// The door's proof: the shipped http in its utility process on 127.0.0.1 and a port the test picked, never 4747, with a
+// fake mcp in the test install only. The shipped token seam refuses every token, so a request that passes the token
+// check runs in the join test
 
 const holders: net.Server[] = []
 
@@ -21,7 +23,6 @@ afterEach(async () => {
   for (const holder of holders.splice(0)) await new Promise(resolve => holder.close(resolve))
 })
 
-const PORT = 4747
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
 // A first-party id, so it ships in this install as a first-party copy, never in hetu's own list. Its handle takes
@@ -69,11 +70,11 @@ async function install(withMcp: boolean): Promise<string> {
   return dir
 }
 
-// A data folder with a folder plugin that holds plugin.call on mcp
-async function data(): Promise<string> {
+// A data folder with a folder plugin that holds plugin.call on mcp and the door's port in its switches
+async function data(port: number): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  await store.writeSwitches({ ...defaultSwitches(), port })
   const root = path.join(dataDir, 'plugins', 'caller')
   const granted = [{ type: 'plugin.call' as const, targets: ['mcp'] }]
   await writeFolder(root, filesFor(workerManifest('caller', { capabilities: granted }), { 'worker.js': await builtWorker(caller) }))
@@ -81,24 +82,25 @@ async function data(): Promise<string> {
   return dataDir
 }
 
-async function started(withMcp: boolean): Promise<{ app: ElectronApplication, editor: Page, dataDir: string }> {
-  const dataDir = await data()
+async function started(withMcp: boolean, given?: number): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, port: number }> {
+  const port = given ?? await freePort()
+  const dataDir = await data(port)
   const app = await launch(dataDir, { HETU_INSTALL_DIR: await install(withMcp) })
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
-  return { app, editor, dataDir }
+  return { app, editor, dataDir, port }
 }
 
-const canConnect = () => new Promise<boolean>(resolve => {
-  const socket = net.connect({ host: '127.0.0.1', port: PORT })
+const canConnect = (port: number) => new Promise<boolean>(resolve => {
+  const socket = net.connect({ host: '127.0.0.1', port })
   socket.once('connect', () => { socket.destroy(); resolve(true) })
   socket.once('error', () => resolve(false))
 })
 
 // One request written as it is on its own connection, answered with the status line's code
-function status(lines: string[]): Promise<number> {
+function status(port: number, lines: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
-    const socket = net.connect({ host: '127.0.0.1', port: PORT })
+    const socket = net.connect({ host: '127.0.0.1', port })
     let raw = ''
     socket.on('data', chunk => { raw += chunk.toString('latin1') })
     socket.on('error', reject)
@@ -106,7 +108,7 @@ function status(lines: string[]): Promise<number> {
     socket.once('connect', () => socket.write(`${lines.join('\r\n')}\r\n\r\n{}`))
   })
 }
-const post = (extra: string[]) => status(['POST /mcp HTTP/1.1', ...extra, 'Content-Type: application/json', 'Content-Length: 2', 'Connection: close'])
+const post = (port: number, extra: string[]) => status(port, ['POST /mcp HTTP/1.1', ...extra, 'Content-Type: application/json', 'Content-Length: 2', 'Connection: close'])
 
 // A call from the editor through the shell's bridge
 const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, action, args]) => new Promise<unknown>(resolve => {
@@ -119,25 +121,26 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
 
 const utilityFolders = async () => (await readdir(tmpdir())).filter(name => name.startsWith('hetu-utility-'))
 
+// Past the trusted window's input delay, inside which anything but a read counts for nothing
+const PAST_DELAY = 2000
+
 describe('the door', () => {
   it('stays closed with no mcp in the install, http reading ready', async () => {
-    expect(await canConnect()).toBe(false)
-    const { dataDir } = await started(false)
+    const { dataDir, port } = await started(false)
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'http' }))
     await tick(500)
-    expect(await canConnect()).toBe(false)
+    expect(await canConnect(port)).toBe(false)
     expect(await logged(dataDir, 'plugin.failed', { plugin: 'http' })).toBe(false)
   })
 
   it('refuses another Host and an Origin with 403, reaching nothing, each reason in one http.refused with its count', async () => {
-    expect(await canConnect()).toBe(false)
-    const { dataDir } = await started(true)
-    await until(() => canConnect())
-    expect(await post(['Host: evil.example', 'Authorization: Bearer any'])).toBe(403)
-    expect(await post(['Host: localhost:4747', 'Authorization: Bearer any'])).toBe(403)
-    expect(await post(['Host: 127.0.0.1:4747', 'Origin: https://evil.example', 'Authorization: Bearer any'])).toBe(403)
+    const { dataDir, port } = await started(true)
+    await until(() => canConnect(port))
+    expect(await post(port, ['Host: evil.example', 'Authorization: Bearer any'])).toBe(403)
+    expect(await post(port, [`Host: localhost:${port}`, 'Authorization: Bearer any'])).toBe(403)
+    expect(await post(port, [`Host: 127.0.0.1:${port}`, 'Origin: https://evil.example', 'Authorization: Bearer any'])).toBe(403)
     // The shipped seam refuses every token
-    expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
+    expect(await post(port, [`Host: 127.0.0.1:${port}`, 'Authorization: Bearer any'])).toBe(401)
     await until(async () => (await records(dataDir)).filter(record => record.event === 'http.refused').length === 3)
     await tick(1500)
     const refused = (await records(dataDir)).filter(record => record.event === 'http.refused')
@@ -155,12 +158,12 @@ describe('the door', () => {
     expect(answer).toEqual({ refused: 'not-granted' })
   })
 
-  it('reads failed (port-taken) in the trusted window while another program holds 127.0.0.1:4747 and comes up on Restart once it is free', async () => {
-    expect(await canConnect()).toBe(false)
+  it('reads failed (port-taken) in the trusted window while another program holds its port and comes up on Restart once it is free', async () => {
+    const port = await freePort()
     const holder = net.createServer(socket => socket.destroy())
     holders.push(holder)
-    await new Promise<void>(resolve => holder.listen({ host: '127.0.0.1', port: PORT, exclusive: true }, resolve))
-    const { app, editor, dataDir } = await started(true)
+    await new Promise<void>(resolve => holder.listen({ host: '127.0.0.1', port, exclusive: true }, resolve))
+    const { app, editor, dataDir } = await started(true, port)
     await until(() => logged(dataDir, 'plugin.failed', { plugin: 'http', reason: 'port-taken' }))
     expect((await ask(editor, 'security.open')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
@@ -168,23 +171,45 @@ describe('the door', () => {
     await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · failed (port-taken)')
     await new Promise<void>(resolve => holder.close(() => resolve()))
     holders.splice(holders.indexOf(holder), 1)
-    expect(await canConnect()).toBe(false)
-    // Past the trusted window's input delay, inside which a click counts for nothing
-    await tick(2000)
+    expect(await canConnect(port)).toBe(false)
+    await tick(PAST_DELAY)
     await row.getByRole('button', { name: 'Restart', exact: true }).click()
-    await until(() => canConnect())
-    expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
+    await until(() => canConnect(port))
+    expect(await post(port, [`Host: 127.0.0.1:${port}`, 'Authorization: Bearer any'])).toBe(401)
     await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · ready')
   })
 
+  // The port is the human's per-machine switch: asked for in the trusted window, applied on its Confirm, http started
+  // again on it and the Host check following it
+  it('moves to the port confirmed in the trusted window, the old port let go and its Host refused', async () => {
+    expect(await canConnect(DOOR_PORT)).toBe(false)
+    const { app, editor, dataDir, port } = await started(true)
+    await until(() => canConnect(port))
+    const moved = await freePort()
+    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    await tick(PAST_DELAY)
+    expect(await ask(trusted, 'security.request', { change: { kind: 'port.set', port: moved } })).toMatchObject({ ok: true, result: { held: expect.any(String) } })
+    await until(async () => (await trusted.locator('#root').innerText()).includes(`Move the agent door to 127.0.0.1:${moved}`))
+    expect(await canConnect(moved)).toBe(false)
+    await tick(PAST_DELAY)
+    await trusted.getByRole('button', { name: 'Confirm' }).click()
+    await until(() => canConnect(moved))
+    expect(await canConnect(port)).toBe(false)
+    expect((await new StateStore(dataDir).load()).state.switches.port).toBe(moved)
+    expect(await post(moved, [`Host: 127.0.0.1:${port}`, 'Authorization: Bearer any'])).toBe(403)
+    expect(await post(moved, [`Host: 127.0.0.1:${moved}`, 'Authorization: Bearer any'])).toBe(401)
+    expect(await canConnect(DOOR_PORT)).toBe(false)
+  })
+
   it('leaves no utility working folder and the port free after a clean quit', async () => {
-    expect(await canConnect()).toBe(false)
     const before = await utilityFolders()
-    const { app } = await started(true)
-    await until(() => canConnect())
+    const { app, port } = await started(true)
+    await until(() => canConnect(port))
     expect((await utilityFolders()).length).toBeGreaterThan(before.length)
     await app.close()
-    await until(async () => !(await canConnect()))
+    await until(async () => !(await canConnect(port)))
     await until(async () => (await utilityFolders()).filter(name => !before.includes(name)).length === 0)
   })
 })
+

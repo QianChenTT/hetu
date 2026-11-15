@@ -2,9 +2,9 @@
 // socket. They run in a fixed order before anything else reads a request: the Host, the Origin, Sec-Fetch-Site, the
 // route and method, then size and rate, then the token
 
-// The one address and port the door listens on. The port is part of every URL a harness keeps, so it never moves
+// The one address the door listens on. The port is the human's per-machine switch, which the core hands the half in its
+// init, and part of every URL a harness keeps, so it moves only with a Confirm
 export const HOST = '127.0.0.1'
-export const PORT = 4747
 
 // The door's own policy, fixed in the plugin
 export const doorLimits = Object.freeze({

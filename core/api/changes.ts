@@ -22,10 +22,15 @@ const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as con
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
 const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
 
+// The port of the door agents come in through on 127.0.0.1, a per-machine switch read as 4747 while none is set. Never a
+// port only an administrator may bind on some systems
+export const DOOR_PORT = 4747
+export const doorPort = z.int().min(1024).max(65535)
+
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set',
+  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'port.set',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
@@ -47,6 +52,8 @@ export const change = z.discriminatedUnion('kind', [
     value: z.int().positive(),
     plugin: pluginId.nullable(),
   }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
+  // Moves the door. Every agent signs in again, since each sign-in names the port
+  z.strictObject({ kind: z.literal('port.set'), port: doorPort }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
 // and for the capabilities plugin switched on again
@@ -106,6 +113,9 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'allowUnsigned':
       return change.on ? 'widens' : 'narrows'
     case 'limit.set':
+      return 'widens'
+    // Loosens nothing but moves the door, which the human confirms as any other per-machine switch
+    case 'port.set':
       return 'widens'
     // Only the core raises one and it always waits for the human
     case 'class.raised':

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, originOk, PORT, refusalReasons, refuseEveryToken, routeOf,
+  authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, originOk, refusalReasons, refuseEveryToken, routeOf,
   type Seen,
 } from '../src/checks.ts'
+import * as checks from '../src/checks.ts'
 import { agentRefusals } from 'hetu-core/api/actions.ts'
 
 // A request as Node's parser hands it over: the method, the target as sent, the version and the raw header list,
@@ -11,9 +12,10 @@ const seen = (headers: string[] = ['Host', '127.0.0.1:4747'], extra: Partial<See
   ({ method: 'POST', target: '/mcp', version: '1.1', headers, ...extra })
 
 describe('the fixed values', () => {
-  it('listens on the IPv4 loopback literal and port 4747 alone', () => {
+  // The port is the human's per-machine switch, which the core hands the half in its init, so the plugin holds none
+  it('listens on the IPv4 loopback literal alone and holds no port of its own', () => {
     expect(HOST).toBe('127.0.0.1')
-    expect(PORT).toBe(4747)
+    expect(Object.keys(checks).filter(name => /port/i.test(name))).toEqual([])
   })
 
   it('names every limit the door holds', () => {

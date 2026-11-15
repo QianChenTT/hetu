@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
+import { change, changeEffect, changeKinds, DOOR_PORT, MAX_FOLDER_LENGTH, mustType, type Change } from '../api/changes.ts'
 import { isSecurityControl, securityControls } from '../api/ids.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
 
@@ -28,15 +28,16 @@ const everyKind = [
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'recordNothing', on: true },
+  { kind: 'port.set', port: 5123 },
 ]
 
 describe('the change kinds', () => {
-  it("are the twenty change kinds the trusted window applies", () => {
+  it("are the twenty-one change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.set', 'devMode', 'exec.anyCommand', 'skipVerification',
-      'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set',
+      'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set', 'port.set',
     ])
   })
 
@@ -152,6 +153,37 @@ describe('what each kind holds', () => {
       expect(timeConstants).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'logFailMs', 'floodMs'])
       expect(change.safeParse({ kind: 'limit.set', constant: 'bytesInFlight', value: 2 ** 40, plugin: null }).success).toBe(true)
     })
+  })
+})
+
+describe('port.set', () => {
+  it("reads 4747 as the door's port while none is set", () => {
+    expect(DOOR_PORT).toBe(4747)
+  })
+
+  it.each([1024, 4747, 49152, 65535])('takes %i', port => {
+    expect(change.parse({ kind: 'port.set', port })).toEqual({ kind: 'port.set', port })
+  })
+
+  it.each([
+    ['a port under 1024', 1023],
+    ['port 80', 80],
+    ['zero, which asks the system for any port', 0],
+    ['a port past 65535', 65536],
+    ['a negative port', -4747],
+    ['a port that is not whole', 4747.5],
+    ['a port as text', '4747'],
+    ['null', null],
+  ])('refuses %s', (_name, port) => {
+    expect(change.safeParse({ kind: 'port.set', port }).success).toBe(false)
+  })
+
+  // It moves the door and loosens nothing, but every agent then signs in again, so it waits for the Confirm as any
+  // per-machine switch, with no word to type
+  it('waits for the Confirm and asks for nothing typed', () => {
+    const one = change.parse({ kind: 'port.set', port: 5123 })
+    expect(changeEffect(one)).toBe('widens')
+    expect(mustType(one)).toBe(null)
   })
 })
 

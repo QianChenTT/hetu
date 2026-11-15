@@ -26,6 +26,7 @@ const everyKind = [
   { kind: 'recordNothing', on: true },
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
+  { kind: 'port.set', port: 5123 },
 ]
 
 describe("the core's words for a change", () => {
@@ -57,6 +58,17 @@ describe("the core's words for a change", () => {
   it('names a limit for one plugin or for every plugin', () => {
     expect(describeChange(one({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })).text).toBe('Set readyMs to 20000 for every plugin')
     expect(describeChange(one({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: 'search' })).text).toBe('Set readyMs to 20000 for search')
+  })
+
+  // The issuer and every token's audience name the port, so a move signs every agent out
+  it("names the door's new address and says every agent signs in again and http starts again on it", () => {
+    expect(describeChange(one({ kind: 'port.set', port: 5123 }))).toEqual({
+      text: 'Move the agent door to 127.0.0.1:5123',
+      notes: [
+        "Every agent connected now signs in again, since each sign-in names the door's port",
+        'http starts again on the new port, which cuts the agent calls in flight',
+      ],
+    })
   })
 
   // Decision 12: allow all means all, so the per-item switches lapse. Exec keeps its own list, which leaves out an item

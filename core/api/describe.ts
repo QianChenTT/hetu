@@ -78,6 +78,14 @@ export function describeChange(change: Change): Described {
         : { text: `Stop trusting the unsigned build ${change.hash}`, notes: [] }
     case 'limit.set':
       return { text: `Set ${change.constant} to ${change.value} for ${change.plugin ?? 'every plugin'}`, notes: [] }
+    case 'port.set':
+      return {
+        text: `Move the agent door to 127.0.0.1:${change.port}`,
+        notes: [
+          'Every agent connected now signs in again, since each sign-in names the door\'s port',
+          'http starts again on the new port, which cuts the agent calls in flight',
+        ],
+      }
     case 'class.raised':
       return {
         text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,

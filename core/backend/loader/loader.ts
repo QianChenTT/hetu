@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
-import { change as changeSchema, changeEffect, mustType, type Change, type ClassRaised } from '../../api/changes.ts'
+import { change as changeSchema, changeEffect, DOOR_PORT, mustType, type Change, type ClassRaised } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
@@ -1722,9 +1722,12 @@ ${capabilityKey(change.capability)}`)
       previousVersion: k.previousVersion,
     }
     // An install host half runs in main with Node, so the data folder is no secret from it: storage keeps its spaces
-    // there and later host plugins their working folders. A worker and a utility half never hear it
+    // there and later host plugins their working folders. A worker and a utility half never hear it. The utility half
+    // is the door and hears its port, the human's switch or 4747
     for (const [half, run] of live.halves) {
-      const own = half === 'host' && k.place === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
+      const own = half === 'host' && k.place === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir }
+        : half === 'host' && k.place === 'utility' ? { ...init, port: this.state.switches.port ?? DOOR_PORT }
+        : init
       this.link.send(run.caller, own)
     }
     // A plugin with no half to start, frames or a page only, is ready once checked
@@ -2043,6 +2046,15 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.clearStorage(change.plugin)
       case 'plugin.reset':
         return this.reset(change.plugin, confirm)
+      // 4747 leaves the field out, so a build from before it reads the file again. http starts again on the new port,
+      // a failed or crashed one included, and one the human stopped or switched off reads it at its next start
+      case 'port.set': {
+        const { port: _, ...rest } = this.state.switches
+        await this.writeSwitches(change.port === DOOR_PORT ? rest : { ...rest, port: change.port })
+        const http = this.known.get('http')
+        if (http?.place === 'utility' && !this.stoppedByHuman(http)) await this.restart(http.id, 'human').catch(() => {})
+        return
+      }
       // Answered: the class and its asks were stored when the notice was raised
       case 'class.raised':
         return this.answered(change.plugin)

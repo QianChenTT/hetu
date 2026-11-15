@@ -66,17 +66,18 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
 const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
 
 // http on the fake core with mcp as a stand-in whose handle echoes what reached it
-async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, answer?: (call: Delivered) => unknown } = {}) {
-  const port = options.port ?? await freePort()
-  const core = fakeCore({ manifest })
+// The port reaches http in its init, as the loader tells it the human's setting
+async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number | null, answer?: (call: Delivered) => unknown } = {}) {
+  const port = options.port === undefined ? await freePort() : options.port
+  const core = fakeCore({ manifest, ...(port === null ? {} : { port }) })
   cores.push(core)
   const mcp: StandIn = core.standIn('mcp', {
     actions: { handle: { from: ['http'] } },
     handle: options.answer ?? (call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null, args: call.args }) })),
     state: options.mcp ?? 'ready',
   })
-  const state = await core.start(httpPlugin({ port, token: options.token ?? goodToken }))
-  return { core, mcp, port, state }
+  const state = await core.start(httpPlugin({ token: options.token ?? goodToken }))
+  return { core, mcp, port: port ?? 0, state }
 }
 
 describe('http on the fake core', () => {
@@ -139,6 +140,25 @@ describe('http on the fake core', () => {
     expect(core.status()).toEqual({ state: 'failed', reason: 'port-taken' })
     await tick(100)
     expect(listens.mock.calls.map(([given]) => given)).toEqual([{ host: '127.0.0.1', port, exclusive: true }])
+  })
+
+  // One place holds the port: what init names is bound and is the only port the Host check takes
+  it('binds the port its init names and takes a Host naming it alone, 4747 refused', async () => {
+    const { port, mcp } = await started()
+    await until(() => canConnect(port))
+    expect((await post(port, { host: '127.0.0.1:4747', headers: { Authorization: 'Bearer good-token' } })).status).toBe(403)
+    expect((await post(port, { host: `127.0.0.1:${port + 1}`, headers: { Authorization: 'Bearer good-token' } })).status).toBe(403)
+    expect((await post(port, { headers: { Authorization: 'Bearer good-token' } })).status).toBe(200)
+    expect(mcp.delivered).toHaveLength(1)
+  })
+
+  it('binds nothing when its init names no port and tells the core bind-failed', async () => {
+    const listens = vi.spyOn(net.Server.prototype, 'listen')
+    const { core } = await started({ port: null })
+    await until(() => core.coreCalls.length === 1)
+    expect(core.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'bind-failed' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
+    expect(core.status()).toEqual({ state: 'failed', reason: 'bind-failed' })
+    expect(listens).not.toHaveBeenCalled()
   })
 
   it('reports refusals at the door to the core once a second by reason, never one call a refusal', async () => {

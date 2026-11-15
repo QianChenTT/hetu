@@ -149,6 +149,15 @@ export function limitChange(constant: FloorConstant, typed: string, plugin: stri
   return Number.isSafeInteger(value) ? { kind: 'limit.set', constant, value, plugin } : null
 }
 
+// What the human typed for the door's port as its change, or null for anything but a whole number from 1024 to 65535.
+// The core checks it again
+export function portChange(typed: string): Change | null {
+  const text = typed.trim()
+  if (!/^[1-9][0-9]{3,4}$/.test(text)) return null
+  const port = Number(text)
+  return port >= 1024 && port <= 65535 ? { kind: 'port.set', port } : null
+}
+
 export function screen(list: SecurityList): Screen {
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),

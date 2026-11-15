@@ -22,6 +22,7 @@ export { FakeDrawer, holds }
 export type { FakeMode }
 
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
+  | { state: 'failed', reason: string }
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }
 
 // A call the carrier delivered to a stand-in, onBehalf only when the caller named one
@@ -45,9 +46,11 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // latencyMs is how long the luoshu, storage and cache take to answer each call, so a plugin meets a save or a read that
 // takes time. limits are the human's values for all, read each time, so a test may change them while the plugin runs
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
+// port is the door's port the core tells http in a utility process, as the loader tells it the human's setting. Left
+// out, http hears none
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
-  limits?: Partial<Record<FloorConstant, number>>, drawer?: FakeDrawer,
+  limits?: Partial<Record<FloorConstant, number>>, drawer?: FakeDrawer, port?: number,
 }
 
 type Manifest = {
@@ -238,6 +241,7 @@ export class FakeCore {
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
   private readonly drawer: FakeDrawer | null
+  private readonly port: number | null
   private readonly missing: Set<string>
   private readonly standIns = new Map<string, { state: StandInState, actions: Record<string, { from?: string[] }> }>()
   private readonly ports: MessagePort[] = []
@@ -246,12 +250,14 @@ export class FakeCore {
   private reason: string | null = null
   private waiting: Plugin | null = null
   private live: Caller | null = null
+  private ended: (() => void) | null = null
 
   constructor(options: FakeCoreOptions) {
     this.manifest = manifestOf(options.manifest)
     this.mode = options.mode ?? 'manifest'
     this.readyMs = options.readyMs ?? floorConstants.readyMs
     this.drawer = options.drawer ?? null
+    this.port = options.port ?? null
     this.half = 'host' in this.manifest.entries ? 'host' : 'worker'
     this.limits = { ...options.limits }
     this.loader = new FakeLoader(this.mode === 'gate-failed' ? 'failed' : 'on', this.limits)
@@ -423,14 +429,22 @@ export class FakeCore {
       actions: this.manifest.provides?.actions ?? {},
       topics: this.manifest.provides?.topics ?? [],
     })
-    const ready = this.loader.waitFor(caller, 'ready', this.readyMs)
+    // A core.bindFailed while it starts ends it as failed, as the loader ends it
+    const ended = new Promise<false>(resolve => { this.ended = () => resolve(false) })
+    const ready = Promise.race([this.loader.waitFor(caller, 'ready', this.readyMs), ended])
+    this.live = caller
     const transport = utility ? portTransportOf(this.carrier, caller, this.ports) : transportOf(this.carrier, caller)
     run(plugin, transport, this.drawer === null ? {} : { editor: this.drawer.fresh() })
     this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
     this.carrier.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,
+      ...(utility && this.port !== null ? { port: this.port } : {}),
     })
-    if (!(await ready)) {
+    const came = await ready
+    this.ended = null
+    if (this.live === null) return { state: 'failed', reason: this.reason ?? 'bind-failed' }
+    if (!came) {
+      this.live = null
       this.markState('crashed')
       this.carrier.end(caller, 'crashed')
       this.lastStop = 'start-timeout'
@@ -471,6 +485,7 @@ export class FakeCore {
     this.lastStop = reason
     this.live = null
     this.carrier.end(live, 'crashed')
+    this.ended?.()
     return null
   }
 

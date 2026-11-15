@@ -1135,6 +1135,40 @@ describe('a failed check and a switch-off', () => {
 })
 
 // removed lives in the switches, so a switches file that didn't check out has lost the tombstones
+// A per-machine switch left out while it reads 4747, so a file that never moved the door reads the same in a build from
+// before the field
+describe("the door's port", () => {
+  it('is left out of the defaults', () => {
+    expect(Object.hasOwn(defaultSwitches(), 'port')).toBe(false)
+  })
+
+  it('reads a file with no port as having none, ok and nothing suspect', async () => {
+    await store.writeSwitches(switchesIn)
+    const loaded = await store.load()
+    expect(result(loaded, 'switches')).toBe('ok')
+    expect(Object.hasOwn(loaded.state.switches, 'port')).toBe(false)
+  })
+
+  it.each([1024, 5123, 65535])('writes and loads back port %i', async port => {
+    await store.writeSwitches({ ...switchesIn, port })
+    expect(await jsonOf(switchesPath())).toEqual({ format: 2, ...switchesIn, port })
+    const loaded = await store.load()
+    expect(result(loaded, 'switches')).toBe('ok')
+    expect(loaded.state.switches.port).toBe(port)
+  })
+
+  it.each([80, 1023, 0, 65536, 4747.5, '4747', null])('refuses to write the port %j', async port => {
+    await expect(store.writeSwitches({ ...switchesIn, port })).rejects.toThrow()
+  })
+
+  it.each([80, 65536, '5123'])('reads a file holding the port %j as invalid, its switches the defaults', async port => {
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...switchesIn, port }))
+    const loaded = await store.load()
+    expect(result(loaded, 'switches')).toBe('invalid')
+    expect(loaded.state.switches).toEqual(defaultSwitches())
+  })
+})
+
 describe('the tombstones', () => {
   it('are known when the switches file checked out', async () => {
     await store.writeSwitches(switchesIn)

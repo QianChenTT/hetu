@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ListedPlugin, SecurityList } from '../api/actions.ts'
 import { floorConstantNames, floorConstants } from '../api/floor.ts'
-import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
+import { choiceChange, limitChange, portChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
   id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, firstParty: false, on: true, items: [], class: 1,
@@ -153,6 +153,13 @@ describe('what the trusted window draws', () => {
     expect(limitChange('readyMs', '20000', null)).toEqual({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
     expect(limitChange('callsInFlight', ' 8 ', 'search')).toEqual({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'search' })
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
+  })
+
+  it('reads a port the human typed as its change and anything but a whole number from 1024 to 65535 as none', () => {
+    expect(portChange('5123')).toEqual({ kind: 'port.set', port: 5123 })
+    expect(portChange(' 65535 ')).toEqual({ kind: 'port.set', port: 65535 })
+    expect(portChange('1024')).toEqual({ kind: 'port.set', port: 1024 })
+    for (const typed of ['', '80', '1023', '0', '65536', '-4747', '4747.5', '4e3', '0x1293', '04747', 'port']) expect(portChange(typed)).toBeNull()
   })
 
   describe('the stopped mode', () => {

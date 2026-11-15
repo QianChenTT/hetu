@@ -4,12 +4,13 @@ import { mcpServe } from './mcp.ts'
 import { refusalCounter } from './report.ts'
 import { type Door, type DoorTimes, openDoor } from './server.ts'
 
-export type HttpOptions = { port: number, token: TokenSeam, limits?: Partial<DoorTimes> }
+export type HttpOptions = { token: TokenSeam, limits?: Partial<DoorTimes> }
 
-// http's host half: the door is open exactly while mcp is there, opened on start and on every change the core tells.
-// A bind that fails tells the core why, port-taken when the port is held and bind-failed otherwise, and no other port is
-// tried, since every URL a harness keeps names this one. The core then ends the half and http reads failed. Refusals
-// at the door go to the core counted by reason, at most one report a reason a second
+// http's host half: the door is open exactly while mcp is there, opened on start and on every change the core tells, on
+// the port the core names in init and no other. A bind that fails tells the core why, port-taken when the port is held
+// and bind-failed otherwise, bind-failed too with no port named, and no other port is tried, since every URL a harness
+// keeps names this one. The core then ends the half and http reads failed. Refusals at the door go to the core counted
+// by reason, at most one report a reason a second
 export function httpPlugin(options: HttpOptions): Plugin {
   return definePlugin({
     start(ctx) {
@@ -26,7 +27,8 @@ export function httpPlugin(options: HttpOptions): Plugin {
         const wanted = ctx.has('mcp')
         if (wanted && door === null) {
           try {
-            door = await openDoor({ port: options.port, token: options.token, serve, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })
+            if (ctx.port === null) throw new Error('no port named')
+            door = await openDoor({ port: ctx.port, token: options.token, serve, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })
           } catch (error) {
             failed = true
             const reason = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
