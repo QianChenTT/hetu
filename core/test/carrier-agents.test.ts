@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { createGate } from '../../plugins/gate/src/gate.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
@@ -195,6 +196,105 @@ describe('mcp\'s reach into notes, history and leases', () => {
     expect(atSearch.deadline).toBe(got.deadline)
     await search.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: atSearch.callId as string })
     expect(luoshu.prepared.at(-1)!.deadline).toBe(got.deadline)
+  })
+})
+
+// The real gate on one StateView: mcp holds inbox and private, agent #1 inbox and secret, search everything
+function gated() {
+  const gate = createGate()
+  const items = (...paths: string[]) => [{ capability: { type: 'luoshu.read' as const, paths }, off: false, firstUse: false }]
+  const table = <T>(entries: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), entries)
+  gate.stateChanged({
+    n: 1, foldCase: false, execAny: [],
+    plugins: table({
+      http: [{ capability: { type: 'plugin.call', targets: ['mcp'] }, off: false, firstUse: false }],
+      mcp: [...items('inbox/**', 'private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false }],
+      search: items('**'),
+    }),
+    agents: table({ 'client#1': [...items('inbox/**', 'secret/**'), { capability: { type: 'storage' }, off: false, firstUse: false }] }),
+  })
+  const parts = agents({ gate: () => gate })
+  for (const path of ['private/b.md', 'secret/c.md']) parts.luoshu.files.set(path, path)
+  return parts
+}
+
+describe('the gate over an agent\'s call, in every gate state', () => {
+  const cases = ['agent inside', 'agent outside', 'agent with no item', 'mcp outside its own', 'a plugin\'s own call'] as const
+  const expected: Record<string, (string | null)[]> = {
+    on: [null, 'not-granted', 'not-granted', 'not-granted', null],
+    off: ['policy-down', 'policy-down', 'policy-down', 'policy-down', null],
+    failed: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
+    absent: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
+    tampered: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
+    starting: ['starting', 'starting', 'starting', 'starting', 'starting'],
+  }
+
+  it.each(Object.keys(expected))('answers each case as the table has it with the gate %s', async state => {
+    const { door, mcp, search, loader, luoshu } = gated()
+    // Both calls from the door land while the gate is on, the state changes under them
+    const one = await handled(door, mcp, 'client#1')
+    const two = await handled(door, mcp, 'client#2')
+    loader.slots.gate = state as never
+    const answers = [
+      await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, one.parent),
+      await mcp.ask('luoshu.read', { path: 'private/b.md' }, one.parent),
+      await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, two.parent),
+      await mcp.ask('luoshu.read', { path: 'secret/c.md' }, one.parent),
+      await search.ask('luoshu.read', { path: 'inbox/a.md' }),
+    ]
+    expect(Object.fromEntries(answers.map((answer, i) => [cases[i], code(answer)]))).toEqual(Object.fromEntries(cases.map((name, i) => [name, expected[state][i]])))
+    // Nothing of an agent's reached the luoshu's perform but what the gate on let through
+    const performed = luoshu.performed.filter(done => done.call.onBehalf !== undefined).map(done => done.prepared.scope.paths)
+    expect(performed).toEqual(state === 'on' ? [['inbox/a.md']] : [])
+  })
+
+  it('refuses an agent\'s free call, its listing and a core action while the gate isn\'t on, and serves them while it is', async () => {
+    const { door, mcp, loader } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    for (const state of ['off', 'failed', 'starting'] as const) {
+      loader.slots.gate = state
+      const down = state === 'starting' ? 'starting' : 'policy-down'
+      expect(code(await mcp.ask('storage.set', { key: 'k', value: 1 }, parent))).toBe(down)
+      expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe(down)
+      expect(code(await mcp.ask('core.self', undefined, parent))).toBe(down)
+      expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }, parent))).toBe(down)
+      // mcp's own free call with no parent is its own and free whatever the gate's state, as any plugin's
+      expect((await mcp.ask('storage.set', { key: 'k', value: 1 })).ok).toBe(true)
+    }
+    loader.slots.gate = 'on'
+    expect((await mcp.ask('storage.set', { key: 'k', value: 1 }, parent)).ok).toBe(true)
+    expect((await mcp.ask('core.self', undefined, parent)).ok).toBe(true)
+  })
+
+  it('refuses an agent\'s call at the canonical judgement when the human switched the gate off while the luoshu prepared it', async () => {
+    const { door, mcp, loader, luoshu, search } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    let open!: () => void
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    const id = mcp.call('luoshu.read', { path: 'inbox/a.md' }, parent)
+    const plain = search.call('luoshu.read', { path: 'inbox/a.md' })
+    for (let i = 0; i < 200 && luoshu.prepared.length < 2; i++) await tick(2)
+    loader.slots.gate = 'off'
+    open()
+    expect(code(await mcp.reply(id))).toBe('policy-down')
+    expect((await search.reply(plain)).ok).toBe(true)
+    expect(luoshu.performed.map(done => done.call.caller)).toEqual([worker('search')])
+  })
+
+  it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
+    const { carrier, door, mcp, loader } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    loader.slots.gate = 'off'
+    carrier.stopping()
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
+  })
+
+  it('holds mcp\'s call to another plugin for an agent to the agent\'s own plugin.call items', async () => {
+    const { door, mcp, search } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    // mcp holds plugin.call on search and the agent doesn't
+    expect(code(await mcp.ask('search.query', {}, parent))).toBe('not-granted')
+    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 })
 

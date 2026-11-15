@@ -79,7 +79,34 @@ function partsOf(rule: Rule, scope: Scope): readonly string[] | null {
   return null
 }
 
-type Held = { view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]> }
+type Held = {
+  view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]>, agents: Map<string, Compiled[]>
+}
+
+// One list of items against one access: allowed, asking for the first item whose first use asks, switched off or not
+// granted
+function judgeItems(items: readonly Compiled[], access: Access, view: number): Decision {
+  const refused = (code: 'not-granted' | 'switched-off'): Decision => ({ allow: false, code, view })
+  const rule = scopeRules[access.capability] ?? 'none'
+  const parts = partsOf(rule, access.scope)
+  if (parts === null) return refused('not-granted')
+  // A history item counts only for the access it names, so a read item never covers a commit
+  const ofType = items.filter(item => item.type === access.capability && (rule !== 'access' || item.access === access.scope.access))
+  let switchedOff = false
+  let ask: string | null = null
+  for (const part of parts) {
+    const inside = ofType.filter(item => item.covers(part))
+    if (inside.length === 0) return refused('not-granted')
+    if (inside.some(on)) continue
+    const asking = inside.find(item => !item.off)
+    if (asking === undefined) switchedOff = true
+    else ask ??= asking.key
+  }
+  if (switchedOff) return refused('switched-off')
+  // The raw stage can only refuse, so an item whose first use asks passes there and asks at the canonical one
+  if (ask !== null && access.stage === 'canonical') return { ask, view }
+  return { allow: true, view }
+}
 
 // The gate the gate plugin holds. It decides on the newest StateView and on core/api's fixed window grants, and keeps
 // nothing else between calls
@@ -94,39 +121,35 @@ export function createGate(): Gate {
     return []
   }
 
+  // An agent's items that are on, none for a label the view doesn't hold. An agent's item has no first use of its own
+  // to ask about, so one switched off or asking covers nothing
+  function agentItems(agent: string): readonly Compiled[] {
+    if (held === null) throw new Error('no StateView yet')
+    return (held.agents.get(agent) ?? []).filter(on)
+  }
+
+  const reads = (items: readonly Compiled[], path: string) => items.some(item => item.type === 'luoshu.read' && on(item) && item.covers(path))
+  // A name is listed through luoshu.list, or through luoshu.read, which lists what it reads
+  const lists = (items: readonly Compiled[], path: string) =>
+    items.some(item => (item.type === 'luoshu.list' || item.type === 'luoshu.read') && on(item) && item.covers(path))
+
   return {
+    // A call for an agent needs the caller's own items and the agent's both to hold it. The caller's answer stands when
+    // it refuses, the agent's refusal is not-granted and an ask is only ever for the caller's own item
     decide(access: Access): Decision {
-      const items = itemsOf(access.caller)
-      const view = held!.view
-      const refused = (code: 'not-granted' | 'switched-off'): Decision => ({ allow: false, code, view })
-      const rule = scopeRules[access.capability] ?? 'none'
-      const parts = partsOf(rule, access.scope)
-      if (parts === null) return refused('not-granted')
-      // A history item counts only for the access it names, so a read item never covers a commit
-      const ofType = items.filter(item => item.type === access.capability && (rule !== 'access' || item.access === access.scope.access))
-      let switchedOff = false
-      let ask: string | null = null
-      for (const part of parts) {
-        const inside = ofType.filter(item => item.covers(part))
-        if (inside.length === 0) return refused('not-granted')
-        if (inside.some(on)) continue
-        const asking = inside.find(item => !item.off)
-        if (asking === undefined) switchedOff = true
-        else ask ??= asking.key
-      }
-      if (switchedOff) return refused('switched-off')
-      // The raw stage can only refuse, so an item whose first use asks passes there and asks at the canonical one
-      if (ask !== null && access.stage === 'canonical') return { ask, view }
-      return { allow: true, view }
+      const own = judgeItems(itemsOf(access.caller), access, held!.view)
+      if (access.agent === undefined || ('allow' in own && own.allow === false)) return own
+      const agent = judgeItems(agentItems(access.agent), access, held!.view)
+      if (!('allow' in agent) || agent.allow !== true) return { allow: false, code: 'not-granted', view: held!.view }
+      return own
     },
 
-    canRead(caller: Caller, path: string): boolean {
-      return itemsOf(caller).some(item => item.type === 'luoshu.read' && on(item) && item.covers(path))
+    canRead(caller: Caller, path: string, agent?: string): boolean {
+      return reads(itemsOf(caller), path) && (agent === undefined || reads(agentItems(agent), path))
     },
 
-    // A name is listed through luoshu.list, or through luoshu.read, which lists what it reads
-    canList(caller: Caller, path: string): boolean {
-      return itemsOf(caller).some(item => (item.type === 'luoshu.list' || item.type === 'luoshu.read') && on(item) && item.covers(path))
+    canList(caller: Caller, path: string, agent?: string): boolean {
+      return lists(itemsOf(caller), path) && (agent === undefined || lists(agentItems(agent), path))
     },
 
     verbs(plugin: string, window: string): string[] {
@@ -154,7 +177,16 @@ export function createGate(): Gate {
       for (const [role, grants] of Object.entries(windowGrants)) {
         windows.set(role, grants.map((capability: Capability) => compile({ capability, off: false, firstUse: false }, foldCase)))
       }
-      held = { view: n, foldCase, plugins: compiled, windows }
+      // By label in a Map, so a label every object knows finds only its own items. exec's any command is a plugin's
+      // switch and lifts no agent's item
+      const agents = new Map<string, Compiled[]>()
+      const given: unknown = next.agents === undefined ? {} : next.agents
+      if (typeof given !== 'object' || given === null || Array.isArray(given)) throw new Error('a StateView whose agents the gate can\'t read')
+      for (const [label, items] of Object.entries(given)) {
+        if (!Array.isArray(items)) throw new Error('an agent with no items')
+        agents.set(label, items.map(item => compile(item as GrantedItem, foldCase)))
+      }
+      held = { view: n, foldCase, plugins: compiled, windows, agents }
     },
   }
 }

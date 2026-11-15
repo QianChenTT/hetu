@@ -847,6 +847,12 @@ export class Carrier {
   }
 
   private async run(pending: Pending, target: Target, args: unknown, kind: Kind): Promise<void> {
+    // A call for an agent goes on only while the gate is on, a free one or a core action with nothing to judge included,
+    // so no call for an agent runs while the agent's grant can't be judged. A call with power is judged at decideFor too
+    if (pending.agent !== undefined) {
+      const open = this.gateOpen(pending.agent)
+      if (open !== 'decide') return this.finish(pending, no(open as RefusalCode))
+    }
     // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
     if (target.kind === 'events') return this.events(pending, args, kind)
     // 5 precheck, for calls with power only
@@ -862,12 +868,14 @@ export class Carrier {
   }
 
   // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-  // call with power passes while its record can still land and passes unrecorded once the human turned recording off
-  private gateOpen(): 'decide' | 'pass' | RefusalCode {
+  // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
+  // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
+  // that is down
+  private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
-    if (gate !== 'off') return this.down('policy-down')
+    if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
     if (this.muted() || !this.logFailing()) return 'pass'
     return this.down('policy-down')
   }
@@ -891,9 +899,10 @@ export class Carrier {
   }
 
   // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
-  // since a live subscription is its item in use
+  // since a live subscription is its item in use. Every judgement of a call comes here, so a call for an agent is
+  // judged against the agent's own grant beside the caller's at each one and passes at none while the gate isn't on
   private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-    const open = this.gateOpen()
+    const open = this.gateOpen(asker.agent)
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
     const gate = this.holder(() => this.options.gate())
