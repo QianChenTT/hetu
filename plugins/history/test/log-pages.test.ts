@@ -90,8 +90,9 @@ describe('a log over commits that changed only dot paths', () => {
     await commitOf(history, ['journal/b.md'], 'plain')
     await planted(2, 'journal/.hidden.md')
     pages.length = 0
-    heldMs = 80
-    const call = { ...callOf('history.log', { path: 'journal', limit: 1 }), deadline: Date.now() + 40 }
+    heldMs = 600
+    // The deadline falls inside the first page, wherever git's other calls of the log end on a busy machine
+    const call = { ...callOf('history.log', { path: 'journal', limit: 1 }), deadline: Date.now() + 300 }
     const prepared = await history.provider.prepare(call)
     await expect(history.provider.perform(call, prepared as never)).rejects.toEqual({ code: 'timeout' })
     expect(pages).toEqual(['--max-count=1'])
@@ -100,8 +101,8 @@ describe('a log over commits that changed only dot paths', () => {
   it('answers a log of one page past its deadline, since nothing waits on another page', async () => {
     const history = await started(where)
     const plain = await commitOf(history, ['journal/b.md'], 'plain')
-    heldMs = 80
-    const call = { ...callOf('history.log', { path: 'journal', limit: 1 }), deadline: Date.now() + 40 }
+    heldMs = 600
+    const call = { ...callOf('history.log', { path: 'journal', limit: 1 }), deadline: Date.now() + 300 }
     const prepared = await history.provider.prepare(call)
     expect(((await history.provider.perform(call, prepared as never)) as { commits: { commit: string }[] }).commits.map(listed => listed.commit)).toEqual([plain])
   })
