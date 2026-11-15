@@ -102,6 +102,14 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     return calls
   }
 
+  // A raw answer ends the socket: the door's end with the answer, the socket destroyed once the answer is flushed and at
+  // the latest after the request time, whatever the client does. end alone would keep it until the client's own end
+  const endRaw = (socket: Socket, text: string) => {
+    const cap = setTimeout(() => socket.destroy(), times.requestMs)
+    socket.once('close', () => clearTimeout(cap))
+    socket.end(text, () => socket.destroy())
+  }
+
   const answer = (res: http.ServerResponse, status: number, body: string | null, close: boolean, extra: Readonly<Record<string, string>> = {}) => {
     const text = body ?? ''
     const headers: Record<string, string> = { ...FIXED, ...extra, 'Content-Length': String(Buffer.byteLength(text)) }
@@ -202,7 +210,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     const checked = checkDoor(seen, bound)
     const refusal: Refusal = 'status' in checked ? checked : { status: 405, reason: 'method', allow: 'POST' }
     options.refused(refusal.reason)
-    socket.end(rawAnswer(refusal.status, added[refusal.status] ?? {}))
+    endRaw(socket, rawAnswer(refusal.status, added[refusal.status] ?? {}))
   })
   server.keepAliveTimeout = times.keepAliveMs
   server.maxRequestsPerSocket = doorLimits.requestsPerSocket
@@ -225,7 +233,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
       return
     }
     const status = err.code === 'HPE_HEADER_OVERFLOW' ? 431 : err.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? 408 : 400
-    socket.end(rawAnswer(status))
+    endRaw(socket, rawAnswer(status))
   })
 
   return new Promise((resolve, reject) => {

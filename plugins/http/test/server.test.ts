@@ -521,6 +521,117 @@ describe('the requests Node would answer itself', () => {
   })
 })
 
+type Held = { socket: net.Socket, raw: () => string, ended: () => boolean, error: () => string | null }
+
+// A socket that never closes its own side and reads what comes until the test ends
+async function hold(port: number, text: string): Promise<Held> {
+  const socket = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
+  sockets.push(socket)
+  let raw = ''
+  let ended = false
+  let error: string | null = null
+  socket.on('data', data => {
+    raw += data.toString('latin1')
+  })
+  socket.on('end', () => {
+    ended = true
+  })
+  socket.on('error', err => {
+    error = (err as NodeJS.ErrnoException).code ?? 'error'
+  })
+  await new Promise(resolve => socket.once('connect', resolve))
+  if (text.length > 0) socket.write(text)
+  return { socket, raw: () => raw, ended: () => ended, error: () => error }
+}
+
+const openAt = (door: Door) => new Promise<number>((resolve, reject) => door.server.getConnections((err, count) => (err ? reject(err) : resolve(count))))
+
+// Waits until the door holds no socket or the time passed and gives the count then
+async function drained(door: Door, withinMs: number): Promise<number> {
+  const started = performance.now()
+  let open = await openAt(door)
+  while (open > 0 && performance.now() - started < withinMs) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+    open = await openAt(door)
+  }
+  return open
+}
+
+describe('sockets answered past Node\'s response', () => {
+  const connect = (port: number) => request([`CONNECT 127.0.0.1:${port} HTTP/1.1`, `Host: 127.0.0.1:${port}`])
+
+  it.each([
+    ['a CONNECT', connect, 403, 'host'],
+    ['bytes the parser refuses', () => 'GARBAGE\r\n\r\n', 400, 'malformed'],
+    ['headers past the limit', (port: number) => post(port, [`X-Pad: ${'a'.repeat(9000)}`]), 431, 'size'],
+  ])('lets go of a socket it answered %s on within a second, the client keeping its side open', async (_name, text, status, reason) => {
+    const { door, port, refused } = await made({ token: anyToken })
+    const held = await hold(port, text(port))
+    expect(await drained(door, 1000)).toBe(0)
+    const [response] = responses(held.raw())
+    expect(response.status).toBe(status)
+    expectOnlyOwnHeaders(response, ['connection'])
+    expect(held.ended()).toBe(true)
+    expect(held.error()).toBe(null)
+    expect(refused).toEqual([reason])
+  })
+
+  it('lets go of a silent socket once it answered 408, the client keeping its side open', async () => {
+    const { door, port, refused } = await made({ limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
+    const held = await hold(port, '')
+    expect(await drained(door, 2000)).toBe(0)
+    expect(responses(held.raw()).map(response => response.status)).toEqual([408])
+    expect(refused).toEqual(['timeout'])
+  })
+
+  it('answers a good request while 64 refused CONNECT sockets are held open by their client', async () => {
+    const { door, port, refused } = await made({ token: anyToken })
+    const holders: Held[] = []
+    for (let i = 0; i < doorLimits.connections; i++) holders.push(await hold(port, connect(port)))
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(holders.every(holder => holder.raw().startsWith('HTTP/1.1 403'))).toBe(true)
+    expect(await drained(door, 1000)).toBe(0)
+    const [response] = responses((await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))).raw)
+    expect(response.status).toBe(200)
+    expect(refused).toEqual(Array(doorLimits.connections).fill('host'))
+  })
+
+  // A loopback socket takes a 4 MiB answer at once on this platform, so a flush that never ends is stood in for
+  it('lets go of a socket whose raw answer is never flushed once the request time passed', async () => {
+    const { door, port } = await made({ token: anyToken, limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
+    vi.spyOn(net.Socket.prototype, 'end').mockImplementation(function (this: net.Socket, data?: unknown) {
+      if (typeof data === 'string') this.write(data)
+      return this
+    })
+    await hold(port, connect(port))
+    expect(await drained(door, 300)).toBe(1)
+    expect(await drained(door, 1500)).toBe(0)
+  })
+
+  it('hands the whole answer to a client that reads it only after the door let go', async () => {
+    const { door, port } = await made({ token: anyToken })
+    for (const text of [connect(port), 'GARBAGE\r\n\r\n']) {
+      const socket = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
+      sockets.push(socket)
+      socket.on('error', () => {})
+      await new Promise(resolve => socket.once('connect', resolve))
+      socket.pause()
+      socket.write(text)
+      expect(await drained(door, 1000)).toBe(0)
+      let raw = ''
+      socket.on('data', data => {
+        raw += data.toString('latin1')
+      })
+      const end = new Promise(resolve => socket.once('end', resolve))
+      socket.resume()
+      await end
+      const [response] = responses(raw)
+      expectOnlyOwnHeaders(response, ['connection'])
+      expect(raw.endsWith('\r\n\r\n')).toBe(true)
+    }
+  })
+})
+
 describe('times', () => {
   const quick = { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 }
 
