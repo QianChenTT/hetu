@@ -1,11 +1,13 @@
-import { appendFile, link, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { appendFile, link, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { flipFuses, FuseV1Options, FuseVersion, getCurrentFuseWire } from '@electron/fuses'
 import { afterEach, describe, expect, it } from 'vitest'
 import { executableIn } from '../../build/package.ts'
 import { FUSES, type FuseName } from '../../build/fuses.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { appDir, cleanup, homeEnv, linkedCopy, repo, resourcesOf, start, temp } from './helpers.ts'
+import { appDir, asarHeader, cleanup, electronCopyIn, endedRefused, exitText, fuseFileIn, fuseFileOf, fuseText, homeEnv, linkedCopy, plistAsarHash, repo, resourcesOf, start, temp, type Started } from './helpers.ts'
 
 // The packed build as it ships, started as a plain process: what Playwright can't drive, since a locked build refuses
 // the switches Playwright starts it with
@@ -53,7 +55,7 @@ describe('a start', () => {
 async function refused(args: string[], extra: Record<string, string> = {}, executable?: string) {
   const { env } = await homeEnv(extra)
   const started = await start({ env, args, ms: 20_000, ...(executable === undefined ? {} : { executable }) })
-  expect(started.code, args.join(' ')).toBe(1)
+  expect(started.code, `${args.join(' ')}: ${exitText(started)}`).toBe(1)
   expect(started.stderr).not.toMatch(/DevTools listening|Debugger listening/)
   expect(started.records).toEqual([])
 }
@@ -78,7 +80,7 @@ describe('switches and arguments', () => {
   // app.isPackaged reads the executable's name. The build's own constant doesn't
   it('refuses a debugging switch to a copy of hetu named electron', async () => {
     const copy = await linkedCopy()
-    const named = path.join(copy, process.platform === 'win32' ? 'electron.exe' : 'electron')
+    const named = electronCopyIn(copy)
     await link(executableIn(copy), named)
     await refused(['--remote-debugging-port=0'], {}, named)
   })
@@ -88,9 +90,10 @@ describe('switches and arguments', () => {
 // start gets a data folder of its own, since a start ends once its log holds core.ready and a log shared with the start
 // before already does, which ended a control before Node had read its options on a slower machine
 describe('the fuses hold', () => {
+  // The copy holds its own fuse file, the Electron framework on macOS, so the fuse flipped leaves the packed folder as built
   async function withFuse(fuse: FuseName, on: boolean, name?: string): Promise<string> {
     const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
-    const copy = await linkedCopy([executable])
+    const copy = await linkedCopy([executable, await fuseFileOf(appDir)])
     await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options[fuse]]: on })
     if (name === undefined) return executableIn(copy)
     const named = path.join(path.dirname(executableIn(copy)), name)
@@ -152,9 +155,13 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   const asar = path.relative(appDir, path.join(resourcesOf(appDir), 'app.asar')).split(path.sep).join('/')
   const executable = path.relative(appDir, executableIn(appDir)).split(path.sep).join('/')
 
-  // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts
-  async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<string> {
-    const copy = await linkedCopy([asar, executable])
+  type Change = { copy: string, at: number, fuses: string }
+
+  // One byte of a file's content, or of the header, changed on a copy. With the integrity fuse off the same copy starts.
+  // The copy holds its own fuse file, the Electron framework on macOS, so a fuse turned off in one copy stays on in the
+  // next. fuses is the fuse file as the copy's start meets it
+  async function changed(where: 'content' | 'header', fuseOn: boolean): Promise<Change> {
+    const copy = await linkedCopy([asar, executable, await fuseFileOf(appDir)])
     const file = path.join(copy, asar)
     const bytes = await readFile(file)
     const at = where === 'content' ? bytes.indexOf('hetu could not start') : bytes.indexOf('"hash":"') + 8
@@ -162,14 +169,85 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
     bytes[at] = bytes[at] === 0x61 ? 0x62 : 0x61
     await writeFile(file, bytes)
     if (!fuseOn) await flipFuses(executableIn(copy), { version: FuseVersion.V1, resetAdHocDarwinSignature: darwin, [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false })
-    return copy
+    return { copy, at, fuses: await fuseLine(copy) }
   }
 
+  const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
+  const headerOf = (bytes: Buffer) => {
+    const { start: from, length } = asarHeader(bytes)
+    return bytes.subarray(from, from + length)
+  }
+
+  // Info.plist as XML text: plutil turns a binary one into XML where macOS has it
+  async function plistText(file: string): Promise<string> {
+    const plutil = spawnSync('plutil', ['-convert', 'xml1', '-o', '-', file], { encoding: 'utf8' })
+    return plutil.status === 0 ? plutil.stdout : readFile(file, 'utf8')
+  }
+
+  // The integrity fuse as a copy's own fuse file holds it just before a start, beside the original's, and whether the
+  // two are one file
+  async function fuseLine(copy: string): Promise<string> {
+    const state = async (dir: string) => {
+      const wire = await getCurrentFuseWire(executableIn(dir)) as unknown as Record<number, number>
+      return `${fuseText(wire, 'EnableEmbeddedAsarIntegrityValidation')}, ${fuseText(wire, 'OnlyLoadAppFromAsar')}`
+    }
+    const [copyState, originalState] = await Promise.all([state(copy), state(appDir)])
+    const [copyStat, originalStat] = await Promise.all([stat(fuseFileIn(copy), { bigint: true }), stat(fuseFileIn(appDir), { bigint: true })])
+    const same = copyStat.ino === originalStat.ino && copyStat.dev === originalStat.dev
+    return [
+      `copy's fuse file ${await realpath(fuseFileIn(copy))}: ${copyState}, inode ${copyStat.ino} links ${copyStat.nlink}`,
+      `original's fuse file: ${originalState}, inode ${originalStat.ino} links ${originalStat.nlink}, one file with the copy's ${same}`,
+    ].join('\n  ')
+  }
+
+  // What tells how a changed archive got past the header check or was stopped: where the byte changed against the
+  // header's bounds, the header's hash before and after against the one Info.plist records, whether the copy's archive
+  // is a file of its own, the integrity fuse each start met and how each start ended
+  async function report(where: string, refusing: Change, refusedStart: Started, off: Change, offStart: Started): Promise<string> {
+    const original = await readFile(path.join(appDir, asar))
+    const copied = await readFile(path.join(refusing.copy, asar))
+    const { start: from, length } = asarHeader(copied)
+    const [originalStat, copyStat] = await Promise.all([stat(path.join(appDir, asar)), stat(path.join(refusing.copy, asar))])
+    const plist = path.join(resourcesOf(refusing.copy), '..', 'Info.plist')
+    const recorded = darwin ? plistAsarHash(await plistText(plist)) ?? 'none found' : 'not macOS'
+    const integrityMessage = (started: Started) => `holds "Integrity check failed" ${started.stderr.includes('Integrity check failed')}, holds "<header>" ${started.stderr.includes('<header>')}`
+    return [
+      `=== asar integrity report: ${where} changed ===`,
+      `platform ${process.platform} ${process.arch}`,
+      `copy ${refusing.copy}, its real path ${await realpath(refusing.copy)}`,
+      `changed offset ${refusing.at}, header from ${from} for ${length} bytes, offset inside header ${refusing.at >= from && refusing.at < from + length}`,
+      `header sha256 as it was ${sha256(headerOf(original))}`,
+      `header sha256 as changed ${sha256(headerOf(copied))}`,
+      `Info.plist ElectronAsarIntegrity Resources/app.asar ${recorded}`,
+      `original app.asar inode ${originalStat.ino} links ${originalStat.nlink}, copy's app.asar inode ${copyStat.ino} links ${copyStat.nlink}, separate file ${originalStat.ino !== copyStat.ino || originalStat.dev !== copyStat.dev}`,
+      `before the start with the check on:\n  ${refusing.fuses}`,
+      `start with the check on: ${integrityMessage(refusedStart)}, ${exitText(refusedStart)}`,
+      `before the start with the check off:\n  ${off.fuses}`,
+      `start with the check off (offset ${off.at}): ${integrityMessage(offStart)}, ${exitText(offStart)}`,
+      '=== end of asar integrity report ===',
+    ].join('\n')
+  }
+
+  // What Electron writes when it refuses the archive: a hash mismatch in a file's content, or the FATAL check naming the
+  // header against the hash the build recorded
+  const integrityFailure = { content: /ASAR Integrity Violation|Integrity check failed for asar archive/, header: /Integrity check failed for asar archive entry '<header>'/ }
+
+  // The app ends a refused start by itself. On Windows that is an exit code. On macOS a content change exits with code
+  // 1 while a changed header fails a FATAL check, which crashes with a trap and no exit code. Since the end alone can't
+  // tell a refusal from another crash, stderr must name the integrity failure too
   it.each(['content', 'header'] as const)('ends the app when its %s changed, and the same copy starts with the check off', async where => {
-    const refusedStart = await start({ dir: await changed(where, true), ms: 20_000 })
-    expect(refusedStart.ready).toBe(false)
-    expect(refusedStart.code).not.toBeNull()
-    expect((await start({ dir: await changed(where, false) })).ready).toBe(true)
+    const refusing = await changed(where, true)
+    const refusedStart = await start({ dir: refusing.copy, ms: 20_000 })
+    const off = await changed(where, false)
+    const offStart = await start({ dir: off.copy })
+    const text = await report(where, refusing, refusedStart, off, offStart)
+    const refused = endedRefused(refusedStart) && integrityFailure[where].test(refusedStart.stderr)
+    // Printed on macOS each run so the two cases can be compared, elsewhere when the case fails
+    if (darwin || !refused || !offStart.ready) console.log(text)
+    expect(refusedStart.ready, text).toBe(false)
+    expect(endedRefused(refusedStart), text).toBe(true)
+    expect(refusedStart.stderr, text).toMatch(integrityFailure[where])
+    expect(offStart.ready, text).toBe(true)
   })
 })
 

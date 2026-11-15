@@ -1776,6 +1776,179 @@ describe('a notice owed until the human answers it', () => {
   })
 })
 
+// An entry stored strict, its class not known and every item asking, keeps the class the human was last shown as owed,
+// so a move up it hid gets its notice once a pass knows the class again and a plugin back at that class owes nothing
+describe('a notice owed across an entry stored strict', () => {
+  type Made = Awaited<ReturnType<typeof harness>>
+  const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
+  const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
+  const http = (version: string, capabilities: Capability[]): Listing =>
+    ({ files: filesFor(hostManifest('http', { version, capabilities, provides: { topics: ['done'] } })) })
+  const v1 = () => ({ ...withCapabilities(), http: http('1.0.0', []) })
+  const fetches = () => ({ ...withCapabilities(), http: http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...withCapabilities(), http: http('1.1.0', [read]) })
+  const both = () => ({ ...withCapabilities(), http: http('1.2.0', [read, fetchOne]) })
+  const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
+  const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
+  const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
+  // The real policy, throwing for any plugin that holds an item of this type
+  function failingFor(type: Capability['type']): Capabilities {
+    const real = createCapabilities()
+    return {
+      ...real,
+      classify: (granted, reachable, flow) => {
+        if (granted.some(item => item.type === type)) throw new Error('broken for this one')
+        return real.classify(granted, reachable, flow)
+      },
+    }
+  }
+  const failing = (type: Capability['type']) => ({ capabilities: { exports: { capabilities: failingFor(type) } } })
+  async function closed(made: Made): Promise<void> {
+    await made.loader.shutdown().catch(() => {})
+    made.carrier.close()
+    made.link.carrier?.close()
+  }
+  // A start on the same data, the role failing for that type when one is named
+  async function started(base: string, install: () => ReturnType<typeof v1>, type?: Capability['type']): Promise<Made> {
+    const made = await harness({ base, install: install(), ...(type === undefined ? {} : { behave: failing(type) }) })
+    await made.loader.start()
+    return made
+  }
+  // p stored at a class right under the first install
+  async function seeded(granted: Capability[], n: number): Promise<string> {
+    const base = await tempBase()
+    const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n }) } })
+    await one.loader.start()
+    await closed(one)
+    return base
+  }
+
+  it.each([
+    ['out of 0', [calls('http')], 0, fetches, 'plugin.call', 'class 0, Contained', 'class 3, Network'],
+    ['into 4', [fetchOne, hears('http.done')], 3, reads, 'events.subscribe', 'class 3, Network', 'class 4, Powerful'],
+  ] as [string, Capability[], number, () => ReturnType<typeof v1>, Capability['type'], string, string][])(
+    'raises a notice for a move %s from the class last shown once a start after the strict one knows the class', async (_name, granted, n, second, type, from, to) => {
+      const base = await seeded(granted, n)
+      // The app update moves p, at a start whose role fails for it
+      const strict = await started(base, second, type)
+      expect(await stored(strict, 'p')).toMatchObject({ class: null, firstUse: granted, owed: { from: n, cause: 'start', by: null } })
+      expect(await notices(strict)).toEqual([])
+      await closed(strict)
+      // A restart where it fails again keeps the mark as it was
+      const again = await started(base, second, type)
+      expect(await stored(again, 'p')).toMatchObject({ class: null, owed: { from: n, cause: 'start', by: null } })
+      expect(await notices(again)).toEqual([])
+      await closed(again)
+      const known = await started(base, second)
+      expect((await stored(known, 'p')).owed).toEqual({ from: n, cause: 'start', by: null })
+      expect(await notices(known)).toEqual([notice('p', from, to)])
+    })
+
+  it('raises it from the class last shown when the strict store came in the pass that runs once the slot is switched on', async () => {
+    const base = await tempBase()
+    const granted = [calls('http')]
+    const off = await harness({
+      base, install: fetches(), switches: { off: ['capabilities'] }, behave: failing('plugin.call'),
+      folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) },
+    })
+    await off.loader.start()
+    expect((await stored(off, 'p')).class).toBe(0)
+    await off.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await until(() => off.loader.slot('capabilities') === 'on')
+    await off.loader.settled()
+    await tick(30)
+    expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } })
+    expect(await notices(off)).toEqual([])
+    await closed(off)
+    const known = await started(base, fetches)
+    expect(await stored(known, 'p')).toMatchObject({ class: 3, owed: { from: 0, cause: 'slot-on', by: null } })
+    expect(await notices(known)).toEqual([notice('p', 'class 0, Contained', 'class 3, Network')])
+  })
+
+  it('owes nothing once a start after the strict one finds the plugin back at the class last shown', async () => {
+    const base = await seeded([calls('http')], 0)
+    const strict = await started(base, v1, 'plugin.call')
+    expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'start', by: null } })
+    await closed(strict)
+    const known = await started(base, v1)
+    expect(await stored(known, 'p')).toMatchObject({ class: 0 })
+    expect((await stored(known, 'p')).owed).toBeUndefined()
+    expect(await notices(known)).toEqual([])
+  })
+
+  it('keeps the class last shown by a notice nobody answered through a strict store, not the class stored before it', async () => {
+    const base = await seeded([calls('http')], 0)
+    const moved = await started(base, fetches)
+    expect(await notices(moved)).toEqual([notice('p', 'class 0, Contained', 'class 3, Network')])
+    await closed(moved)
+    const strict = await started(base, both, 'plugin.call')
+    expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'start', by: null } })
+    await closed(strict)
+    const known = await started(base, both)
+    expect(await notices(known)).toEqual([notice('p', 'class 0, Contained', 'class 4, Powerful')])
+  })
+
+  it('owes nothing for a strict store under a Confirm that showed the class not known', async () => {
+    const role = breakable()
+    const base = await tempBase()
+    const made = await harness({
+      base, install: withCapabilities(), behave: { capabilities: { exports: { capabilities: role } } },
+      folder: { sync: worker('sync', [fetchOne]) }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
+    })
+    await made.loader.start()
+    role.broken = true
+    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, editor)
+    const held = (await listed(made)).requests.find(request => request.kind === 'grant.widen' && request.plugin === 'sync')!
+    expect(held.notes).toContain(DOWN)
+    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
+    expect(await stored(made, 'sync')).toMatchObject({ class: null })
+    expect((await stored(made, 'sync')).owed).toBeUndefined()
+    await closed(made)
+    const known = await harness({ base, install: withCapabilities() })
+    await known.loader.start()
+    expect(await stored(known, 'sync')).toMatchObject({ class: 4 })
+    expect(await notices(known)).toEqual([])
+  })
+
+  it('measures from the class last shown once a change while the slot is off marks the entry stored strict as not classed', async () => {
+    const granted = [fetchOne, hears('http.done')]
+    const base = await seeded(granted, 3)
+    const strict = await started(base, v1, 'events.subscribe')
+    expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 3, cause: 'start', by: null } })
+    await closed(strict)
+    const off = await harness({ base, install: v1(), switches: { off: ['capabilities'] } })
+    await off.loader.start()
+    await off.loader.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('http.done') })
+    expect(await stored(off, 'p')).toMatchObject({ class: null, unclassed: true, owed: { from: 3, cause: 'start', by: null } })
+    await closed(off)
+    const known = await started(base, v1)
+    expect(await stored(known, 'p')).toMatchObject({ class: 3 })
+    expect((await stored(known, 'p')).owed).toBeUndefined()
+    expect(await notices(known)).toEqual([])
+  })
+
+  // The first start with the entry planted already fails for p, so no pass classes it before the strict store
+  it.each([
+    ['with a class not known', null, {}, []],
+    ['never classed, approved while off', null, { unclassed: true as const }, [notice('p', 'a class not known', 'class 3, Network')]],
+    ['written while off with the class it had kept', 3, { unclassed: true as const }, [notice('p', 'a class not known', 'class 3, Network')]],
+  ] as [string, number | null, Partial<Plugin>, string[]][])('raises what it raised before for an entry %s that a strict store finds', async (_name, n, extra, expected) => {
+    const base = await tempBase()
+    const granted = [calls('http')]
+    const strict = await harness({
+      base, install: fetches(), behave: failing('plugin.call'),
+      folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n, ...extra }) },
+    })
+    await strict.loader.start()
+    expect(await stored(strict, 'p')).toMatchObject({ class: null, ...extra })
+    expect((await stored(strict, 'p')).owed).toBeUndefined()
+    await closed(strict)
+    const known = await started(base, fetches)
+    expect(await stored(known, 'p')).toMatchObject({ class: 3 })
+    expect(await notices(known)).toEqual(expected)
+  })
+})
+
 // A plugin never classed that reaches a known class with no Confirm on screen having shown that class gets a notice, its
 // class not known counting as 0 there: approved while the capabilities plugin was off, or approved Confirm-off.
 // Everywhere else a class not known counts as 4

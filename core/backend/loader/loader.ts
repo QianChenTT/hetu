@@ -760,13 +760,19 @@ ${capabilityKey(change.capability)}`)
     const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
     const asks = asking.filter(item => !listed.has(capabilityKey(item)))
     // A plugin never classed, approved while the slot was off or approved now, moves from a class not known. For its
-    // notice that class counts as 0, since nothing showed the human any class. Everywhere else it counts as 4
+    // notice that class counts as 0, since nothing showed the human any class, or as the class last shown when its mark
+    // holds one. Everywhere else it counts as 4
     const unknown = before === null ? cause === 'approve' : before.class === null && before.unclassed === true
     const moving: ClassMove | null = slot === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
-    const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: 0 } : moving) ? moving : null
-    // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer
+    const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: before?.owed?.from ?? 0 } : moving) ? moving : null
+    // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer.
+    // An entry stored strict with no Confirm on screen keeps the class it held in the mark as the class last shown, so a
+    // move up made while the class is not known is measured from it once the class is known again and a plugin back there
+    // owes nothing. An entry marked as not classed held no class the human was shown
     const was = before?.owed
-    const owed = slot !== 'on' ? was
+    const forgets = slot === 'down' && !confirm && was === undefined && before !== null && before.class !== null && before.unclassed !== true
+    const owed = forgets ? { from: before.class, cause: notice.cause, by: notice.by }
+      : slot !== 'on' ? was
       : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
         : was !== undefined && n !== null && this.alerts({ id, from: was.from ?? 0, to: n }) ? was : undefined
     delete next.owed

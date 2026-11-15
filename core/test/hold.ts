@@ -47,5 +47,6 @@ export async function releaseAll(): Promise<void> {
   await Promise.all([...live].map(release))
 }
 
-// PowerShell takes a second or more to start, so a test that holds a file gets more than vitest's 5 seconds
-export const HOLD_TIMEOUT = 15_000
+// PowerShell takes a second or more to start. On a busy shared Windows runner the first test of a file to hold one took
+// 10 s and once more than 15 s where the holds after it took about 2 s at most, so a test that holds a file gets 30 s
+export const HOLD_TIMEOUT = 30_000
