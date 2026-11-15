@@ -72,7 +72,7 @@ describe('an agent\'s call', () => {
     expect(gate.decide({ ...access(mcp, undefined, 'luoshu.read', reads('secret/c.md')), onBehalf: 'client#1' })).toMatchObject({ allow: false })
   })
 
-  it('asks for the caller\'s own item at its first use, never for an agent\'s, and an agent\'s item off or asking covers nothing', () => {
+  it('asks for the caller\'s own item at its first use, never for an agent\'s and an agent\'s item off or asking covers nothing', () => {
     const asking = gateWith({ plugins: table({ mcp: [item(read('inbox/**'), { firstUse: true })] }) })
     expect(asking.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md')))).toEqual({ ask: JSON.stringify([['paths', ['inbox/**']], ['type', 'luoshu.read']]), view: 4 })
     expect(asking.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md'), 'raw'))).toEqual({ allow: true, view: 4 })
@@ -99,7 +99,7 @@ describe('an agent\'s call', () => {
     expect(gate.decide(access(mcp, 'client#1', 'plugin.call', { target: 'search' }))).toMatchObject({ allow: false, code: 'not-granted' })
   })
 
-  it('gives every agent nothing on a view with no agents, and fails on one whose agents it can\'t read', () => {
+  it('gives every agent nothing on a view with no agents and fails on one whose agents it can\'t read', () => {
     const none = gateWith({ agents: undefined })
     expect(none.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: false, code: 'not-granted' })
     for (const agents of [null, [], { 'client#1': 'inbox/**' }, { 'client#1': [{ capability: read('inbox/**') }] }]) {

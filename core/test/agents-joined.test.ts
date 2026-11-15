@@ -70,7 +70,7 @@ async function joined(gate: 'on' | 'off') {
 
 let next = 1
 
-// A call from a half with the envelope fields given, and its reply
+// A call from a half with the envelope fields given and its reply
 async function ask(half: Half, action: string, args: unknown, extra: object = {}): Promise<Message> {
   const id = 5000 + next++
   half.send({ v: 1, kind: 'call', id, action, args, ...extra })
@@ -109,7 +109,7 @@ describe('agents through the joined core', () => {
     expect((listed.result as { paths: string[] }).paths).toEqual(['inbox/a.md'])
   })
 
-  it('lets agent #2, which has no item, read nothing, and mcp with no parent read nothing, with the gate on', async () => {
+  it('lets agent #2 with no item and mcp with no parent read nothing, with the gate on', async () => {
     const { door, mcp } = await joined('on')
     const { parent } = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')

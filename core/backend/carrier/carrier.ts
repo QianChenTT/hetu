@@ -679,7 +679,7 @@ export class Carrier {
       if (parent === null || parsed.data.onBehalf !== undefined) return refuse('invalid')
       if (parent.depth + 1 > this.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')
     }
-    // A label is an agent's only down a chain that started at the door's own call with a label, and the door's call is
+    // A label is an agent's only down a chain that started at the door's own call with a label. The door's call is
     // still http's own. Any other call keeps a label as text that grants nothing
     const agent = parent?.lends
     const door = parent === null && onBehalf !== undefined && action === agentDoor.action && way.caller.kind === 'plugin'

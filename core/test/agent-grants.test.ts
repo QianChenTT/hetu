@@ -111,7 +111,7 @@ describe('agents\' items in the agent host\'s entry', () => {
 describe('agents\' items in the StateView', () => {
   afterEach(cleanup)
 
-  // mcp as the install's own copy with its entry seeded as a test does, and alpha a plugin of the folder
+  // mcp as the install's own copy with its entry seeded as a test does and alpha a plugin of the folder
   async function started(over: object = {}) {
     const gate = allowAll()
     const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))

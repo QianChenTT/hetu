@@ -82,8 +82,8 @@ const switches = z.strictObject({
 })
 // Items for agents an entry holds in all, across every agent
 export const MAX_AGENT_ITEMS = 256
-// One item of an agent's grant: the label the agent door names the agent by, in the envelope's own grammar, and an
-// item in the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
+// One item of an agent's grant: the label the agent door names the agent by in the envelope's own grammar and an item
+// in the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
 const agentItems = z.array(z.strictObject({ agent: screenText(MAX_LABEL_LENGTH), capability: folderCapability }))
   .max(MAX_AGENT_ITEMS, { abort: true })
   .superRefine((items, ctx) => {

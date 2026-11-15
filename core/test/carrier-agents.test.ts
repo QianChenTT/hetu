@@ -91,7 +91,7 @@ describe('an agent\'s label down a chain of calls', () => {
     ])
   })
 
-  it('refuses a sub-call that sets its own onBehalf as invalid, its parent\'s own text included, and delivers nothing', async () => {
+  it('refuses a sub-call that sets its own onBehalf as invalid and delivers nothing, its parent\'s own text included', async () => {
     const { door, mcp, search, luoshu } = agents()
     const { parent } = await handled(door, mcp)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { ...parent, onBehalf: 'client#2' }))).toBe('invalid')
@@ -101,7 +101,7 @@ describe('an agent\'s label down a chain of calls', () => {
     expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
-  it('keeps the own onBehalf of a call with no parent, a window\'s and a plugin\'s, and treats neither as an agent\'s', async () => {
+  it('keeps the own onBehalf of a call with no parent from a window or a plugin and treats neither as an agent\'s', async () => {
     const { carrier, door, search, gate, beta } = agents()
     gate.grants.beta.push({ type: 'plugin.call', targets: ['search'] })
     const way = windowWay(carrier, { editor })
@@ -138,7 +138,7 @@ describe('an agent\'s label down a chain of calls', () => {
 })
 
 describe('mcp\'s reach into notes, history and leases', () => {
-  it('refuses mcp\'s luoshu, history and leases calls with no parent, and lets its storage and its own view through', async () => {
+  it('refuses mcp\'s luoshu, history and leases calls with no parent and lets its storage and its own view through', async () => {
     const { mcp, luoshu } = agents()
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
     expect(code(await mcp.ask('luoshu.write', { path: 'inbox/a.md', text: 'x' }))).toBe('not-granted')
@@ -257,7 +257,7 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     expect(performed).toEqual(state === 'on' ? [['inbox/a.md']] : [])
   })
 
-  it('refuses an agent\'s free call, its listing and a core action while the gate isn\'t on, and serves them while it is', async () => {
+  it('refuses an agent\'s free call, its listing and a core action while the gate isn\'t on and serves them while it is', async () => {
     const { door, mcp, loader } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
     for (const state of ['off', 'failed', 'starting'] as const) {
@@ -373,7 +373,7 @@ describe('what an agent may read and list through mcp', () => {
 })
 
 describe('the audit record of an agent\'s call', () => {
-  it('names the inherited label on a sub-call, and the parent\'s label, never its own, on one refused for setting its own', async () => {
+  it('names the inherited label on a sub-call and the parent\'s label, never its own, on one refused for setting its own', async () => {
     const { carrier, door, mcp, log } = agents()
     const { id, got, parent } = await handled(door, mcp)
     expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)

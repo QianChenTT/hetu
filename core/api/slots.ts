@@ -45,8 +45,8 @@ export type GuardCall = {
 }
 
 // What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing. agent is set by the carrier alone, for a call under a chain that started at
-// the agent door, and names the agent whose own grant the call is judged against beside the caller's
+// never decided on, so it grants nothing. agent is set by the carrier alone for a call under a chain that started at
+// the agent door. It names the agent whose own grant the call is judged against beside the caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
   readonly caller: Caller
