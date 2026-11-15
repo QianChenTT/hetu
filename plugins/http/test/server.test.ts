@@ -285,13 +285,13 @@ describe('the token check', () => {
     expect(passed).toEqual([])
   })
 
-  it('hands the seam the one Authorization header and refuses two', async () => {
+  it('hands the seam the one Authorization header and asks it nothing for none or two', async () => {
     const seen: (string | null)[] = []
     const { port, passed } = await made({ token: text => (seen.push(text), anyToken(text)) })
     await exchange(port, post(port, ['Authorization: Bearer good', 'Connection: close']))
     await exchange(port, post(port, ['Authorization: Bearer good', 'Authorization: Bearer good']))
     await exchange(port, post(port))
-    expect(seen).toEqual(['Bearer good', null, null])
+    expect(seen).toEqual(['Bearer good'])
     expect(passed).toHaveLength(1)
   })
 
@@ -913,16 +913,6 @@ describe('while what serves is away', () => {
     expect(refused).toEqual(['host', 'origin', 'method', 'malformed', 'size'])
   })
 
-  it('answers 429 past the rate before 503, the rate spent as for a request served', async () => {
-    const { port, refused } = await made({ token: anyToken, clock: () => 0, ready: () => false })
-    const answered = responses((await exchange(port, post(port, ['Authorization: Bearer good']).repeat(51), 4000)).raw)
-    expect(answered.map(response => response.status)).toEqual([503])
-    const rest: number[] = []
-    for (let i = 0; i < 50; i++) rest.push(responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)[0].status)
-    expect(rest).toEqual([...Array(49).fill(503), 429])
-    expect(refused).toEqual(['rate'])
-  })
-
   it('serves again once what serves is back, read at each request', async () => {
     let ready = false
     const { port, passed } = await made({ token: anyToken, ready: () => ready })
@@ -939,6 +929,107 @@ describe('while what serves is away', () => {
     const answered = responses((await exchange(port, post(port, ['Authorization: Bearer good']).repeat(3))).raw)
     expect(answered.map(response => response.status)).toEqual([503])
     expect(passed).toEqual([])
+  })
+})
+
+// A caller with no token can't shut agents out: a request with no well-formed token spends a bucket of its own and
+// never the seam, the agents' bucket counts only a token the seam took, a connection that says nothing is let go and
+// one dropped at the cap is recorded
+describe('callers with no token', () => {
+  // Each request on its own connection, as a flood would send them
+  const each = async (port: number, texts: string[]) => {
+    const statuses: number[] = []
+    for (const text of texts) statuses.push(responses((await exchange(port, text)).raw)[0]?.status ?? 0)
+    return statuses
+  }
+  const silent = async (port: number) => {
+    const socket = net.connect({ host: '127.0.0.1', port })
+    sockets.push(socket)
+    socket.on('error', () => {})
+    await new Promise(resolve => socket.once('connect', resolve))
+    return socket
+  }
+  const open = (door: Door) => new Promise<number>(resolve => door.server.getConnections((_err, count) => resolve(count)))
+
+  it('leaves a request with a good token served while 50 a second come with none, which spend a bucket of their own', async () => {
+    const asked: (string | null)[] = []
+    const { port, refused, passed } = await made({ token: async text => (asked.push(text), anyToken(text)), clock: () => 0 })
+    const none = await each(port, Array.from({ length: 50 }, () => post(port)))
+    expect(none).toEqual([...Array(10).fill(401), ...Array(40).fill(429)])
+    const good = await each(port, Array.from({ length: 50 }, () => post(port, ['Authorization: Bearer good', 'Connection: close'])))
+    expect(good).toEqual(Array(50).fill(200))
+    expect(asked).toEqual(Array(50).fill('Bearer good'))
+    expect(passed).toHaveLength(50)
+    expect(refused.filter(reason => reason === 'token')).toHaveLength(10)
+    expect(refused.filter(reason => reason === 'rate')).toHaveLength(40)
+  })
+
+  it('counts an Authorization that is not one Bearer token of the token grammar as none, never asking the seam', async () => {
+    const asked: (string | null)[] = []
+    const { port } = await made({ token: async text => (asked.push(text), anyToken(text)), clock: () => 0 })
+    const sent = [[], ['Authorization: Basic YTpi'], ['Authorization: bearer good'], ['Authorization: Bearer a b'], ['Authorization: Bearer good', 'Authorization: Bearer good']]
+    expect(await each(port, sent.map(extra => post(port, extra)))).toEqual(Array(5).fill(401))
+    expect(asked).toEqual([])
+  })
+
+  it('leaves a request with a good token served while tokens of the right shape nobody issued flood, each asking the seam once', async () => {
+    let asked = 0
+    const { port, passed } = await made({ token: async text => (asked++, anyToken(text)), clock: () => 0 })
+    const made_up = await each(port, Array.from({ length: 60 }, (_, i) => post(port, [`Authorization: Bearer made-up-${i}`])))
+    expect(made_up).toEqual(Array(60).fill(401))
+    expect(asked).toBe(60)
+    expect(await each(port, Array.from({ length: 51 }, () => post(port, ['Authorization: Bearer good', 'Connection: close'])))).toEqual([...Array(50).fill(200), 429])
+    expect(passed).toHaveLength(50)
+  })
+
+  it('answers 503 to a well-formed token while what serves is away with no bucket spent and 429 to none past its own', async () => {
+    const { port, refused } = await made({ token: anyToken, clock: () => 0, ready: () => false })
+    expect(await each(port, Array.from({ length: 60 }, () => post(port, ['Authorization: Bearer good'])))).toEqual(Array(60).fill(503))
+    expect(await each(port, Array.from({ length: 11 }, () => post(port)))).toEqual([...Array(10).fill(503), 429])
+    expect(refused).toEqual(['rate'])
+  })
+
+  it('lets go of a connection that sends nothing within about a second, with the door\'s 408 recorded timeout', async () => {
+    const { port, refused } = await made()
+    const answered = await exchange(port, '', 3000)
+    expect(answered.closed).toBe(true)
+    expect(answered.closedAfterMs).toBeGreaterThan(800)
+    expect(answered.closedAfterMs).toBeLessThan(1500)
+    expect(responses(answered.raw).map(response => response.status)).toEqual([408])
+    expect(refused).toEqual(['timeout'])
+  })
+
+  it('leaves a connection that sent part of its request to the headers time', async () => {
+    const { port, refused } = await made({ limits: { headersMs: 3000 } })
+    const answered = await exchange(port, `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`, 2000)
+    expect(answered.closed).toBe(false)
+    expect(refused).toEqual([])
+  })
+
+  it('lets go of 64 connections that say nothing within the bound and then answers a good request', async () => {
+    const { door, port, refused } = await made({ token: anyToken })
+    for (let i = 0; i < 64; i++) await silent(port)
+    expect(await open(door)).toBe(64)
+    await vi.waitFor(async () => expect(await open(door)).toBe(0), { timeout: 1600, interval: 50 })
+    expect(refused).toEqual(Array(64).fill('timeout'))
+    expect(responses((await exchange(port, post(port, ['Authorization: Bearer good']))).raw)[0].status).toBe(200)
+  })
+
+  it('records each connection dropped at the 64 cap as full', async () => {
+    const { door, port, refused } = await made({ token: anyToken })
+    const held: net.Socket[] = []
+    for (let i = 0; i < 64; i++) {
+      const socket = await silent(port)
+      socket.write(`POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`)
+      held.push(socket)
+    }
+    await vi.waitFor(async () => expect(await open(door)).toBe(64))
+    for (let i = 0; i < 3; i++) {
+      const extra = await exchange(port, post(port), 1000)
+      expect([extra.raw, extra.closed]).toEqual(['', true])
+    }
+    expect(refused).toEqual(['full', 'full', 'full'])
+    for (const socket of held) socket.destroy()
   })
 })
 

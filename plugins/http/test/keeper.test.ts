@@ -212,6 +212,31 @@ describe('http on the fake core', () => {
     expect(mcp.delivered).toEqual([])
   })
 
+  it('reports connections dropped at the 64 cap to the core as full, once a second with their count', async () => {
+    const { core, port } = await started()
+    const held: net.Socket[] = []
+    for (let i = 0; i < 64; i++) {
+      const socket = net.connect({ host: '127.0.0.1', port })
+      socket.on('error', () => {})
+      await new Promise(resolve => socket.once('connect', resolve))
+      socket.write(`POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`)
+      held.push(socket)
+    }
+    try {
+      await tick(100)
+      for (let i = 0; i < 5; i++) {
+        const socket = net.connect({ host: '127.0.0.1', port })
+        socket.on('error', () => {})
+        await new Promise(resolve => socket.once('close', resolve))
+      }
+      await until(() => core.floor.some(record => record.event === 'http.refused' && record.fields.reason === 'full'))
+      await tick(1200)
+      expect(core.floor.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'full', count: 5 }])
+    } finally {
+      for (const socket of held) socket.destroy()
+    }
+  })
+
   it('writes no token, body, query, Host or Origin text to any record or line', async () => {
     const lines: string[] = []
     for (const stream of [process.stdout, process.stderr]) {

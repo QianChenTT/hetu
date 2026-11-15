@@ -57,9 +57,9 @@ const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPIC
 export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http'
 
 // Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
-// Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
-// too slow
-export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
+// Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse, a request or a
+// connection too slow and a connection dropped with the door full
+export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout', 'full'] as const)
 export type AgentRefusal = typeof agentRefusals[number]
 // The most refusals one report counts, far above what the door can refuse in the second a report covers
 export const MAX_REFUSAL_COUNT = 1_000_000

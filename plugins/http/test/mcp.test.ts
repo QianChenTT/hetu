@@ -161,18 +161,18 @@ describe('what mcp.handle answers', () => {
 })
 
 describe('the refusals told to the core', () => {
-  it('reports each reason at most once a second with its count, so 5000 refusals in a second make at most eight calls', async () => {
+  it('reports each reason at most once a second with its count, so 5000 refusals in a second make one call a reason', async () => {
     vi.useFakeTimers()
     const reports: [RefusalReason, number][] = []
     const counter = refusalCounter(async (reason, count) => { reports.push([reason, count]) })
     for (let i = 0; i < 5000; i++) counter.hit(refusalReasons[i % refusalReasons.length])
     expect(reports).toEqual([])
     await vi.advanceTimersByTimeAsync(1000)
-    expect(reports).toHaveLength(8)
+    expect(reports).toHaveLength(refusalReasons.length)
     expect(reports.reduce((sum, [, count]) => sum + count, 0)).toBe(5000)
-    expect(new Set(reports.map(([reason]) => reason)).size).toBe(8)
+    expect(new Set(reports.map(([reason]) => reason)).size).toBe(refusalReasons.length)
     await vi.advanceTimersByTimeAsync(5000)
-    expect(reports).toHaveLength(8)
+    expect(reports).toHaveLength(refusalReasons.length)
     counter.hit('host')
     await vi.advanceTimersByTimeAsync(1000)
     expect(reports.at(-1)).toEqual(['host', 1])

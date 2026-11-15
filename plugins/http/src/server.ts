@@ -1,13 +1,13 @@
 import http from 'node:http'
 import type { AddressInfo, Socket } from 'node:net'
 import {
-  authorizationOf, checkDoor, doorLimits, HOST, type Refusal, type RefusalReason, type Seen, type TokenSeam,
+  authorizationOf, checkDoor, doorLimits, HOST, type Refusal, type RefusalReason, type Seen, type TokenSeam, tokenFormed,
 } from './checks.ts'
 
 // The door: Node's own HTTP/1.1 server on 127.0.0.1 and one port, every request through the checks of checks.ts in
-// their order, then the rate, the size, whether what serves is there, the token, which settles later, and only then the
-// body. Nothing a request sent reaches a response header and nothing is written to any log or console. A refusal is
-// told by its fixed reason alone
+// their order, then the shape of the token and a bucket of its own for a request with none, the size, whether what
+// serves is there, the token, which settles later, the agents' rate and only then the body. Nothing a request sent
+// reaches a response header and nothing is written to any log or console. A refusal is told by its fixed reason alone
 
 // What serving a request that passed every check answers. Only these two fields are read
 export type Answer = { status: number, body: string | null }
@@ -17,7 +17,7 @@ export type Answer = { status: number, body: string | null }
 export type Passed = { client: string, body: Buffer, headers: readonly string[], signal: AbortSignal }
 
 // The times a test may shorten, with how often Node checks them
-export type DoorTimes = { headersMs: number, requestMs: number, keepAliveMs: number, checkMs: number }
+export type DoorTimes = { headersMs: number, requestMs: number, keepAliveMs: number, checkMs: number, silentMs: number }
 
 export type DoorOptions = {
   port: number
@@ -72,7 +72,7 @@ function rawAnswer(status: number, extra: Readonly<Record<string, string>> = {})
   return `${lines.join('\r\n')}\r\n\r\n`
 }
 
-// Requests in the last second, oldest first. A request counts only once it passed the checks before the rate, so a
+// Requests in the last second, oldest first. A request counts only once it passed the checks before its bucket, so a
 // page on another name can't spend what the agents have
 function rate(perSecond: number, clock: () => number): () => boolean {
   const times: number[] = []
@@ -88,8 +88,15 @@ function rate(perSecond: number, clock: () => number): () => boolean {
 // Opens the door on 127.0.0.1 and the port given, or rejects. A port that is taken is never traded for another, since
 // every URL a harness keeps names this one
 export function openDoor(options: DoorOptions): Promise<Door> {
-  const times: DoorTimes = { headersMs: doorLimits.headersMs, requestMs: doorLimits.requestMs, keepAliveMs: doorLimits.keepAliveMs, checkMs: 1000, ...options.limits }
-  const take = rate(doorLimits.perSecond, options.clock ?? (() => performance.now()))
+  const times: DoorTimes = {
+    headersMs: doorLimits.headersMs, requestMs: doorLimits.requestMs, keepAliveMs: doorLimits.keepAliveMs, checkMs: 1000, silentMs: doorLimits.silentMs,
+    ...options.limits,
+  }
+  const clock = options.clock ?? (() => performance.now())
+  // The agents' bucket counts only a token the seam took, so a caller with no token, or with one of the right shape
+  // nobody issued, can't spend it. A request with no well-formed token spends its own bucket and never asks the seam
+  const take = rate(doorLimits.perSecond, clock)
+  const takeTokenless = rate(doorLimits.tokenlessPerSecond, clock)
   const parser: Parser = { maxHeaderSize: doorLimits.headerBytes, insecureHTTPParser: false, requireHostHeader: false }
   // The port the Host must name, the one bound when a test asked for any
   let bound = options.port
@@ -195,15 +202,18 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     const checked = checkDoor(seen, bound)
     if ('status' in checked) return refuse(req, res, checked)
     if (expects === 'other') return refuse(req, res, { status: 417, reason: 'malformed' })
-    if (!take()) return refuse(req, res, { status: 429, reason: 'rate' })
+    const authorization = authorizationOf(seen)
+    const formed = tokenFormed(authorization)
+    if (!formed && !takeTokenless()) return refuse(req, res, { status: 429, reason: 'rate' })
     const declared = req.headers['content-length']
     if (declared !== undefined && Number(declared) > doorLimits.mcpBodyBytes) return refuse(req, res, { status: 413, reason: 'size' })
     if (options.ready?.() === false) return away(req, res)
     // A check that throws names no client
-    const client = await options.token(authorizationOf(seen)).catch(() => null)
+    const client = formed ? await options.token(authorization).catch(() => null) : null
     // The socket may have been refused or closed while the check ran, so nothing more is written or read for it
     if (behindRefusal(req) || req.socket.destroyed) return
     if (client === null) return refuse(req, res, { status: 401, reason: 'token' })
+    if (!take()) return refuse(req, res, { status: 429, reason: 'rate' })
     if (expects === 'continue') res.writeContinue()
     const chunks: Buffer[] = []
     let size = 0
@@ -276,6 +286,21 @@ export function openDoor(options: DoorOptions): Promise<Door> {
   server.keepAliveTimeout = times.keepAliveMs
   server.maxRequestsPerSocket = doorLimits.requestsPerSocket
   server.maxConnections = doorLimits.connections
+  // A connection past the cap is dropped by Node unanswered, and recorded
+  server.on('drop', () => options.refused('full'))
+  // A connection that sends nothing within silentMs is let go with the door's 408, recorded timeout, so connections
+  // that never speak can't hold the cap. One that sent part of a request is left to the headers time
+  server.on('connection', (socket: Socket) => {
+    const silent = setTimeout(() => {
+      if (socket.bytesRead > 0 || socket.destroyed) return
+      if (!told.has(socket)) {
+        told.add(socket)
+        options.refused('timeout')
+      }
+      endRaw(socket, rawAnswer(408))
+    }, times.silentMs)
+    socket.once('close', () => clearTimeout(silent))
+  })
 
   // Node's parser refused the request or its time ran out. The answer carries the fixed headers and closes. Headers past
   // the limit count as size, other bytes the parser refused as malformed and a request too slow as timeout, once a

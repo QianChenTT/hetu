@@ -41,8 +41,8 @@ describe('the core actions', () => {
     })
   })
 
-  it('names the eight reasons an agent is refused at the door for, fixed and frozen', () => {
-    expect(agentRefusals).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
+  it('names the nine reasons an agent is refused at the door for, fixed and frozen', () => {
+    expect(agentRefusals).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout', 'full'])
     expect(Object.isFrozen(agentRefusals)).toBe(true)
   })
 

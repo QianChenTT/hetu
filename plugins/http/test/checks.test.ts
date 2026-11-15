@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, originOk, refusalReasons, refuseEveryToken, routeOf,
-  type Seen,
+  tokenFormed, type Seen,
 } from '../src/checks.ts'
 import * as checks from '../src/checks.ts'
 import { agentRefusals } from 'hetu-core/api/actions.ts'
@@ -29,7 +29,9 @@ describe('the fixed values', () => {
       mcpBodyBytes: 512 * 1024,
       tokenBodyBytes: 8 * 1024,
       perSecond: 50,
+      tokenlessPerSecond: 10,
       openPerSecond: 10,
+      silentMs: 1000,
       callsPerClient: 8,
       callsInAll: 32,
       answerBytes: 4 * 1024 * 1024,
@@ -40,8 +42,8 @@ describe('the fixed values', () => {
     expect(Object.isFrozen(doorLimits)).toBe(true)
   })
 
-  it('records a refusal under the eight fixed reasons core.agentRefused takes and no others', () => {
-    expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
+  it('records a refusal under the nine fixed reasons core.agentRefused takes and no others', () => {
+    expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout', 'full'])
     expect(refusalReasons).toEqual(agentRefusals)
   })
 })
@@ -187,6 +189,16 @@ describe('the token seam', () => {
     expect(authorizationOf(seen(['Authorization', 'Bearer abc']))).toBe('Bearer abc')
     expect(authorizationOf(seen(['authorization', 'Bearer abc']))).toBe('Bearer abc')
     expect(authorizationOf(seen(['Authorization', 'Bearer abc', 'Authorization', 'Bearer abc']))).toBe(null)
+  })
+
+  // A check of the text alone, before any bucket or the seam, so a caller with no token at all spends neither the
+  // agents' rate nor a seam call
+  it('takes one Bearer token of the token grammar as well-formed and nothing else', () => {
+    for (const text of ['Bearer a', 'Bearer abc-._~+/DEF123', 'Bearer abc==', `Bearer ${'a'.repeat(2048)}`]) expect(tokenFormed(text)).toBe(true)
+    for (const text of [
+      null, '', 'Bearer', 'Bearer ', 'bearer abc', 'BEARER abc', 'Basic YTpi', 'Bearer  abc', 'Bearer abc def', 'Bearer abc,def',
+      'Bearer =abc', 'Bearer abc=d', 'Bearer abc\t', ' Bearer abc', `Bearer ${'a'.repeat(2049)}`, 'Bearer abcé',
+    ]) expect(tokenFormed(text)).toBe(false)
   })
 
   it('refuses every token in the build that ships, since none is issued yet', async () => {

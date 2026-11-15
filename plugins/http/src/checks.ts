@@ -18,10 +18,13 @@ export const doorLimits = Object.freeze({
   // Bodies on /mcp and on the routes a token is traded on
   mcpBodyBytes: 512 * 1024,
   tokenBodyBytes: 8 * 1024,
-  // Requests a second in all and on the routes that need no token. Every client is 127.0.0.1, so a limit by address
-  // would mean nothing
+  // Requests a second: with a token the seam took, with no well-formed token and on the routes that need no token.
+  // Every client is 127.0.0.1, so a limit by address would mean nothing
   perSecond: 50,
+  tokenlessPerSecond: 10,
   openPerSecond: 10,
+  // How long a connection may stay open sending nothing
+  silentMs: 1000,
   // Calls in flight to MCP, for one client and in all, under the carrier's limit for http as one caller
   callsPerClient: 8,
   callsInAll: 32,
@@ -34,9 +37,9 @@ export const doorLimits = Object.freeze({
 })
 
 // What a refusal at the door is recorded under, the reasons core.agentRefused takes. malformed is bytes Node's parser
-// or the door's own reading of the body and the mcp- headers refused and timeout a request too slow. Never the text of
-// a header, a body or a target
-export const refusalReasons = Object.freeze(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
+// or the door's own reading of the body and the mcp- headers refused, timeout a request too slow or a connection that
+// sent nothing and full a connection dropped with 64 open. Never the text of a header, a body or a target
+export const refusalReasons = Object.freeze(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout', 'full'] as const)
 export type RefusalReason = typeof refusalReasons[number]
 export type Refusal = { status: number, reason: RefusalReason, allow?: 'POST' }
 
@@ -103,4 +106,11 @@ export const refuseEveryToken: TokenSeam = async () => null
 export function authorizationOf(seen: Seen): string | null {
   const values = valuesOf(seen, 'authorization')
   return values.length === 1 ? values[0] : null
+}
+
+// One Bearer token of RFC 6750's token grammar, at most 2048 characters, read from the text alone. Only such a token
+// reaches the seam. Anything else is a request with no token, which spends a bucket of its own and never the agents'
+const BEARER = /^Bearer [A-Za-z0-9\-._~+/]{1,2048}=*$/
+export function tokenFormed(authorization: string | null): boolean {
+  return authorization !== null && BEARER.test(authorization)
 }

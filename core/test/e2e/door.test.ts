@@ -8,13 +8,13 @@ import { DOOR_PORT } from '../../api/changes.ts'
 import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
-import { buildPlugin } from '../../sdk/build/esbuild.ts'
+import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
 import { cleanup, editorPage, freePort, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
 // The door's proof: the shipped http in its utility process on 127.0.0.1 and a port the test picked, never 4747, with a
 // fake mcp in the test install only. The shipped token seam refuses every token, so a request that passes the token
-// check runs in the join test
+// check runs on an http built from the same source with a seam that takes one test token, in the test install only
 
 const holders: net.Server[] = []
 
@@ -53,8 +53,16 @@ const builtWorker = async (text: string) => {
   return built!.text
 }
 
-// The shipped install, with the fake mcp beside it when asked
-async function install(withMcp: boolean): Promise<string> {
+// http from its own source with a seam that takes one test token, in place of the shipped seam that takes none
+const keeper = path.join(repo, 'plugins', 'http', 'src', 'keeper.ts').split(path.sep).join('/')
+const TEST_TOKEN = 'Bearer test-token-for-the-door'
+const seamed = `
+import { httpPlugin } from '${keeper}'
+export default httpPlugin({ token: async text => (text === '${TEST_TOKEN}' ? { client: 'https://client.example/metadata' } : null) })
+`
+
+// The shipped install, with the fake mcp beside it when asked and http built with the test seam when asked
+async function install(withMcp: boolean, testSeam = false): Promise<string> {
   const dir = await temp()
   const dist = path.join(repo, 'core', 'dist')
   await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
@@ -65,6 +73,13 @@ async function install(withMcp: boolean): Promise<string> {
     const root = path.join(dir, 'plugins', 'mcp')
     await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['http'] } } } }), { 'worker.js': await builtWorker(mcp) }))
     list.plugins.mcp = { path: 'plugins/mcp', version: '1.0.0', hash: hashFiles(await readFiles(root)), firstParty: true }
+  }
+  if (testSeam) {
+    const source = await temp()
+    await writeFolder(source, { 'src/host.ts': seamed })
+    const root = path.join(dir, 'plugins', 'http')
+    await writeFile(path.join(root, 'dist', 'host.js'), (await buildHost(source, 'src/host.ts', ['http'])).text)
+    ;(list.plugins.http as { hash: string }).hash = hashFiles(await readFiles(root))
   }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
   return dir
@@ -82,10 +97,10 @@ async function data(port: number): Promise<string> {
   return dataDir
 }
 
-async function started(withMcp: boolean, given?: number): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, port: number }> {
+async function started(withMcp: boolean, given?: number, options: { testSeam?: boolean, dataDir?: string } = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, port: number }> {
   const port = given ?? await freePort()
-  const dataDir = await data(port)
-  const app = await launch(dataDir, { HETU_INSTALL_DIR: await install(withMcp) })
+  const dataDir = options.dataDir ?? await data(port)
+  const app = await launch(dataDir, { HETU_INSTALL_DIR: await install(withMcp, options.testSeam === true) })
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
   return { app, editor, dataDir, port }
@@ -215,3 +230,52 @@ describe('the door', () => {
   })
 })
 
+
+// The door made ready, in one data folder: the real build on a port the test picked, 503 with no mcp, served with it,
+// a flood with no token leaving a good request served and the port moved through the trusted window's Confirm. Nothing
+// on 4747 before or after
+describe('the door made ready', () => {
+  it('holds the port the test picked, answers 503 with no mcp and serves with it, through a flood and a move', async () => {
+    expect(await canConnect(DOOR_PORT)).toBe(false)
+    const port = await freePort()
+    const dataDir = await data(port)
+    const good = (at: number) => post(at, [`Host: 127.0.0.1:${at}`, `Authorization: ${TEST_TOKEN}`])
+
+    const away = await started(false, port, { testSeam: true, dataDir })
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'http' }))
+    expect(await canConnect(port)).toBe(true)
+    expect(await good(port)).toBe(503)
+    await away.app.close()
+    await until(async () => !(await canConnect(port)))
+
+    const { app, editor } = await started(true, port, { testSeam: true, dataDir })
+    await until(async () => (await good(port)) === 200)
+    // 50 requests a second with no token for 2 s, a good one every 200 ms beside them
+    const flood: Promise<number>[] = []
+    const goods: Promise<number>[] = []
+    for (let i = 0; i < 100; i++) {
+      flood.push(post(port, [`Host: 127.0.0.1:${port}`]))
+      if (i % 10 === 0) goods.push(good(port))
+      await tick(20)
+    }
+    expect(await Promise.all(goods)).toEqual(Array(10).fill(200))
+    const answered = await Promise.all(flood)
+    expect(answered.filter(code => code === 401).length + answered.filter(code => code === 429).length).toBe(100)
+    expect(answered.filter(code => code === 429).length).toBeGreaterThan(0)
+
+    const moved = await freePort()
+    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    await tick(PAST_DELAY)
+    expect(await ask(trusted, 'security.request', { change: { kind: 'port.set', port: moved } })).toMatchObject({ ok: true })
+    await until(async () => (await trusted.locator('#root').innerText()).includes(`Move the agent door to 127.0.0.1:${moved}`))
+    await tick(PAST_DELAY)
+    await trusted.getByRole('button', { name: 'Confirm' }).click()
+    await until(async () => (await canConnect(moved)) && (await good(moved)) === 200)
+    expect(await canConnect(port)).toBe(false)
+    expect(await canConnect(DOOR_PORT)).toBe(false)
+    await app.close()
+    expect(await canConnect(moved)).toBe(false)
+    expect(await canConnect(DOOR_PORT)).toBe(false)
+  })
+})
