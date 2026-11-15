@@ -462,7 +462,7 @@ describe('writing', () => {
       const loaded = await store.load()
       expect(result(loaded, 'switches')).toBe('ok')
       expect(loaded.state.switches).toEqual(noSwitches)
-    }, 15_000)
+    })
   })
 
   describe('refusing bad input', () => {
