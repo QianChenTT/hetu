@@ -45,15 +45,25 @@ export type GuardCall = {
 }
 
 // What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing
+// never decided on, so it grants nothing. agent is set by the carrier alone, for a call under a chain that started at
+// the agent door, and names the agent whose own grant the call is judged against beside the caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
   readonly caller: Caller
   readonly onBehalf?: string
+  readonly agent?: string
   readonly action: string
   readonly capability: CapabilityType
   readonly scope: Scope
 }
+
+// The agent door: http's host half calling mcp.handle on behalf of an agent, named by its label. Every call under that
+// call carries the label as the agent's and can't set its own. A label set anywhere else names nobody's agent
+export const agentDoor = frozen({ plugin: 'http', half: 'host', action: 'mcp.handle' } as const)
+// The plugin agents act through, whose entry holds their grants as labelled items
+export const agentHost = 'mcp'
+// The providers the agent host reaches only under a live call from the door
+export const agentOnly = frozen(['luoshu', 'history', 'leases'] as const)
 
 // view is the number of the StateView the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only

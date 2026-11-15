@@ -126,14 +126,14 @@ describe('prepare before decide', () => {
     const { connect, gate, guards, loader, luoshu } = harness({ guardsFor: () => ['leases'] })
     loader.slots.leases = 'on'
     guards.leases = new FakeGuard()
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    const mcp = connect(worker('mcp'))
-    const reply = await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }, { onBehalf: 'agent-b' })
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    const scribe = connect(worker('scribe'))
+    const reply = await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }, { onBehalf: 'agent-b' })
     expect(reply.ok).toBe(true)
     expect(luoshu.performed[0].call.onBehalf).toBe('agent-b')
     expect(guards.leases.calls[0].onBehalf).toBe('agent-b')
     expect(gate.asked.map(access => access.onBehalf)).toEqual(['agent-b', 'agent-b'])
-    expect(code(await mcp.ask('luoshu.write', { path: 'secret/a.md', text: 'x' }, { onBehalf: 'admin' }))).toBe('not-granted')
+    expect(code(await scribe.ask('luoshu.write', { path: 'secret/a.md', text: 'x' }, { onBehalf: 'admin' }))).toBe('not-granted')
   })
 })
 
@@ -145,7 +145,7 @@ describe('guards', () => {
       loader.slots[id] = 'on'
       guards[id] = new FakeGuard()
     }
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     return parts
   }
 
@@ -154,12 +154,12 @@ describe('guards', () => {
     const asked: string[] = []
     guards.leases.answer = () => { asked.push('leases'); return 'allow' }
     guards.second.answer = () => { asked.push('second'); return 'allow' }
-    const reply = await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'secret text', baseVersion: hash })
+    const reply = await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'secret text', baseVersion: hash })
     expect(reply.ok).toBe(true)
     expect(asked).toEqual(['leases', 'second'])
     const call: GuardCall = guards.leases.calls[0]
     expect(Object.keys(call).sort()).toEqual(['action', 'baseVersion', 'callId', 'caller', 'scope'])
-    expect(call).toMatchObject({ action: 'luoshu.write', caller: worker('mcp'), scope: { paths: ['notes/a.md'] }, baseVersion: hash })
+    expect(call).toMatchObject({ action: 'luoshu.write', caller: worker('scribe'), scope: { paths: ['notes/a.md'] }, baseVersion: hash })
     expect(JSON.stringify(guards.leases.calls)).not.toContain('secret text')
     expect(Object.isFrozen(call)).toBe(true)
   })
@@ -167,7 +167,7 @@ describe('guards', () => {
   it('skips a guard the human switched off and asks the rest', async () => {
     const { connect, guards, loader } = setup()
     loader.slots.leases = 'off'
-    expect((await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
+    expect((await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
     expect(guards.leases.calls).toEqual([])
     expect(guards.second.calls).toHaveLength(1)
   })
@@ -175,14 +175,14 @@ describe('guards', () => {
   it('answers starting while a guard starts', async () => {
     const { connect, loader, luoshu } = setup()
     loader.slots.second = 'starting'
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('starting')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('starting')
     expect(luoshu.performed).toEqual([])
   })
 
   it.each(['failed', 'absent', 'tampered'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
     const { carrier, connect, loader, luoshu, guards } = setup()
     loader.slots.leases = state
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     const way = windowWay(carrier, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     expect(guards.second.calls).toEqual([])
@@ -193,7 +193,7 @@ describe('guards', () => {
   it('answers guard-down for a guard that is on with no holder to ask', async () => {
     const { connect, guards } = setup()
     delete (guards as Record<string, unknown>).second
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
   })
 
   it.each([
@@ -204,7 +204,7 @@ describe('guards', () => {
   ])('answers %j with %s', async (answer, expected) => {
     const { connect, guards, luoshu } = setup()
     guards.leases.answer = () => answer
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe(expected)
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe(expected)
     expect(guards.second.calls).toEqual([])
     expect(luoshu.performed).toEqual([])
   })
@@ -212,13 +212,13 @@ describe('guards', () => {
   it('counts a promise as no answer, since a host guard answers from its own state', async () => {
     const { connect, guards } = setup()
     guards.leases.answer = async () => 'allow'
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
   })
 
   it('counts a throw as guard-down and records the fault', async () => {
     const { carrier, connect, guards, log, debug } = setup()
     guards.leases.answer = () => { throw new Error('table broke') }
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     expect(debug.map(entry => [entry.plugin, entry.text])).toEqual([['leases', 'table broke']])
     carrier.close()
     await tick()
@@ -228,8 +228,8 @@ describe('guards', () => {
   // GIT~1/config prepares to .git/config, which no scope matches
   it('asks no guard about a call decide refused', async () => {
     const { connect, gate, guards } = setup()
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['**'] }]
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'GIT~1/config', text: 'x' }))).toBe('not-granted')
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }]
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'GIT~1/config', text: 'x' }))).toBe('not-granted')
     expect(guards.leases.calls).toEqual([])
     expect(guards.second.calls).toEqual([])
   })
@@ -240,19 +240,19 @@ describe('guards', () => {
     const { connect, guards, loader, gate, luoshu } = parts
     loader.slots.leases = 'on'
     guards.leases = new FakeGuard()
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    const mcp = connect(worker('mcp'))
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    const scribe = connect(worker('scribe'))
     guards.leases.answer = () => { clock += 2000; return 'allow' }
-    expect((await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
+    expect((await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
     guards.leases.answer = () => { clock += 2001; return 'allow' }
-    expect(code(await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     expect(luoshu.performed).toHaveLength(1)
     await tick()
     expect(parts.log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'leases', step: 'guard-late', count: 1 }])
     // Only the human raises a guard's limit
     loader.human.plugins.leases = { guardAnswerMs: 5000 }
     guards.leases.answer = () => { clock += 4000; return 'allow' }
-    expect((await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
+    expect((await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
   })
 
   it('times the answer on a clock the wall clock does not move', async () => {
@@ -260,23 +260,23 @@ describe('guards', () => {
     const { connect, guards, loader, gate } = harness({ guardsFor: () => ['leases'], now: () => wall })
     loader.slots.leases = 'on'
     guards.leases = new FakeGuard()
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     guards.leases.answer = () => { wall += 60000; return 'allow' }
-    expect((await connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
+    expect((await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
   })
 
   it('still holds every guard with the gate off', async () => {
     const { connect, loader, guards } = setup()
     loader.slots.gate = 'off'
     guards.second.answer = () => 'deny'
-    expect(code(await connect(worker('mcp')).ask('luoshu.write', { path: 'secret/a.md', text: 'x' }))).toBe('guard-refused')
+    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'secret/a.md', text: 'x' }))).toBe('guard-refused')
   })
 
   it('asks no guard for an action that is not guardable', async () => {
     const { connect, guards, gate, luoshu } = setup()
-    gate.grants.mcp.push({ type: 'luoshu.read', paths: ['**'] })
+    gate.grants.scribe.push({ type: 'luoshu.read', paths: ['**'] })
     luoshu.files.set('notes/a.md', 'x')
-    expect((await connect(worker('mcp')).ask('luoshu.read', { path: 'notes/a.md' })).ok).toBe(true)
+    expect((await connect(worker('scribe')).ask('luoshu.read', { path: 'notes/a.md' })).ok).toBe(true)
     expect(guards.leases.calls).toEqual([])
   })
 })

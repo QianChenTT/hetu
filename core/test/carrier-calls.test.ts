@@ -254,11 +254,11 @@ describe('parent', () => {
   })
 
   it('hands a provider the parent of a sub-call', async () => {
-    const { http, mcp, luoshu } = plugins()
+    const { mcp, search, luoshu } = plugins()
     luoshu.files.set('notes/a.md', 'x')
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    expect((await mcp.ask('luoshu.read', { path: 'notes/a.md' }, { parent: parent.callId })).ok).toBe(true)
+    mcp.call('search.query')
+    const parent = await search.delivered('search.query')
+    expect((await search.ask('luoshu.read', { path: 'notes/a.md' }, { parent: parent.callId })).ok).toBe(true)
     expect(luoshu.prepared[0].parent).toBe(parent.callId)
   })
 
@@ -489,14 +489,14 @@ describe('deadlines and cancel', () => {
   })
 
   it('leaves a provider call to finish when it is cancelled and lets go of the lock it took', async () => {
-    const { mcp, luoshu } = plugins()
+    const { search, luoshu } = plugins()
     luoshu.files.set('notes/a.md', 'x')
     let open!: () => void
     luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
-    const id = mcp.call('luoshu.read', { path: 'notes/a.md' })
+    const id = search.call('luoshu.read', { path: 'notes/a.md' })
     for (let i = 0; i < 100 && luoshu.prepared.length === 0; i++) await tick(2)
-    mcp.post({ v: 1, kind: 'cancel', id })
-    expect(code(await mcp.reply(id))).toBe('stopped')
+    search.post({ v: 1, kind: 'cancel', id })
+    expect(code(await search.reply(id))).toBe('stopped')
     open()
     await tick(10)
     expect(luoshu.performed).toEqual([])

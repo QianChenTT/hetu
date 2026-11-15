@@ -59,13 +59,13 @@ describe('the judge a call with power carries to its provider', () => {
     guarded.loader.slots.leases = 'on'
     guarded.guards.leases = new FakeGuard()
     guarded.guards.leases.answer = (call: GuardCall) => (call.scope.paths?.[0] === 'other/a.md' ? 'deny' : 'allow')
-    guarded.gate.grants.mcp = [{ type: 'luoshu.write', paths: ['**'] }]
+    guarded.gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }]
     const answers: unknown[] = []
     guarded.luoshu.perform_ = (call: Call) => {
       answers.push((call as Call & { judge?: Judge }).judge?.(['other/a.md']))
       return null
     }
-    await guarded.connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await guarded.connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(guarded.guards.leases.calls.map(call => call.scope.paths)).toEqual([['notes/a.md'], ['other/a.md']])
     expect(answers).toEqual([{ code: 'guard-refused' }])
   })
@@ -111,7 +111,7 @@ describe('the judge a call with power carries to its provider', () => {
       parts.loader.slots[id] = 'on'
       parts.guards[id] = new FakeGuard()
     }
-    parts.gate.grants.mcp = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
+    parts.gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
     parts.luoshu.files.set('notes/a.md', 'a')
     let first: { asked: number, guarded: number } | null = null
     parts.luoshu.perform_ = (call: Call) => {
@@ -119,7 +119,7 @@ describe('the judge a call with power carries to its provider', () => {
       expect((call as Call & { judge?: Judge }).judge?.(['moved/a.md', 'moved/b.md'])).toBe(null)
       return null
     }
-    const reply = await parts.connect(worker('mcp')).ask('luoshu.move', { from: 'notes/a.md', to: 'notes/b.md' }, { onBehalf: 'agent-a' })
+    const reply = await parts.connect(worker('scribe')).ask('luoshu.move', { from: 'notes/a.md', to: 'notes/b.md' }, { onBehalf: 'agent-a' })
     expect(reply.ok).toBe(true)
     const canonical = parts.gate.asked.slice(0, first!.asked).filter(access => access.stage === 'canonical')
     const again = parts.gate.asked.slice(first!.asked)

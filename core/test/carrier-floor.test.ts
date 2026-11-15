@@ -400,13 +400,13 @@ describe('the floor', () => {
     const { connect, loader, gate, providers } = harness()
     loader.installed('leases')
     providers.leases = { prepare: async () => ({ scope: {} }), perform: async call => call.action }
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    const mcp = connect(worker('mcp'))
-    expect((await mcp.ask('leases.renew')).result).toBe('leases.renew')
-    expect((await mcp.ask('leases.release')).result).toBe('leases.release')
-    expect((await mcp.ask('leases.list')).result).toBe('leases.list')
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    const scribe = connect(worker('scribe'))
+    expect((await scribe.ask('leases.renew')).result).toBe('leases.renew')
+    expect((await scribe.ask('leases.release')).result).toBe('leases.release')
+    expect((await scribe.ask('leases.list')).result).toBe('leases.list')
     expect(gate.asked).toEqual([])
-    expect((await mcp.ask('leases.acquire', { paths: ['notes/a.md'] })).ok).toBe(true)
+    expect((await scribe.ask('leases.acquire', { paths: ['notes/a.md'] })).ok).toBe(true)
     expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([['raw', 'luoshu.write'], ['canonical', 'luoshu.write']])
   })
 
@@ -422,8 +422,8 @@ describe('the floor', () => {
       },
       perform: async () => null,
     }
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    expect(code(await connect(worker('mcp')).ask('leases.acquire', { paths: ['notes/a.md', 'secret/b.md'] }))).toBe('not-granted')
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    expect(code(await connect(worker('scribe')).ask('leases.acquire', { paths: ['notes/a.md', 'secret/b.md'] }))).toBe('not-granted')
     expect(prepared).toEqual([])
     expect(gate.asked[0].scope).toEqual({ paths: ['notes/a.md', 'secret/b.md'] })
   })

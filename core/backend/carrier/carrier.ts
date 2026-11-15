@@ -14,8 +14,8 @@ import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
-  pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Sample, type Scope,
-  type SlotState,
+  agentDoor, agentHost, agentOnly, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
+  type Sample, type Scope, type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
@@ -58,7 +58,12 @@ type Pending = {
   way: Way
   answer: Send
   caller: Caller
+  // The parent's for a sub-call, the caller's own text otherwise
   onBehalf: string | undefined
+  // The agent the call is judged for, inherited from the door's call down the chain
+  agent: string | undefined
+  // The agent its sub-calls act for: the label of the door's own call, an agent's call's agent
+  lends: string | undefined
   action: string
   parent: Pending | null
   root: Root
@@ -102,15 +107,16 @@ type Kind =
 type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
 type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
 
-// What the audit record of a call names, read from the envelope once it parsed. parent is the live call it named
+// What the audit record of a call names, read from the envelope once it parsed. parent is the live call it named, whose
+// onBehalf a call under it records whatever its own envelope said
 type About = { id: number | null, action: string, onBehalf: string | undefined, parent: Pending | null }
 
 // Who the gate is asked for: a call, or a subscription the bus asks about again
-type Asker = { caller: Caller, onBehalf: string | undefined, action: string }
+type Asker = { caller: Caller, onBehalf: string | undefined, agent?: string | undefined, action: string }
 
 type Shaped =
   | ({ ok: false, no: No } & About)
-  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number } & About)
+  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number, agent: string | undefined, lends: string | undefined } & About)
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
@@ -608,7 +614,7 @@ export class Carrier {
       const callId = newId()
       const shaped = this.shape(way, message)
       if (!shaped.ok) return this.early(way, answer, callId, shaped, shaped.no, started)
-      const kind = this.floorOf(way, shaped.target, shaped.args)
+      const kind = this.floorOf(way, shaped.target, shaped.args, shaped.agent)
       if ('code' in kind) return this.early(way, answer, callId, shaped, kind, started)
       pending = this.admit(way, answer, callId, shaped, kind, started)
       if (pending === null) return this.early(way, answer, callId, shaped, { code: 'throttled' }, started)
@@ -621,17 +627,19 @@ export class Carrier {
   }
 
   // 2 shape: the strict envelope, args within the caller's cap, the schema of a core or provider action and a parent
-  // that names a live call delivered on this same way
+  // that names a live call delivered on this same way. A call under a parent takes the parent's onBehalf and can't set
+  // its own
   private shape(way: Way, message: unknown): Shaped {
     const parsed = requestEnvelope.safeParse(message)
     if (!parsed.success) {
       return { ok: false, id: readId(message), action: readAction(message), onBehalf: undefined, parent: null, no: { code: 'invalid' } }
     }
-    const { id, action, parent: parentId, onBehalf } = parsed.data
+    const { id, action, parent: parentId } = parsed.data
     // Looked up first so a refused call's record still names its root. A call past its due time is as good as over,
     // though its timer hasn't run yet
     const named = parentId === undefined ? null : way.delivered.get(parentId) ?? null
     const parent = named !== null && !named.done && this.clock() < named.due ? named : null
+    const onBehalf = parent !== null ? parent.onBehalf : parsed.data.onBehalf
     const refuse = (code: RefusalCode, reason?: ReasonCode): Shaped =>
       ({ ok: false, id, action, onBehalf, parent, no: reason ? { code, reason } : { code } })
     const measured = measurePlain(parsed.data.args, this.limits.of(way.plugin, 'argumentBytes'))
@@ -668,17 +676,25 @@ export class Carrier {
     }
 
     if (parentId !== undefined) {
-      if (parent === null) return refuse('invalid')
+      if (parent === null || parsed.data.onBehalf !== undefined) return refuse('invalid')
       if (parent.depth + 1 > this.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')
     }
-    return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent }
+    // A label is an agent's only down a chain that started at the door's own call with a label, and the door's call is
+    // still http's own. Any other call keeps a label as text that grants nothing
+    const agent = parent?.lends
+    const door = parent === null && onBehalf !== undefined && action === agentDoor.action && way.caller.kind === 'plugin'
+      && way.caller.id === agentDoor.plugin && way.caller.half === agentDoor.half
+    return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
-  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions
-  // and the free actions that skip the gate. Never asks the gate
-  private floorOf(way: Way, target: Target, args: unknown): Kind | No {
+  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
+  // the agent host held to the door's calls for the notes and the free actions that skip the gate. Never asks the gate
+  private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
     const { caller } = way
     const trusted = caller.kind === 'window' && caller.role === 'trusted'
+    // Only for an agent whose call from the door is live, so the agent host acts on notes for no one else
+    const host = caller.kind === 'plugin' && caller.id === agentHost
+    if (host && target.kind === 'provider' && isOne(agentOnly, target.provider) && agent === undefined) return { code: 'not-granted' }
     if (target.kind === 'core') {
       const { from } = target.spec
       const admitted = from === 'any'
@@ -798,6 +814,8 @@ export class Carrier {
       answer,
       caller: way.caller,
       onBehalf: shaped.onBehalf,
+      agent: shaped.agent,
+      lends: shaped.lends,
       action: shaped.action,
       parent,
       root,
@@ -882,7 +900,7 @@ export class Carrier {
     if (gate === null) return { code: this.down('policy-down') }
     const access: Access = frozen({
       stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
-      action: asker.action, capability, scope,
+      ...(asker.agent !== undefined ? { agent: asker.agent } : {}), action: asker.action, capability, scope,
     })
     let allow: unknown, view: unknown, code: unknown, ask: unknown
     try {

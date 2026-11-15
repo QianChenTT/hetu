@@ -82,9 +82,9 @@ describe('shutdown', () => {
     const { connect, gate, guards, loader } = parts
     loader.slots.leases = 'on'
     guards.leases = new FakeGuard()
-    gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    return { ...parts, mcp: connect(worker('mcp')), search: connect(worker('search')) }
+    return { ...parts, scribe: connect(worker('scribe')), search: connect(worker('search')) }
   }
 
   it('answers stopped for a call with power once shutdown began and the gate reads failed', async () => {
@@ -95,10 +95,10 @@ describe('shutdown', () => {
   })
 
   it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {
-    const { carrier, loader, mcp, luoshu } = setup()
+    const { carrier, loader, scribe, luoshu } = setup()
     carrier.stopping()
     loader.slots.leases = 'failed'
-    expect(code(await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
+    expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
     expect(luoshu.performed).toEqual([])
   })
 
@@ -110,9 +110,9 @@ describe('shutdown', () => {
   })
 
   it('answers policy-down, guard-down and unavailable for the same calls before shutdown', async () => {
-    const { loader, mcp, providers, search } = setup()
+    const { loader, scribe, providers, search } = setup()
     loader.slots.leases = 'failed'
-    expect(code(await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
+    expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     delete (providers as Record<string, unknown>).luoshu
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('unavailable')
     loader.slots.gate = 'failed'
