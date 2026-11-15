@@ -632,6 +632,101 @@ describe('sockets answered past Node\'s response', () => {
   })
 })
 
+describe('a refusal behind a request still being served', () => {
+  const connect = (port: number) => request([`CONNECT 127.0.0.1:${port} HTTP/1.1`, `Host: 127.0.0.1:${port}`])
+
+  // Calls that answer their own number after ms, counted as run to their end or cancelled before it
+  function slowCalls(ms: number) {
+    const counts = { made: 0, ended: 0, cancelled: 0 }
+    const serve = (call: Passed) => new Promise<Answer>(resolve => {
+      const n = ++counts.made
+      let done = false
+      const timer = setTimeout(() => {
+        done = true
+        counts.ended++
+        resolve({ status: 200, body: `{"n":${n}}` })
+      }, ms)
+      call.signal.addEventListener('abort', () => {
+        if (done) return
+        counts.cancelled++
+        clearTimeout(timer)
+        resolve({ status: 200, body: null })
+      })
+    })
+    return { counts, serve }
+  }
+
+  it.each([
+    ['a CONNECT', connect, 403, 'host'],
+    ['bytes the parser refuses', () => 'GARBAGE\r\n\r\n', 400, 'malformed'],
+  ])('answers the request ahead first, then refuses %s, records it once and lets go of the socket', async (_name, behind, status, reason) => {
+    for (const apartMs of [0, 100]) {
+      const { counts, serve } = slowCalls(300)
+      const { door, port, refused } = await made({ token: anyToken, serve })
+      const good = post(port, ['Authorization: Bearer good'])
+      const held = await hold(port, apartMs === 0 ? good + behind(port) : good)
+      if (apartMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, apartMs))
+        held.socket.write(behind(port))
+      }
+      expect(await drained(door, 1500)).toBe(0)
+      expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [status, '']])
+      expect(held.ended()).toBe(true)
+      expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
+      expect(refused).toEqual([reason])
+    }
+  })
+
+  it('answers every request ahead in order before the refusal', async () => {
+    const { counts, serve } = slowCalls(300)
+    const { door, port, refused } = await made({ token: anyToken, serve })
+    const good = post(port, ['Authorization: Bearer good'])
+    const held = await hold(port, good + good + connect(port))
+    expect(await drained(door, 1500)).toBe(0)
+    expect(responses(held.raw()).map(response => response.status)).toEqual([200, 200, 403])
+    expect(responses(held.raw()).map(response => response.body).slice(0, 2).sort()).toEqual(['{"n":1}', '{"n":2}'])
+    expect(counts).toEqual({ made: 2, ended: 2, cancelled: 0 })
+    expect(refused).toEqual(['host'])
+  })
+
+  // Node's headers time runs out on a socket whose parser failed, a second clientError while the refusal waits
+  it('keeps the first refusal\'s answer when the headers time also runs out while it waits', async () => {
+    const { counts, serve } = slowCalls(900)
+    const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 2000, keepAliveMs: 300, checkMs: 50 } })
+    const held = await hold(port, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
+    expect(await drained(door, 2500)).toBe(0)
+    expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [400, '']])
+    expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
+    expect(refused).toEqual(['malformed'])
+  })
+
+  it('answers a request read to its end before the 408 of one behind it whose body is late', async () => {
+    const { counts, serve } = slowCalls(900)
+    const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
+    const good = post(port, ['Authorization: Bearer good'])
+    const late = good.replace('Content-Length: 2', 'Content-Length: 50')
+    const held = await hold(port, good + late)
+    expect(await drained(door, 2500)).toBe(0)
+    expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [408, '']])
+    expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
+    expect(refused).toEqual(['timeout'])
+  })
+
+  it('writes nothing ahead of an answer that never comes and lets go of the socket after the request time, the call cancelled', async () => {
+    const { counts, serve } = slowCalls(60_000)
+    const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
+    const held = await hold(port, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
+    expect(await drained(door, 300)).toBe(1)
+    expect(held.raw()).toBe('')
+    expect(await drained(door, 1500)).toBe(0)
+    expect(held.raw()).toBe('')
+    // The count drops before the socket's close, which cancels the call
+    await vi.waitFor(() => expect(counts.cancelled).toBe(1))
+    expect(counts).toEqual({ made: 1, ended: 0, cancelled: 1 })
+    expect(refused).toEqual(['malformed'])
+  })
+})
+
 describe('times', () => {
   const quick = { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 }
 

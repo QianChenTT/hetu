@@ -102,12 +102,42 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     return calls
   }
 
-  // A raw answer ends the socket: the door's end with the answer, the socket destroyed once the answer is flushed and at
-  // the latest after the request time, whatever the client does. end alone would keep it until the client's own end
+  // The answers each socket still owes, those Node holds in line behind another included
+  const owing = new WeakMap<Socket, Set<http.ServerResponse>>()
+  // The raw answer a socket keeps until every answer it owes went out and the sockets already given one
+  const waiting = new WeakMap<Socket, string>()
+  const ending = new WeakSet<Socket>()
+  const owe = (socket: Socket, res: http.ServerResponse) => {
+    const owed = owing.get(socket) ?? new Set<http.ServerResponse>()
+    owing.set(socket, owed)
+    owed.add(res)
+    res.once('close', () => {
+      owed.delete(res)
+      flush(socket)
+    })
+  }
+  // Only a request read to its end is ahead of a refusal. One still being read is the request a parser failure or a
+  // timeout is about, so its answer is the raw one
+  const owesAhead = (socket: Socket) => [...owing.get(socket) ?? []].some(res => res.req.complete)
+  const flush = (socket: Socket) => {
+    const text = waiting.get(socket)
+    if (text === undefined || owesAhead(socket)) return
+    waiting.delete(socket)
+    if (!socket.writable) return void socket.destroy()
+    socket.end(text, () => socket.destroy())
+  }
+
+  // A raw answer ends the socket. It goes out only after every answer the socket owes, so a client never reads it as
+  // the answer to a request it sent before, then the door's end and the socket destroyed once it is flushed. At the
+  // latest the socket is destroyed the request time after the refusal, whatever the client does, a call still owed
+  // cancelled with it. end alone would keep the socket until the client's own end
   const endRaw = (socket: Socket, text: string) => {
+    if (ending.has(socket)) return
+    ending.add(socket)
     const cap = setTimeout(() => socket.destroy(), times.requestMs)
     socket.once('close', () => clearTimeout(cap))
-    socket.end(text, () => socket.destroy())
+    waiting.set(socket, text)
+    flush(socket)
   }
 
   const answer = (res: http.ServerResponse, status: number, body: string | null, close: boolean, extra: Readonly<Record<string, string>> = {}) => {
@@ -133,6 +163,7 @@ export function openDoor(options: DoorOptions): Promise<Door> {
     counted.set(req.socket, place)
     placed.set(req, place)
     if (behindRefusal(req)) return
+    owe(req.socket, res)
     current.set(req.socket, res)
     const seen: Seen = { method: req.method ?? '', target: req.url ?? '', version: req.httpVersion, headers: req.rawHeaders }
     const checked = checkDoor(seen, bound)
