@@ -84,6 +84,8 @@ jobs:
       matrix:
         os: [windows-2025, macos-15]
     runs-on: ${{ matrix.os }}
+    # A green run took up to 12.5 min on Windows and 11 min on macOS. A run that hung sat until cancelled
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,19 +106,37 @@ jobs:
       - name: build the MSI
         if: runner.os == 'Windows'
         run: npm run package
+      # Takes 10 to 13 s and has hung with no log kept. So it ends at 10 min, each msiexec run writes a verbose log flushed
+      # line by line and a line before and after each phase names the phase it stopped in
       - name: install, check and uninstall
+        id: install
         if: runner.os == 'Windows'
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $msi = Get-ChildItem dist-package/installer/*.msi | Select-Object -First 1
-          $install = Start-Process msiexec -ArgumentList '/i', $msi.FullName, '/qn', '/norestart' -Wait -PassThru
+          $logs = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'msiexec-logs')
+          Write-Output "$(Get-Date -Format o) install: msiexec /i $($msi.Name)"
+          $install = Start-Process msiexec -ArgumentList '/i', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'install.log') -Wait -PassThru
+          Write-Output "$(Get-Date -Format o) install ended with $($install.ExitCode)"
           if ($install.ExitCode -ne 0) { throw "msiexec /i ended with $($install.ExitCode)" }
           $env:HETU_INSTALLED = Join-Path $env:ProgramFiles 'hetu'
+          Write-Output "$(Get-Date -Format o) installed suite: starting"
           npm run test:installed -w hetu-core
+          Write-Output "$(Get-Date -Format o) installed suite ended with $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw 'the installed checks failed' }
-          $remove = Start-Process msiexec -ArgumentList '/x', $msi.FullName, '/qn', '/norestart' -Wait -PassThru
+          Write-Output "$(Get-Date -Format o) uninstall: msiexec /x $($msi.Name)"
+          $remove = Start-Process msiexec -ArgumentList '/x', $msi.FullName, '/qn', '/norestart', '/l*v!', (Join-Path $logs 'uninstall.log') -Wait -PassThru
+          Write-Output "$(Get-Date -Format o) uninstall ended with $($remove.ExitCode)"
           if ($remove.ExitCode -ne 0) { throw "msiexec /x ended with $($remove.ExitCode)" }
           if (Test-Path $env:HETU_INSTALLED) { throw 'the install folder is still there' }
+      # The msiexec logs of an install step that failed, timed out or was cancelled
+      - name: keep the msiexec logs
+        if: always() && (steps.install.outcome == 'failure' || steps.install.outcome == 'cancelled')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: msiexec-logs
+          path: ${{ runner.temp }}/msiexec-logs/*.log
       - name: keep the MSI and its hash
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
