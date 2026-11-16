@@ -22,7 +22,8 @@ export type EditorClient = {
   // Replaces every binding. The command named comes back as a command event
   bind(bindings: { key: string, command: string }[]): Promise<void>
   keys(on: boolean): Promise<void>
-  // Opens a note in the editor, inside the plugin's read or list scope. Needs ui.view
+  // Opens a note in the editor. Needs ui.view and luoshu.read on the path and on the note it resolves to, a list or
+  // ui.read grant isn't enough
   open(path: string): Promise<void>
   on(topic: EditorTopic, handler: (event: BridgeEvent) => void): void
 }
