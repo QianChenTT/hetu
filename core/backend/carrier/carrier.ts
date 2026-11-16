@@ -681,9 +681,10 @@ export class Carrier {
     }
     // A label is an agent's only down a chain that started at the door's own call with a label, the door known by the
     // way that call came on. The door's call is still http's own. Any other call keeps a label as text that grants
-    // nothing
+    // nothing. A call from the door names the agent it is for, so one with no label is refused before mcp sees it
     const agent = parent?.lends
-    const door = parent === null && onBehalf !== undefined && action === agentDoor.action && this.isDoor(way)
+    const door = parent === null && action === agentDoor.action && this.isDoor(way)
+    if (door && onBehalf === undefined) return refuse('invalid')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 

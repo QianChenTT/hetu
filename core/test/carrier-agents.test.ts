@@ -120,8 +120,8 @@ describe('an agent\'s label down a chain of calls', () => {
     expect(asked(gate, 'luoshu.read').at(-1)).toEqual({ stage: 'canonical', onBehalf: 'client#1', agent: undefined })
   })
 
-  it('marks no agent under an mcp.handle from http\'s worker half, from another plugin or from the door with no label', async () => {
-    const { door, httpWorker, mcp, beta, loader, gate } = agents()
+  it('marks no agent under an mcp.handle from http\'s worker half or from another plugin', async () => {
+    const { httpWorker, mcp, beta, loader, gate } = agents()
     loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
     for (const from of [httpWorker, beta]) {
       from.call('mcp.handle', {}, { onBehalf: 'client#1' })
@@ -132,9 +132,28 @@ describe('an agent\'s label down a chain of calls', () => {
       expect(code(await mcp.ask('search.query', {}, { parent: got.callId as string }))).toBe('not-granted')
     }
     expect(asked(gate, 'search.query')).toEqual([])
-    const { parent } = await handled(door, mcp, null)
-    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('not-granted')
     expect(gate.asked.filter(access => access.agent !== undefined)).toEqual([])
+  })
+
+  it('refuses the door\'s mcp.handle with no label as invalid in every gate state and delivers nothing to mcp', async () => {
+    const { door, mcp, loader, gate, carrier, log } = agents()
+    for (const state of ['on', 'off', 'starting', 'failed'] as const) {
+      loader.slots.gate = state
+      expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
+    }
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+    expect(asked(gate, 'mcp.handle')).toEqual([])
+    const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
+    expect(records.map(record => record.code)).toEqual(['invalid', 'invalid', 'invalid', 'invalid'])
+  })
+
+  it('still delivers an mcp.handle with no label that is not the door\'s and the door\'s other calls with no label', async () => {
+    const { door, httpWorker, mcp, search, loader } = agents()
+    loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    httpWorker.call('mcp.handle', {})
+    expect((await mcp.delivered('mcp.handle')).onBehalf).toBeUndefined()
+    door.call('search.query', {})
+    expect((await search.delivered('search.query')).onBehalf).toBeUndefined()
   })
 })
 
@@ -311,7 +330,7 @@ function gated() {
         { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false },
       ],
       search: items('**'),
-      beta: [{ capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
+      beta: [{ capability: { type: 'plugin.call', targets: ['search', 'mcp'] }, off: false, firstUse: false }],
     }),
     agents: table({
       'client#1': [...items('inbox/**', 'secret/**', 'asks/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
@@ -448,9 +467,12 @@ describe('what an agent may read and list through mcp', () => {
     expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('starting')
   })
 
-  it('still asks for the door\'s own caller when the door named no agent, which reads nothing', async () => {
-    const { door, mcp } = gated()
-    const { got } = await handled(door, mcp, null)
+  it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {
+    const { mcp, beta, loader } = gated()
+    loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
+    const got = await mcp.delivered('mcp.handle')
+    // What mcp and beta may both read, and beta reads nothing
     expect((await mcp.ask('core.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
   })
 
