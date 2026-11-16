@@ -16,13 +16,16 @@ const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnati
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 
 // mcp as the install's own copy in the plugin folder, holding read on everything, the agents' items its entry is seeded
-// with and a clock the test moves
+// with, http as the install's utility plugin and a clock the test moves
 async function started(over: { agents?: { agent: string, capability: Capability }[], revoked?: string[] } = {}) {
   const clock = { now: 1000 }
   const gate = allowAll()
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
   const made = await harness({
-    install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true } },
+    install: {
+      ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true },
+      http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+    },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
     behave: { gate: { exports: { gate } } },
@@ -302,5 +305,63 @@ describe('revoke of an agent', () => {
     expect(await stored()).toEqual(before)
     await loader.confirm(loader.pending()[0].id, {})
     expect((await stored()).agents).toContainEqual({ agent: 'client#2', capability: read })
+  })
+})
+
+describe('an agent\'s ask that lapses or is withdrawn', () => {
+  it('lapses five minutes after it was raised, an ask of the same items meanwhile moving nothing, and then can\'t be confirmed', async () => {
+    const { loader, ask, clock, link, list } = await started()
+    await ask('client#1', [inbox])
+    const id = loader.pending()[0].id
+    clock.now += 4 * 60_000
+    // A burst of the same ask finds the request and leaves its lapse where it was
+    expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })
+    clock.now += 60_000 - 1
+    expect(loader.pending()).toHaveLength(1)
+    clock.now += 1
+    expect(loader.pending()).toEqual([])
+    expect((await list()).requests).toEqual([])
+    expect(link.events('security.lapsed')).toMatchObject([{ kind: 'agent.ask', target: 'mcp', window: 'core' }])
+    expect(await code(loader.confirm(id, {}))).toBe('not-found')
+    // The agent may ask again, as a new request
+    expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })
+    expect(loader.pending()[0].id).not.toBe(id)
+  })
+
+  it('refuses a Confirm that comes after the lapse though nothing read the list between', async () => {
+    const { loader, ask, clock, stored } = await started()
+    await ask('client#1', [inbox])
+    const id = loader.pending()[0].id
+    clock.now += 5 * 60_000
+    expect(await code(loader.confirm(id, {}))).toBe('not-found')
+    expect((await stored()).agents).toBeUndefined()
+  })
+
+  it('lapses nothing a window asked for', async () => {
+    const { loader, clock } = await started()
+    await loader.request({ kind: 'skipVerification', on: true }, trusted)
+    clock.now += 24 * 60 * 60_000
+    expect(loader.pending()).toHaveLength(1)
+  })
+
+  it.each([['mcp', mcpWorker], ['http', { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } as Caller]])('withdraws every waiting ask when %s stops, so a Confirm after it is refused', async (_id, caller) => {
+    const { loader, ask, link, stored } = await started()
+    await ask('client#1', [inbox])
+    await ask('client#2', [write])
+    await loader.request({ kind: 'skipVerification', on: true }, trusted)
+    const id = loader.pending()[0].id
+    loader.crashed(caller, 'closed')
+    expect(loader.pending().map(one => one.kind)).toEqual(['skipVerification'])
+    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.ask' }, { kind: 'agent.ask' }])
+    expect(await code(loader.confirm(id, {}))).toBe('not-found')
+    expect((await stored()).agents).toBeUndefined()
+  })
+
+  it('withdraws every waiting ask when the human switches mcp off', async () => {
+    const { loader, ask } = await started()
+    await ask('client#1', [inbox])
+    await loader.request({ kind: 'plugin.off', plugin: 'mcp' }, trusted)
+    await loader.settled()
+    expect(loader.pending()).toEqual([])
   })
 })

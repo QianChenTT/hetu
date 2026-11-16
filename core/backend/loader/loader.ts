@@ -3,7 +3,9 @@ import path from 'node:path'
 import type {
   ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
-import { AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, type AgentAsk, type Change, type ClassRaised } from '../../api/changes.ts'
+import {
+  AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, withdrawnWith, type AgentAsk, type Change, type ClassRaised,
+} from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
@@ -1916,8 +1918,10 @@ ${capabilityKey(change.capability)}`)
     if (k.live === live) k.live = null
   }
 
-  // Ends the worker and revokes the incarnation's ways, so nothing it sends counts again
+  // Ends the worker and revokes the incarnation's ways, so nothing it sends counts again. A request whose change is the
+  // plugin's to use goes with it, so no Confirm applies one for a plugin that stopped
   private release(k: Known, live: Live, code: 'stopped' | 'crashed'): void {
+    this.requests.withdraw(change => withdrawnWith(change).includes(k.id))
     for (const run of live.halves.values()) {
       try {
         this.link.end(run.caller, code)

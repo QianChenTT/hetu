@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { PendingRequest } from '../../api/actions.ts'
-import { mustType, type Change, type ChangeEffect } from '../../api/changes.ts'
+import { lapseOf, mustType, type Change, type ChangeEffect } from '../../api/changes.ts'
 import type { Caller } from '../../api/envelope.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Landing } from './seams.ts'
@@ -44,8 +44,11 @@ export type RequestHost = {
 
 export type RequestAnswer = { applied: true } | { held: string }
 
-// raisedBy is the plugin whose call raised the request, null for one a window or the core raised
-type Held = { id: string, key: string, change: Change, fingerprint: Promise<string>, window: string, raisedBy: string | null, source: string }
+// raisedBy is the plugin whose call raised the request, null for one a window or the core raised. until is the clock
+// time it lapses at, null for one that waits until answered
+type Held = {
+  id: string, key: string, change: Change, fingerprint: Promise<string>, window: string, raisedBy: string | null, source: string, until: number | null
+}
 
 // The same text for a change whatever order its fields came in, so a change asked twice is found again and its hash
 // in the records doesn't depend on how a window spelled it
@@ -86,11 +89,13 @@ export class Requests {
 
   // Each request with its change, oldest first
   changes(): { id: string, change: Change }[] {
+    this.lapse()
     return [...this.held.values()].map(({ id, change }) => ({ id, change }))
   }
 
   // Oldest first, the order the trusted window shows them in
   pending(): PendingRequest[] {
+    this.lapse()
     return [...this.held.values()].map(({ id, change }) => ({ id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null }))
   }
 
@@ -130,12 +135,18 @@ export class Requests {
   private hold(
     change: Change, key: string, fields: Record<string, Field>, raisedBy: string | null, limit: number, source: string,
   ): string | { code: 'throttled' } {
+    this.lapse()
+    // The same change asked again finds the request and leaves its lapse where it was
     for (const one of this.held.values()) if (one.key === key) return one.id
     const open = [...this.held.values()].filter(one => one.source === source).length
     if (open >= limit || this.held.size >= MAX_HELD) return { code: 'throttled' }
     const id = randomUUID()
     const fingerprint = this.host.fingerprint(change).catch(() => 'unreadable')
-    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy, source })
+    const lapse = lapseOf(change)
+    const until = lapse === null ? null : this.host.clock() + lapse
+    this.held.set(id, { id, key, change, fingerprint, window: fields.window as string, raisedBy, source, until })
+    // So windows hear of it at the lapse though nothing reads the list then
+    if (lapse !== null) setTimeout(() => this.lapse(), lapse).unref?.()
     void this.host.record('security.request', fields)
     this.moved()
     return id
@@ -152,6 +163,16 @@ export class Requests {
     } catch {}
   }
 
+  // Drops each request whose time ran out, with its record. A lapsed request can't be confirmed
+  private lapse(): void {
+    const now = this.host.clock()
+    for (const one of [...this.held.values()]) {
+      if (one.until === null || now < one.until) continue
+      this.drop(one.id)
+      void this.host.record('security.lapsed', { ...fieldsOf(one.change, one.key), window: one.window })
+    }
+  }
+
   private drop(id: string): void {
     this.held.delete(id)
     this.moved()
@@ -163,6 +184,7 @@ export class Requests {
   // dropped as stale
   confirm(id: string, options: { typed?: string }): Promise<void> {
     return this.host.exclusive(async () => {
+      this.lapse()
       const one = this.held.get(id)
       if (one === undefined) throw { code: 'not-found' }
       const head = this.head
@@ -194,6 +216,7 @@ export class Requests {
   // nothing to cancel
   cancel(id: string): Promise<void> {
     return this.host.exclusive(async () => {
+      this.lapse()
       const one = this.held.get(id)
       if (one === undefined) throw { code: 'not-found' }
       this.drop(id)

@@ -136,6 +136,18 @@ export function changeEffect(change: Change): ChangeEffect {
   }
 }
 
+// How long a request of this kind waits for the human before it lapses, null for one that waits until answered. Only
+// a request a plugin's call brought about lapses, since the call that asked is long over
+export function lapseOf(change: Change): number | null {
+  return change.kind === 'agent.ask' ? AGENT_ASK_LAPSE_MS : null
+}
+
+// The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
+// is for an agent of the agent host that http's door named
+export function withdrawnWith(change: Change): readonly string[] {
+  return change.kind === 'agent.ask' ? [change.plugin, 'http'] : []
+}
+
 // What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to
 // stop recording, the moments protection goes away. Every other Confirm has the input delay alone, so typing doesn't
 // become a habit
