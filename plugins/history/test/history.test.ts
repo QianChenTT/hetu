@@ -300,7 +300,8 @@ describe('a name spelled with no dot that leads to a dot name', () => {
 
   // A second notes folder with the same plain notes and nothing else, where each name below is missing. Each call
   // answers in where what it answers there, the scope the gate judges included. The commit made first in each
-  // stands for the other
+  // stands for the other. Two notes folders, then a prepare, a commit, a log and a read in each for each of up to six
+  // spellings, each running git, took 4 to 5 s on a shared Windows runner, up to vitest's 5 s
   it('answers commit, log and read as for a missing name, through a junction and an 8.3 short name', async () => {
     const bare = await place()
     await mkdir(path.join(bare.notes, 'journal'))
@@ -335,7 +336,7 @@ describe('a name spelled with no dot that leads to a dot name', () => {
     const mixed = await commitOf(inDotted, ['journal/b.md', 'cfg/app.json'])
     expect(await ask(inDotted, 'history.read', { path: 'cfg/app.json', commit: mixed })).toEqual({ refused: { code: 'not-found' } })
     expect(await logOf(inDotted, 'cfg')).toEqual([])
-  })
+  }, 30_000)
 })
 
 describe('a folder swapped after prepare', () => {
