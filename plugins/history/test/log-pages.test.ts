@@ -63,6 +63,8 @@ async function planted(count: number, at: string): Promise<void> {
 }
 
 describe('a log over commits that changed only dot paths', () => {
+  // A commit, three commits planted with six plain git runs each and two logs of two pages each took up to 3.8 s on a
+  // shared Windows runner
   it('asks for the limit first and the largest page after it, so a run of such commits costs one more page', async () => {
     const history = await started(where)
     const plain = await commitOf(history, ['journal/b.md'], 'plain')
@@ -74,7 +76,7 @@ describe('a log over commits that changed only dot paths', () => {
     pages.length = 0
     expect((await logOf(history, 'journal', 2)).map(listed => listed.commit)).toEqual([plain])
     expect(pages).toEqual(['--max-count=2', '--max-count=200'])
-  })
+  }, 20_000)
 
   it('asks for one page only when the first fills the limit', async () => {
     const history = await started(where)
@@ -84,7 +86,9 @@ describe('a log over commits that changed only dot paths', () => {
     expect(pages).toEqual(['--max-count=1'])
   })
 
-  // history runs one call at a time, so a log that pages on past its deadline would hold every call behind it
+  // history runs one call at a time, so a log that pages on past its deadline would hold every call behind it. A commit,
+  // two commits planted with six plain git runs each and a log held 600 ms took up to 3.5 s on a shared Windows runner
+  // and only the test's own limit follows that, the 300 ms deadline it asserts stays
   it('stops paging once the call\'s deadline has passed and answers timeout', async () => {
     const history = await started(where)
     await commitOf(history, ['journal/b.md'], 'plain')
@@ -96,7 +100,7 @@ describe('a log over commits that changed only dot paths', () => {
     const prepared = await history.provider.prepare(call)
     await expect(history.provider.perform(call, prepared as never)).rejects.toEqual({ code: 'timeout' })
     expect(pages).toEqual(['--max-count=1'])
-  })
+  }, 20_000)
 
   it('answers a log of one page past its deadline, since nothing waits on another page', async () => {
     const history = await started(where)
