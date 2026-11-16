@@ -1,11 +1,16 @@
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer, type FakeMode, type StandIn } from '../sdk/testing/index.ts'
 import type { Capability } from '../api/capabilities.ts'
+import { LIST_PAGE } from '../api/actions.ts'
 import { API_VERSION } from '../api/manifest.ts'
 import { quotas } from '../api/storage.ts'
-import type { Call } from '../api/slots.ts'
-import { MemoryStorage } from '../sdk/testing/providers.ts'
+import type { Call, Provider } from '../api/slots.ts'
+import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
+import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
 import { tick } from './carrier-fakes.ts'
 
 const cores: FakeCore[] = []
@@ -170,6 +175,127 @@ describe('the fake core', () => {
     await fake.stop()
     expect(stopped).toBe(true)
     expect((await fake.call('reader.read', { path: 'notes/a.md' })).ok).toBe(false)
+  })
+})
+
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
+describe('the fake core\'s luoshu listing', () => {
+  // More than two pages of notes with a file the grant leaves out beside each, so a page fills only with names the
+  // plugin may list. Names that sort apart by code unit and by code point, dot names and a folder whose name starts as
+  // the listed one's
+  it('pages every name the plugin may list under a folder at any depth, LIST_PAGE at a time in code-unit order, each once', async () => {
+    const notes: Record<string, string> = {}
+    const listable: string[] = []
+    for (let i = 0; i < 2500; i++) {
+      const name = `notes/${i % 3 === 0 ? 'deep/er/' : ''}${String(i).padStart(4, '0')}.md`
+      notes[name] = 'n'
+      notes[name.replace(/\.md$/, '.png')] = 'p'
+      listable.push(name)
+    }
+    const odd = ['notes/B.md', 'notes/a.md', 'notes/ﬁ.md', 'notes/\u{1f600}.md']
+    for (const name of [...odd, 'notes/.hidden.md', 'notes/.obsidian/x.md', 'notes/deep/.cache/y.md', 'notesx/n.md', 'secret/s.md']) notes[name] = 'x'
+    listable.push(...odd)
+    const fake = fakeCore({ manifest: manifest({ capabilities: [{ type: 'luoshu.list', paths: ['**/*.md'] }] }), notes })
+    cores.push(fake)
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    const ctx = box.ctx!
+    const pages: string[][] = []
+    let after: string | undefined
+    for (;;) {
+      const page = await ctx.luoshu.list({ folder: 'notes', ...(after === undefined ? {} : { after }) })
+      pages.push(page.paths)
+      if (page.next === null) break
+      expect(page.next).toBe(page.paths.at(-1))
+      after = page.next
+    }
+    expect(pages.map(page => page.length)).toEqual([LIST_PAGE, LIST_PAGE, 2504 - 2 * LIST_PAGE])
+    expect(pages.flat()).toEqual([...listable].sort(byCodeUnit))
+    // The whole luoshu with no folder, the astral name before U+FB01 as code units order them
+    expect(await ctx.luoshu.list({ after: 'notes/deep/er/2499.md' })).toEqual({ paths: ['notes/\u{1f600}.md', 'notes/ﬁ.md', 'notesx/n.md', 'secret/s.md'], next: null })
+    expect((await ctx.luoshu.list({ folder: 'notes/deep' })).paths).toEqual(listable.filter(name => name.startsWith('notes/deep/')).sort(byCodeUnit))
+    for (const folder of ['notes/dee', 'missing', 'notes/a.md']) expect(await ctx.luoshu.list({ folder })).toEqual({ paths: [], next: null })
+    for (const folder of ['notes/.obsidian', 'notes/deep/.cache']) await expect(ctx.luoshu.list({ folder })).rejects.toMatchObject({ code: 'not-granted' })
+  })
+
+  it('lists nothing for a plugin that may list nothing', async () => {
+    const fake = core(undefined, { capabilities: [] })
+    const { plugin, box } = reader()
+    await fake.start(plugin)
+    expect(await box.ctx!.luoshu.list({})).toEqual({ paths: [], next: null })
+  })
+})
+
+describe('the fake luoshu against the luoshu plugin', () => {
+  let base: string
+  afterEach(async () => {
+    if (base !== undefined) await rm(base, { recursive: true, force: true })
+  })
+
+  // The same files on disk and in memory, a page of two names in both. Every name allowed is how the gate off by the
+  // human lets a listing through, so the dot names are left out by each luoshu itself
+  it('answers each listing as the luoshu plugin does', async () => {
+    const names = [
+      'a.md', 'B.md', 'ﬁ.md', '\u{1f600}.md', 'journal/b.md', 'journal/c.md', 'journal/deep/d.md', 'journalx/e.md',
+      ...Array.from({ length: 5 }, (_, i) => `journal/hidden-${i}.md`), 'journal/p1.md', 'journal/p2.md',
+      '.hidden.md', '.obsidian/app.json', 'journal/.todo.md', 'journal/deep/.config/x.md',
+    ]
+    base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-fake-list-')))
+    const folder = path.join(base, 'notes')
+    await mkdir(path.join(base, 'data'))
+    await mkdir(path.join(base, 'install'))
+    for (const name of names) {
+      await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
+      await writeFile(path.join(folder, name), name)
+    }
+    const real = createLuoshu({ pageSize: 2 })
+    real.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    const memory = new MemoryLuoshu(async () => {}, 0, 2)
+    for (const name of names) memory.notes.set(name, name)
+
+    let n = 0
+    async function ask(provider: Provider, args: object, canList: ((at: string) => boolean) | null): Promise<unknown> {
+      const call: Call = {
+        callId: `l${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.list', args, deadline: Date.now() + 30000,
+        ...(canList === null ? {} : { canList }),
+      }
+      const prepared = await provider.prepare(call)
+      if (!('scope' in prepared)) return { refused: prepared }
+      try {
+        return await provider.perform(call, prepared)
+      } catch (err) {
+        return { refused: err }
+      }
+    }
+    // Every page of a listing, following next
+    async function pages(provider: Provider, args: { folder?: string }, canList: (at: string) => boolean): Promise<unknown[]> {
+      const answers: unknown[] = []
+      let after: string | undefined
+      do {
+        const answer = await ask(provider, { ...args, ...(after === undefined ? {} : { after }) }, canList)
+        answers.push(answer)
+        after = (answer as { next?: string | null }).next ?? undefined
+      } while (after !== undefined && answers.length < 20)
+      return answers
+    }
+
+    const all = () => true
+    const shown = (at: string) => !at.includes('hidden-')
+    for (const [args, canList] of [[{}, all], [{}, shown], [{ folder: 'journal' }, shown], [{ folder: 'journal/deep' }, all]] as const) {
+      const expected = await pages(real.provider, args, canList)
+      expect(await pages(memory, args, canList), JSON.stringify(args)).toEqual(expected)
+    }
+    expect((await pages(real.provider, {}, all)).flatMap(page => (page as { paths: string[] }).paths)).toEqual([
+      'B.md', 'a.md', 'journal/b.md', 'journal/c.md', 'journal/deep/d.md',
+      ...Array.from({ length: 5 }, (_, i) => `journal/hidden-${i}.md`), 'journal/p1.md', 'journal/p2.md', 'journalx/e.md', '\u{1f600}.md', 'ﬁ.md',
+    ])
+    for (const [args, canList] of [
+      [{ after: 'journal/c.md' }, all], [{ folder: 'missing' }, all], [{ folder: 'a.md' }, all], [{ folder: 'journal' }, () => false],
+      [{ folder: '.obsidian' }, all], [{ folder: 'journal/deep/.config' }, all], [{}, null],
+    ] as const) {
+      expect(await ask(memory, args, canList), JSON.stringify(args)).toEqual(await ask(real.provider, args, canList))
+    }
   })
 })
 
