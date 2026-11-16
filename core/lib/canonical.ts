@@ -142,6 +142,29 @@ export async function looked(
   return { state: await look(now.absolute), target: now }
 }
 
+// A file a provider opened or is about to act on, as fstat or lstat gives it, so a look by name can tell whether the
+// name still holds that file
+export type Opened = { readonly ino: bigint, readonly dev: bigint }
+
+// A file a provider holds open, looked at again by name: canonical once more on the spelling the caller wrote. The
+// open follows whatever name the disk gives that spelling, another case of the last name made since prepare included,
+// which no look at the folder sees. held when the spelling gives the key prepare took and its path holds the file
+// opened, at the path judged or at one judged says the gate allows, which is the path to act on and record. replaced
+// when the path holds another file or none, a note written, moved or removed since the open, which can be opened
+// again. moved otherwise, which a provider refuses as it refuses a folder that moved. The file is compared before the
+// judge is asked, so the judge only hears of the path of the file opened. What is left is a file that leaves the name
+// and comes back to it between this look and the lstat after it
+export async function named(
+  target: Canonical, opened: Opened, again: () => Promise<Canonical | NotCanonical>, judged: (now: Canonical) => boolean,
+): Promise<{ state: 'held', target: Canonical } | { state: 'replaced' | 'moved' }> {
+  const now = await again()
+  if (!now.ok || now.key !== target.key) return { state: 'moved' }
+  const there = await lstat(now.absolute, { bigint: true }).catch(() => null)
+  if (there === null || there.ino !== opened.ino || there.dev !== opened.dev) return { state: 'replaced' }
+  if (now.relative !== target.relative && !judged(now)) return { state: 'moved' }
+  return { state: 'held', target: now }
+}
+
 async function stateOf(folder: string): Promise<FolderState> {
   let dir = folder
   for (let gone = false; ; gone = true) {

@@ -7,7 +7,7 @@ import type { Caller } from 'hetu-core/api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from 'hetu-core/api/exec.ts'
 import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, folderState, looked, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, looked, named, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
 
 export type HistoryOptions = {
@@ -34,6 +34,8 @@ const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
 const commitId = /^[0-9a-f]{40}$/
 const NO_COMMIT = '0'.repeat(40)
+// How many times a note is opened when its name holds another file each time it is looked at again
+const OPENS = 3
 const BRANCH = 'refs/heads/main'
 // What git answers with apart from a note's bytes: ids and a page of the log
 const SMALL = 1024 * 1024
@@ -157,29 +159,45 @@ export function createHistory(options: HistoryOptions = {}): History {
     return ran.code === 0 && commitId.test(id) ? id : null
   }
 
-  // One note's bytes as they are now, null for none. A folder under that name is no note either. The note is opened once
-  // and checked and read through that one handle, so what is read is what was checked: a name swapped for a link to a
-  // file outside the notes folder between a check and a read by name would have put that file in the repo. Where the
-  // system has them, a link at the last name is refused and a FIFO opens without waiting for a writer
-  async function bytesOf(target: Canonical): Promise<Buffer | null> {
-    let handle
-    try {
-      handle = await open(target.absolute, NOTE_READ)
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return null
-      if (code === 'ELOOP') throw refused('failed')
-      throw err
-    }
-    try {
-      const info = await handle.stat()
-      if (!info.isFile()) return null
-      if (info.size > fileBytes) throw refused('failed', 'too-large')
-      const bytes = await handle.readFile()
-      if (bytes.length > fileBytes) throw refused('failed', 'too-large')
-      return bytes
-    } finally {
-      await handle.close()
+  // One note's bytes as they are now, null for none, with the path to record them under. A folder under that name is no
+  // note either. The note is opened once and checked and read through that one handle, so what is read is what was
+  // checked: a name swapped for a link to a file outside the notes folder between a check and a read by name would have
+  // put that file in the repo. Where the system has them, a link at the last name is refused and a FIFO opens without
+  // waiting for a writer. Once open, the caller's spelling is resolved again as named does, before the size or anything
+  // else of the file is looked at: the open finds a note made since prepare under another case of the last name, which
+  // the look at the folder never sees. The bytes go in only under the path judged or one the judge allows. A name that
+  // holds another file by then is opened again, a few times before the call answers stale
+  async function bytesOf(prepared: Canonical, target: Canonical, judged: (now: Canonical) => boolean): Promise<{ bytes: Buffer | null, target: Canonical }> {
+    const spelled = spelling.get(prepared)
+    const now = opening
+    for (let tries = 1; ; tries++) {
+      let handle
+      try {
+        handle = await open(target.absolute, NOTE_READ)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') return { bytes: null, target }
+        if (code === 'ELOOP') throw refused('failed')
+        throw err
+      }
+      try {
+        const info = await handle.stat({ bigint: true })
+        // A path that stands for a name leading to a dot name has no spelling kept and no file at it
+        if (now !== null && spelled !== undefined) {
+          const found = await named(target, info, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
+          if (found.state === 'moved') throw refused('not-granted')
+          if (found.state === 'held') target = found.target
+          else if (tries < OPENS) continue
+          else throw refused('stale')
+        }
+        if (!info.isFile()) return { bytes: null, target }
+        if (info.size > BigInt(fileBytes)) throw refused('failed', 'too-large')
+        const bytes = await handle.readFile()
+        if (bytes.length > fileBytes) throw refused('failed', 'too-large')
+        return { bytes, target }
+      } finally {
+        await handle.close()
+      }
     }
   }
 
@@ -204,13 +222,13 @@ export function createHistory(options: HistoryOptions = {}): History {
     // The paths as judged, each replaced once the gate allows the path a look resolved again
     const paths = targets.map(target => target.relative)
     for (const [at, prepared] of targets.entries()) {
-      const target = await standing(prepared, now => {
+      const judged = (now: Canonical) => {
         const next = paths.with(at, now.relative)
         if (call.judge === undefined || call.judge(next) !== null) return false
         paths[at] = now.relative
         return true
-      })
-      const bytes = await bytesOf(target)
+      }
+      const { bytes, target } = await bytesOf(prepared, await standing(prepared, judged), judged)
       total += bytes?.length ?? 0
       // All of a commit sits in memory at once, so the call as a whole has a cap too
       if (total > commitBytes) throw refused('failed', 'too-large')
