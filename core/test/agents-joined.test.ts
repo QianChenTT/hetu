@@ -117,13 +117,17 @@ async function ask(half: Half, action: string, args: unknown, extra: object = {}
   throw new Error(`no reply to ${action}`)
 }
 
-// The door hands mcp one request on behalf of label and mcp gets it as mcp.handle
+// The door hands mcp one request on behalf of label and mcp gets it as mcp.handle, each delivery taken once
+const taken = new WeakSet<object>()
 async function request(door: Half, mcp: Half, label: string) {
   const id = 5000 + next++
   door.send({ v: 1, kind: 'call', id, action: 'mcp.handle', args: { body: '{}' }, onBehalf: label })
   for (let waited = 0; waited < 3000; waited += 5) {
-    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle' && message.onBehalf === label)
-    if (got !== undefined) return { parent: got.callId as string }
+    const got = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle' && message.onBehalf === label && !taken.has(message))
+    if (got !== undefined) {
+      taken.add(got)
+      return { parent: got.callId as string }
+    }
     await tick(5)
   }
   throw new Error('mcp.handle never arrived')
@@ -171,6 +175,21 @@ describe('agents through the joined core', () => {
     }
     expect(got?.onBehalf).toBe('client#1')
     expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
+  })
+
+  it('lets agent #2 read inside the items its ask was confirmed for, from its next call on, and nothing before', async () => {
+    const { loader, door, mcp } = await joined('on')
+    const before = await request(door, mcp, 'client#2')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
+    const asked = await ask(mcp, 'core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, before)
+    expect(asked.result).toEqual({ asked: 'waiting' })
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
+    await loader.confirm(loader.pending()[0].id, {})
+    const after = await request(door, mcp, 'client#2')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, after))).toBe('inbox text')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, after))).toBe('not-granted')
+    // The call made before the Confirm, still live, is judged on the StateView now too
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('inbox text')
   })
 
   it('refuses the door\'s call for agent #1 policy-down with the gate off before mcp sees it', async () => {

@@ -112,3 +112,63 @@ describe('an agent\'s ask', () => {
     expect(loader.pending()).toEqual([])
   })
 })
+
+describe('the Confirm of an agent\'s ask', () => {
+  const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
+
+  it('adds the items to that label\'s on mcp\'s entry beside granted and hands the gate the next StateView', async () => {
+    const { loader, ask, stored, gate, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#10', capability: inbox }] })
+    await ask('client#1', [write, inbox])
+    await loader.confirm(loader.pending()[0].id, {})
+    const entry = await stored()
+    expect(entry.granted).toEqual([read])
+    expect(entry.agents).toEqual([
+      { agent: 'client#1', capability: inbox }, { agent: 'client#10', capability: inbox }, { agent: 'client#1', capability: write },
+    ])
+    const view = gate.seen.at(-1)!
+    expect(view.agents).toEqual({ 'client#1': [item(inbox), item(write)], 'client#10': [item(inbox)] })
+    expect(view.plugins.mcp).toEqual([item(read)])
+    expect(loader.pending()).toEqual([])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.ask', target: 'mcp', by: 'confirm' }])
+  })
+
+  it('writes and shows an item of a type the tool table never maps, as the entry takes any type', async () => {
+    const { loader, ask, list, stored } = await started()
+    const fetch: Capability = { type: 'net.fetch', hosts: ['example.com'] }
+    await ask('client#1', [fetch])
+    expect((await list()).requests[0].notes[0]).toBe('It asks for: net.fetch to "example.com"')
+    await loader.confirm(loader.pending()[0].id, {})
+    expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: fetch }])
+  })
+
+  it('refuses as stale an ask another write of mcp\'s entry came after, and the agent asks again', async () => {
+    const { loader, ask, stored, link } = await started()
+    await ask('client#1', [inbox])
+    await ask('client#2', [write])
+    const [one, two] = loader.pending()
+    await loader.confirm(one.id, {})
+    expect(await code(loader.confirm(two.id, {}))).toBe('stale')
+    expect(loader.pending()).toEqual([])
+    expect(link.events('security.stale')).toMatchObject([{ kind: 'agent.ask', target: 'mcp' }])
+    expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }])
+    expect(await ask('client#2', [write])).toEqual({ asked: 'waiting' })
+    await loader.confirm(loader.pending()[0].id, {})
+    expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: write }])
+  })
+
+  it('writes nothing for an ask that would put the entry past 256 items in all', async () => {
+    const many = Array.from({ length: 254 }, (_, i) => ({ agent: `client#${i + 1}`, capability: inbox }))
+    const { loader, ask, stored, gate, clock } = await started({ agents: many })
+    const views = gate.seen.length
+    await ask('client#1', [write, read, { type: 'luoshu.list', paths: ['**'] }])
+    expect(await code(loader.confirm(loader.pending()[0].id, {}))).toBe('failed')
+    expect((await stored()).agents).toHaveLength(254)
+    expect(gate.seen).toHaveLength(views)
+    // A Confirm that failed leaves the request for the human to cancel, as any request. Two fit
+    await loader.cancel(loader.pending()[0].id)
+    clock.now += 60_000
+    await ask('client#1', [write, read])
+    await loader.confirm(loader.pending()[0].id, {})
+    expect((await stored()).agents).toHaveLength(256)
+  })
+})

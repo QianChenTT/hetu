@@ -2090,8 +2090,24 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'class.raised':
         return this.answered(change.plugin)
       case 'agent.ask':
-        throw new Error('no writer for an agent\'s items yet')
+        return this.agentGrant(change)
     }
+  }
+
+  // An agent's ask confirmed: its items added to that label's on the agent host's entry in one write through the entry's
+  // own schema, so none are written when one can't be. No class moves, since no agent's item counts as the host's own
+  private async agentGrant(change: AgentAsk): Promise<void> {
+    const entry = this.hostEntry()
+    if (entry === null) throw new Error('the agent host is not on')
+    const items = [...entry.agents ?? []]
+    for (const capability of change.capabilities) {
+      const key = capabilityKey(capability)
+      if (!items.some(item => item.agent === change.agent && capabilityKey(item.capability) === key)) items.push({ agent: change.agent, capability })
+    }
+    const next: Plugin = { ...entry, agents: items }
+    await this.store.writePlugin(agentHost, next)
+    this.putEntry(agentHost, next)
+    this.bump()
   }
 
   // A capability added to a folder plugin's entry or taken out with its switch. Adding one it holds changes nothing
