@@ -129,10 +129,9 @@ describe('an agent\'s label down a chain of calls', () => {
       ;(got as { seen?: boolean }).seen = true
       expect(got.onBehalf).toBe('client#1')
       expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: got.callId as string }))).toBe('not-granted')
-      mcp.call('search.query', {}, { parent: got.callId as string })
+      expect(code(await mcp.ask('search.query', {}, { parent: got.callId as string }))).toBe('not-granted')
     }
-    await until(() => asked(gate, 'search.query').length === 4)
-    expect(asked(gate, 'search.query').map(access => [access.onBehalf, access.agent])).toEqual(Array(4).fill(['client#1', undefined]))
+    expect(asked(gate, 'search.query')).toEqual([])
     const { parent } = await handled(door, mcp, null)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('not-granted')
     expect(gate.asked.filter(access => access.agent !== undefined)).toEqual([])
@@ -150,6 +149,44 @@ describe('mcp\'s reach into notes, history and leases', () => {
     expect(luoshu.prepared).toEqual([])
     expect((await mcp.ask('storage.set', { key: 'k', value: 1 })).ok).toBe(true)
     expect((await mcp.ask('core.self')).result).toEqual(worker('mcp'))
+  })
+
+  it('refuses mcp\'s call to another plugin, to exec and its subscribe to another plugin\'s topic with no parent and delivers nothing', async () => {
+    const { mcp, search, beta, loader, gate } = agents()
+    loader.installed('exec')
+    loader.plugins.mcp.topics = ['seen']
+    gate.grants.mcp.push({ type: 'exec', commands: [['cat', 'private/b.md']], env: [] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'search.found'] })
+    expect(code(await mcp.ask('search.query', {}))).toBe('not-granted')
+    expect(code(await mcp.ask('beta.go', {}))).toBe('not-granted')
+    expect(code(await mcp.ask('exec.run', { command: ['cat', 'private/b.md'] }))).toBe('not-granted')
+    expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe('not-granted')
+    expect(code(await mcp.ask('events.subscribe', { topics: ['mcp.seen', 'search.found'] }))).toBe('not-granted')
+    for (const side of [search, beta]) expect(side.inbox.filter(message => message.kind === 'call')).toEqual([])
+    // Its own space, its own view and its own topic stay its own. Nothing of it reached the gate
+    expect((await mcp.ask('cache.set', { key: 'k', value: 1 })).ok).toBe(true)
+    expect((await mcp.ask('core.self')).ok).toBe(true)
+    expect((await mcp.ask('events.subscribe', { topics: ['mcp.seen'] })).ok).toBe(true)
+    expect((await mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    expect(gate.asked.filter(access => access.caller.kind === 'plugin' && access.caller.id === 'mcp')).toEqual([])
+  })
+
+  it('refuses mcp\'s call to another plugin with the parent left out while an agent\'s call from the door is live', async () => {
+    const { door, mcp, search } = agents()
+    const { parent } = await handled(door, mcp, 'client#1')
+    expect(code(await mcp.ask('search.query', {}))).toBe('not-granted')
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
+    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
+    // The same under the chain is the agent's and goes on
+    mcp.call('search.query', {}, parent)
+    expect((await search.delivered('search.query')).onBehalf).toBe('client#1')
+  })
+
+  it('refuses mcp\'s subscribe to another plugin\'s topic under an agent\'s call, since a subscription outlives the call', async () => {
+    const { door, mcp, gate } = agents()
+    gate.grants.mcp.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
+    const { parent } = await handled(door, mcp, 'client#1')
+    expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }, parent))).toBe('not-granted')
+    expect(gate.asked.filter(access => access.action === 'events.subscribe')).toEqual([])
   })
 
   it('refuses mcp\'s luoshu call under a parent from another plugin than http\'s host half', async () => {
@@ -274,6 +311,7 @@ function gated() {
         { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false },
       ],
       search: items('**'),
+      beta: [{ capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
     }),
     agents: table({
       'client#1': [...items('inbox/**', 'secret/**', 'asks/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
@@ -326,7 +364,8 @@ describe('the gate over an agent\'s call, in every gate state', () => {
       expect(code(await mcp.ask('storage.set', { key: 'k', value: 1 }, parent))).toBe(down)
       expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe(down)
       expect(code(await mcp.ask('core.self', undefined, parent))).toBe(down)
-      expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }, parent))).toBe(down)
+      // A subscribe of mcp's to another plugin's topic is refused at the floor before the gate's state is read
+      expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }, parent))).toBe('not-granted')
       // mcp's own free call with no parent is its own and free whatever the gate's state, as any plugin's
       expect((await mcp.ask('storage.set', { key: 'k', value: 1 })).ok).toBe(true)
     }
@@ -396,9 +435,9 @@ describe('what an agent may read and list through mcp', () => {
   })
 
   it('keeps filtering for a plugin\'s own call as before, every path with the gate off, while an agent\'s answers policy-down', async () => {
-    const { door, mcp, search, loader } = gated()
+    const { door, mcp, search, beta, loader } = gated()
     const one = await handled(door, mcp, 'client#1')
-    mcp.call('search.query', {})
+    beta.call('search.query', {})
     const plain = await search.delivered('search.query')
     loader.slots.gate = 'off'
     expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')

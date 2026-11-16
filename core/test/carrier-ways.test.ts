@@ -196,13 +196,13 @@ describe('the end of a way in', () => {
   it('reports a port closed under its plugin as crashed and answers the calls it held crashed', async () => {
     const { connect, loader, gate } = harness()
     loader.sandboxed('search', { query: {} })
-    gate.grants.mcp = [{ type: 'plugin.call', targets: ['search'] }]
-    const mcp = connect(worker('mcp'))
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
+    const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
-    const id = mcp.call('search.query', { text: 'x' })
+    const id = scribe.call('search.query', { text: 'x' })
     await search.delivered('search.query')
     search.port.close()
-    const reply = await mcp.reply(id)
+    const reply = await scribe.reply(id)
     expect(code(reply)).toBe('crashed')
     expect(loader.crashes).toEqual([{ caller: worker('search'), reason: 'closed' }])
   })
@@ -223,13 +223,13 @@ describe('the end of a way in', () => {
   it('answers the calls a planned stop held with stopped', async () => {
     const { carrier, connect, loader, gate } = harness()
     loader.sandboxed('search', { query: {} })
-    gate.grants.mcp = [{ type: 'plugin.call', targets: ['search'] }]
-    const mcp = connect(worker('mcp'))
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
+    const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
-    const id = mcp.call('search.query')
+    const id = scribe.call('search.query')
     await search.delivered('search.query')
     carrier.end(worker('search'))
-    expect(code(await mcp.reply(id))).toBe('stopped')
+    expect(code(await scribe.reply(id))).toBe('stopped')
   })
 })
 

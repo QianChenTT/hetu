@@ -14,7 +14,7 @@ import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
-  agentDoor, agentHost, agentOnly, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
+  agentDoor, agentHost, agentOwn, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
   type Sample, type Scope, type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
@@ -688,13 +688,15 @@ export class Carrier {
   }
 
   // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
-  // the agent host held to the door's calls for the notes and the free actions that skip the gate. Never asks the gate
+  // the agent host held to the door's calls past its own and the free actions that skip the gate. Never asks the gate
   private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
     const { caller } = way
     const trusted = caller.kind === 'window' && caller.role === 'trusted'
-    // Only for an agent whose call from the door is live, so the agent host acts on notes for no one else
+    // The agent host reaches a provider but its own storage and a plugin but itself only for an agent whose call from
+    // the door is live, so a plugin that reads for it can't read for no one
     const host = caller.kind === 'plugin' && caller.id === agentHost
-    if (host && target.kind === 'provider' && isOne(agentOnly, target.provider) && agent === undefined) return { code: 'not-granted' }
+    const beyond = target.kind === 'provider' ? !isOne(agentOwn, target.provider) : target.kind === 'plugin' && target.target !== agentHost
+    if (host && beyond && agent === undefined) return { code: 'not-granted' }
     if (target.kind === 'core') {
       const { from } = target.spec
       const admitted = from === 'any'
@@ -705,7 +707,12 @@ export class Carrier {
       // A from with no rule here refuses every caller
       return admitted ? { kind: 'core' } : { code: 'not-granted' }
     }
-    if (target.kind === 'events') return this.eventsFloor(caller, target.action, args)
+    if (target.kind === 'events') {
+      // A subscription outlives the call it was made under and what it delivers is filtered for the subscriber alone,
+      // so the agent host subscribes to no topic but its own, under an agent's call or not
+      const kind = this.eventsFloor(caller, target.action, args)
+      return host && 'kind' in kind && kind.kind === 'power' ? { code: 'not-granted' } : kind
+    }
     // The trusted window holds core actions and the core topics only and never note content
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }

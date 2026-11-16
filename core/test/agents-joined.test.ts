@@ -35,12 +35,15 @@ async function joined(gate: 'on' | 'off') {
   await writeFile(path.join(folder, 'private', 'b.md'), 'SECRET')
   // A link in inbox that leads into private. A junction, which Windows makes with no admin rights
   await symlink(path.join(folder, 'private'), path.join(folder, 'inbox', 'link'), 'junction')
-  const mcp = filesFor(workerManifest('mcp', { capabilities: [everything], provides: { actions: { handle: { from: ['http'] } } } }))
+  const mcpGrant: Capability[] = [everything, { type: 'plugin.call', targets: ['search'] }]
+  const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant, provides: { actions: { handle: { from: ['http'] } } } }))
+  const search = filesFor(workerManifest('search', { capabilities: [everything], provides: { actions: { query: {} } } }))
   await writeInstall(installDir, {
     ...coreInstall(),
     luoshu: { files: filesFor(hostManifest('luoshu')) },
     http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcp, firstParty: true },
+    search: { files: search, firstParty: true },
   })
   const store = new StateStore(dataDir)
   await store.writeSwitches(gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
@@ -48,11 +51,15 @@ async function joined(gate: 'on' | 'off') {
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
   await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), {
-    granted: [everything], class: 1, agents: [
+    granted: mcpGrant, class: 1, agents: [
       { agent: 'client#1', capability: { type: 'luoshu.read', paths: ['inbox/**'] } },
+      { agent: 'client#1', capability: { type: 'plugin.call', targets: ['search'] } },
       { agent: 'client#3', capability: { type: 'luoshu.read', paths: ['inbox/**', 'INBOX/**'] } },
     ],
   }))
+  const searchRoot = path.join(dataDir, 'plugins', 'search')
+  await writeFolder(searchRoot, search)
+  await store.writePlugin('search', firstPartyEntry(await hashOf(searchRoot), { granted: [everything], class: 1 }))
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
   // Runs once before the next perform, as another program acting on the folder between prepare and perform
@@ -81,7 +88,7 @@ async function joined(gate: 'on' | 'off') {
   })
   await loader.start()
   await loader.settled()
-  return { loader, runtime, folder, hooks, door: runtime.half('http', 1, 'utility'), mcp: runtime.half('mcp') }
+  return { loader, runtime, folder, hooks, door: runtime.half('http', 1, 'utility'), mcp: runtime.half('mcp'), search: runtime.half('search') }
 }
 
 // A folder renamed under the luoshu's watch, which can hold it open for a moment on Windows
@@ -145,6 +152,25 @@ describe('agents through the joined core', () => {
     expect((await ask(mcp, 'luoshu.list', {}, { parent })).result).toEqual({ paths: [], next: null })
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
     expect(outcome(await ask(mcp, 'luoshu.list', {}))).toBe('not-granted')
+  })
+
+  it('refuses mcp\'s search with no call from the door live and filters search\'s answer for agent #1 under its call', async () => {
+    const { door, mcp, search } = await joined('on')
+    const notes = ['inbox/a.md', 'private/b.md']
+    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }))).toBe('not-granted')
+    const { parent } = await request(door, mcp, 'client#1')
+    // The parent left out while agent #1's call is live
+    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }))).toBe('not-granted')
+    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
+    const id = 5000 + next++
+    mcp.send({ v: 1, kind: 'call', id, action: 'search.query', args: { text: 'SECRET' }, parent })
+    let got: Message | undefined
+    for (let waited = 0; got === undefined && waited < 3000; waited += 5) {
+      got = search.inbox.find(message => message.kind === 'call' && message.action === 'search.query')
+      if (got === undefined) await tick(5)
+    }
+    expect(got?.onBehalf).toBe('client#1')
+    expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
   })
 
   it('refuses agent #1 both notes with the gate off, while the door\'s own call still reaches mcp', async () => {

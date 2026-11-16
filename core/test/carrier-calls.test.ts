@@ -7,17 +7,17 @@ import { cleanup, code, editor, FakeGuard, harness, host, hostHalf, tick, window
 
 afterEach(cleanup)
 
-// search serves query, git serves log and mcp serves handle for http only
+// search serves query, git serves log and scribe serves handle for http only
 function plugins(over: Partial<CarrierOptions> = {}) {
   const parts = harness(over)
   const { loader, gate, connect } = parts
   loader.sandboxed('search', { query: {} })
   loader.sandboxed('git', { log: {} })
-  loader.sandboxed('mcp', { handle: { from: ['http'] } })
-  gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
-  gate.grants.mcp = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+  loader.sandboxed('scribe', { handle: { from: ['http'] } })
+  gate.grants.http = [{ type: 'plugin.call', targets: ['scribe'] }]
+  gate.grants.scribe = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
   gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }, { type: 'luoshu.read', paths: ['notes/**', 'private/**'] }]
-  return { ...parts, http: connect(worker('http')), mcp: connect(worker('mcp')), search: connect(worker('search')), git: connect(worker('git')) }
+  return { ...parts, http: connect(worker('http')), scribe: connect(worker('scribe')), search: connect(worker('search')), git: connect(worker('git')) }
 }
 
 // The delivery a callee got for the nth call of an action
@@ -25,40 +25,40 @@ const deliveries = (side: Side, action: string) => side.inbox.filter(message => 
 
 describe('plugin.call', () => {
   it('mints a random call id in the token grammar for every call', async () => {
-    const { mcp } = plugins()
-    const replies = await Promise.all(Array.from({ length: 50 }, () => mcp.ask('core.self')))
+    const { scribe } = plugins()
+    const replies = await Promise.all(Array.from({ length: 50 }, () => scribe.ask('core.self')))
     const ids = replies.map(reply => reply.callId)
     expect(ids.every(id => token.safeParse(id).success)).toBe(true)
     expect(new Set(ids).size).toBe(50)
   })
 
   it('hands the callee the caller and onBehalf with the call id the caller\'s reply carries', async () => {
-    const { http, mcp } = plugins()
+    const { http, scribe } = plugins()
     const started = Date.now()
-    const id = http.call('mcp.handle', { tool: 'read' }, { onBehalf: 'https://client.example/agent-a' })
-    const got = await mcp.delivered('mcp.handle')
+    const id = http.call('scribe.handle', { tool: 'read' }, { onBehalf: 'https://client.example/agent-a' })
+    const got = await scribe.delivered('scribe.handle')
     expect(delivery.safeParse(got).success).toBe(true)
     expect(got).toMatchObject({ caller: worker('http'), onBehalf: 'https://client.example/agent-a', args: { tool: 'read' } })
     expect(got.deadline).toBeGreaterThanOrEqual(started + 30000)
     expect(got.deadline).toBeLessThan(started + 31000)
-    mcp.answer(got.callId, { ok: 1 })
+    scribe.answer(got.callId, { ok: 1 })
     const reply = await http.reply(id)
     expect(reply).toMatchObject({ ok: true, result: { ok: 1 }, callId: got.callId })
   })
 
   it('lets only the callers a declared from names reach the action, the plugin\'s own halves aside', async () => {
-    const { http, search, mcp, connect, loader, carrier } = plugins()
-    expect(code(await search.ask('mcp.handle'))).toBe('not-granted')
-    http.call('mcp.handle')
-    await mcp.delivered('mcp.handle')
-    const panel = connect({ kind: 'plugin', id: 'mcp', half: 'consent', incarnation: 1 })
-    panel.call('mcp.handle')
+    const { http, search, scribe, connect, loader, carrier } = plugins()
+    expect(code(await search.ask('scribe.handle'))).toBe('not-granted')
+    http.call('scribe.handle')
+    await scribe.delivered('scribe.handle')
+    const panel = connect({ kind: 'plugin', id: 'scribe', half: 'consent', incarnation: 1 })
+    panel.call('scribe.handle')
     await tick()
-    expect(deliveries(mcp, 'mcp.handle')).toHaveLength(2)
+    expect(deliveries(scribe, 'scribe.handle')).toHaveLength(2)
     // A window is never in from, even with the gate off
     loader.slots.gate = 'off'
     const way = windowWay(carrier, { 'editor-1': editor })
-    expect(code(await way.ask('editor-1', 'mcp.handle'))).toBe('not-granted')
+    expect(code(await way.ask('editor-1', 'scribe.handle'))).toBe('not-granted')
   })
 
   it.each([
@@ -69,31 +69,31 @@ describe('plugin.call', () => {
     ['waiting', 'unavailable'],
     ['crashed', 'unavailable'],
   ] as const)('answers a call to a %s target %s at once', async (state, expected) => {
-    const { mcp, git, loader } = plugins()
+    const { scribe, git, loader } = plugins()
     loader.sandboxed('git', { log: {} }, state)
     const started = Date.now()
-    expect(code(await mcp.ask('git.log'))).toBe(expected)
+    expect(code(await scribe.ask('git.log'))).toBe(expected)
     expect(Date.now() - started).toBeLessThan(1000)
     expect(deliveries(git, 'git.log')).toEqual([])
   })
 
   it('answers unavailable for a ready target whose serving half has no way in', async () => {
-    const { mcp, loader } = plugins()
+    const { scribe, loader } = plugins()
     loader.sandboxed('git', { log: {} }, 'ready', 2)
-    expect(code(await mcp.ask('git.log'))).toBe('unavailable')
+    expect(code(await scribe.ask('git.log'))).toBe('unavailable')
   })
 
   it('ignores a reply on any port but the one the call was delivered on', async () => {
-    const { mcp, search, git } = plugins()
-    const id = mcp.call('search.query', { text: 'x' })
+    const { scribe, search, git } = plugins()
+    const id = scribe.call('search.query', { text: 'x' })
     const got = await search.delivered('search.query')
     git.answer(got.callId, ['forged.md'])
-    mcp.answer(got.callId, ['mine.md'])
+    scribe.answer(got.callId, ['mine.md'])
     git.post({ v: 1, kind: 'reply', callId: got.callId, ok: false, refusal: { code: 'not-granted', action: 'search.query' } })
     await tick(20)
-    expect(mcp.repliesTo(id)).toEqual([])
+    expect(scribe.repliesTo(id)).toEqual([])
     search.answer(got.callId, ['a.md'])
-    expect((await mcp.reply(id)).result).toEqual(['a.md'])
+    expect((await scribe.reply(id)).result).toEqual(['a.md'])
   })
 
   // Codes such as policy-down or switched-off describe the core's own state for the caller's call. A plugin that sends
@@ -104,73 +104,73 @@ describe('plugin.call', () => {
     ['policy-down', 'failed'], ['switched-off', 'failed'], ['needs-confirm', 'failed'], ['guard-down', 'failed'],
     ['guard-refused', 'failed'], ['starting', 'failed'], ['stopped', 'failed'], ['crashed', 'failed'], ['tampered', 'failed'],
   ])('passes a callee\'s %s on as %s', async (sent, answered) => {
-    const { mcp, search } = plugins()
-    const id = mcp.call('search.query', { text: 'x' })
+    const { scribe, search } = plugins()
+    const id = scribe.call('search.query', { text: 'x' })
     const got = await search.delivered('search.query')
     search.post({ v: 1, kind: 'reply', callId: got.callId, ok: false, refusal: { code: sent, action: 'search.query' } })
-    expect(code(await mcp.reply(id))).toBe(answered)
+    expect(code(await scribe.reply(id))).toBe(answered)
   })
 
   it('keeps a callee\'s too-large and drops any other reason', async () => {
-    const { mcp, search } = plugins()
-    const first = mcp.call('search.query', { text: 'x' })
+    const { scribe, search } = plugins()
+    const first = scribe.call('search.query', { text: 'x' })
     const one = await search.delivered('search.query')
     search.post({ v: 1, kind: 'reply', callId: one.callId, ok: false, refusal: { code: 'invalid', action: 'search.query', reason: 'too-large' } })
-    expect((await mcp.reply(first)).refusal).toEqual({ code: 'invalid', action: 'search.query', reason: 'too-large' })
-    const second = mcp.call('search.query', { text: 'y' })
+    expect((await scribe.reply(first)).refusal).toEqual({ code: 'invalid', action: 'search.query', reason: 'too-large' })
+    const second = scribe.call('search.query', { text: 'y' })
     await search.waitFor(message => message.kind === 'call' && message.callId !== one.callId)
     const two = search.inbox.filter(message => message.kind === 'call').at(-1)!
     search.post({ v: 1, kind: 'reply', callId: two.callId, ok: false, refusal: { code: 'failed', action: 'search.query', reason: 'declined' } })
-    expect((await mcp.reply(second)).refusal).toEqual({ code: 'failed', action: 'search.query' })
+    expect((await scribe.reply(second)).refusal).toEqual({ code: 'failed', action: 'search.query' })
   })
 
   it('ignores a reply from a new incarnation for a call the old one was given', async () => {
-    const { mcp, search, connect, loader } = plugins()
-    const id = mcp.call('search.query')
+    const { scribe, search, connect, loader } = plugins()
+    const id = scribe.call('search.query')
     const got = await search.delivered('search.query')
     loader.sandboxed('search', { query: {} }, 'ready', 2)
     const again = connect(worker('search', 2))
     again.answer(got.callId, ['forged.md'])
     await tick(20)
-    expect(mcp.repliesTo(id)).toEqual([])
+    expect(scribe.repliesTo(id)).toEqual([])
     search.answer(got.callId, ['a.md'])
-    expect((await mcp.reply(id)).result).toEqual(['a.md'])
+    expect((await scribe.reply(id)).result).toEqual(['a.md'])
   })
 
   it('drops a second answer and an answer outside the schema fails the call', async () => {
-    const { mcp, search } = plugins()
-    const one = mcp.call('search.query')
+    const { scribe, search } = plugins()
+    const one = scribe.call('search.query')
     const first = await search.delivered('search.query')
     search.answer(first.callId, 1)
     search.answer(first.callId, 2)
-    expect((await mcp.reply(one)).result).toBe(1)
-    const two = mcp.call('search.query')
+    expect((await scribe.reply(one)).result).toBe(1)
+    const two = scribe.call('search.query')
     await tick(10)
     const second = deliveries(search, 'search.query')[1]
     search.post({ v: 1, kind: 'reply', callId: second.callId, ok: true, result: 1, extra: true })
-    expect(code(await mcp.reply(two))).toBe('failed')
+    expect(code(await scribe.reply(two))).toBe('failed')
     await tick(10)
-    expect(mcp.repliesTo(one)).toHaveLength(1)
+    expect(scribe.repliesTo(one)).toHaveLength(1)
   })
 
   it('hands on neither a needs-confirm nor a request id a callee made up', async () => {
-    const { mcp, search } = plugins()
-    const id = mcp.call('search.query')
+    const { scribe, search } = plugins()
+    const id = scribe.call('search.query')
     const got = await search.delivered('search.query')
     search.post({
       v: 1, kind: 'reply', callId: got.callId, ok: false,
       refusal: { code: 'needs-confirm', action: 'luoshu.write', reason: 'declined', request: 'fake-request' },
     })
-    expect((await mcp.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query' })
+    expect((await scribe.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query' })
   })
 
   it('fails a callee result past its cap with too-large', async () => {
-    const { mcp, search, loader } = plugins()
+    const { scribe, search, loader } = plugins()
     loader.human.plugins.search = { resultBytes: 64 }
-    const id = mcp.call('search.query')
+    const id = scribe.call('search.query')
     const got = await search.delivered('search.query')
     search.answer(got.callId, 'x'.repeat(100))
-    expect((await mcp.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query', reason: 'too-large' })
+    expect((await scribe.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query', reason: 'too-large' })
   })
 
   // A loader whose actions is not an object throws outside every step's own try
@@ -187,27 +187,27 @@ describe('plugin.call', () => {
 
 describe('parent', () => {
   it('takes a parent only for a live call delivered on the same port', async () => {
-    const { http, mcp, git, search } = plugins()
-    const id = http.call('mcp.handle')
-    const got = await mcp.delivered('mcp.handle')
-    // Foreign: delivered to mcp, named by others
+    const { http, scribe, git, search } = plugins()
+    const id = http.call('scribe.handle')
+    const got = await scribe.delivered('scribe.handle')
+    // Foreign: delivered to scribe, named by others
     expect(code(await git.ask('search.query', undefined, { parent: got.callId }))).toBe('invalid')
     expect(code(await http.ask('core.self', undefined, { parent: got.callId }))).toBe('invalid')
     expect(code(await search.ask('git.log', undefined, { parent: got.callId }))).toBe('invalid')
-    expect(code(await mcp.ask('core.self', undefined, { parent: 'no-such-call' }))).toBe('invalid')
-    expect((await mcp.ask('core.self', undefined, { parent: got.callId })).ok).toBe(true)
-    mcp.answer(got.callId, null)
+    expect(code(await scribe.ask('core.self', undefined, { parent: 'no-such-call' }))).toBe('invalid')
+    expect((await scribe.ask('core.self', undefined, { parent: got.callId })).ok).toBe(true)
+    scribe.answer(got.callId, null)
     await http.reply(id)
     // Over once answered
-    expect(code(await mcp.ask('core.self', undefined, { parent: got.callId }))).toBe('invalid')
+    expect(code(await scribe.ask('core.self', undefined, { parent: got.callId }))).toBe('invalid')
   })
 
   it('shrinks the deadline along parent', async () => {
-    const { http, mcp, git, loader } = plugins()
+    const { http, scribe, git, loader } = plugins()
     loader.human.plugins.http = { callDeadlineMs: 5000 }
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    mcp.call('git.log', undefined, { parent: parent.callId })
+    http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    scribe.call('git.log', undefined, { parent: parent.callId })
     const child = await git.delivered('git.log')
     expect(child.deadline).toBe(parent.deadline)
     expect(parent.deadline as number).toBeLessThan(Date.now() + 5001)
@@ -247,16 +247,16 @@ describe('parent', () => {
   })
 
   it('names the caller itself in core.self under a parent, never the root', async () => {
-    const { http, mcp } = plugins()
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    expect((await mcp.ask('core.self', undefined, { parent: parent.callId })).result).toEqual(worker('mcp'))
+    const { http, scribe } = plugins()
+    http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    expect((await scribe.ask('core.self', undefined, { parent: parent.callId })).result).toEqual(worker('scribe'))
   })
 
   it('hands a provider the parent of a sub-call', async () => {
-    const { mcp, search, luoshu } = plugins()
+    const { scribe, search, luoshu } = plugins()
     luoshu.files.set('notes/a.md', 'x')
-    mcp.call('search.query')
+    scribe.call('search.query')
     const parent = await search.delivered('search.query')
     expect((await search.ask('luoshu.read', { path: 'notes/a.md' }, { parent: parent.callId })).ok).toBe(true)
     expect(luoshu.prepared[0].parent).toBe(parent.callId)
@@ -265,138 +265,138 @@ describe('parent', () => {
   // The parent's timer may not have run yet, say when a host half kept main busy past the deadline
   it('refuses a sub-call under a parent already past its deadline', async () => {
     let clock = 1_000_000
-    const { http, mcp, git, loader } = plugins({ clock: () => clock })
+    const { http, scribe, git, loader } = plugins({ clock: () => clock })
     loader.human.plugins.http = { callDeadlineMs: 5000 }
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
+    http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
     clock += 5000
-    expect(code(await mcp.ask('git.log', undefined, { parent: parent.callId }))).toBe('invalid')
+    expect(code(await scribe.ask('git.log', undefined, { parent: parent.callId }))).toBe('invalid')
     expect(deliveries(git, 'git.log')).toEqual([])
   })
 })
 
 describe('deadlines and cancel', () => {
   it('times a call out, cancels its sub-calls and drops their late replies', async () => {
-    const { http, mcp, git, loader } = plugins()
+    const { http, scribe, git, loader } = plugins()
     loader.human.plugins.http = { callDeadlineMs: 80 }
-    const id = http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    const sub = mcp.call('git.log', undefined, { parent: parent.callId })
+    const id = http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    const sub = scribe.call('git.log', undefined, { parent: parent.callId })
     const child = await git.delivered('git.log')
     expect(code(await http.reply(id, 1000))).toBe('timeout')
-    expect(code(await mcp.reply(sub))).toBe('timeout')
-    await mcp.waitFor(message => message.kind === 'cancel' && message.callId === parent.callId)
+    expect(code(await scribe.reply(sub))).toBe('timeout')
+    await scribe.waitFor(message => message.kind === 'cancel' && message.callId === parent.callId)
     await git.waitFor(message => message.kind === 'cancel' && message.callId === child.callId)
     git.answer(child.callId, 'late')
-    mcp.answer(parent.callId, 'late')
+    scribe.answer(parent.callId, 'late')
     await tick(20)
-    expect(mcp.repliesTo(sub)).toHaveLength(1)
+    expect(scribe.repliesTo(sub)).toHaveLength(1)
     expect(http.repliesTo(id)).toHaveLength(1)
   })
 
   it('cancels a call by its own id, with every sub-call under it', async () => {
-    const { http, mcp, git, search } = plugins()
-    const id = http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    const toSearch = mcp.call('search.query', undefined, { parent: parent.callId })
+    const { http, scribe, git, search } = plugins()
+    const id = http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    const toSearch = scribe.call('search.query', undefined, { parent: parent.callId })
     const atSearch = await search.delivered('search.query')
     const toGit = search.call('git.log', undefined, { parent: atSearch.callId })
     const atGit = await git.delivered('git.log')
-    // Not mcp's own call, so this cancel finds nothing
-    mcp.post({ v: 1, kind: 'cancel', id })
+    // Not scribe's own call, so this cancel finds nothing
+    scribe.post({ v: 1, kind: 'cancel', id })
     await tick(10)
     expect(http.repliesTo(id)).toEqual([])
     http.post({ v: 1, kind: 'cancel', id })
     expect(code(await http.reply(id))).toBe('stopped')
-    expect(code(await mcp.reply(toSearch))).toBe('stopped')
+    expect(code(await scribe.reply(toSearch))).toBe('stopped')
     expect(code(await search.reply(toGit))).toBe('stopped')
-    for (const [side, callId] of [[mcp, parent.callId], [search, atSearch.callId], [git, atGit.callId]] as const) {
+    for (const [side, callId] of [[scribe, parent.callId], [search, atSearch.callId], [git, atGit.callId]] as const) {
       await side.waitFor(message => message.kind === 'cancel' && message.callId === callId)
     }
     git.answer(atGit.callId, 'late')
     search.answer(atSearch.callId, 'late')
     await tick(20)
     expect(search.repliesTo(toGit)).toHaveLength(1)
-    expect(mcp.repliesTo(toSearch)).toHaveLength(1)
+    expect(scribe.repliesTo(toSearch)).toHaveLength(1)
   })
 
   it('cancels the sub-calls a crashed plugin had in flight', async () => {
-    const { http, mcp, git } = plugins()
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    mcp.call('git.log', undefined, { parent: parent.callId })
+    const { http, scribe, git } = plugins()
+    http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    scribe.call('git.log', undefined, { parent: parent.callId })
     const child = await git.delivered('git.log')
-    mcp.port.close()
+    scribe.port.close()
     await git.waitFor(message => message.kind === 'cancel' && message.callId === child.callId)
   })
 
   // Nothing done under a call outlives it: work a callee wants to keep doing after answering runs as its own calls
   it('cancels the live sub-calls of a call once it is answered', async () => {
-    const { http, mcp, git } = plugins()
-    const id = http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    const sub = mcp.call('git.log', undefined, { parent: parent.callId })
+    const { http, scribe, git } = plugins()
+    const id = http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    const sub = scribe.call('git.log', undefined, { parent: parent.callId })
     const child = await git.delivered('git.log')
-    mcp.answer(parent.callId, 'done')
+    scribe.answer(parent.callId, 'done')
     expect((await http.reply(id)).ok).toBe(true)
-    expect(code(await mcp.reply(sub))).toBe('stopped')
+    expect(code(await scribe.reply(sub))).toBe('stopped')
     await git.waitFor(message => message.kind === 'cancel' && message.callId === child.callId)
     git.answer(child.callId, 'late')
     await tick(20)
-    expect(mcp.repliesTo(sub)).toHaveLength(1)
+    expect(scribe.repliesTo(sub)).toHaveLength(1)
   })
 
   it('frees the root caller\'s ceiling once the answered call\'s sub-calls are cancelled', async () => {
-    const { http, mcp, loader } = plugins()
+    const { http, scribe, loader } = plugins()
     loader.human.plugins.http = { callsInFlight: 2 }
-    const id = http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    mcp.call('git.log', undefined, { parent: parent.callId })
+    const id = http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    scribe.call('git.log', undefined, { parent: parent.callId })
     await tick(10)
-    mcp.answer(parent.callId, 'done')
+    scribe.answer(parent.callId, 'done')
     await http.reply(id)
-    http.call('mcp.handle')
-    http.call('mcp.handle')
-    for (let i = 0; i < 100 && deliveries(mcp, 'mcp.handle').length < 3; i++) await tick(5)
-    expect(deliveries(mcp, 'mcp.handle')).toHaveLength(3)
+    http.call('scribe.handle')
+    http.call('scribe.handle')
+    for (let i = 0; i < 100 && deliveries(scribe, 'scribe.handle').length < 3; i++) await tick(5)
+    expect(deliveries(scribe, 'scribe.handle')).toHaveLength(3)
     expect(http.inbox.filter(message => code(message) === 'throttled')).toEqual([])
   })
 
   it('leaves the sub-calls of other calls from the same caller running', async () => {
-    const { http, mcp, git } = plugins()
-    const first = http.call('mcp.handle')
-    http.call('mcp.handle')
-    for (let i = 0; i < 100 && deliveries(mcp, 'mcp.handle').length < 2; i++) await tick(5)
-    const [one, two] = deliveries(mcp, 'mcp.handle')
-    mcp.call('git.log', undefined, { parent: one.callId })
-    const kept = mcp.call('git.log', undefined, { parent: two.callId })
+    const { http, scribe, git } = plugins()
+    const first = http.call('scribe.handle')
+    http.call('scribe.handle')
+    for (let i = 0; i < 100 && deliveries(scribe, 'scribe.handle').length < 2; i++) await tick(5)
+    const [one, two] = deliveries(scribe, 'scribe.handle')
+    scribe.call('git.log', undefined, { parent: one.callId })
+    const kept = scribe.call('git.log', undefined, { parent: two.callId })
     for (let i = 0; i < 100 && deliveries(git, 'git.log').length < 2; i++) await tick(5)
-    mcp.answer(one.callId, 'done')
+    scribe.answer(one.callId, 'done')
     await http.reply(first)
     const atGit = deliveries(git, 'git.log')[1]
     git.answer(atGit.callId, 'entries')
-    expect((await mcp.reply(kept)).result).toBe('entries')
+    expect((await scribe.reply(kept)).result).toBe('entries')
   })
 
   it('still lets a callee make calls of its own with no parent after it answered', async () => {
-    const { http, mcp, git } = plugins()
-    const id = http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    mcp.answer(parent.callId, 'done')
+    const { http, scribe, git } = plugins()
+    const id = http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    scribe.answer(parent.callId, 'done')
     await http.reply(id)
-    const own = mcp.call('git.log')
+    const own = scribe.call('git.log')
     const atGit = await git.delivered('git.log')
     git.answer(atGit.callId, 'entries')
-    expect((await mcp.reply(own)).result).toBe('entries')
+    expect((await scribe.reply(own)).result).toBe('entries')
   })
 
   // A call with no parent, which only the list of calls the way made can reach
   it.each([
-    ['crashes', (parts: ReturnType<typeof plugins>) => parts.mcp.port.close()],
-    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.carrier.end(worker('mcp'))],
+    ['crashes', (parts: ReturnType<typeof plugins>) => parts.scribe.port.close()],
+    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.carrier.end(worker('scribe'))],
   ])('tells the callee at once when the plugin that made a call %s', async (_name, end) => {
     const parts = plugins()
-    parts.mcp.call('search.query')
+    parts.scribe.call('search.query')
     const got = await parts.search.delivered('search.query')
     end(parts)
     await parts.search.waitFor(message => message.kind === 'cancel' && message.callId === got.callId, 500)
@@ -423,22 +423,22 @@ describe('deadlines and cancel', () => {
 
   // Past the longest delay a timer takes, Node would fire the timer at once
   it('holds a deadline raised past the longest timer to the longest timer', async () => {
-    const { http, mcp, loader } = plugins()
+    const { http, scribe, loader } = plugins()
     loader.human.plugins.http = { callDeadlineMs: 30 * 24 * 3600 * 1000 }
-    const id = http.call('mcp.handle')
-    const got = await mcp.delivered('mcp.handle')
+    const id = http.call('scribe.handle')
+    const got = await scribe.delivered('scribe.handle')
     await tick(50)
     expect(http.repliesTo(id)).toEqual([])
     expect(got.deadline as number).toBeLessThanOrEqual(Date.now() + MAX_TIMER_MS)
-    mcp.answer(got.callId, null)
+    scribe.answer(got.callId, null)
     expect((await http.reply(id)).ok).toBe(true)
   })
 
   it('keeps a delivered deadline a safe integer whatever deadline the human\'s limits hold', async () => {
-    const { http, mcp, loader } = plugins()
+    const { http, scribe, loader } = plugins()
     loader.human.all = { callDeadlineMs: Number.MAX_SAFE_INTEGER }
-    const id = http.call('mcp.handle')
-    const got = await mcp.delivered('mcp.handle')
+    const id = http.call('scribe.handle')
+    const got = await scribe.delivered('scribe.handle')
     expect(delivery.safeParse(got).success).toBe(true)
     await tick(20)
     expect(http.repliesTo(id)).toEqual([])
@@ -478,13 +478,13 @@ describe('deadlines and cancel', () => {
 
   it('delivers no plugin call the gate ran past its deadline', async () => {
     let clock = 1_000_000
-    const { mcp, search, gate, loader } = plugins({ clock: () => clock })
-    loader.human.plugins.mcp = { callDeadlineMs: 5000 }
+    const { scribe, search, gate, loader } = plugins({ clock: () => clock })
+    loader.human.plugins.scribe = { callDeadlineMs: 5000 }
     gate.decision = access => {
       if (access.stage === 'canonical') clock += 5000
       return gate.granted(access)
     }
-    expect(code(await mcp.ask('search.query'))).toBe('timeout')
+    expect(code(await scribe.ask('search.query'))).toBe('timeout')
     expect(deliveries(search, 'search.query')).toEqual([])
   })
 
@@ -507,7 +507,7 @@ describe('deadlines and cancel', () => {
 describe('filterReadable', () => {
   async function incoming(over: Partial<CarrierOptions> = {}) {
     const parts = plugins(over)
-    const id = parts.mcp.call('search.query', { text: 'x' })
+    const id = parts.scribe.call('search.query', { text: 'x' })
     const got = await parts.search.delivered('search.query')
     return { ...parts, id, got }
   }
@@ -517,15 +517,15 @@ describe('filterReadable', () => {
     const reply = await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md', 'private/b.md', 'other/c.md'] })
     expect(reply.result).toEqual(['notes/a.md'])
     const asked = gate.reads.map(read => `${(read.caller as { id: string }).id} ${read.path}`)
-    expect(asked).toEqual(['search notes/a.md', 'mcp notes/a.md', 'search private/b.md', 'mcp private/b.md', 'search other/c.md'])
+    expect(asked).toEqual(['search notes/a.md', 'scribe notes/a.md', 'search private/b.md', 'scribe private/b.md', 'search other/c.md'])
   })
 
   it('works only during a live call delivered on the same port', async () => {
-    const { search, git, mcp, got, id } = await incoming()
+    const { search, git, scribe, got, id } = await incoming()
     expect(code(await git.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
-    expect(code(await mcp.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(code(await scribe.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
     search.answer(got.callId, [])
-    await mcp.reply(id)
+    await scribe.reply(id)
     expect(code(await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
   })
 
@@ -648,7 +648,7 @@ describe('filterReadable', () => {
 
   it('takes the human\'s budget for the caller', async () => {
     const { loader, paths, filter } = await timed()
-    loader.human.plugins.mcp = { filterMsPerSecond: 200 }
+    loader.human.plugins.scribe = { filterMsPerSecond: 200 }
     expect((await filter()).result).toEqual(paths)
     expect((await filter()).result).toEqual(paths)
     expect(code(await filter())).toBe('throttled')

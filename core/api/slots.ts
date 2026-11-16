@@ -63,8 +63,9 @@ export type Access = {
 export const agentDoor = frozen({ plugin: 'http', half: 'host', action: 'mcp.handle' } as const)
 // The plugin agents act through, whose entry holds their grants as labelled items
 export const agentHost = 'mcp'
-// The providers the agent host reaches only under a live call from the door
-export const agentOnly = frozen(['luoshu', 'history', 'leases'] as const)
+// The providers the agent host reaches with no live call from the door: its own storage and cache, which hold nothing
+// of the notes. Every other provider and every other plugin it reaches only under that call
+export const agentOwn = frozen(['storage'] as const)
 
 // view is the number of the StateView the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only

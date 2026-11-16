@@ -171,24 +171,24 @@ describe('the ceiling', () => {
   it('charges a sub-call to the root of its parent links as well as to its caller', async () => {
     const { connect, loader } = harness()
     loader.slots.gate = 'off'
-    loader.sandboxed('mcp', { handle: {} })
+    loader.sandboxed('scribe', { handle: {} })
     loader.sandboxed('git', { log: {} })
     loader.human.plugins.http = { callsInFlight: 2 }
     const http = connect(worker('http'))
-    const mcp = connect(worker('mcp'))
+    const scribe = connect(worker('scribe'))
     connect(worker('git'))
-    http.call('mcp.handle')
-    const parent = await mcp.delivered('mcp.handle')
-    const one = mcp.call('git.log', undefined, { parent: parent.callId })
+    http.call('scribe.handle')
+    const parent = await scribe.delivered('scribe.handle')
+    const one = scribe.call('git.log', undefined, { parent: parent.callId })
     await tick(10)
-    expect(mcp.repliesTo(one)).toEqual([])
+    expect(scribe.repliesTo(one)).toEqual([])
     // http holds two now, its own and the sub-call
-    expect(code(await mcp.ask('git.log', undefined, { parent: parent.callId }))).toBe('throttled')
-    expect(code(await http.ask('mcp.handle'))).toBe('throttled')
-    // mcp's own calls are charged to mcp only
-    mcp.call('git.log')
+    expect(code(await scribe.ask('git.log', undefined, { parent: parent.callId }))).toBe('throttled')
+    expect(code(await http.ask('scribe.handle'))).toBe('throttled')
+    // scribe's own calls are charged to scribe only
+    scribe.call('git.log')
     await tick(10)
-    expect(mcp.inbox.filter(message => message.kind === 'reply' && (message.refusal as { code?: string } | undefined)?.code === 'throttled')).toHaveLength(1)
+    expect(scribe.inbox.filter(message => message.kind === 'reply' && (message.refusal as { code?: string } | undefined)?.code === 'throttled')).toHaveLength(1)
   })
 
   it('frees the bytes of a call that ended while another is still in flight', async () => {
@@ -343,16 +343,16 @@ describe('the flood cap', () => {
     const clock = 1_000_000
     const { connect, loader, gate } = harness({ clock: () => clock })
     loader.sandboxed('search', { query: {} })
-    gate.grants.mcp = [{ type: 'plugin.call', targets: ['search'] }]
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
     loader.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
-    const mcp = connect(worker('mcp'))
+    const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
-    const id = mcp.call('search.query')
+    const id = scribe.call('search.query')
     await search.delivered('search.query')
     const closed = new Promise(resolve => search.port.once('close', resolve))
     for (let i = 0; i < 21; i++) search.post({ v: 1, kind: 'pong' })
     await closed
-    expect(code(await mcp.reply(id))).toBe('crashed')
+    expect(code(await scribe.reply(id))).toBe('crashed')
     await tick(20)
     expect(loader.crashes).toEqual([{ caller: worker('search'), reason: 'flood' }])
     // Only the first 2 of the first second reached the loader
