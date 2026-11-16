@@ -588,8 +588,17 @@ describe('the requests Node would answer itself', () => {
 
 type Held = { socket: net.Socket, raw: () => string, ended: () => boolean, error: () => string | null }
 
-// The door's next connection once its server has taken it. The client's connect can come first, and on macOS it does
-const accepted = (door: Door) => new Promise<void>(resolve => door.server.once('connection', () => resolve()))
+// The door's next connection, or the next count of them, once its server has taken them. The client's connect can come
+// first, and on macOS it does
+const accepted = (door: Door, count = 1) => new Promise<void>(resolve => {
+  let taken = 0
+  const took = () => {
+    if (++taken < count) return
+    door.server.off('connection', took)
+    resolve()
+  }
+  door.server.on('connection', took)
+})
 
 // A socket that never closes its own side and reads what comes until the test ends, once the door holds it
 async function hold(door: Door, text: string): Promise<Held> {
@@ -1008,7 +1017,8 @@ describe('callers with no token', () => {
 
   it('lets go of 64 connections that say nothing within the bound and then answers a good request', async () => {
     const { door, port, refused } = await made({ token: anyToken })
-    for (let i = 0; i < 64; i++) await silent(port)
+    // All at once, so none is let go before the last is held
+    await Promise.all([accepted(door, 64), ...Array.from({ length: 64 }, () => silent(port))])
     expect(await open(door)).toBe(64)
     await vi.waitFor(async () => expect(await open(door)).toBe(0), { timeout: 1600, interval: 50 })
     expect(refused).toEqual(Array(64).fill('timeout'))
