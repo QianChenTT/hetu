@@ -32,6 +32,10 @@ export type History = {
 // Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
 const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
+// What a commit refused not-granted throws once the call's judge refused the path it would record: the judge's own
+// refusal, so the caller and the record get the gate's code or a guard's and not a missing grant whatever refused
+const passedOn = (err: unknown, denied: ProviderRefusal | null): unknown =>
+  denied !== null && typeof err === 'object' && err !== null && !(err instanceof Error) && (err as ProviderRefusal).code === 'not-granted' ? denied : err
 const commitId = /^[0-9a-f]{40}$/
 const NO_COMMIT = '0'.repeat(40)
 // How many times a note is opened when its name holds another file each time it is looked at again
@@ -221,18 +225,28 @@ export function createHistory(options: HistoryOptions = {}): History {
     let total = 0
     // The paths as judged, each replaced once the gate allows the path a look resolved again
     const paths = targets.map(target => target.relative)
+    // The judge's own refusal, so a commit refused for it answers what refused: the gate, a guard or a gate that is
+    // down or starting
+    let denied: ProviderRefusal | null = null
     for (const [at, prepared] of targets.entries()) {
       const judged = (now: Canonical) => {
         const next = paths.with(at, now.relative)
-        if (call.judge === undefined || call.judge(next) !== null) return false
+        if (call.judge === undefined) return false
+        const answer = call.judge(next)
+        denied = answer === null ? null : refused(answer.code, answer.reason)
+        if (answer !== null) return false
         paths[at] = now.relative
         return true
       }
-      const { bytes, target } = await bytesOf(prepared, await standing(prepared, judged), judged)
-      total += bytes?.length ?? 0
-      // All of a commit sits in memory at once, so the call as a whole has a cap too
-      if (total > commitBytes) throw refused('failed', 'too-large')
-      notes.push({ path: target.relative, bytes })
+      try {
+        const { bytes, target } = await bytesOf(prepared, await standing(prepared, judged), judged)
+        total += bytes?.length ?? 0
+        // All of a commit sits in memory at once, so the call as a whole has a cap too
+        if (total > commitBytes) throw refused('failed', 'too-large')
+        notes.push({ path: target.relative, bytes })
+      } catch (err) {
+        throw passedOn(err, denied)
+      }
     }
     const parent = await head(repo)
     // Only history writes this repo and one call at a time, so a lock here was left by a git ended mid-write. The index

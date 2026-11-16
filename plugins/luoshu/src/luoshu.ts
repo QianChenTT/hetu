@@ -47,6 +47,10 @@ const absent = (err: unknown) => ['ENOENT', 'ENOTDIR'].includes((err as NodeJS.E
 
 const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
+// What a call refused not-granted throws once the call's judge refused the path it would act on: the judge's own
+// refusal, so the caller and the record get the gate's code or a guard's and not a missing grant whatever refused
+const passedOn = (err: unknown, denied: ProviderRefusal | null): unknown =>
+  denied !== null && typeof err === 'object' && err !== null && !(err instanceof Error) && (err as ProviderRefusal).code === 'not-granted' ? denied : err
 // Windows and macOS compare names without case, so hetu's own folders are found in any spelling there
 const fold = process.platform === 'win32' || process.platform === 'darwin' ? (name: string) => name.toLowerCase() : (name: string) => name
 const within = (folder: string, target: string) => {
@@ -587,15 +591,27 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
           return page
         }
         if (target === undefined) throw refused('failed')
-        // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no
-        const ask: Ask = paths => call.judge !== undefined && call.judge(paths) === null
+        // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no. The
+        // judge's own refusal is kept, so a call refused for it answers what refused: the gate, a guard or a gate that
+        // is down or starting
+        let denied: ProviderRefusal | null = null
+        const ask: Ask = paths => {
+          if (call.judge === undefined) return false
+          const answer = call.judge(paths)
+          denied = answer === null ? null : refused(answer.code, answer.reason)
+          return answer === null
+        }
         const one: Judged = now => ask([now.relative])
-        if (call.action === 'luoshu.read') return await read(target, one)
-        if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
-        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
-        const moved = moving.get(call.callId)
-        if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same, ask)
-        throw refused('invalid')
+        try {
+          if (call.action === 'luoshu.read') return await read(target, one)
+          if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
+          if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
+          const moved = moving.get(call.callId)
+          if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same, ask)
+          throw refused('invalid')
+        } catch (err) {
+          throw passedOn(err, denied)
+        }
       } finally {
         unlock(call.callId)
       }
