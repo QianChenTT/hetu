@@ -4,9 +4,10 @@ import { mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE } from 'hetu-core/api/exec.ts'
+import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from 'hetu-core/api/exec.ts'
+import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, looked, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
 
 export type HistoryOptions = {
@@ -62,6 +63,8 @@ export function createHistory(options: HistoryOptions = {}): History {
   const repos = new Map<Folder, Promise<Repo>>()
   const resolved = new Map<string, Canonical[]>()
   const preparedUnder = new Map<string, Folder>()
+  // The path each target was prepared from, as the caller wrote it, so a look at its folder can resolve it again
+  const spelling = new WeakMap<Canonical, string>()
   let stopping = new AbortController()
   // git keeps one index per repo, so one call runs at a time
   let tail: Promise<void> = Promise.resolve()
@@ -180,12 +183,33 @@ export function createHistory(options: HistoryOptions = {}): History {
     }
   }
 
+  // The folder of a prepared path looked at again just before its note is read, as the luoshu does, with one more look
+  // through canonical on the caller's spelling for a folder that reads as moved, whose path goes on when it is the one
+  // judged or judged says the gate allows it. One gone since holds no note. Answers the path to read and record
+  async function standing(prepared: Canonical, judged: (now: Canonical) => boolean): Promise<Canonical> {
+    const spelled = spelling.get(prepared)
+    const now = opening
+    const { state, target } = now === null || spelled === undefined
+      ? { state: await folderState(prepared.absolute), target: prepared }
+      : await looked(prepared, folderState, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
+    if (state === 'moved') throw refused('not-granted')
+    return target
+  }
+
   async function commit(repo: Repo, call: Call, targets: readonly Canonical[]): Promise<unknown> {
     const { message } = call.args as { message: string }
     // Every note is read before git hears of any, so a file over the cap commits none of the call
     const notes: { path: string, bytes: Buffer | null }[] = []
     let total = 0
-    for (const target of targets) {
+    // The paths as judged, each replaced once the gate allows the path a look resolved again
+    const paths = targets.map(target => target.relative)
+    for (const [at, prepared] of targets.entries()) {
+      const target = await standing(prepared, now => {
+        const next = paths.with(at, now.relative)
+        if (call.judge === undefined || call.judge(next) !== null) return false
+        paths[at] = now.relative
+        return true
+      })
       const bytes = await bytesOf(target)
       total += bytes?.length ?? 0
       // All of a commit sits in memory at once, so the call as a whole has a cap too
@@ -231,21 +255,49 @@ export function createHistory(options: HistoryOptions = {}): History {
     }
   }
 
+  // The commits of a page that changed a path with no dot segment under the folder or note logged. A build from before
+  // dot names were refused could have committed one. A commit that changed nothing else would show its author, date
+  // and message in a folder's log. diff-tree names the changed paths of each commit in the order given
+  async function plainOf(repo: Repo, ids: readonly string[], relative: string): Promise<Set<string>> {
+    const out = await git(repo, ['diff-tree', '--stdin', '-r', '-z', '--name-only', '--root', '--no-renames', '--', relative], {
+      input: ids.map(id => `${id}\n`).join(''), maxOutput: ids.length * MAX_COMMIT_PATHS * (MAX_SCOPE_LENGTH * 3 + 1) + SMALL,
+    })
+    const plain = new Set<string>()
+    let at = -1
+    for (const item of out.split('\0')) {
+      if (ids[at + 1] === item) at++
+      else if (at >= 0 && item !== '' && !item.split('/').some(isDotName)) plain.add(ids[at])
+    }
+    return plain
+  }
+
   async function log(repo: Repo, call: Call, target: Canonical): Promise<unknown> {
     if (await head(repo) === null) return { commits: [] }
     const limit = (call.args as { limit?: number }).limit ?? LOG_PAGE
     const format = ['%H', '%an', '%cn', '%aI', '%B'].join('%x1f')
-    // A message of the longest kind is three bytes a character, with room for the names, the date and the id
-    const out = await git(repo, ['rev-list', `--max-count=${limit}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: limit * (MAX_COMMIT_MESSAGE * 3 + 4096) })
     const commits: HistoryCommit[] = []
-    for (const record of out.split(RECORD)) {
-      // rev-list writes its own "commit <id>" line before each formatted one
-      const fields = record.replace(/^\s*commit [0-9a-f]+\n/, '').split(FIELD)
-      if (fields.length !== 5 || !commitId.test(fields[0])) continue
-      const [id, author, committer, date, message] = fields
-      commits.push({ commit: id, author, committer, date, message: message.replace(/\n+$/, '') })
+    // A page at a time until the commits kept fill one, since a page can lose some. The first page is the limit, all a
+    // log with no commit of dot paths only needs. Each after it is the largest page, so a run of such commits costs a
+    // page for every 200 and not one for each. The deadline is looked at before each page, so a long run ends there and
+    // frees the calls waiting behind it
+    for (let skip = 0, size = limit; commits.length < limit; skip += size, size = MAX_LOG_PAGE) {
+      if (Date.now() > call.deadline) throw refused('timeout')
+      // A message of the longest kind is three bytes a character, with room for the names, the date and the id
+      const out = await git(repo, ['rev-list', `--max-count=${size}`, `--skip=${skip}`, `--format=${format}%x1e`, BRANCH, '--', target.relative], { maxOutput: size * (MAX_COMMIT_MESSAGE * 3 + 4096) })
+      const page: HistoryCommit[] = []
+      for (const record of out.split(RECORD)) {
+        // rev-list writes its own "commit <id>" line before each formatted one
+        const fields = record.replace(/^\s*commit [0-9a-f]+\n/, '').split(FIELD)
+        if (fields.length !== 5 || !commitId.test(fields[0])) continue
+        const [id, author, committer, date, message] = fields
+        page.push({ commit: id, author, committer, date, message: message.replace(/\n+$/, '') })
+      }
+      if (page.length === 0) break
+      const plain = await plainOf(repo, page.map(listed => listed.commit), target.relative)
+      commits.push(...page.filter(listed => plain.has(listed.commit)))
+      if (page.length < size) break
     }
-    return { commits }
+    return { commits: commits.slice(0, limit) }
   }
 
   async function read(repo: Repo, call: Call, target: Canonical): Promise<unknown> {
@@ -278,8 +330,15 @@ export function createHistory(options: HistoryOptions = {}): History {
       if (!Array.isArray(named) || named.length === 0 || !named.every(item => typeof item === 'string')) return refused('invalid')
       const targets: Canonical[] = []
       for (const item of named as string[]) {
-        const target = await canonical(under.folder, item, { dataDir: under.dataDir, installDir: under.installDir })
-        if (!target.ok) return refused(target.code)
+        const found = await canonical(under.folder, item, { dataDir: under.dataDir, installDir: under.installDir })
+        // A name spelled with no dot that leads to a dot name is taken as the same name missing, at a path no file has,
+        // so its commit, log and read answer as a missing note's do. History writes nothing in the notes folder
+        let target: Canonical
+        if (found.ok) {
+          target = found
+          spelling.set(target, item)
+        } else if (found.code === 'not-granted' && found.absent !== undefined) target = found.absent
+        else return refused(found.code)
         if (!targets.some(known => known.relative === target.relative)) targets.push(target)
       }
       resolved.set(call.callId, targets)

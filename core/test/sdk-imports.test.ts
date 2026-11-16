@@ -49,6 +49,11 @@ describe('what a plugin bundles from the SDK', () => {
     expect(inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])
   })
 
+  it('hands a plugin the core\'s own isDotName, not a copy', async () => {
+    const [sdk, scope] = await Promise.all([import('../sdk/index.ts'), import('../api/scope.ts')])
+    expect(sdk.isDotName).toBe(scope.isDotName)
+  })
+
   it('names every provider action core/api has', () => {
     expect([...providerActionNames].sort()).toEqual(Object.keys(providerActions).sort())
   })

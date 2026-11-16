@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -36,6 +36,24 @@ async function resolved(relative: string) {
 }
 const invalid = (rule: StringRule): NotCanonical => ({ ok: false, code: 'invalid', rule })
 const notGranted = (rule: DiskRule): NotCanonical => ({ ok: false, code: 'not-granted', rule })
+
+// A name spelled with no dot segment that leads to a dot name: refused as that name, with the name as if nothing were
+// there beside it. Its relative and key are what the same spelling gets in a luoshu with the same plain folders and no
+// dot name or link at all. Its path is that missing name's path with one name swapped for one no file has
+async function expectAbsent(input: string, rule: 'dot' | 'git'): Promise<void> {
+  const bare = path.join(base, 'bare')
+  await mkdir(path.join(bare, 'notes'), { recursive: true })
+  const missing = await canonical(bare, input)
+  if (!missing.ok) throw new Error(`${input} is no plain missing name: ${JSON.stringify(missing)}`)
+  const answer = await canonical(luoshu, input)
+  expect(answer, input).toEqual({ ok: false, code: 'not-granted', rule, absent: { ok: true, absolute: expect.any(String), relative: missing.relative, key: missing.key } })
+  const { absolute } = (answer as { absent: { absolute: string } }).absent
+  await expect(lstat(absolute), input).rejects.toMatchObject({ code: 'ENOENT' })
+  const mine = path.relative(await realpath(luoshu), absolute).split(path.sep)
+  const theirs = path.relative(await realpath(bare), missing.absolute).split(path.sep)
+  expect(mine, input).toHaveLength(theirs.length)
+  expect(mine.filter((name, i) => name !== theirs[i]), input).toHaveLength(1)
+}
 
 // A junction on Windows, which needs no admin rights. Elsewhere the type is ignored for a plain link
 const linkFolder = (target: string, name: string) => symlink(target, path.join(luoshu, name), 'junction')
@@ -354,11 +372,12 @@ describe('.git', () => {
     expect(await canonical(luoshu, '.GIT/config')).toEqual(notGranted('git'))
   })
 
-  it('refuses a link inside the luoshu that points at .git', async () => {
+  // Spelled with no dot, so the caller learns no more than a missing name tells
+  it('answers a link inside the luoshu that points at .git as a missing name', async () => {
     await linkFolder(path.join(luoshu, '.git'), 'repo')
-    expect(await canonical(luoshu, 'repo')).toEqual(notGranted('git'))
-    expect(await canonical(luoshu, 'repo/config')).toEqual(notGranted('git'))
-    expect(await canonical(luoshu, 'repo/hooks/post-checkout')).toEqual(notGranted('git'))
+    await expectAbsent('repo', 'git')
+    await expectAbsent('repo/config', 'git')
+    await expectAbsent('repo/hooks/post-checkout', 'git')
   })
 
   it.each([
@@ -430,24 +449,46 @@ describe('dot names', () => {
     }
   })
 
-  it('refuses a folder link into a dot folder, for a file there, a new one and the link itself', async () => {
+  it('answers a folder link into a dot folder as a missing name, for a file there, a new one and the link itself', async () => {
     await linkFolder(path.join(luoshu, '.obsidian'), 'cfg')
     expect(await readFile(path.join(luoshu, 'cfg', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
-    expect(await canonical(luoshu, 'cfg/plugins/x/main.js')).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, 'cfg/plugins/y/main.js')).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, 'cfg')).toEqual(notGranted('dot'))
+    await expectAbsent('cfg/plugins/x/main.js', 'dot')
+    await expectAbsent('cfg/plugins/y/main.js', 'dot')
+    await expectAbsent('cfg', 'dot')
   })
 
-  it('refuses a link into a folder inside a dot folder and a chain of links ending in one', async () => {
+  it('answers a link into a folder inside a dot folder and a chain of links ending in one as a missing name', async () => {
     await linkFolder(path.join(luoshu, '.obsidian', 'plugins'), 'plugins')
     await linkFolder(path.join(luoshu, 'plugins'), 'first')
-    expect(await canonical(luoshu, 'plugins/x/main.js')).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, 'first/x/main.js')).toEqual(notGranted('dot'))
+    await expectAbsent('plugins/x/main.js', 'dot')
+    await expectAbsent('first/x/main.js', 'dot')
   })
 
-  it('refuses a file link to a file in a dot folder', async ({ skip }) => {
+  it('answers a file link to a file in a dot folder as a missing name', async ({ skip }) => {
     await linkFile(path.join(luoshu, '.obsidian', 'plugins', 'x', 'main.js'), 'main.js', skip)
-    expect(await canonical(luoshu, 'main.js')).toEqual(notGranted('dot'))
+    await expectAbsent('main.js', 'dot')
+  })
+
+  // What lies past the dot folder never shows: a link in it out of the luoshu, a link in it to nowhere and a link in it
+  // back to a plain folder answer as the rest of a missing name would
+  it('answers every name past a link into a dot folder as missing, whatever is there', async () => {
+    await linkFolder(path.join(luoshu, '.obsidian'), 'cfg')
+    await linkFolder(outside, path.join('.obsidian', 'out'))
+    await linkFolder(path.join(base, 'nowhere'), path.join('.obsidian', 'ghost'))
+    await linkFolder(path.join(luoshu, 'notes'), path.join('.obsidian', 'back'))
+    expect(await readFile(path.join(luoshu, 'cfg', 'out', 'secret.md'), 'utf8')).toBe('secret')
+    expect(await readFile(path.join(luoshu, 'cfg', 'back', 'a.md'), 'utf8')).toBe('note a')
+    await expectAbsent('cfg/out/secret.md', 'dot')
+    await expectAbsent('cfg/ghost/x.md', 'dot')
+    await expectAbsent('cfg/back/a.md', 'dot')
+    await expectAbsent('cfg/back', 'dot')
+  })
+
+  it('keeps refusing a name spelled with a dot as before, with no missing name beside it', async () => {
+    await linkFolder(path.join(luoshu, '.obsidian'), 'cfg')
+    expect(await canonical(luoshu, 'cfg/.hidden.md')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, 'notes/.x/cfg/a.md')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, '.git/../cfg')).toEqual(invalid('dot-segment'))
   })
 
   // The caller's spelling counts as well as where it leads
@@ -574,7 +615,7 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
     return null
   }
 
-  it('expands an 8.3 short name and refuses the one for .git', async ({ skip }) => {
+  it('expands an 8.3 short name and answers the one for .git as a missing name', async ({ skip }) => {
     await mkdir(path.join(luoshu, 'Long folder name'))
     const git = await shortName(luoshu, '.git')
     const long = await shortName(luoshu, 'Long folder name')
@@ -584,12 +625,13 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
       return skip('this volume makes no 8.3 short names')
     }
     expect(await readFile(path.join(luoshu, git, 'config'), 'utf8')).toBe('[core]\n')
-    expect(await canonical(luoshu, `${git}/config`)).toEqual(notGranted('git'))
-    expect(await canonical(luoshu, `${git}/hooks/new`)).toEqual(notGranted('git'))
+    await expectAbsent(`${git}/config`, 'git')
+    await expectAbsent(`${git}/hooks/new`, 'git')
+    await expectAbsent(git, 'git')
     expect(await canonical(luoshu, `${long}/x.md`)).toEqual(await resolved('Long folder name/x.md'))
   })
 
-  it('expands the 8.3 short name of a dot folder and refuses it', async ({ skip }) => {
+  it('expands the 8.3 short name of a dot folder and answers it as a missing name', async ({ skip }) => {
     await mkdir(path.join(luoshu, '.obsidian', 'plugins', 'x'), { recursive: true })
     await writeFile(path.join(luoshu, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
     const short = await shortName(luoshu, '.obsidian')
@@ -599,16 +641,23 @@ describe.runIf(onWindows)('other Windows names for the same file', () => {
     }
     expect(short.startsWith('.')).toBe(false)
     expect(await readFile(path.join(luoshu, short, 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
-    expect(await canonical(luoshu, `${short}/plugins/x/main.js`)).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, `${short}/plugins/y/main.js`)).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, short)).toEqual(notGranted('dot'))
-    // A dot folder deeper in the path, named by its short name
+    await expectAbsent(`${short}/plugins/x/main.js`, 'dot')
+    await expectAbsent(`${short}/plugins/y/main.js`, 'dot')
+    await expectAbsent(short, 'dot')
+    // A dot folder deeper in the path named by its short name, then a dot file
     await mkdir(path.join(luoshu, 'notes', '.config long'))
     await writeFile(path.join(luoshu, 'notes', '.config long', 'x.md'), 'x')
     const deeper = await shortName(path.join(luoshu, 'notes'), '.config long')
     expect(deeper).not.toBeNull()
-    expect(await canonical(luoshu, `notes/${deeper}/x.md`)).toEqual(notGranted('dot'))
-    expect(await canonical(luoshu, `notes/${deeper}/new.md`)).toEqual(notGranted('dot'))
+    await expectAbsent(`notes/${deeper}/x.md`, 'dot')
+    await expectAbsent(`notes/${deeper}/new.md`, 'dot')
+    await writeFile(path.join(luoshu, '.env'), 'secret')
+    const env = await shortName(luoshu, '.env')
+    expect(env).not.toBeNull()
+    expect(await readFile(path.join(luoshu, env!), 'utf8')).toBe('secret')
+    await expectAbsent(env!, 'dot')
+    // Spelled with its dot it still answers as before
+    expect(await canonical(luoshu, '.obsidian/plugins/x/main.js')).toEqual(notGranted('dot'))
   })
 
   it('refuses ::$INDEX_ALLOCATION, which opens .git as its folder stream', async () => {

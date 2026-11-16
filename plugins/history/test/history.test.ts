@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { findProgram } from 'hetu-core/lib/clean-env.ts'
+import type { Call } from 'hetu-core/api/slots.ts'
 import { createHistory } from '../src/history.ts'
 import { ask, callOf, cleanup, commitOf, editor, git, logOf, place, started, type Place } from './helpers.ts'
 
@@ -285,6 +286,140 @@ describe('the paths it takes', () => {
   })
 })
 
+describe('a name spelled with no dot that leads to a dot name', () => {
+  // The 8.3 short name Windows made for a name in a folder, as dir /x shows it. null when the volume makes none
+  async function shortName(dir: string, name: string): Promise<string | null> {
+    const { stdout } = await promisify(execFile)('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: dir })
+    for (const line of stdout.split(/\r?\n/).map(l => l.trimEnd())) {
+      if (!line.endsWith(` ${name}`)) continue
+      const short = line.slice(0, -name.length).trimEnd().split(/\s+/).at(-1)
+      if (short?.includes('~')) return short
+    }
+    return null
+  }
+
+  // A second notes folder with the same plain notes and nothing else, where each name below is missing. Each call
+  // answers in where what it answers there, the scope the gate judges included. The commit made first in each
+  // stands for the other
+  it('answers commit, log and read as for a missing name, through a junction and an 8.3 short name', async () => {
+    const bare = await place()
+    await mkdir(path.join(bare.notes, 'journal'))
+    await note(bare, 'a.md', 'note a')
+    await note(bare, 'journal/b.md', 'note b')
+    await mkdir(path.join(where.notes, '.obsidian'))
+    await note(where, '.obsidian/app.json', 'DOT JSON')
+    await mkdir(path.join(where.notes, '.git'))
+    await note(where, '.git/config', '[core]\n')
+    await symlink(path.join(where.notes, '.obsidian'), path.join(where.notes, 'cfg'), 'junction')
+    await symlink(path.join(where.notes, '.git'), path.join(where.notes, 'repo'), 'junction')
+    const spellings = ['cfg', 'cfg/app.json', 'repo', 'repo/config']
+    if (onWindows) {
+      const short = await shortName(where.notes, '.obsidian')
+      if (short !== null) spellings.push(short, `${short}/app.json`)
+    }
+    const inDotted = await started(where)
+    const inBare = await started(bare)
+    const commits = new Map([[inDotted, await commitOf(inDotted, ['a.md'])], [inBare, await commitOf(inBare, ['a.md'])]])
+    const both = async (action: string, args: (history: typeof inDotted) => unknown) => {
+      const [mine, theirs] = await Promise.all([inDotted, inBare].map(history => ask(history, action, args(history))))
+      expect(mine, `${action} ${JSON.stringify(args(inBare))}`).toEqual(theirs)
+    }
+    for (const spelled of spellings) {
+      const call = callOf('history.log', { path: spelled })
+      expect(await inDotted.provider.prepare(call), spelled).toEqual(await inBare.provider.prepare(callOf('history.log', { path: spelled })))
+      inDotted.provider.release?.(call, { scope: {} })
+      await both('history.commit', () => ({ paths: [spelled], message: 'x' }))
+      await both('history.log', () => ({ path: spelled }))
+      await both('history.read', history => ({ path: spelled, commit: commits.get(history) }))
+    }
+    const mixed = await commitOf(inDotted, ['journal/b.md', 'cfg/app.json'])
+    expect(await ask(inDotted, 'history.read', { path: 'cfg/app.json', commit: mixed })).toEqual({ refused: { code: 'not-found' } })
+    expect(await logOf(inDotted, 'cfg')).toEqual([])
+  })
+})
+
+describe('a folder swapped after prepare', () => {
+  // prepare judged a plain folder. One swapped for a junction into a dot folder by perform would put the dot file's
+  // bytes in the repo under the plain name
+  it('refuses a commit whose folder became a junction into a dot folder after prepare and commits nothing', async () => {
+    await mkdir(path.join(where.notes, '.obsidian'))
+    await note(where, '.obsidian/b.md', 'DOT B')
+    const history = await started(where)
+    const first = await commitOf(history, ['a.md'])
+    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'swapped' })
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'journal-was'))
+    await symlink(path.join(where.notes, '.obsidian'), path.join(where.notes, 'journal'), 'junction')
+    await expect(history.provider.perform(call, prepared as never)).rejects.toEqual({ code: 'not-granted' })
+    expect((await logOf(history, 'a.md')).map(listed => listed.commit)).toEqual([first])
+    expect(await logOf(history, 'journal/b.md')).toEqual([])
+  })
+
+  // The caller's spelling resolved again gives the key prepare took and another path, so the commit asks the gate again
+  // through the call's judge and goes on when it allows the new paths
+  const judging = (call: Call, asked: string[][], answer: { code: 'not-granted' } | null = null): Call => ({
+    ...call,
+    judge: (paths: readonly string[]) => {
+      asked.push([...paths])
+      return answer
+    },
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('commits a note whose folder another program renamed in case since prepare', async () => {
+    const history = await started(where)
+    const asked: string[][] = []
+    const call = judging(callOf('history.commit', { paths: ['journal/b.md'], message: 'renamed' }), asked)
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'Journal'))
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(asked).toEqual([['Journal/b.md']])
+    expect(await ask(history, 'history.read', { path: 'journal/b.md', commit: made.commit })).toEqual({ text: 'note b', version: sha256('note b') })
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('refuses and commits nothing for a note whose folder another program renamed in case since prepare when the call has no judge or its judge refuses', async () => {
+    const history = await started(where)
+    const first = await commitOf(history, ['a.md'])
+    for (const judge of ['none', 'refusing'] as const) {
+      const asked: string[][] = []
+      const plain = callOf('history.commit', { paths: ['a.md', 'journal/b.md'], message: 'renamed' })
+      const call = judge === 'none' ? plain : judging(plain, asked, { code: 'not-granted' })
+      const prepared = await history.provider.prepare(call)
+      await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'Journal'))
+      await expect(history.provider.perform(call, prepared as never), judge).rejects.toEqual({ code: 'not-granted' })
+      await rename(path.join(where.notes, 'Journal'), path.join(where.notes, 'journal'))
+      expect(asked).toEqual(judge === 'none' ? [] : [['a.md', 'Journal/b.md']])
+    }
+    expect((await logOf(history, 'a.md')).map(listed => listed.commit)).toEqual([first])
+  })
+
+  it.runIf(onWindows || process.platform === 'darwin')('commits a note once when two spellings of its new folder are one folder by perform', async () => {
+    const history = await started(where)
+    const asked: string[][] = []
+    const call = judging(callOf('history.commit', { paths: ['inbox/x.md', 'Inbox/x.md'], message: 'one folder' }), asked)
+    const prepared = await history.provider.prepare(call)
+    expect((prepared as { scope: { paths: string[] } }).scope.paths).toEqual(['inbox/x.md', 'Inbox/x.md'])
+    await mkdir(path.join(where.notes, 'Inbox'))
+    await note(where, 'Inbox/x.md', 'note x')
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(asked).toEqual([['Inbox/x.md', 'Inbox/x.md']])
+    expect(await ask(history, 'history.read', { path: 'inbox/x.md', commit: made.commit })).toEqual({ text: 'note x', version: sha256('note x') })
+    const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => name !== 'empty')!, 'shadow.git')
+    const { stdout } = await promisify(execFile)('git', [`--git-dir=${repo}`, 'ls-tree', '-r', '--name-only', made.commit])
+    expect(stdout.trim().split('\n')).toEqual(['Inbox/x.md'])
+  })
+
+  // A folder gone since prepare holds no note, so the commit records the note gone, as for any missing one
+  it('commits a note whose folder is gone since prepare as gone', async () => {
+    const history = await started(where)
+    await commitOf(history, ['journal/b.md'])
+    const call = callOf('history.commit', { paths: ['journal/b.md'], message: 'gone' })
+    const prepared = await history.provider.prepare(call)
+    await rename(path.join(where.notes, 'journal'), path.join(where.notes, 'journal-was'))
+    const made = await history.provider.perform(call, prepared as never) as { commit: string }
+    expect(await ask(history, 'history.read', { path: 'journal/b.md', commit: made.commit })).toEqual({ refused: { code: 'not-found' } })
+  })
+})
+
 describe('where the history lives', () => {
   it('keeps a repo of its own under the data folder, with no hooks folder, and puts nothing in the notes folder', async () => {
     const history = await started(where)
@@ -412,6 +547,37 @@ describe('a page of the log', () => {
     expect(listed).toHaveLength(90)
     expect(listed[0].message).toBe(message)
   }, 180000)
+
+  // A build from before dot names were refused could have committed one. Nothing reads it back, but the log of a folder
+  // would name the commit with its author, date and message
+  it('leaves out of a folder\'s log a commit that changed only dot files under it, a page at a time', async () => {
+    const history = await started(where)
+    const plain = await commitOf(history, ['journal/b.md'], 'plain')
+    const repo = path.join(where.dataDir, 'host', 'history', (await readdir(path.join(where.dataDir, 'host', 'history'))).find(name => name !== 'empty')!, 'shadow.git')
+    const env = { ...process.env, GIT_DIR: repo, GIT_INDEX_FILE: path.join(where.base, 'index'), GIT_AUTHOR_NAME: 'old', GIT_AUTHOR_EMAIL: 'old@hetu.invalid', GIT_COMMITTER_NAME: 'old', GIT_COMMITTER_EMAIL: 'old@hetu.invalid' }
+    const gitIn = async (args: string[], input?: string) => {
+      const running = promisify(execFile)('git', args, { env, cwd: where.base })
+      if (input !== undefined) running.child.stdin!.end(input)
+      return (await running).stdout.trim()
+    }
+    // One commit on top of the last, as an older build would have made it, with the paths given
+    const planted = async (paths: string[], message: string) => {
+      const blob = await gitIn(['hash-object', '-w', '--stdin'], `${message} bytes`)
+      await gitIn(['read-tree', 'refs/heads/main'])
+      for (const at of paths) await gitIn(['update-index', '--add', '--cacheinfo', `100644,${blob},${at}`])
+      const made = await gitIn(['commit-tree', await gitIn(['write-tree']), '-p', 'refs/heads/main', '-m', message])
+      await gitIn(['update-ref', 'refs/heads/main', made])
+      return made
+    }
+    const mixed = await planted(['journal/.hidden.md', 'journal/c.md'], 'mixed')
+    await planted(['journal/.hidden.md'], 'dot file')
+    await planted(['journal/.config/x.md', 'journal/deep/.obsidian/app.json', 'journal/\u200c.cfg'], 'dot folders')
+    await planted(['.obsidian/app.json'], 'outside the folder')
+    expect((await logOf(history, 'journal')).map(listed => listed.message)).toEqual(['mixed', 'plain'])
+    expect((await logOf(history, 'journal', 1)).map(listed => listed.commit)).toEqual([mixed])
+    expect((await logOf(history, 'journal/b.md')).map(listed => listed.commit)).toEqual([plain])
+    expect(await ask(history, 'history.log', { path: 'journal/.hidden.md' })).toEqual({ refused: { code: 'not-granted' } })
+  })
 })
 
 describe('whose call it is', () => {

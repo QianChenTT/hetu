@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { definePlugin } from '@hetu/sdk'
 import { type FakeCore, fakeCore, type FakeMode } from '@hetu/sdk/testing'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Index } from '../src/index.ts'
@@ -70,6 +71,21 @@ describe('search with the grants its manifest asks for', () => {
     await fake.stop()
     expect(await fake.start(search)).toEqual({ state: 'ready' })
     expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
+  })
+
+  it('drops the dot paths of an index saved before dot names were refused and saves it without them', async () => {
+    const fake = core()
+    // The same plugin id leaving the cache as an older build could have
+    const older = definePlugin({ start: async ctx => {
+      await ctx.cache.set({ key: 'index', value: { v: 1, notes: { 'notes/a.md': ['fox'], '.env': ['fox', 'hunter2'], '.obsidian/plugins/x/data.json': ['apikey'] } } })
+    } })
+    expect(await fake.start(older)).toEqual({ state: 'ready' })
+    await fake.stop()
+    expect(await fake.start(search)).toEqual({ state: 'ready' })
+    expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
+    expect(await query(fake, 'hunter2')).toEqual([])
+    await fake.stop()
+    expect(fake.stored('cache', 'index')).toEqual({ v: 1, notes: { 'notes/a.md': ['fox'] } })
   })
 
   it('keeps a note through a read that fails for a while, then reads it again', async () => {
@@ -179,6 +195,18 @@ describe('the index', () => {
     expect(index.search('')).toEqual([])
     index.remove('a.md')
     expect(index.search('hello')).toEqual(['b.md'])
+  })
+
+  // A build from before dot names were refused could have indexed one with the gate off. Nothing reads it again
+  it('leaves out every path with a dot segment when it loads a saved index', () => {
+    const index = Index.from({ v: 1, notes: {
+      'notes/a.md': ['fox'], '.env': ['fox', 'hunter2'], '.obsidian/plugins/x/data.json': ['fox', 'apikey'],
+      'notes/.hidden.md': ['fox'], 'notes/deep/.config/x.md': ['fox'], '\u200c.obsidian/app.json': ['fox'], '.git/config': ['fox'],
+    } })
+    expect(index.paths()).toEqual(['notes/a.md'])
+    expect(index.search('fox')).toEqual(['notes/a.md'])
+    expect(index.search('hunter2')).toEqual([])
+    expect(index.toJSON()).toEqual({ v: 1, notes: { 'notes/a.md': ['fox'] } })
   })
 
   it('starts empty from a saved index it can\'t read', () => {

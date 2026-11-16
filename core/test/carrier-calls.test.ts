@@ -541,6 +541,17 @@ describe('filterReadable', () => {
     expect(gate.reads).toEqual([])
   })
 
+  // A saved index or another store from a build before dot names were refused could still hold one
+  it('gives back no path with a dot segment whatever the gate says with the gate on or off and asks it nothing about one', async () => {
+    const { search, got, loader, gate } = await incoming()
+    gate.readable = () => true
+    const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
+    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+    expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
+    loader.slots.gate = 'off'
+    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+  })
+
   it('refuses policy-down when canRead throws and counts only an exact true', async () => {
     const { search, got, gate } = await incoming()
     const id = (caller: Caller) => (caller as { id: string }).id
@@ -668,7 +679,9 @@ describe('a listing', () => {
     const { search, gate } = listing()
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
     expect(gate.asked).toEqual([])
-    expect(gate.lists.map(asked => asked.path)).toEqual(expect.arrayContaining(['secret/b.md', '.scratch.md']))
+    expect(gate.lists.map(asked => asked.path)).toEqual(expect.arrayContaining(['secret/b.md']))
+    // A dot name never reaches the gate
+    expect(gate.lists.map(asked => asked.path)).not.toContain('.scratch.md')
   })
 
   it.each([
@@ -684,12 +697,24 @@ describe('a listing', () => {
     expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
   })
 
-  it('lets every name through with the gate off by the human and answers policy-down while the gate is down', async () => {
+  it('lets every name with no dot segment through with the gate off by the human and answers policy-down while the gate is down', async () => {
     const { search, loader } = listing()
     loader.slots.gate = 'off'
-    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['.scratch.md', 'notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
     loader.slots.gate = 'failed'
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+  })
+
+  // The luoshu's walk leaves dot names out itself. This is the carrier's own check behind it
+  it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s and fails a page that holds one', async state => {
+    const { search, loader, gate, luoshu } = listing()
+    for (const path of ['notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json']) luoshu.files.set(path, 'x')
+    gate.listable = () => true
+    loader.slots.gate = state
+    expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
+    expect(gate.lists.filter(asked => asked.path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.')))).toEqual([])
+    luoshu.perform_ = () => ({ paths: ['notes/.hidden.md'], next: null })
+    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
   })
 
   it('records a canList that throws and answers policy-down rather than a page it couldn’t check', async () => {
@@ -824,6 +849,19 @@ describe('editor.reach', () => {
       loader.slots.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
     }
+  })
+
+  // No note the human opened has such a path, so a plugin reaches none through one
+  it.each(['on', 'off'] as const)('answers no reach for a path with a dot segment whatever the gate says, with the gate %s', async state => {
+    const { way, loader, gate } = made()
+    gate.readable = () => true
+    gate.listable = () => true
+    gate.decision = () => ({ allow: true, view: loader.current })
+    loader.slots.gate = state
+    for (const path of ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/edit/.config/x.md', '\u200c.obsidian/app.json']) {
+      expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })).result, path).toMatchObject({ read: false, edit: false, uiRead: false, list: false })
+    }
+    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: true, list: true })
   })
 
   // As a direct call: with the gate off, a call with power passes only while its record can land

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import type { RefusalCode } from '../api/envelope.ts'
@@ -10,9 +11,14 @@ export type StringRule =
   | 'type' | 'empty' | 'too-long' | 'ill-formed' | 'absolute' | 'backslash' | 'colon' | 'control'
   | 'empty-segment' | 'dot-segment' | 'trailing' | 'device'
 export type DiskRule = 'unresolved' | 'outside' | 'root' | 'git' | 'dot' | 'data' | 'install'
+// absent is there when the caller spelled no dot segment and a name on the way leads to a dot name through a link, a
+// junction or an 8.3 short name: the same input as if nothing were there from that name on. Its relative and key are
+// what a missing name gets and its absolute a path no file has. A provider that only reads may act on it, so the
+// answer tells the caller no more than a missing name's. The time it takes still can, since a resolve that succeeds
+// through a short name or a junction costs more than one that fails. One that writes refuses it as it would the dot name
 export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'invalid'>, rule: StringRule }
-  | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule }
+  | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule, absent?: Canonical }
 
 // absolute is for the disk. relative joins the names with / on every platform and is what the gate, the guards and
 // the records see. key is only for the luoshu's per-path lock and the lease table's conflict check
@@ -67,35 +73,90 @@ function stringRule(input: string): StringRule | null {
 // ENOTDIR is a name below a file, which can't exist either
 const absent = (err: unknown) => ['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')
 
-// The real path of the deepest part that exists and the names under that part, which don't exist yet. null when
-// something on the way exists and can't be resolved: a link to nowhere, a loop, a folder that can't be read
-async function deepest(base: string, names: string[]): Promise<{ real: string, rest: string[] } | null> {
-  for (let i = names.length; i >= 0; i--) {
-    const candidate = path.join(base, ...names.slice(0, i))
-    try {
-      return { real: await realpath(candidate), rest: names.slice(i) }
-    } catch (err) {
-      if (!absent(err)) return null
-    }
-    // realpath answers alike for a missing name and for a link to a missing target. A write through that link would
-    // create the target wherever the link points, so only a name lstat can't find either counts as not there yet
-    try {
-      await lstat(candidate)
-      return null
-    } catch (err) {
-      if (!absent(err)) return null
-    }
-  }
-  return null
-}
-
 const withSep = (folder: string) => folder.endsWith(path.sep) ? folder : folder + path.sep
 
 // Exact on purpose: both sides come from the OS, so another spelling is another folder or a refusal, never a match
 const within = (folder: string, target: string) => target === folder || target.startsWith(withSep(folder))
 
-// For a provider's prepare step. The string rules run first. Then the OS resolves the deepest part that exists, with
-// links, junctions and 8.3 short names. The names that don't exist yet are kept for a write. The promise form of
+// The real path of the deepest part that exists and the names under that part, which don't exist yet, each part
+// resolved from the luoshu down. null when something on the way exists and can't be resolved: a link to nowhere, a
+// loop, a folder that can't be read. A part that resolves to a dot name inside base ends the walk as a missing part
+// would, so nothing past it is looked at. hidden names the rule that name breaks
+async function deepest(base: string, names: string[]): Promise<{ real: string, rest: string[], hidden: 'git' | 'dot' | null } | null> {
+  let real = base
+  for (let i = 0; i < names.length; i++) {
+    const candidate = path.join(base, ...names.slice(0, i + 1))
+    let next: string
+    try {
+      next = await realpath(candidate)
+    } catch (err) {
+      if (!absent(err)) return null
+      // realpath answers alike for a missing name and for a link to a missing target. A write through that link would
+      // create the target wherever the link points, so only a name lstat can't find either counts as not there yet
+      try {
+        await lstat(candidate)
+        return null
+      } catch (err) {
+        if (!absent(err)) return null
+      }
+      return { real, rest: names.slice(i), hidden: null }
+    }
+    const reached = within(base, next) && next !== base ? next.slice(withSep(base).length).split(path.sep) : []
+    if (reached.some(isDotName)) {
+      // The lstat a missing part gets too, so both take the same steps on the disk
+      await lstat(candidate).catch(() => {})
+      return { real, rest: names.slice(i), hidden: reached.some(isGitName) ? 'git' : 'dot' }
+    }
+    real = next
+  }
+  return { real, rest: [], hidden: null }
+}
+
+// The folder of a path canonical gave, looked at again just before a provider acts on the path: held when it still
+// resolves to itself, missing when it is gone and the deepest folder on the way that is there still resolves to
+// itself, moved otherwise. prepare judged the path. A folder on the way swapped for a link or a junction since would
+// carry the act out of what was judged, so a provider refuses moved as canonical refuses a link out. What is left is
+// the time between this look and the act
+export const folderState = (absolute: string) => stateOf(path.dirname(absolute))
+
+// The folder a listing walks, looked at itself as folderState looks at the folder a note sits in
+export const listedState = (folder: string) => stateOf(folder)
+
+export type FolderState = 'held' | 'moved' | 'missing'
+
+// A look that finds the folder moved gets one more: canonical once more on the spelling the caller wrote. When that
+// gives the key prepare took, the disk reads the spelling as the same name now, as when a write sent beside this one
+// made a new folder under another case or another program changed a name's case. The key folds further than the gate
+// matches, so a relative path that differs in any character from the one judged goes on only when judged says the gate
+// allows it and is moved otherwise. The call then acts on the path it gives and the folder of that path is looked at
+// as before
+export async function looked(
+  target: Canonical, look: (absolute: string) => Promise<FolderState>, again: () => Promise<Canonical | NotCanonical>,
+  judged: (now: Canonical) => boolean = () => false,
+): Promise<{ state: FolderState, target: Canonical }> {
+  const state = await look(target.absolute)
+  if (state !== 'moved') return { state, target }
+  const now = await again()
+  if (!now.ok || now.key !== target.key) return { state, target }
+  if (now.relative !== target.relative && !judged(now)) return { state, target }
+  return { state: await look(now.absolute), target: now }
+}
+
+async function stateOf(folder: string): Promise<FolderState> {
+  let dir = folder
+  for (let gone = false; ; gone = true) {
+    try {
+      return (await realpath(dir)) !== dir ? 'moved' : gone ? 'missing' : 'held'
+    } catch (err) {
+      const up = path.dirname(dir)
+      if (!absent(err) || up === dir) return 'moved'
+      dir = up
+    }
+  }
+}
+
+// For a provider's prepare step. The string rules run first. Then the OS resolves each part that exists, with links,
+// junctions and 8.3 short names. The names that don't exist yet are kept for a write. The promise form of
 // realpath is realpath.native. Resolves once and keeps nothing open: the caller acts on exactly the path returned and
 // the provider holds the per-path lock on key from prepare to perform. The spellings of one name give one key, so no
 // other hetu write to that name runs in between. On Windows a name not there yet that reads like an 8.3 short name,
@@ -104,11 +165,12 @@ const within = (folder: string, target: string) => target === folder || target.s
 export async function canonical(root: string, input: string, options: CanonicalOptions = {}): Promise<Canonical | NotCanonical> {
   const broken = stringRule(input)
   if (broken !== null) return { ok: false, code: 'invalid', rule: broken }
-  const refuse = (rule: DiskRule): NotCanonical => ({ ok: false, code: 'not-granted', rule })
+  const refuse = (rule: DiskRule): Extract<NotCanonical, { code: 'not-granted' }> => ({ ok: false, code: 'not-granted', rule })
 
   const rootReal = await realpath(root).catch(() => null)
   if (rootReal === null) return refuse('unresolved')
-  const found = await deepest(rootReal, input.split('/'))
+  const spelled = input.split('/')
+  const found = await deepest(rootReal, spelled)
   if (found === null) return refuse('unresolved')
   // A link or a junction out of the luoshu
   if (!within(rootReal, found.real)) return refuse('outside')
@@ -119,9 +181,9 @@ export async function canonical(root: string, input: string, options: CanonicalO
   // A link to the luoshu itself, where no note lives
   if (names.length === 0) return refuse('root')
   if (names.some(isGitName)) return refuse('git')
-  // A dot name where the path leads through links, junctions and 8.3 short names or as the caller spelled it, so a link
-  // named .x refuses as .x would
-  if (names.some(isDotName) || input.split('/').some(isDotName)) return refuse('dot')
+  // A dot name as the caller spelled it, so a link named .x refuses as .x would, by the rule of the name it leads to
+  // when that is a dot name too
+  if (names.some(isDotName) || spelled.some(isDotName)) return refuse(found.hidden ?? 'dot')
 
   const absolute = path.join(found.real, ...found.rest)
   for (const [rule, folder] of [['data', options.dataDir], ['install', options.installDir]] as const) {
@@ -131,5 +193,10 @@ export async function canonical(root: string, input: string, options: CanonicalO
     if (real === null || within(real, absolute)) return refuse(rule)
   }
   const relative = names.join('/')
-  return { ok: true, absolute, relative, key: keyOf(relative) }
+  const answer: Canonical = { ok: true, absolute, relative, key: keyOf(relative) }
+  if (found.hidden === null) return answer
+  // The OS would read the caller's spelling of the first name that leads to a dot name as that name again, so a name
+  // made up here and no file has takes its place on the disk
+  const nowhere = path.join(found.real, `.${randomBytes(16).toString('hex')}`, ...found.rest.slice(1))
+  return { ...refuse(found.hidden), absent: { ...answer, absolute: nowhere } }
 }

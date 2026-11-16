@@ -532,6 +532,26 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 })
 
+// A path with a dot segment names no note. The luoshu publishes none, so one on the bus is a string a plugin wrote
+describe('a path with a dot segment', () => {
+  const dotted = ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config']
+
+  it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while the publish answers as any other', async state => {
+    const { carrier, loader, gate, search, mcp, edited } = setup()
+    gate.listable = () => true
+    loader.slots.gate = state
+    carrier.changed()
+    for (const side of [search, mcp]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    for (const path of dotted) expect((await edited(path)).ok, path).toBe(true)
+    await edited('notes/a.md')
+    await until(() => [search, mcp].every(side => paths(side.events()).includes('notes/a.md')))
+    await settle()
+    expect(paths(search.events())).toEqual(['notes/a.md'])
+    expect(paths(mcp.events())).toEqual(['notes/a.md'])
+    expect(gate.lists.filter(asked => asked.path !== 'notes/a.md')).toEqual([])
+  })
+})
+
 describe('the gate off by the human', () => {
   // A bus on a clock the test moves and a log that can't write, with one record queued that waits from 0
   async function failing() {

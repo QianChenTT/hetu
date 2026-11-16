@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -123,6 +123,18 @@ describe('writing', () => {
     const made = opened()
     await ask(made, 'luoshu.write', { path: 'journal/b.md', text: 'again', baseVersion: sha('note b') })
     expect((await readdir(path.join(folder, 'journal'))).sort()).toEqual(['b.md'])
+  })
+
+  // A hard link with a plain name to a dot file still reads as the dot file. A write goes to a temp file and a rename,
+  // which replaces the plain name only, so the dot file keeps its bytes
+  it('replaces only the plain name of a hard link to a dot file and leaves the dot file as it was', async () => {
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await link(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), path.join(folder, 'journal', 'alias.md'))
+    const made = opened()
+    expect(await ask(made, 'luoshu.write', { path: 'journal/alias.md', text: 'planted', baseVersion: sha('plugin code') })).toEqual({ version: sha('planted') })
+    expect(await readFile(path.join(folder, 'journal', 'alias.md'), 'utf8')).toBe('planted')
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
   })
 })
 
@@ -270,6 +282,188 @@ describe('a folder change while calls are in flight', () => {
   })
 })
 
+// prepare judged a plain folder. One swapped for a junction into a dot folder by perform would hand a read the dot file
+// or land a write there, as remove and move already refuse
+describe('a folder swapped for a junction after prepare', () => {
+  beforeEach(async () => {
+    await mkdir(path.join(folder, '.obsidian', 'plugins', 'x'), { recursive: true })
+    await writeFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'plugin code')
+    await writeFile(path.join(folder, 'journal', 'main.js'), 'plain')
+  })
+
+  async function swapped(action: string, args: unknown): Promise<unknown> {
+    const made = opened()
+    const call = callOf(action, args)
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await symlink(path.join(folder, '.obsidian', 'plugins', 'x'), path.join(folder, 'journal'), 'junction')
+    return made.provider.perform(call, prepared).catch(err => ({ refused: err }))
+  }
+
+  it('refuses a read and reads nothing from the dot folder', async () => {
+    expect(await swapped('luoshu.read', { path: 'journal/main.js' })).toEqual({ refused: { code: 'not-granted' } })
+  })
+
+  it('refuses a write of a new note and writes nothing into the dot folder', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/planted.js', text: 'planted' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+  })
+
+  // The note's own folder isn't there yet, so the swapped folder is the one above it
+  it('refuses a write into a new folder under the swapped one and makes no folder in the dot folder', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/new/deeper/planted.js', text: 'planted' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+  })
+
+  it('refuses a write over a note there at its version and leaves the dot file as it was', async () => {
+    expect(await swapped('luoshu.write', { path: 'journal/main.js', text: 'planted', baseVersion: sha('plugin code') })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readdir(path.join(folder, '.obsidian', 'plugins', 'x'))).toEqual(['main.js'])
+    expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
+  })
+
+  it('refuses a listing of the swapped folder and names nothing in the dot folder', async () => {
+    expect(await swapped('luoshu.list', { folder: 'journal' })).toEqual({ refused: { code: 'not-granted' } })
+  })
+
+  it('refuses a listing of a folder missing at prepare and a junction into a dot folder by perform', async () => {
+    const made = opened()
+    const call = callOf('luoshu.list', { folder: 'later' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await symlink(path.join(folder, '.obsidian', 'plugins', 'x'), path.join(folder, 'later'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+  })
+
+  it('answers an empty page for a listing whose folder is gone since prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.list', { folder: 'journal' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    expect(await made.provider.perform(call, prepared)).toEqual({ paths: [], next: null })
+  })
+
+  // The caller's spelling looked at again leads to another folder, whose key isn't the one prepare took
+  it('refuses a read whose folder became a junction into another plain folder', async () => {
+    const made = opened()
+    const call = callOf('luoshu.read', { path: 'journal/b.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await symlink(path.join(folder, 'journal-was'), path.join(folder, 'journal'), 'junction')
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
+  })
+
+  // A folder gone since prepare holds no note, so the read answers as for any missing one
+  it('answers not-found for a read whose folder is gone since prepare', async () => {
+    const made = opened()
+    const call = callOf('luoshu.read', { path: 'journal/b.md' })
+    const prepared = await made.provider.prepare(call) as Prepared
+    await rename(path.join(folder, 'journal'), path.join(folder, 'journal-was'))
+    await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-found' })
+  })
+})
+
+// The look at the folder before the act finds another spelling of the one prepare resolved. The caller's spelling
+// resolved again gives the key prepare took and another path, so the call asks the gate again through its judge and
+// goes on when the judge allows the new path
+describe.runIf(onWindows || process.platform === 'darwin')('a folder whose name differs only in case from the one prepare resolved', () => {
+  // A folder renamed back and forth under the luoshu's watch, which can hold it open for a moment on Windows
+  const renamed = async (from: string, to: string) => {
+    for (let wait = 10; ; wait *= 2) {
+      try {
+        return await rename(from, to)
+      } catch (err) {
+        if (!['EPERM', 'EBUSY'].includes((err as NodeJS.ErrnoException).code ?? '') || wait > 1280) throw err
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
+  }
+
+  // A call whose judge answers as given, null as the gate does for a caller granted every path, keeping each ask
+  const judging = (call: Call, asked: string[][], answer: { code: 'not-granted' } | null = null): Call => ({
+    ...call,
+    judge: (paths: readonly string[]) => {
+      asked.push([...paths])
+      return answer
+    },
+  })
+
+  it('writes two notes sent together into one new folder spelled in two cases', async () => {
+    const made = opened()
+    const asked: string[][] = []
+    const first = judging(callOf('luoshu.write', { path: 'Inbox/a.md', text: 'a' }), asked)
+    const second = judging(callOf('luoshu.write', { path: 'inbox/b.md', text: 'b' }), asked)
+    const [one, two] = [await made.provider.prepare(first), await made.provider.prepare(second)]
+    expect(await made.provider.perform(first, one as Prepared)).toEqual({ version: sha('a') })
+    expect(await made.provider.perform(second, two as Prepared)).toEqual({ version: sha('b') })
+    expect(asked).toEqual([['Inbox/b.md']])
+    expect((await readdir(folder)).filter(name => name.toLowerCase() === 'inbox')).toEqual(['Inbox'])
+    expect((await readdir(path.join(folder, 'Inbox'))).sort()).toEqual(['a.md', 'b.md'])
+  })
+
+  it('reads and lists a note whose folder another program renamed in case since prepare', async () => {
+    const made = opened()
+    const asked: string[][] = []
+    const read = judging(callOf('luoshu.read', { path: 'journal/b.md' }), asked)
+    const list = judging(callOf('luoshu.list', { folder: 'journal' }), asked)
+    const [reading, listing] = [await made.provider.prepare(read), await made.provider.prepare(list)]
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    expect(await made.provider.perform(read, reading as Prepared)).toEqual({ text: 'note b', version: sha('note b'), path: 'Journal/b.md' })
+    // A listing's folder is never judged again, since canList judges each name it gives
+    expect(await made.provider.perform(list, listing as Prepared)).toEqual({ paths: ['Journal/b.md'], next: null })
+    expect(asked).toEqual([['Journal/b.md']])
+  })
+
+  it('moves a note out of and into a folder another program renamed in case since prepare', async () => {
+    const made = opened()
+    const asked: string[][] = []
+    const out = judging(callOf('luoshu.move', { from: 'journal/b.md', to: 'b.md' }), asked)
+    const into = judging(callOf('luoshu.move', { from: 'a.md', to: 'journal/a.md' }), asked)
+    const [leaving, entering] = [await made.provider.prepare(out), await made.provider.prepare(into)]
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    expect(await made.provider.perform(out, leaving as Prepared)).toBeNull()
+    expect(await made.provider.perform(into, entering as Prepared)).toBeNull()
+    expect(asked).toEqual([['Journal/b.md', 'b.md'], ['a.md', 'Journal/a.md']])
+    expect(await readFile(path.join(folder, 'b.md'), 'utf8')).toBe('note b')
+    expect(await readdir(path.join(folder, 'Journal'))).toEqual(['a.md'])
+  })
+
+  it('refuses a read, a write, a remove and both ends of a move with no judge on the call or a judge that refuses the new path', async () => {
+    const made = createLuoshu()
+    made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install'), trash: async () => {} })
+    await writeFile(path.join(folder, 'journal', 'c.md'), 'note c')
+    const tries: [string, unknown][] = [
+      ['luoshu.read', { path: 'journal/b.md' }],
+      ['luoshu.write', { path: 'journal/new.md', text: 'x' }],
+      ['luoshu.remove', { path: 'journal/c.md', baseVersion: sha('note c') }],
+      ['luoshu.move', { from: 'journal/b.md', to: 'out.md' }],
+      ['luoshu.move', { from: 'a.md', to: 'journal/in.md' }],
+    ]
+    for (const judge of ['none', 'refusing'] as const) {
+      for (const [action, args] of tries) {
+        const asked: string[][] = []
+        const plain = callOf(action, args)
+        const call = judge === 'none' ? plain : judging(plain, asked, { code: 'not-granted' })
+        const prepared = await made.provider.prepare(call)
+        await renamed(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+        await expect(made.provider.perform(call, prepared as Prepared), `${judge} ${action}`).rejects.toEqual({ code: 'not-granted' })
+        await renamed(path.join(folder, 'Journal'), path.join(folder, 'journal'))
+        expect(asked).toHaveLength(judge === 'none' ? 0 : 1)
+      }
+    }
+    made.close()
+    expect((await readdir(path.join(folder, 'journal'))).sort()).toEqual(['b.md', 'c.md'])
+    expect((await readdir(folder)).sort()).toEqual(['.git', 'a.md', 'journal'])
+  })
+
+  // The note's own folder is gone under the renamed one, so the look at the path resolved again finds it gone
+  it('refuses a move from a folder gone under one renamed in case, as from any gone folder', async () => {
+    const made = opened()
+    const call = callOf('luoshu.move', { from: 'journal/sub/x.md', to: 'y.md' })
+    const prepared = await made.provider.prepare(call)
+    await rename(path.join(folder, 'journal'), path.join(folder, 'Journal'))
+    await expect(made.provider.perform(call, prepared as Prepared)).rejects.toEqual({ code: 'not-granted' })
+  })
+})
+
 describe('a note too large to answer', () => {
   it('is refused failed and too-large from its size, before it is read', async () => {
     await writeFile(path.join(folder, 'big.md'), 'x'.repeat(2048))
@@ -312,7 +506,8 @@ describe('the spellings threat-model row 3 found', () => {
     expect(await ask(made, 'luoshu.read', { path: 'install/install.json' })).toEqual({ refused: { code: 'not-granted' } })
   })
 
-  it.runIf(onWindows)('refuses .git through its 8.3 short name', async ({ skip }) => {
+  // Spelled with no dot, so it answers as a missing note, which aliases.test.ts compares action by action
+  it.runIf(onWindows)('answers .git through its 8.3 short name as a missing note', async ({ skip }) => {
     const { stdout } = await run('cmd.exe', ['/d', '/c', 'dir', '/x', '/a'], { cwd: folder })
     const line = stdout.split(/\r?\n/).map(l => l.trimEnd()).find(l => l.endsWith(' .git'))
     const short = line?.slice(0, -' .git'.length).trimEnd().split(/\s+/).at(-1)
@@ -321,6 +516,8 @@ describe('the spellings threat-model row 3 found', () => {
       return skip('this volume makes no 8.3 short names')
     }
     expect(await readFile(path.join(folder, short, 'config'), 'utf8')).toBe('[core]\n')
-    expect(await ask(opened(), 'luoshu.read', { path: `${short}/config` })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await ask(opened(), 'luoshu.read', { path: `${short}/config` })).toEqual({ refused: { code: 'not-found' } })
+    expect(await ask(opened(), 'luoshu.write', { path: `${short}/config`, text: 'x' })).toEqual({ refused: { code: 'not-granted' } })
+    expect(await readFile(path.join(folder, '.git', 'config'), 'utf8')).toBe('[core]\n')
   })
 })

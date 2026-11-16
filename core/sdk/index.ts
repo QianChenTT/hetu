@@ -10,3 +10,5 @@ export type { Handler, IncomingCall } from './serving.ts'
 export type { Transport } from './transport.ts'
 export { diffTree, type UiClient } from './ui.ts'
 export type { LayoutState, LayoutView, Op, UiEvent, UiNode, UiTopic } from '../api/ui.ts'
+// The core's own check for a path segment no note path holds, for a plugin that keeps paths from an older build
+export { isDotName } from '../api/names.ts'

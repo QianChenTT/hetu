@@ -28,6 +28,10 @@ export type Call = {
   // For a listing only: whether the caller may see a name, as the gate answers. The provider pages over the names it
   // allows, so no name the caller can't list reaches it, not even as where the next page starts
   readonly canList?: (path: string) => boolean
+  // For a call with power: the gate and the guards asked again, as for the call's first judgement, about the paths the
+  // provider would act on now, one for each path prepare gave. A provider asks when a look at the disk after the first
+  // judgement reads a path otherwise. null lets the call go on on those paths
+  readonly judge?: (paths: readonly string[]) => ProviderRefusal | null
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
