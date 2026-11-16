@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
-  ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
+  ack as ackSchema, agentLabel, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
@@ -681,10 +681,11 @@ export class Carrier {
     }
     // A label is an agent's only down a chain that started at the door's own call with a label, the door known by the
     // way that call came on. The door's call is still http's own. Any other call keeps a label as text that grants
-    // nothing. A call from the door names the agent it is for, so one with no label is refused before mcp sees it
+    // nothing. A call from the door names the agent it is for in the agent label's form, so one with no label or another
+    // is refused before mcp sees it
     const agent = parent?.lends
     const door = parent === null && action === agentDoor.action && this.isDoor(way)
-    if (door && onBehalf === undefined) return refuse('invalid')
+    if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 

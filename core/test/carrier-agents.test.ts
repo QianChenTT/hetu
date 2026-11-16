@@ -147,6 +147,25 @@ describe('an agent\'s label down a chain of calls', () => {
     expect(records.map(record => record.code)).toEqual(['invalid', 'invalid', 'invalid', 'invalid'])
   })
 
+  it('refuses the door\'s mcp.handle with a label out of the <client id>#<n> form as invalid and delivers nothing to mcp', async () => {
+    const { door, mcp } = agents()
+    const cp = (...points: number[]) => String.fromCodePoint(...points)
+    const labels = [
+      `client${cp(0x200b)}#1`, `client${cp(0x2028)}#1`, `${cp(0x441)}lient#1`, `client#1${cp(0x2060)}`, ' ', 'client', 'client#01', 'a#1#1',
+      `${'a'.repeat(256)}#1`, 'client "x"#1',
+    ]
+    for (const label of labels) expect(code(await door.ask('mcp.handle', {}, { onBehalf: label }))).toBe('invalid')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  it('marks an agent whose client id is a metadata document\'s address', async () => {
+    const { door, mcp, gate } = agents()
+    const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'
+    const { parent } = await handled(door, mcp, label)
+    expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
+    expect(asked(gate, 'luoshu.read').map(access => access.agent)).toEqual([label, label])
+  })
+
   it('still delivers an mcp.handle with no label that is not the door\'s and the door\'s other calls with no label', async () => {
     const { door, httpWorker, mcp, search, loader } = agents()
     loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })

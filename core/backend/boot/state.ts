@@ -4,7 +4,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import { capabilityKey, folderCapabilities, folderCapability, screenText, type Capability } from '../../api/capabilities.ts'
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
-import { MAX_LABEL_LENGTH } from '../../api/envelope.ts'
+import { agentLabel } from '../../api/envelope.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
 import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { agentHost } from '../../api/slots.ts'
@@ -82,9 +82,9 @@ const switches = z.strictObject({
 })
 // Items for agents an entry holds in all, across every agent
 export const MAX_AGENT_ITEMS = 256
-// One item of an agent's grant: the label the agent door names the agent by in the envelope's own grammar and an item
-// in the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
-const agentItems = z.array(z.strictObject({ agent: screenText(MAX_LABEL_LENGTH), capability: folderCapability }))
+// One item of an agent's grant: the label the agent door names the agent by, in the agent label's form, and an item in
+// the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
+const agentItems = z.array(z.strictObject({ agent: agentLabel, capability: folderCapability }))
   .max(MAX_AGENT_ITEMS, { abort: true })
   .superRefine((items, ctx) => {
     const byAgent = new Map<string, Capability[]>()

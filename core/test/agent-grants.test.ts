@@ -91,15 +91,39 @@ describe('agents\' items in the agent host\'s entry', () => {
     ['an item of no known type', [{ agent: 'client#1', capability: { type: 'host.replace' } }]],
     ['the same item twice for one agent', [{ agent: 'client#1', capability: inbox }, { agent: 'client#1', capability: { paths: ['inbox/**'], type: 'luoshu.read' } }]],
     ['more scopes of one type for one agent than a plugin may hold', [0, 1].map(n => ({ agent: 'client#1', capability: { type: 'luoshu.read', paths: Array.from({ length: 40 }, (_, i) => `n${n}-${i}/**`) } }))],
-    ['more items than an entry holds', Array.from({ length: 257 }, (_, i) => ({ agent: `client#${i}`, capability: inbox }))],
+    ['more items than an entry holds', Array.from({ length: 257 }, (_, i) => ({ agent: `client#${i + 1}`, capability: inbox }))],
   ])('refuses %s', async (_name, items) => {
     await expect(store.writePlugin('mcp', entry({ agents: items }))).rejects.toThrow()
     await plant('mcp', entry({ agents: items }))
     expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'mcp', result: 'invalid' })
   })
 
+  // Labels a screen draws as another one or as nothing, and labels out of the <client id>#<n> form
+  const cp = (...points: number[]) => String.fromCodePoint(...points)
+  it.each([
+    ['one space', ' '], ['a zero width space alone', cp(0x200b)], ['client#1 then a zero width space', `client#1${cp(0x200b)}`],
+    ['a cyrillic first letter', `${cp(0x441)}lient#1`], ['an accent as a combining mark', `e${cp(0x301)}#1`], ['a line separator', `client${cp(0x2028)}#1`],
+    ['a word joiner', `client${cp(0x2060)}#1`], ['a soft hyphen', `client${cp(0xad)}#1`], ['no number', 'client'], ['a plugin id', 'search'],
+    ['no client id', '#1'], ['a number with a leading zero', 'client#01'], ['the number zero', 'client#0'], ['a second number sign', 'a#1#1'],
+    ['a space in the client id', 'my client#1'], ['a quote', 'client"#1'], ['an angle bracket', '<b>#1'], ['a backslash', 'a\\b#1'],
+    ['a name every object knows', '__proto__'], ['another', 'constructor'], ['a client id of 256 characters', `${'a'.repeat(256)}#1`], ['a number of 16 digits', `client#${'9'.repeat(16)}`],
+  ])('refuses a label with %s', async (_name, label) => {
+    await expect(store.writePlugin('mcp', entry({ agents: [{ agent: label, capability: inbox }] }))).rejects.toThrow()
+    await plant('mcp', entry({ agents: [{ agent: label, capability: inbox }] }))
+    expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'mcp', result: 'invalid' })
+  })
+
+  it('takes a client id that is a metadata document\'s address, one of 255 characters and a number of 15 digits', async () => {
+    const labels = [
+      'https://claude.ai/oauth/claude-code-client-metadata#3', 'https://client.example/a/b?x=1&y=%20#12', 'client#1',
+      `${'a'.repeat(255)}#1`, `client#${'9'.repeat(15)}`,
+    ]
+    await store.writePlugin('mcp', entry({ agents: labels.map(agent => ({ agent, capability: inbox })) }))
+    expect((await store.load()).state.plugins.mcp.agents!.map(item => item.agent)).toEqual(labels)
+  })
+
   it('takes one item for each of many agents, the same item for two agents and a type\'s scopes counted per agent', async () => {
-    const many = Array.from({ length: 256 }, (_, i) => ({ agent: `client#${i}`, capability: inbox }))
+    const many = Array.from({ length: 256 }, (_, i) => ({ agent: `client#${i + 1}`, capability: inbox }))
     await store.writePlugin('mcp', entry({ agents: many }))
     expect((await store.load()).state.plugins.mcp.agents).toHaveLength(256)
     const wide = [1, 2].map(n => ({ agent: `client#${n}`, capability: { type: 'luoshu.read' as const, paths: Array.from({ length: 40 }, (_, i) => `n${i}/**`) } }))
@@ -145,13 +169,5 @@ describe('agents\' items in the StateView', () => {
     const off = await started({ enabled: false })
     expect(off.gate.seen.at(-1)!.agents).toEqual({})
     expect(off.gate.seen.at(-1)!.plugins.mcp).toBeUndefined()
-  })
-
-  it('keeps a label every object knows as one agent\'s, with no prototype to find', async () => {
-    const { gate } = await started({ agents: [{ agent: '__proto__', capability: inbox }, { agent: 'constructor', capability: write }] })
-    const view = gate.seen.at(-1)!
-    expect(Object.keys(view.agents!).sort()).toEqual(['__proto__', 'constructor'])
-    expect(view.agents!.__proto__).toEqual([item(inbox)])
-    expect(view.agents!.toString).toBeUndefined()
   })
 })

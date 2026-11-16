@@ -45,7 +45,7 @@ describe('audit records', () => {
     gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const http = connect(host('http'))
     const mcp = connect(worker('mcp'))
-    const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a' })
+    const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a#1' })
     const parent = await mcp.delivered('mcp.handle')
     const write = await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'secret note text' }, { parent: parent.callId })
     expect(write.ok).toBe(true)
@@ -54,7 +54,7 @@ describe('audit records', () => {
     const records = await written(carrier, log)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
-      caller: 'mcp/worker#1', onBehalf: 'agent-a', root: 'http/host#1', action: 'luoshu.write',
+      caller: 'mcp/worker#1', onBehalf: 'agent-a#1', root: 'http/host#1', action: 'luoshu.write',
       paths: '["notes/a.md"]', pathCount: 1, code: null, gate: 'on', count: 1,
     })
     expect(records[1]).toMatchObject({ caller: 'http/host#1', root: 'http/host#1', action: 'mcp.handle', target: 'mcp', code: null })

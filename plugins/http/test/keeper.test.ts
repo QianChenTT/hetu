@@ -63,7 +63,7 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
   })
 }
 
-const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
+const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
 
 // http on the fake core with mcp as a stand-in whose handle echoes what reached it
 async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, answer?: (call: Delivered) => unknown } = {}) {
@@ -91,7 +91,7 @@ describe('http on the fake core', () => {
     expect(reply.status).toBe(200)
     expect(JSON.parse(reply.body)).toEqual({
       caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 },
-      onBehalf: 'https://client.example/metadata',
+      onBehalf: 'https://client.example/metadata#1',
       args: { body: 'not json {', headers: { 'mcp-session-id': 's-1' } },
     })
     expect(reply.headers['content-type']).toBe('application/json')
