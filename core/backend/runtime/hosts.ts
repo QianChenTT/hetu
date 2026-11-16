@@ -9,7 +9,7 @@ export type HostLoading = {
   importer(url: string): Promise<unknown>
 }
 
-function isPlugin(value: unknown): value is Parameters<typeof run>[0] {
+export function isPlugin(value: unknown): value is Parameters<typeof run>[0] {
   if (typeof value !== 'object' || value === null) return false
   const { kind, spec } = value as { kind?: unknown, spec?: { start?: unknown } }
   return kind === 'hetu-plugin' && typeof spec?.start === 'function'

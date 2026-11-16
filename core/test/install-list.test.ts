@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FIRST_PARTY_SIGNER, installList, isNewer, MAX_INSTALL_LIST_BYTES, pluginVersion } from '../api/install.ts'
-import { dependencyReason, depsMessage, init, reason, ready, stop, stopped } from '../api/lifecycle.ts'
+import { bindFailures, dependencyReason, depsMessage, init, reason, ready, stop, stopped, stopReasons } from '../api/lifecycle.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 
 const hash = 'a'.repeat(64)
@@ -81,6 +82,22 @@ describe('the lifecycle messages', () => {
     ['a field it does not know', { ...sent, grants: [] }],
   ])('refuses init with %s', (_name, message) => {
     expect(init.safeParse(message).success).toBe(false)
+  })
+
+  // Each reason a crash, a kill, a missed beat or a failed bind leaves is the lastStop a restarted half's init carries
+  it('holds every reason the loader ends a plugin with, read from the loader\'s own source', () => {
+    const source = readFileSync(new URL('../backend/loader/loader.ts', import.meta.url), 'utf8')
+    const quoted = (text: string) => [...text.matchAll(/'([a-z-]+)'/g)].map(match => match[1])
+    const given = [...source.matchAll(/this\.die\(([^)]*)\)/g)].flatMap(match => quoted(match[1]))
+    // A crash's reason comes in through crashed and a failed bind's through core.bindFailed
+    const crashed = source.match(/crashed\(caller: Caller, reason: ([^)]*)\)/)
+    expect(crashed).not.toBeNull()
+    const reasons = [...new Set([...given, ...quoted(crashed![1]), ...bindFailures])]
+    expect(reasons).toEqual(expect.arrayContaining(['start-failed', 'killed', 'exited', 'unresponsive', 'closed', 'flood', 'malformed', 'port-taken', 'bind-failed']))
+    for (const one of reasons) {
+      expect(stopReasons).toContain(one)
+      expect(init.safeParse({ ...sent, lastStop: one }).success).toBe(true)
+    }
   })
 
   it('names only the direct requirement in a dependency reason', () => {

@@ -37,7 +37,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'gate', 'hidden-marks', 'history', 'layout', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'gate', 'hidden-marks', 'history', 'http', 'layout', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -113,6 +113,23 @@ describe('the main bundle', () => {
     expect(typeof (module[id] as Record<string, unknown>)[method]).toBe('function')
   })
 
+  // http's host half runs in a utility process, so it holds no provider and no role and its module is the plugin alone
+  it('writes http into the install as a host half that imports only the built-ins its manifest names and exports the plugin alone', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'http')
+    expect(list.plugins.http).toEqual({ path: 'plugins/http', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
+    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
+    const imports = [...new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))]
+    expect(imports).toEqual(['node:http'])
+    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
+    expect(Object.keys(module)).toEqual(['default'])
+    expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
+  })
+
   // The page compiles hidden marks in itself. The install's copy is what its switch and its hash cover
   it('writes hidden-marks into the install as an in-page plugin: an install manifest with a page entry and the module bundled, with the hash of its files', async () => {
     const out = await outDir()
@@ -133,6 +150,14 @@ describe('the main bundle', () => {
       expect((await stat(path.join(out, 'frontend', file))).isFile(), file).toBe(true)
     }
     expect(built.pageImports).toEqual([])
+  })
+
+  it('bundles the utility bootstrap beside main.js as one module that imports nothing', async () => {
+    const out = await outDir()
+    const built = await buildMain(out)
+    expect((await stat(path.join(out, 'utility.js'))).isFile()).toBe(true)
+    expect(built.utilityImports).toEqual([])
+    expect(await readFile(path.join(out, 'utility.js'), 'utf8')).toContain('data:text/javascript;base64,')
   })
 
   it('bundles the workers and window preloads as scripts whose only import is electron', async () => {

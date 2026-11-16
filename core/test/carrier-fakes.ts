@@ -63,6 +63,11 @@ export class FakeLoader implements Loader {
   installed(id: string, state: PluginInfo['state'] = 'ready'): void {
     this.plugins[id] = { state, place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [] }
   }
+
+  // An install plugin whose host half runs in a utility process, on a port as a worker's
+  utility(id: string, state: PluginInfo['state'] = 'ready'): void {
+    this.plugins[id] = { state, place: 'utility', incarnation: 1, serves: 'host', actions: {}, topics: [] }
+  }
 }
 
 // Whether grants hold an access, with core/api's own matcher on a volume that keeps case

@@ -20,7 +20,7 @@ export type Port = {
 // answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
 export type PluginInfo = {
   state: PluginState
-  place: 'host' | 'sandboxed' | 'page'
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
   incarnation: number
   serves: string
   actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
@@ -46,8 +46,9 @@ export type Loader = {
   // A way in closed under its plugin or was closed for a flood. The loader moves dependents to waiting before this
   // returns and the carrier then answers the calls the plugin held
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
-  // Lifecycle messages a plugin sends, which the carrier only passes on
-  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void
+  // Lifecycle messages a plugin sends, which the carrier only passes on, and alive for anything at all main heard from a
+  // utility half, before its rate
+  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive'): void
 }
 
 // Raises the prompt behind a gate's ask and names the held request, or refuses: throttled while another ask from the

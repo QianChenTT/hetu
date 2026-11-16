@@ -1,8 +1,10 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
+import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { FuseState, FuseV1Options, pathToFuseFile } from '@electron/fuses'
 import { stateDir } from '../../backend/boot/state.ts'
+import type { FuseName } from '../../build/fuses.ts'
 import { executableIn } from '../../build/package.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
@@ -82,7 +84,70 @@ export async function records(dataDir: string): Promise<Record<string, unknown>[
   return text.split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
 }
 
-export type Started = { code: number | null, stderr: string, records: Record<string, unknown>[], dataDir: string, ready: boolean }
+// code and signal are Node's for the exit, so a death by signal has a null code and names the signal. killed says the
+// test ended the process once its wait was over
+export type Started = { code: number | null, signal: string | null, killed: boolean, stderr: string, records: Record<string, unknown>[], dataDir: string, ready: boolean }
+
+// The last characters of stderr, where a fatal error lands
+const TAIL = 2000
+
+// How a start ended, for an assertion's message
+export function exitText(started: Started): string {
+  const tail = started.stderr.length > TAIL ? started.stderr.slice(-TAIL) : started.stderr
+  const how = started.killed ? 'ended by the test' : `code ${started.code}, signal ${started.signal}`
+  return `${how}, ready ${started.ready}, stderr's end:\n${tail.trim() === '' ? '(empty)' : tail}`
+}
+
+// The traps Chromium's immediate crash raises after a failed FATAL check: SIGTRAP on arm64, SIGTRAP or SIGILL on x64
+const CRASH_TRAPS: readonly string[] = ['SIGTRAP', 'SIGILL']
+
+// Whether the app ended a start by itself before ready, the way a refused start ends. Windows hands back an exit code
+// for every end, a crash included. On macOS a refusal in JavaScript exits with a code, while a failed FATAL check, such
+// as the one on a changed asar header, crashes on purpose with a trap and has no exit code. Both are the app refusing.
+// A start the test had to end, a clean exit and a start that reached ready are not, nor is a signal from outside
+export function endedRefused(started: Started, platform: string = process.platform): boolean {
+  if (started.killed || started.ready) return false
+  if (started.code !== null) return started.code !== 0
+  return platform !== 'win32' && started.signal !== null && CRASH_TRAPS.includes(started.signal)
+}
+
+// Where a copy of hetu named electron goes: beside the executable, so on macOS inside the bundle, where the executable
+// finds the Electron framework as a real copy of the app would have it
+export function electronCopyIn(appOutDir: string, platform: string = process.platform): string {
+  return path.join(path.dirname(executableIn(appOutDir, platform)), platform === 'win32' ? 'electron.exe' : 'electron')
+}
+
+// The file that holds Electron's fuses, as @electron/fuses finds it: the executable on Windows and Linux, the Electron
+// framework inside the bundle on macOS
+export function fuseFileIn(appOutDir: string, platform: string = process.platform): string {
+  return pathToFuseFile(executableIn(appOutDir, platform))
+}
+
+// The fuse file's path inside a packed folder with every link in the folder followed, in the form linkedCopy takes. A
+// copy that flips a fuse names it, since flipping writes into the file in place and through a hard link would change
+// the original and every copy made after it
+export async function fuseFileOf(appOutDir: string, platform: string = process.platform): Promise<string> {
+  return path.relative(await realpath(appOutDir), await realpath(fuseFileIn(appOutDir, platform))).split(path.sep).join('/')
+}
+
+// A fuse's state as its byte in a wire getCurrentFuseWire read
+export function fuseText(wire: Readonly<Record<number, number>>, fuse: FuseName): string {
+  const byte = wire[FuseV1Options[fuse]]
+  return `${fuse} ${byte === FuseState.ENABLE ? 'on' : byte === FuseState.DISABLE ? 'off' : `byte ${byte}`}`
+}
+
+// The header's JSON text in an archive's bytes: a pickled size, then a pickle holding the text's length and the text.
+// These are the bytes Electron checks against the integrity the build recorded
+export function asarHeader(bytes: Buffer): { start: number, length: number } {
+  return { start: 16, length: bytes.readUInt32LE(12) }
+}
+
+// The SHA-256 recorded for Resources/app.asar under ElectronAsarIntegrity in an Info.plist in XML
+export function plistAsarHash(text: string): string | undefined {
+  const integrity = /<key>ElectronAsarIntegrity<\/key>\s*<dict>([\s\S]*?)<\/dict>\s*<\/dict>/.exec(text)?.[1]
+  if (integrity === undefined) return undefined
+  return /<key>Resources\/app\.asar<\/key>\s*<dict>[\s\S]*?<key>hash<\/key>\s*<string>([^<]*)<\/string>/.exec(integrity)?.[1]
+}
 
 // The process and every one it started, which a plain kill on Windows leaves running
 function end(pid: number): void {
@@ -106,9 +171,11 @@ export async function start(options: {
   let stderr = ''
   child.stderr.on('data', (piece: Buffer) => { stderr += piece.toString('utf8') })
   let code: number | null = null
+  let signal: string | null = null
   let exited = false
-  child.on('exit', exitCode => {
+  child.on('exit', (exitCode, exitSignal) => {
     code = exitCode
+    signal = exitSignal
     exited = true
   })
   const done = options.until ?? (all => all.some(record => record.event === 'core.ready'))
@@ -125,5 +192,5 @@ export async function start(options: {
   // A moment for the last lines to land
   await new Promise(resolve => setTimeout(resolve, 300))
   seen = await records(dataDir)
-  return { code: killed ? null : code, stderr, records: seen, dataDir, ready: seen.some(record => record.event === 'core.ready') }
+  return { code: killed ? null : code, signal: killed ? null : signal, killed, stderr, records: seen, dataDir, ready: seen.some(record => record.event === 'core.ready') }
 }

@@ -168,10 +168,30 @@ export async function checkHostImports(entry: string, node: readonly string[]): 
   return [...problems].sort()
 }
 
+// The require a CommonJS dependency calls once bundled: esbuild's ESM output turns a require of a built-in into a stub
+// that throws unless a require is in scope, and a module loaded from a data: URL has none. This one is a default import
+// of each built-in the bundle names and a require that answers those names alone, with or without node:, so the bundle
+// reaches no built-in its imports don't already name. It holds no createRequire, no getBuiltinModule and no other way
+// past an import, so checkHostReach still reads the whole text
+export function requireBanner(builtins: readonly string[]): string {
+  const names = [...new Set(builtins.map(name => name.replace(/^node:/, '')))].sort()
+  const imports = names.map((name, i) => `import __hetu_builtin_${i} from ${JSON.stringify(`node:${name}`)};`)
+  const table = names.map((name, i) => `[${JSON.stringify(name)}, __hetu_builtin_${i}]`).join(', ')
+  return `${imports.join('\n')}
+const __hetu_builtins = new Map([${table}]);
+const require = (name) => {
+  const key = String(name).replace(/^node:/, "");
+  if (!__hetu_builtins.has(key)) throw new Error(String(name) + " is not among the built-ins this host half imports");
+  return __hetu_builtins.get(key);
+};
+`
+}
+
 // A host half as one ES module for Node. The runtime imports it from a data: URL, which can't import by a relative path,
 // so everything is bundled but Node's built-ins, and each of those must be in the manifest's node list. Anything else
 // left to load at run time is refused, an Electron import among them, and so are the plain ways past an import that
-// checkHostReach finds. The node list bounds a host half's imports, its review bounds the rest
+// checkHostReach finds. A bundle with a CommonJS dependency that requires a built-in starts with requireBanner. The node
+// list bounds a host half's imports, its review bounds the rest
 export async function buildHost(root: string, entry: string, node: readonly string[]): Promise<{ text: string, imports: string[] }> {
   const result = await build({
     absWorkingDir: root,
@@ -191,15 +211,18 @@ export async function buildHost(root: string, entry: string, node: readonly stri
   const allowed = new Set(node.map(name => name.replace(/^node:/, '').split('/')[0]))
   const imports = new Set<string>()
   const problems = new Set<string>()
+  let required = false
   for (const output of Object.values(result.metafile.outputs)) {
     for (const item of output.imports) {
       if (!item.external) continue
       imports.add(item.path)
+      if (item.kind === 'require-call') required = true
       if (!isBuiltin(item.path)) problems.add(`${item.path} would load at run time`)
       else if (!allowed.has(item.path.replace(/^node:/, '').split('/')[0])) problems.add(`${item.path} isn't in the manifest's node list`)
     }
   }
-  const text = result.outputFiles[0].text
+  const bundled = result.outputFiles[0].text
+  const text = required ? requireBanner([...imports]) + bundled : bundled
   for (const problem of checkHostReach(text)) problems.add(`${problem}, past the node list`)
   if (problems.size > 0) throw new Error(`the host half can't ship as built:\n${[...problems].sort().join('\n')}`)
   return { text, imports: [...imports].sort() }

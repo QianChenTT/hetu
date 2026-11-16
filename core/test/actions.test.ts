@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, providerActions } from '../api/actions.ts'
+import {
+  agentRefusals, coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
+  providerActions,
+} from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
@@ -33,7 +36,14 @@ describe('the core actions', () => {
       'watchdog.stop': 'watchdog',
       'watchdog.restart': 'watchdog',
       'watchdog.limit': 'watchdog',
+      'core.agentRefused': 'http',
+      'core.bindFailed': 'http',
     })
+  })
+
+  it('names the eight reasons an agent is refused at the door for, fixed and frozen', () => {
+    expect(agentRefusals).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
+    expect(Object.isFrozen(agentRefusals)).toBe(true)
   })
 
   it('lives only in the namespaces the core serves, none of them events, which the bus has, or ui yet', () => {
@@ -49,7 +59,7 @@ describe('the core actions', () => {
     expect(() => { (coreActions as Record<string, unknown>)['core.load'] = { from: 'any' } }).toThrow()
   })
 
-  it.each([
+  it.each<[string, unknown, boolean]>([
     ['core.self', undefined, true],
     ['core.self', {}, true],
     ['core.self', { as: 'gate' }, false],
@@ -102,6 +112,28 @@ describe('the core actions', () => {
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/dist/board.html', navigated: true }, true],
     ['editor.frameGone', { url: 'https://example.com/', navigated: false }, false],
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/', navigated: 'yes' }, false],
+    ...agentRefusals.map((reason): [string, unknown, boolean] => ['core.agentRefused', { reason, count: 1 }, true]),
+    ['core.agentRefused', { reason: 'token', count: MAX_REFUSAL_COUNT }, true],
+    ['core.agentRefused', { reason: 'token', count: MAX_REFUSAL_COUNT + 1 }, false],
+    ['core.agentRefused', { reason: 'token', count: 0 }, false],
+    ['core.agentRefused', { reason: 'token', count: -1 }, false],
+    ['core.agentRefused', { reason: 'token', count: 1.5 }, false],
+    ['core.agentRefused', { reason: 'token', count: '3' }, false],
+    ['core.agentRefused', { reason: 'token' }, false],
+    ['core.agentRefused', { count: 1 }, false],
+    ['core.agentRefused', { reason: 'Token', count: 1 }, false],
+    ['core.agentRefused', { reason: 'refused at the door', count: 1 }, false],
+    ['core.agentRefused', { reason: 'token', count: 1, host: 'evil.example' }, false],
+    ['core.agentRefused', { reason: 'token', count: 1, plugin: 'search' }, false],
+    ['core.bindFailed', { reason: 'port-taken' }, true],
+    ['core.bindFailed', { reason: 'bind-failed' }, true],
+    ['core.bindFailed', { reason: 'crashed' }, false],
+    ['core.bindFailed', { reason: 'port taken by another program' }, false],
+    ['core.bindFailed', {}, false],
+    ['core.bindFailed', undefined, false],
+    // A half speaks only about itself, so no plugin is named
+    ['core.bindFailed', { reason: 'port-taken', plugin: 'gate' }, false],
+    ['core.bindFailed', { reason: 'port-taken', port: 4748 }, false],
   ])('checks %s with %j', (action, args, ok) => {
     expect(coreActions[action].args.safeParse(args).success).toBe(ok)
   })

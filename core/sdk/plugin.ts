@@ -1,5 +1,5 @@
 import { floorConstants } from '../api/floor.ts'
-import type { DepState } from '../api/lifecycle.ts'
+import type { BindFailure, DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
 import { type Client, makeClient } from './client.ts'
@@ -24,6 +24,12 @@ export type PluginContext = Client & {
   has(id: string): boolean
   // Runs when the core asks the plugin to stop, beside the spec's own stop, within the grace
   onStop(fn: () => void | Promise<void>): void
+  // Runs each time the core tells a change to the state of its requires and plugin.call targets, a key or a state,
+  // starting to ready included. It is handed nothing and reads has again. Never for init's own map nor once stopping
+  onDeps(fn: () => void | Promise<void>): void
+  // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
+  // reason. Only http's host half in its utility process may, every other caller is refused not-granted
+  bindFailed(reason: BindFailure): Promise<void>
   // Serves <id>.<name>, an action the manifest declares under provides.actions
   provide(name: string, handler: Handler): void
   // The paths of these the call's own caller may read too, only while the call is live
@@ -77,6 +83,12 @@ function direct(transport: Transport): Pick<Sender, 'send'> {
   }
 }
 
+// Two deps maps with the same keys, each with the same state
+function sameDeps(one: Record<string, unknown>, two: Record<string, unknown>): boolean {
+  const keys = Object.keys(one)
+  return keys.length === Object.keys(two).length && keys.every(key => Object.hasOwn(two, key) && two[key] === one[key])
+}
+
 // One half of a plugin on its transport: init, start, ready, the heartbeat and the stop, with the calls inside
 class Half {
   private readonly spec: PluginSpec
@@ -85,6 +97,7 @@ class Half {
   private phase: Phase = 'init'
   private deps: Record<string, unknown> = {}
   private readonly stops: (() => void | Promise<void>)[] = []
+  private readonly depHooks: (() => void | Promise<void>)[] = []
   private ctx: PluginContext | null = null
   private serving: Serving | null = null
   private events: Events | null = null
@@ -115,7 +128,7 @@ class Half {
       return
     }
     if (kind === 'reply') this.calls.reply(message)
-    else if (kind === 'deps') this.readDeps((message as { deps?: unknown }).deps)
+    else if (kind === 'deps') this.depsChanged((message as { deps?: unknown }).deps)
     else if (kind === 'ping') {
       this.post({ v: VERSION, kind: 'pong' })
       this.events?.resendAck()
@@ -148,6 +161,8 @@ class Half {
         return state === 'ready' || state === 'starting'
       },
       onStop: fn => { this.stops.push(fn) },
+      onDeps: fn => { this.depHooks.push(fn) },
+      bindFailed: async reason => { await request('core.bindFailed', { reason }) },
       provide: (name, handler) => serving.provide(name, handler),
       filterReadable: (call, paths) => serving.filterReadable(call, paths),
       events: {
@@ -180,6 +195,24 @@ class Half {
 
   private readDeps(deps: unknown): void {
     if (typeof deps === 'object' && deps !== null) this.deps = Object.assign(Object.create(null), deps)
+  }
+
+  // The map is replaced first, so a hook that reads has reads the new one. A hook that throws or rejects is logged and
+  // the rest still run
+  private depsChanged(deps: unknown): void {
+    const before = this.deps
+    this.readDeps(deps)
+    if (this.phase !== 'starting' && this.phase !== 'ready') return
+    if (sameDeps(before, this.deps)) return
+    for (const fn of this.depHooks) {
+      void (async () => {
+        try {
+          await fn()
+        } catch (err) {
+          console.error('hetu: a deps hook threw', err)
+        }
+      })()
+    }
   }
 
   // The spec's stop and every onStop run together. stopped goes out once they settle or the grace is nearly up,

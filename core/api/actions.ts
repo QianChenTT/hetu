@@ -5,6 +5,7 @@ import { token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
@@ -50,9 +51,18 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window or the watchdog slot's holder. The floor
-// decides these and never the gate, so a failed gate can't block the way out
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog'
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder or http's host
+// half in its utility process. The floor decides these and never the gate, so a failed gate can't block the way out.
+// A value the floor has no rule for refuses every caller
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http'
+
+// Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
+// Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
+// too slow
+export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
+export type AgentRefusal = typeof agentRefusals[number]
+// The most refusals one report counts, far above what the door can refuse in the second a report covers
+export const MAX_REFUSAL_COUNT = 1_000_000
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
@@ -142,6 +152,15 @@ const coreTable = {
     from: 'watchdog',
     args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
   },
+  // The refusals at the door since http's last report for one reason, which the core writes as http.refused coalesced
+  // by reason
+  'core.agentRefused': {
+    from: 'http',
+    args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
+  },
+  // http's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
+  // names no plugin, so a half speaks only about itself
+  'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -250,12 +269,13 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // it didn't restart a second time
 export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
 
-// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs, its state and
-// why, whether it is a security control, the human's switch and, for a plugin-folder plugin, each item it was granted
+// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs (in main, in a
+// utility process, in a sandboxed worker or in the editor page), its state and why, whether it is a security control,
+// the human's switch and, for a plugin-folder plugin, each item it was granted
 export type ListedPlugin = {
   id: string
   from: 'install' | 'folder'
-  place: 'host' | 'sandboxed' | 'page'
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
   state: PluginState
   reason: string | null
   security: boolean
@@ -323,6 +343,8 @@ export type ActionResults = {
   'security.list': SecurityList
   'security.request': { applied: true } | { held: string }
   'core.filterReadable': string[]
+  'core.agentRefused': null
+  'core.bindFailed': null
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

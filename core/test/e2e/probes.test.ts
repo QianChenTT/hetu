@@ -152,7 +152,22 @@ describe('the probes in a worker', () => {
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'heaviest' }))
     const workers = await probes(app, ['objects', 'nested', 'past', 'heaviest'])
     const stalls: Record<string, number> = {}
-    // Before the relay a million small objects stalled main 390 ms, and before it weighed, 16 MiB of nesting 827 ms
+    // What parsing the heaviest message the relay passes costs main on this machine in this run, the best of three so a
+    // pause of the runner's own doesn't count. With the relay main pays about twice it for that message and next to
+    // nothing for one the relay cut off. With no cutoff a million small objects stalled main about 13 times it and with
+    // no weighing 16 MiB of nesting 40 times or more. So the limits follow the machine: 4 times it for a message cut off
+    // and 8 times for the heaviest, each with room for a pause of a shared runner
+    const read = await app.evaluate(() => {
+      const text = JSON.stringify(Array.from({ length: 600_000 }, () => ({})))
+      let best = Number.POSITIVE_INFINITY
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now()
+        JSON.parse(text)
+        best = Math.min(best, performance.now() - start)
+      }
+      return best
+    })
+    const limits = { cut: Math.round(4 * read + 50), heaviest: Math.round(8 * read + 100) }
     const sends: [string, string][] = [
       ['objects', 'a million small objects, not text'], ['nested', '16 MiB of nesting'], ['past', '64 MiB of text'],
       ['heaviest', '600,000 empty objects, the heaviest JSON within the cap'],
@@ -180,12 +195,12 @@ describe('the probes in a worker', () => {
       await new Promise(resolve => setTimeout(resolve, 3000))
       stalls[name] = Math.round(await app.evaluate(() => (globalThis as unknown as { lag: number }).lag))
     }
-    console.log(JSON.stringify({ 'longest stall of main in ms': stalls }))
+    console.log(JSON.stringify({ 'longest stall of main in ms': stalls, 'parse of the heaviest in ms': Math.round(read), limits }))
     for (const plugin of ['objects', 'nested', 'past']) {
       expect(await logged(dataDir, 'plugin.crashed', { plugin, reason: 'malformed' }), plugin).toBe(true)
     }
     // The heaviest message the relay passes reaches main, which reads it and the carrier drops it as no envelope
     expect(await logged(dataDir, 'plugin.crashed', { plugin: 'heaviest' })).toBe(false)
-    for (const [name, ms] of Object.entries(stalls)) expect(ms, name).toBeLessThan(150)
+    for (const [plugin, name] of sends) expect(stalls[name], name).toBeLessThan(plugin === 'heaviest' ? limits.heaviest : limits.cut)
   })
 })

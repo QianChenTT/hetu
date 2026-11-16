@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import http from 'node:http'
+import net, { type AddressInfo } from 'node:net'
+import type { MessagePort } from 'node:worker_threads'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +13,8 @@ import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../../plugins/gate/src/gate.ts'
 import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { httpPlugin } from '../../plugins/http/src/keeper.ts'
+import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
@@ -43,7 +48,7 @@ async function joined(options: {
   before?: (booted: Booted) => void
   // Runs on the data folder before boot reads it
   prepare?: (dataDir: string) => Promise<void>
-  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure'>
+  wire?: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks' | 'windows' | 'onFailure' | 'limited'>
 } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -123,6 +128,16 @@ describe('wiring the core', () => {
     await started
     await carrier.flush()
     expect(await floorEvents(dataDir)).not.toContain('core.ready')
+  })
+
+  it('hands the runtime a limit the human set once it is written, so each running half gets it', async () => {
+    const heard: [string, number][] = []
+    const parts: { carrier: { limit(plugin: string, name: 'messagesPerSecond'): number } | null } = { carrier: null }
+    const { loader, carrier } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.carrier!.limit(plugin, 'messagesPerSecond')]) } })
+    parts.carrier = carrier
+    await loader.start()
+    await loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
+    expect(heard).toEqual([['gate', 20]])
   })
 
   it('refuses a link call made before the carrier exists', () => {
@@ -756,6 +771,9 @@ describe('a failing log', () => {
 // off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {
+  // The time each core joined here may take. Starting one took up to about 5 s on a shared Windows runner against
+  // vitest's 5 s, so each gets four times that
+  const JOIN_MS = 20_000
   async function switchedOff(off: string[], decides: 'refuses' | 'item-off' | 'allows' = 'refuses') {
     const luoshu = new FakeLuoshu()
     luoshu.files.set('notes/a.md', 'x')
@@ -783,18 +801,18 @@ describe('the off states', () => {
     ['the gate and the luoshu: unavailable, since no switch gives a power the framework lacks', ['gate', 'luoshu'], 'unavailable'],
   ])('with %s', async (_name, off, answer) => {
     expect(await read(await switchedOff(off))).toBe(answer)
-  })
+  }, JOIN_MS)
 
   // The gate is asked first, so the luoshu's own state shows once the gate allows
   it('with the luoshu: its calls answer unavailable once the gate allowed them', async () => {
     expect(await read(await switchedOff(['luoshu'], 'allows'))).toBe('unavailable')
-  })
+  }, JOIN_MS)
 
   // Decision 12: allowing all means all, so a per-item switch lapses while the gate is off
   it('lets the per-item switches lapse with the gate off', async () => {
     expect(await read(await switchedOff([], 'item-off'))).toBe('switched-off')
     expect(await read(await switchedOff(['gate'], 'item-off'))).toBe('passes')
-  })
+  }, 2 * JOIN_MS)
 
   it('records the call that passed with the gate off', async () => {
     const parts = await switchedOff(['gate'])
@@ -802,5 +820,93 @@ describe('the off states', () => {
     await parts.carrier.flush()
     const records = await floorRecords(parts.dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read')).toMatchObject([{ gate: 'off', code: null }])
+  }, JOIN_MS)
+})
+
+// The real http host runs through the SDK on the fake runtime's port, and mcp is a first-party worker the test answers
+// for. A request through a seam that names a client reaches mcp as http's host half on behalf of that client
+describe('the door through the joined core', () => {
+  const callMcp = { type: 'plugin.call' as const, targets: ['mcp'] }
+  const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
+
+  async function freePort(): Promise<number> {
+    const server = net.createServer()
+    await new Promise<void>(resolve => server.listen({ host: '127.0.0.1', port: 0 }, resolve))
+    const { port } = server.address() as AddressInfo
+    await new Promise(resolve => server.close(resolve))
+    return port
+  }
+
+  function post(port: number, body: string): Promise<{ status: number, body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, method: 'POST', path: '/mcp', agent: false,
+        headers: { Authorization: 'Bearer good-token', 'Mcp-Session-Id': 's-1', 'Content-Length': String(Buffer.byteLength(body)) },
+      }, res => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => { text += chunk })
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text }))
+      })
+      req.on('error', reject)
+      req.end(body)
+    })
+  }
+
+  async function door() {
+    const port = await freePort()
+    // The gate's own decisions, so a test can tell a refusal at the gate from one at the action's from list
+    const gate = createGate()
+    const decisions: { caller: string, target: string | undefined, allow: boolean }[] = []
+    const decide = gate.decide.bind(gate)
+    gate.decide = access => {
+      const decision = decide(access)
+      if (access.caller.kind === 'plugin') decisions.push({ caller: access.caller.id, target: access.scope.target, allow: 'allow' in decision && decision.allow })
+      return decision
+    }
+    const parts = await joined({
+      install: {
+        ...coreInstall(),
+        http: { files: filesFor(hostManifest('http', { capabilities: [callMcp] })) },
+        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['http'] } } } })), firstParty: true },
+      },
+      folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
+      entries: { beta: { granted: [callMcp] } },
+      behave: {
+        gate: { exports: { gate } },
+        http: {
+          utility: start => {
+            const port_ = start.port as MessagePort
+            run(httpPlugin({ port, token: seam }), { post: message => port_.postMessage(message), listen: next => { port_.on('message', next) } })
+          },
+        },
+      },
+    })
+    await parts.loader.start()
+    await parts.loader.settled()
+    return { ...parts, port, decisions }
+  }
+
+  it('hands a request that passed to the first-party mcp as http\'s host half on behalf of the seam\'s client', async () => {
+    const { loader, runtime, port } = await door()
+    expect(loader.plugin('http')).toMatchObject({ state: 'ready', place: 'utility' })
+    expect(loader.plugin('mcp')).toMatchObject({ state: 'ready' })
+    const mcp = runtime.half('mcp')
+    const asked = post(port, 'not json {')
+    await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'mcp.handle'), 5000)
+    const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle')!
+    expect(delivered.caller).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
+    expect(delivered.onBehalf).toBe('https://client.example/metadata')
+    expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
+    mcp.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: { status: 200, body: '{"jsonrpc":"2.0"}' } })
+    expect(await asked).toEqual({ status: 200, body: '{"jsonrpc":"2.0"}' })
+  })
+
+  it('refuses another plugin\'s worker holding plugin.call on mcp at mcp.handle\'s from list, after the gate allowed it', async () => {
+    const { runtime, decisions } = await door()
+    const reply = await runtime.half('beta').ask('mcp.handle', { body: '{}', headers: {} })
+    expect(code(reply!)).toBe('not-granted')
+    expect(decisions).toContainEqual({ caller: 'beta', target: 'mcp', allow: true })
+    expect(runtime.half('mcp').inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 })

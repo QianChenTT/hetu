@@ -295,6 +295,79 @@ describe('the floor', () => {
     expect(seen).toEqual([])
   })
 
+  it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
+    const { carrier, connect, loader, gate, log } = harness()
+    loader.slots.gate = state
+    loader.utility('http')
+    const http = connect(host('http'))
+    expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
+    expect(gate.asked).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
+  })
+
+  it.each(['on', 'off', 'failed'] as const)('hands core.bindFailed from http\'s host half on its utility port to the loader with the gate %s, asking no gate', async state => {
+    const seen: Call[] = []
+    const { connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
+    loader.slots.gate = state
+    loader.utility('http')
+    expect(await connect(host('http')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
+    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('http'), args: { reason: 'port-taken' } }])
+    expect(gate.asked).toEqual([])
+  })
+
+  // The two actions only http's utility half may call
+  const doorActions = [['core.agentRefused', { reason: 'host', count: 1 }], ['core.bindFailed', { reason: 'port-taken' }]] as const
+
+  it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
+    const seen: Call[] = []
+    const { carrier, connect, loader, gate, log } = harness({ core: async call => { seen.push(call); return null } })
+    loader.slots.gate = state
+    loader.utility('http')
+    loader.sandboxed('search')
+    loader.installed('exec')
+    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const callers = [
+      // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
+      connect(worker('search')),
+      connect(worker('http')),
+      // Another plugin's host half, on a port and on an in-process handle
+      connect(host('exec')),
+      hostHalf(carrier, host('exec', 2)),
+      // http's host half on a handle, which no utility half is ever given
+      hostHalf(carrier, host('http')),
+    ]
+    for (const [action, args] of doorActions) {
+      const refused = [
+        ...await Promise.all(callers.map(caller => caller.ask(action, args))),
+        await way.ask('editor-1', action, args),
+        await way.ask('trusted', action, args),
+      ]
+      expect(refused.map(code)).toEqual(Array(refused.length).fill('not-granted'))
+    }
+    expect(gate.asked).toEqual([])
+    expect(seen).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused')).toEqual([])
+  })
+
+  it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
+    const seen: Call[] = []
+    const { carrier, connect, loader, log } = harness({ core: async call => { seen.push(call); return null } })
+    loader.installed('http')
+    const placedHost = connect(host('http'))
+    for (const [action, args] of doorActions) expect(code(await placedHost.ask(action, args))).toBe('not-granted')
+    delete loader.plugins.http
+    const unknown = connect(host('http', 2))
+    for (const [action, args] of doorActions) expect(code(await unknown.ask(action, args))).toBe('not-granted')
+    expect(seen).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('http.refused')).toEqual([])
+  })
+
   it('holds the trusted window to core actions, with the gate on or off', async () => {
     const { carrier, loader, luoshu } = harness()
     luoshu.files.set('notes/a.md', 'x')

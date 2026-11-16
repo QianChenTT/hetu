@@ -547,6 +547,16 @@ describe('the core actions the loader serves', () => {
     expect(stateOf(made.loader, 'alpha')).toBe('ready')
   })
 
+  // Only a utility half, the door, is kept to the trusted window
+  it('restarts a running sandboxed plugin from the editor window too', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
+    await made.loader.start()
+    await made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' }))
+    await made.loader.settled()
+    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    expect(made.loader.plugin('alpha')?.incarnation).toBe(2)
+  })
+
   it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {
     const made = await harness()
     await made.loader.start()

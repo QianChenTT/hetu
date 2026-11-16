@@ -35,9 +35,10 @@ const hosts = {
 function channel() {
   seen = []
   const workers = { start: (start: unknown) => seen.push(['start', start]), terminate: (id: string, n: number) => seen.push(['terminate', id, n]) }
+  const utility = { startUtility: (start: unknown) => void seen.push(['startUtility', start]), kill: (id: string, n: number) => void seen.push(['kill', id, n]) }
   const core = new FakePortMain()
   const plugin = new FakePortMain()
-  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1), hosts)
+  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1), hosts, utility)
   return { runtime, core, plugin }
 }
 
@@ -82,6 +83,48 @@ describe('the Electron runtime', () => {
     expect(got).toHaveLength(1)
   })
 
+  // bytesPerSecond is 1 here and the bucket starts full at the cap, 100 and the envelope's room
+  it('counts a utility port\'s bytes against bytesPerSecond and reads what is over as unreadable, which the carrier still counts', () => {
+    const { runtime, core } = channel()
+    const ends = runtime.channel('http', true)
+    const got: unknown[] = []
+    const unreadable: unknown[] = []
+    ends.core.on('message', value => got.push(value))
+    ends.core.on('messageerror', value => unreadable.push(value))
+    const big = `"${'x'.repeat(40_000)}"`
+    core.emit('message', { data: big, ports: [] })
+    core.emit('message', { data: big, ports: [] })
+    expect(got).toHaveLength(1)
+    expect(unreadable).toEqual([undefined])
+    core.emit('message', { data: '{"v":1,"kind":"pong"}', ports: [] })
+    expect(got).toHaveLength(2)
+  })
+
+  it('weighs a utility message by what the carrier would measure of it when that is more than its length', () => {
+    const { runtime, core } = channel()
+    const ends = runtime.channel('http', true)
+    const got: unknown[] = []
+    const unreadable: unknown[] = []
+    ends.core.on('message', value => got.push(value))
+    ends.core.on('messageerror', value => unreadable.push(value))
+    // 2500 empty arrays: 7501 characters that the carrier measures at 48898 bytes, so the second one is over
+    const nested = JSON.stringify(Array.from({ length: 2500 }, () => []))
+    core.emit('message', { data: nested, ports: [] })
+    core.emit('message', { data: nested, ports: [] })
+    expect(got).toHaveLength(1)
+    expect(unreadable).toEqual([undefined])
+  })
+
+  it('leaves a worker\'s bytes to the relay in its page and counts none in main', () => {
+    const { runtime, core } = channel()
+    const ends = runtime.channel('search')
+    const got: unknown[] = []
+    ends.core.on('message', value => got.push(value))
+    const big = `"${'x'.repeat(40_000)}"`
+    for (let i = 0; i < 3; i++) core.emit('message', { data: big, ports: [] })
+    expect(got).toHaveLength(3)
+  })
+
   it('posts, starts, closes and reports close on the port it wraps', () => {
     const { runtime, core } = channel()
     const ends = runtime.channel('search')
@@ -108,5 +151,13 @@ describe('the Electron runtime', () => {
     await runtime.startHost({ ...host, id: 'gate' })
     // The built-ins freeze once, before the first host half
     expect(frozen).toBe(1)
+  })
+
+  it('starts and kills utility halves through the utility runtime', () => {
+    const { runtime, plugin } = channel()
+    const start = { id: 'http', incarnation: 1, code: Buffer.from('// http'), port: plugin, exited: () => {} }
+    runtime.startUtility(start)
+    runtime.kill('http', 1)
+    expect(seen).toEqual([['startUtility', start], ['kill', 'http', 1]])
   })
 })

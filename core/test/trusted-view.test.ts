@@ -55,6 +55,22 @@ describe('what the trusted window draws', () => {
     expect(actions({ firstParty: true, id: 'git' })).toEqual(['switch-off', 'stop', 'reset', 'restore', 'remove'])
     // A host half stops only with its switch and restarts only with hetu
     expect(actions({ from: 'install', place: 'host', id: 'luoshu' })).toEqual(['switch-off', 'reset'])
+    expect(actions({ from: 'install', place: 'host', id: 'luoshu', state: 'failed', reason: 'start-failed' })).toEqual(['switch-off', 'reset'])
+    expect(actions({ from: 'install', place: 'page', id: 'hidden-marks' })).toEqual(['switch-off', 'reset'])
+  })
+
+  // A utility half stops and restarts within a run, so a human who freed the port it failed on brings it back here
+  it('offers a utility half Stop while it runs and Restart once it stopped, crashed or failed, drawing why', () => {
+    const http = (over: Partial<ListedPlugin>) => plugin({ id: 'http', from: 'install', place: 'utility', class: null, ...over })
+    const actions = (over: Partial<ListedPlugin>) => screen(calm({ plugins: [http(over)] })).plugins[0].actions
+    expect(actions({})).toEqual(['switch-off', 'stop', 'reset'])
+    expect(actions({ state: 'starting' })).toEqual(['switch-off', 'stop', 'reset'])
+    expect(actions({ state: 'failed', reason: 'port-taken' })).toEqual(['switch-off', 'restart', 'reset'])
+    expect(actions({ state: 'crashed', reason: 'unresponsive' })).toEqual(['switch-off', 'restart', 'reset'])
+    expect(actions({ state: 'stopped', reason: 'human' })).toEqual(['switch-off', 'restart', 'reset'])
+    expect(actions({ on: false, state: 'off' })).toEqual(['switch-on', 'reset'])
+    const drawn = screen(calm({ plugins: [http({ state: 'failed', reason: 'port-taken' })] }))
+    expect(drawn.plugins[0].line).toBe('http · ships with hetu · utility · failed (port-taken)')
   })
 
   it('lists a plugin’s items with their switches and says when one switched off is still reached through another', () => {
