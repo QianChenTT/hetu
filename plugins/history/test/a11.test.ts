@@ -67,6 +67,9 @@ async function useHistory(): Promise<void> {
   history.close()
 }
 
+// The five tests that plant a program in the notes folder or the environment run plain git a few times and then history's
+// two commits, a log and two reads. A shared Windows runner took up to 3.2 s for one and 4.8 s for the nested repo, which
+// runs plain git the most
 describe('A-11, a program planted for git to run', () => {
   it('in the notes folder\'s own .git/config fires under plain git and never through history', async () => {
     await plain(where.notes, ['init', '-q'])
@@ -76,7 +79,7 @@ describe('A-11, a program planted for git to run', () => {
     await rm(marker)
     await useHistory()
     expect(await fired()).toEqual([])
-  })
+  }, 20_000)
 
   it('in a repo nested in a subfolder fires under plain git there and never through history, which stores its notes as plain files', async () => {
     const sub = path.join(where.notes, 'sub')
@@ -97,7 +100,7 @@ describe('A-11, a program planted for git to run', () => {
     await rm(marker)
     await useHistory()
     expect(await fired()).toEqual([])
-  })
+  }, 30_000)
 
   it('as a clean filter named by .gitattributes fires under plain git add and never through history', async () => {
     await plain(where.notes, ['init', '-q'])
@@ -108,7 +111,7 @@ describe('A-11, a program planted for git to run', () => {
     await rm(marker)
     await useHistory()
     expect(await fired()).toEqual([])
-  })
+  }, 20_000)
 
   it('as a hook in the notes folder\'s repo fires under plain git commit and never through history', async () => {
     await plain(where.notes, ['init', '-q'])
@@ -122,7 +125,7 @@ describe('A-11, a program planted for git to run', () => {
     await rm(marker)
     await useHistory()
     expect(await fired()).toEqual([])
-  })
+  }, 20_000)
 
   it('through hetu\'s own environment fires under plain git and never through history, whose environment starts empty', async () => {
     const home = path.join(where.base, 'home')
@@ -159,7 +162,7 @@ describe('A-11, a program planted for git to run', () => {
     for (const name of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_TRACE']) delete process.env[name]
     // Nothing went to the repo the environment named either
     expect((await plain(scratch, ['rev-list', '--all', '--count'])).stdout.trim()).toBe('0')
-  })
+  }, 20_000)
 
   it('in history\'s own repo, as config and as a hook, doesn\'t fire: every call overrides the keys that run a program', async () => {
     const history = await started(where)
