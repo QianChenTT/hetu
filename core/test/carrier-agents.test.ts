@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGate } from '../../plugins/gate/src/gate.ts'
+import type { Access, Call, Gate } from '../api/slots.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
@@ -250,28 +251,40 @@ describe('the door an agent\'s label comes through', () => {
   })
 })
 
-// The real gate on one StateView: mcp holds inbox and private, agent #1 inbox and secret, search everything
+// The real gate on one StateView: mcp holds inbox and private and asks at first use for asks, agent #1 inbox, secret
+// and asks, search everything. decided holds every Access the gate was asked to decide
 function gated() {
-  const gate = createGate()
+  const real = createGate()
+  const decided: Access[] = []
+  const gate: Gate = {
+    ...real,
+    decide: access => {
+      decided.push(access)
+      return real.decide(access)
+    },
+  }
   const items = (...paths: string[]) => [{ capability: { type: 'luoshu.read' as const, paths }, off: false, firstUse: false }]
   const table = <T>(entries: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), entries)
   gate.stateChanged({
     n: 1, foldCase: false, execAny: [],
     plugins: table({
       http: [{ capability: { type: 'plugin.call', targets: ['mcp'] }, off: false, firstUse: false }],
-      mcp: [...items('inbox/**', 'private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false }],
+      mcp: [
+        ...items('inbox/**', 'private/**'), { capability: { type: 'luoshu.read', paths: ['asks/**'] }, off: false, firstUse: true },
+        { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false },
+      ],
       search: items('**'),
     }),
     agents: table({
-      'client#1': [...items('inbox/**', 'secret/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
+      'client#1': [...items('inbox/**', 'secret/**', 'asks/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
       // Two agents that reach search through mcp, one reading inbox and one private
       'client#4': [...items('inbox/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
       'client#5': [...items('private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
     }),
   })
   const parts = agents({ gate: () => gate })
-  for (const path of ['private/b.md', 'secret/c.md']) parts.luoshu.files.set(path, path)
-  return parts
+  for (const path of ['private/b.md', 'secret/c.md', 'asks/a.md']) parts.luoshu.files.set(path, path)
+  return { ...parts, decided }
 }
 
 describe('the gate over an agent\'s call, in every gate state', () => {
@@ -416,6 +429,70 @@ describe('what an agent may read and list through mcp', () => {
     // A luoshu that filters for mcp alone
     luoshu.perform_ = () => ({ paths: ['inbox/a.md', 'private/b.md'], next: null })
     expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe('failed')
+  })
+})
+
+type Judge = (paths: readonly string[]) => unknown
+
+describe('the second ask for an agent\'s call', () => {
+  // A luoshu whose perform asks the call's judge again about each list of paths in turn, as the real one does when a
+  // look at the disk reads a path otherwise than prepare did. before runs first, each time
+  function again(parts: ReturnType<typeof gated>, asks: readonly string[][], before: () => void = () => {}) {
+    const answers: unknown[] = []
+    parts.luoshu.perform_ = (call: Call) => {
+      before()
+      for (const paths of asks) answers.push((call as Call & { judge?: Judge }).judge?.(paths))
+      return null
+    }
+    return answers
+  }
+
+  it('judges an agent\'s second ask against mcp\'s grant and the agent\'s both, carrying the agent\'s label', async () => {
+    const parts = gated()
+    const { parent } = await handled(parts.door, parts.mcp, 'client#1')
+    // inbox both hold, private mcp alone, secret the agent alone
+    const answers = again(parts, [['inbox/b.md'], ['private/b.md'], ['secret/c.md']])
+    expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
+    expect(answers).toEqual([null, { code: 'not-granted' }, { code: 'not-granted' }])
+    const canonical = parts.decided.filter(access => access.action === 'luoshu.read' && access.stage === 'canonical')
+    expect(canonical.map(access => [access.scope.paths, access.caller, access.onBehalf, access.agent])).toEqual(
+      [['inbox/a.md'], ['inbox/b.md'], ['private/b.md'], ['secret/c.md']].map(paths => [paths, worker('mcp'), 'client#1', 'client#1']),
+    )
+  })
+
+  it('refuses an agent\'s second ask outside the agent\'s grant or on mcp\'s item that asks at first use not-granted with no prompt', async () => {
+    const parts = gated()
+    // The item asks at first use: a first ask about it for agent #1 raises the prompt
+    const first = await handled(parts.door, parts.mcp, 'client#1')
+    expect(code(await parts.mcp.ask('luoshu.read', { path: 'asks/a.md' }, first.parent))).toBe('needs-confirm')
+    expect(parts.asks).toHaveLength(1)
+    // Agent #4 holds no asks, agent #1 does and mcp's own item there asks
+    const four = await handled(parts.door, parts.mcp, 'client#4')
+    const answers = again(parts, [['asks/a.md']])
+    expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, four.parent)).ok).toBe(true)
+    expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, first.parent)).ok).toBe(true)
+    expect(answers).toEqual([{ code: 'not-granted' }, { code: 'not-granted' }])
+    expect(parts.asks).toHaveLength(1)
+  })
+
+  it.each([
+    ['off', 'policy-down'],
+    ['failed', 'policy-down'],
+    ['starting', 'starting'],
+  ] as const)('refuses an agent\'s second ask with the gate %s as its first ask is refused', async (state, refused) => {
+    const parts = gated()
+    const { parent } = await handled(parts.door, parts.mcp, 'client#1')
+    const answers = again(parts, [['inbox/b.md']], () => { parts.loader.slots.gate = state })
+    expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
+    expect(answers).toEqual([{ code: refused }])
+    // The first ask with the gate in that state
+    expect(code(await parts.mcp.ask('luoshu.read', { path: 'inbox/b.md' }, parent))).toBe(refused)
+    // A plugin's own second ask passes with the gate off by the human, as its first does
+    if (state !== 'off') return
+    parts.loader.slots.gate = 'on'
+    const plain = again(parts, [['inbox/b.md']], () => { parts.loader.slots.gate = state })
+    expect((await parts.search.ask('luoshu.read', { path: 'inbox/a.md' })).ok).toBe(true)
+    expect(plain).toEqual([null])
   })
 })
 

@@ -1,7 +1,8 @@
-import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
+import type { Call, Prepared } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
@@ -47,12 +48,27 @@ async function joined(gate: 'on' | 'off') {
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
   await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), {
-    granted: [everything], class: 1, agents: [{ agent: 'client#1', capability: { type: 'luoshu.read', paths: ['inbox/**'] } }],
+    granted: [everything], class: 1, agents: [
+      { agent: 'client#1', capability: { type: 'luoshu.read', paths: ['inbox/**'] } },
+      { agent: 'client#3', capability: { type: 'luoshu.read', paths: ['inbox/**', 'INBOX/**'] } },
+    ],
   }))
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
+  // Runs once before the next perform, as another program acting on the folder between prepare and perform
+  const hooks: { before: (() => Promise<void>) | null } = { before: null }
+  const provider = {
+    prepare: luoshu.provider.prepare,
+    release: luoshu.provider.release,
+    perform: async (call: Call, prepared: Prepared) => {
+      const hook = hooks.before
+      hooks.before = null
+      await hook?.()
+      return luoshu.provider.perform(call, prepared)
+    },
+  }
   const runtime = new FakeRuntime()
-  runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } } }
+  runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider, luoshu: luoshu.role } } }
   const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
@@ -65,7 +81,19 @@ async function joined(gate: 'on' | 'off') {
   })
   await loader.start()
   await loader.settled()
-  return { loader, runtime, door: runtime.half('http', 1, 'utility'), mcp: runtime.half('mcp') }
+  return { loader, runtime, folder, hooks, door: runtime.half('http', 1, 'utility'), mcp: runtime.half('mcp') }
+}
+
+// A folder renamed under the luoshu's watch, which can hold it open for a moment on Windows
+async function renamed(from: string, to: string): Promise<void> {
+  for (let wait = 10; ; wait *= 2) {
+    try {
+      return await rename(from, to)
+    } catch (err) {
+      if (!['EPERM', 'EBUSY'].includes((err as NodeJS.ErrnoException).code ?? '') || wait > 1280) throw err
+      await new Promise(resolve => setTimeout(resolve, wait))
+    }
+  }
 }
 
 let next = 1
@@ -125,5 +153,24 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('policy-down')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, { parent }))).toBe('policy-down')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
+  })
+
+  // The luoshu resolves inbox/a.md again once inbox is renamed INBOX after prepare and asks the judge about INBOX/a.md,
+  // which the StateView keeps apart from inbox. mcp holds every path, so the agent's grant decides
+  const caseOnly = process.platform === 'win32' || process.platform === 'darwin'
+  it.runIf(caseOnly)('judges an agent\'s read again against the agent\'s grant when its folder is renamed in case between prepare and perform', async () => {
+    const { door, mcp, folder, hooks } = await joined('on')
+    const recase = async () => {
+      await renamed(path.join(folder, 'inbox'), path.join(folder, 'inbox-was'))
+      await renamed(path.join(folder, 'inbox-was'), path.join(folder, 'INBOX'))
+    }
+    const one = await request(door, mcp, 'client#1')
+    hooks.before = recase
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent: one.parent }))).toBe('not-granted')
+    await renamed(path.join(folder, 'INBOX'), path.join(folder, 'inbox-was'))
+    await renamed(path.join(folder, 'inbox-was'), path.join(folder, 'inbox'))
+    const three = await request(door, mcp, 'client#3')
+    hooks.before = recase
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent: three.parent }))).toBe('inbox text')
   })
 })
