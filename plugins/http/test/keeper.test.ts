@@ -213,7 +213,11 @@ describe('http on the fake core', () => {
   })
 
   it('reports connections dropped at the 64 cap to the core as full, once a second with their count', async () => {
-    const { core, port } = await started()
+    const port = await freePort()
+    const listens = vi.spyOn(net.Server.prototype, 'listen')
+    const { core } = await started({ port })
+    const door = listens.mock.contexts[0] as net.Server
+    const open = () => new Promise<number>(resolve => door.getConnections((_err, count) => resolve(count)))
     const held: net.Socket[] = []
     for (let i = 0; i < 64; i++) {
       const socket = net.connect({ host: '127.0.0.1', port })
@@ -223,7 +227,8 @@ describe('http on the fake core', () => {
       held.push(socket)
     }
     try {
-      await tick(100)
+      // The door holds all 64 before the next connect, since the client's connect can come before the server takes it
+      await until(async () => (await open()) === 64)
       for (let i = 0; i < 5; i++) {
         const socket = net.connect({ host: '127.0.0.1', port })
         socket.on('error', () => {})

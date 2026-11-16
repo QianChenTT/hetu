@@ -854,7 +854,8 @@ describe('counts', () => {
   }, 10_000)
 
   it('holds 64 connections and drops more with no answer', async () => {
-    const { port } = await made()
+    const { door, port } = await made()
+    const taken = accepted(door, 64)
     const held: net.Socket[] = []
     for (let i = 0; i < 64; i++) {
       const socket = net.connect({ host: '127.0.0.1', port })
@@ -863,7 +864,8 @@ describe('counts', () => {
       await new Promise(resolve => socket.once('connect', resolve))
       held.push(socket)
     }
-    await new Promise(resolve => setTimeout(resolve, 200))
+    // Held by the door before the next connect, since the client's connect can come before the server takes it
+    await taken
     const extra = await exchange(port, post(port), 1000)
     expect(extra.raw).toBe('')
     expect(extra.closed).toBe(true)
