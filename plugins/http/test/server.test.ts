@@ -852,3 +852,57 @@ describe('what the door writes', () => {
     for (const reason of refused) for (const secret of secrets) expect(reason).not.toContain(secret)
   })
 })
+
+// Diagnostic: the order of events on both ends of a socket the door answers itself
+describe('diagnostic: event order', () => {
+  const connect = (port: number) => request([`CONNECT 127.0.0.1:${port} HTTP/1.1`, `Host: 127.0.0.1:${port}`])
+  const slow = () => new Promise<Answer>(resolve => setTimeout(() => resolve({ status: 200, body: '{"n":1}' }), 300))
+
+  it.each([
+    ['connect', (port: number) => connect(port)],
+    ['garbage', () => 'GARBAGE\r\n\r\n'],
+    ['good then connect', (port: number) => post(port, ['Authorization: Bearer good']) + connect(port)],
+  ])('prints both ends for %s', async (name, text) => {
+    const { door, port } = await made({ token: anyToken, serve: slow })
+    const started = performance.now()
+    const at = () => Math.round((performance.now() - started) * 10) / 10
+    const events: unknown[] = []
+    door.server.on('connection', (socket: net.Socket) => {
+      events.push(['server connection', at()])
+      socket.on('end', () => events.push(['server end', at()]))
+      socket.on('close', hadError => events.push(['server close', at(), hadError]))
+      socket.on('error', err => events.push(['server error', at(), (err as NodeJS.ErrnoException).code]))
+    })
+    const socket = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
+    sockets.push(socket)
+    let raw = ''
+    let closed = false
+    socket.on('data', data => {
+      raw += data.toString('latin1')
+      events.push(['client data', at(), data.length, data.toString('latin1').slice(0, 15)])
+    })
+    socket.on('end', () => events.push(['client end', at()]))
+    socket.on('close', hadError => {
+      closed = true
+      events.push(['client close', at(), hadError])
+    })
+    socket.on('error', err => events.push(['client error', at(), (err as NodeJS.ErrnoException).code]))
+    await new Promise(resolve => socket.once('connect', resolve))
+    events.push(['client connect', at(), 'server count', await openAt(door)])
+    socket.write(text(port))
+    events.push(['client wrote', at(), 'server count', await openAt(door)])
+    while (!closed && performance.now() - started < 1500) await new Promise(resolve => setTimeout(resolve, 5))
+    events.push(['done', at(), 'server count', await openAt(door), 'responses', responses(raw).map(response => response.status)])
+    console.log(`DIAG ${process.platform} ${name} ${JSON.stringify(events)}`)
+  })
+
+  it('prints what the existing helpers see for a CONNECT', async () => {
+    const { door, port } = await made({ token: anyToken })
+    const held = await hold(port, connect(port))
+    const first = await openAt(door)
+    const drainedTo = await drained(door, 1000)
+    const rawThen = held.raw().length
+    await new Promise(resolve => setTimeout(resolve, 500))
+    console.log(`DIAG ${process.platform} helpers count-after-hold=${first} drained=${drainedTo} raw-then=${rawThen} raw-500ms-later=${held.raw().length} statuses=${JSON.stringify(responses(held.raw()).map(response => response.status))} ended=${held.ended()} error=${held.error()}`)
+  })
+})
