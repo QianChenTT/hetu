@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { constants, createReadStream, watch, type FSWatcher } from 'node:fs'
-import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
+import { constants, createReadStream, watch, type BigIntStats, type FSWatcher } from 'node:fs'
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink, type FileHandle } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
 import { floorConstants } from 'hetu-core/api/floor.ts'
 import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, folderState, listedState, looked, type Canonical, type FolderState, type NotCanonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, listedState, looked, named, type Canonical, type FolderState, type NotCanonical, type Opened } from 'hetu-core/lib/canonical.ts'
 import { retried, syncDir } from 'hetu-core/lib/disk.ts'
 
 // Whether the gate allows a call to act on the path a look resolved again, which differs from the one it judged
@@ -38,6 +38,8 @@ const TEMP = '.hetu-tmp'
 const isTemp = (name: string) => name.startsWith('.') && name.endsWith(TEMP)
 // Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
 const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+// How many times a note is opened when its name holds another file each time it is looked at again
+const OPENS = 3
 
 // What a volume with no hard links answers a link with, so a move falls back to a rename after its check
 const NO_LINKS = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EINVAL'])
@@ -45,6 +47,10 @@ const absent = (err: unknown) => ['ENOENT', 'ENOTDIR'].includes((err as NodeJS.E
 
 const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
+// What a call refused not-granted throws once the call's judge refused the path it would act on: the judge's own
+// refusal, so the caller and the record get the gate's code or a guard's and not a missing grant whatever refused
+const passedOn = (err: unknown, denied: ProviderRefusal | null): unknown =>
+  denied !== null && typeof err === 'object' && err !== null && !(err instanceof Error) && (err as ProviderRefusal).code === 'not-granted' ? denied : err
 // Windows and macOS compare names without case, so hetu's own folders are found in any spelling there
 const fold = process.platform === 'win32' || process.platform === 'darwin' ? (name: string) => name.toLowerCase() : (name: string) => name
 const within = (folder: string, target: string) => {
@@ -132,25 +138,91 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     // answers so
     const { state, target } = await lookAt(prepared, folderState, judged)
     if (state === 'moved') throw refused('not-granted')
-    let handle
+    const note = await openedNote(prepared, target, judged)
+    if (note === null) throw refused('not-found')
+    const { handle, info } = note
     try {
-      handle = await retried(() => open(target.absolute, NOTE_READ), target.absolute, 'read')
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      if (code === 'ENOENT' || code === 'EISDIR' || code === 'ENOTDIR') throw refused('not-found')
-      if (code === 'ELOOP') throw refused('failed')
-      throw err
-    }
-    try {
-      const info = await handle.stat()
       if (!info.isFile()) throw refused('not-found')
-      if (info.size > readCap) throw refused('failed', 'too-large')
+      if (info.size > BigInt(readCap)) throw refused('failed', 'too-large')
       const bytes = await handle.readFile()
       // A note that grew after the check is held to the same cap
       if (bytes.length > readCap) throw refused('failed', 'too-large')
-      return { text: bytes.toString('utf8'), version: version(bytes), path: target.relative }
+      return { text: bytes.toString('utf8'), version: version(bytes), path: note.target.relative }
     } finally {
       await handle.close()
+    }
+  }
+
+  // The note at a path to act on, opened for reading and looked at again once open: the open follows whatever name the
+  // disk gives the caller's spelling, a note made under another case of the last name since prepare included, which no
+  // look at the folder sees. So the spelling is resolved again and has to hold the file opened at the path judged or
+  // one judged says the gate allows (named), else the call is refused not-granted. A name that holds another file by
+  // then is opened again, a few times before the call answers stale. null for no note at the name. The caller closes
+  // the handle
+  async function openedNote(prepared: Canonical, target: Canonical, judged: Judged): Promise<{ handle: FileHandle, info: BigIntStats, target: Canonical } | null> {
+    for (let tries = 1; ; tries++) {
+      let handle: FileHandle
+      try {
+        handle = await retried(() => open(target.absolute, NOTE_READ), target.absolute, 'read')
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'EISDIR' || code === 'ENOTDIR') return null
+        if (code === 'ELOOP') throw refused('failed')
+        throw err
+      }
+      let found: Canonical | null
+      let info: BigIntStats
+      try {
+        info = await handle.stat({ bigint: true })
+        found = await namedAgain(prepared, target, info, judged)
+      } catch (err) {
+        await handle.close()
+        throw err
+      }
+      if (found !== null) return { handle, info, target: found }
+      await handle.close()
+      if (tries >= OPENS) throw refused('stale')
+    }
+  }
+
+  // The caller's spelling resolved again for a file opened or about to be acted on, as named gives it: the path to go
+  // on with, null for a name that holds another file by now, a refusal not-granted for a path the gate did not allow
+  // or another key. A path that stands for a name leading to a dot name has no file and is never resolved again
+  async function namedAgain(prepared: Canonical, target: Canonical, opened: Opened, judged: Judged): Promise<Canonical | null> {
+    const spelled = spelling.get(prepared)
+    const now = opening
+    if (now === null || spelled === undefined || nowhere.has(prepared)) return target
+    const found = await named(target, opened, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
+    if (found.state === 'held') {
+      spelling.set(found.target, spelled)
+      return found.target
+    }
+    if (found.state === 'moved') throw refused('not-granted')
+    return null
+  }
+
+  // The hash of a note's bytes read through its open handle a piece at a time, so a large note never sits whole in main
+  async function hashOpen(handle: FileHandle): Promise<string> {
+    const hash = createHash('sha256')
+    const piece = Buffer.alloc(64 * 1024)
+    for (let at = 0; ;) {
+      const { bytesRead } = await handle.read(piece, 0, piece.length, at)
+      if (bytesRead === 0) return hash.digest('hex')
+      hash.update(piece.subarray(0, bytesRead))
+      at += bytesRead
+    }
+  }
+
+  // The version of the note a write or a remove acts on, checked under the lock: the note opened as a read opens it,
+  // null for none, with the path to act on. A folder at the name throws as reading one does
+  async function versionAt(prepared: Canonical, target: Canonical, judged: Judged): Promise<{ version: string | null, target: Canonical }> {
+    const note = await openedNote(prepared, target, judged)
+    if (note === null) return { version: null, target }
+    try {
+      if (!note.info.isFile()) throw Object.assign(new Error('not a file'), { code: 'EISDIR' })
+      return { version: await hashOpen(note.handle), target: note.target }
+    } finally {
+      await note.handle.close()
     }
   }
 
@@ -188,10 +260,13 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     // folders the note needs exist
     const first = await lookAt(prepared, folderState, judged)
     if (first.state === 'moved') throw refused('not-granted')
-    if ((await current(first.target.absolute)) !== (baseVersion ?? null)) throw refused('stale')
+    // Through the note opened, so a note made under another case of the last name since prepare is judged before its
+    // version is compared. The rename below still acts on the name, so a note made there after this check is replaced
+    const checked = await versionAt(prepared, first.target, judged)
+    if (checked.version !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(prepared)) throw refused('not-granted')
     const bytes = Buffer.from(text, 'utf8')
-    let target = await unmoved(await madeUnder(first.target, judged), judged)
+    let target = await unmoved(await madeUnder(checked.target, judged), judged)
     const dir = path.dirname(target.absolute)
     const temp = path.join(dir, `.${path.basename(target.absolute)}.${randomBytes(6).toString('hex')}${TEMP}`)
     try {
@@ -310,9 +385,12 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // version answers stale
   async function remove(prepared: Canonical, baseVersion: string | undefined, trash: LuoshuOpening['trash'], judged: Judged): Promise<null> {
     if (trash === undefined) throw refused('unavailable')
-    const target = await unmoved(prepared, judged)
-    if (!(await isNote(target.absolute))) throw refused('not-found')
-    if ((await current(target.absolute)) !== baseVersion) throw refused('stale')
+    const looked = await unmoved(prepared, judged)
+    if (!(await isNote(looked.absolute))) throw refused('not-found')
+    // Through the note opened, so a note made under another case of the last name since prepare is judged before its
+    // version is compared. The bin still takes the note by name after it
+    const { version: found, target } = await versionAt(prepared, looked, judged)
+    if (found !== baseVersion) throw refused('stale')
     await trash(target.absolute)
     await syncDir(path.dirname(target.absolute))
     own.delete(target.key)
@@ -332,8 +410,17 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       ends[at] = now.relative
       return true
     }
-    const from = await unmoved(source, end(0))
-    if (!(await isNote(from.absolute))) throw refused('not-found')
+    const looked = await unmoved(source, end(0))
+    const there = await lstat(looked.absolute, { bigint: true }).catch(err => {
+      if (absent(err)) return null
+      throw err
+    })
+    if (there === null || !there.isFile()) throw refused('not-found')
+    // The from end resolved again from the caller's spelling, so a note made under another case of the last name since
+    // prepare is judged before it is linked or renamed. One that holds another file by now has changed under the call
+    const fromNow = await namedAgain(source, looked, there, end(0))
+    if (fromNow === null) throw refused('stale')
+    let from = fromNow
     if (nowhere.has(destination)) throw refused('not-granted')
     let to = destination
     if (same) {
@@ -356,8 +443,14 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         linked = false
       }
       if (linked) {
+        const at = from
         try {
-          await retried(() => unlink(from.absolute), from.absolute)
+          // The file linked is the one the from end holds as judged, else the link is taken back: another program can
+          // put a note under another case of the last name between the look and the link
+          const still = await namedAgain(source, at, await lstat(to.absolute, { bigint: true }), end(0))
+          if (still === null) throw refused('stale')
+          from = still
+          await retried(() => unlink(still.absolute), still.absolute)
         } catch (err) {
           await unlink(to.absolute).catch(() => {})
           throw err
@@ -498,15 +591,27 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
           return page
         }
         if (target === undefined) throw refused('failed')
-        // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no
-        const ask: Ask = paths => call.judge !== undefined && call.judge(paths) === null
+        // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no. The
+        // judge's own refusal is kept, so a call refused for it answers what refused: the gate, a guard or a gate that
+        // is down or starting
+        let denied: ProviderRefusal | null = null
+        const ask: Ask = paths => {
+          if (call.judge === undefined) return false
+          const answer = call.judge(paths)
+          denied = answer === null ? null : refused(answer.code, answer.reason)
+          return answer === null
+        }
         const one: Judged = now => ask([now.relative])
-        if (call.action === 'luoshu.read') return await read(target, one)
-        if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
-        if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
-        const moved = moving.get(call.callId)
-        if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same, ask)
-        throw refused('invalid')
+        try {
+          if (call.action === 'luoshu.read') return await read(target, one)
+          if (call.action === 'luoshu.write') return await write(target, (call.args as { text: string }).text, prepared.baseVersion, one)
+          if (call.action === 'luoshu.remove') return await remove(target, prepared.baseVersion, opening.trash, one)
+          const moved = moving.get(call.callId)
+          if (call.action === 'luoshu.move' && moved !== undefined) return await move(target, moved.to, moved.same, ask)
+          throw refused('invalid')
+        } catch (err) {
+          throw passedOn(err, denied)
+        }
       } finally {
         unlock(call.callId)
       }

@@ -77,6 +77,9 @@ type Pending = {
   started: number
   gate: SlotState
   scope: Scope | undefined
+  // The paths of a second ask the gate or a guard refused after the last one let on, which a call that ends refused
+  // records in place of scope
+  refusedScope: Scope | undefined
   coalesce: boolean
   // How far a throttled filterReadable for this call got, so the next try goes on from there
   filtering: Filtering | null
@@ -816,6 +819,7 @@ export class Carrier {
       // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
       // no path. A plugin call's target is already the plugin's id
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
+      refusedScope: undefined,
       coalesce: target.kind === 'core'
         ? !shaped.action.startsWith('security.') && !shaped.action.startsWith('watchdog.')
         : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
@@ -1241,15 +1245,20 @@ export class Carrier {
   // A provider's second ask, when a look at the disk after the first judgement reads a path otherwise: the paths it
   // would act on now, one for each path prepare gave, judged as the first were. Never once the call has ended. No prompt
   // is raised from here, so an item that still asks at first use answers not-granted. A call let on acts on these
-  // paths, so its record names them
+  // paths, so its record names them. A call that ends refused after a refused one records the paths refused, with the
+  // code the provider passes on, in place of the paths judged before. One that fails on its shape names nothing new
   private judgeAgain(pending: Pending, kind: Extract<Kind, { kind: 'power' }>, prepared: Prepared | null, paths: readonly string[]): No | null {
     if (prepared === null || pending.done) return { code: 'not-granted' }
     const given = prepared.scope.paths
     if (!Array.isArray(paths) || given === undefined || paths.length !== given.length || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
     const now: Prepared = frozen({ ...prepared, scope: { ...prepared.scope, paths: [...paths] } })
     const refused = this.judged(pending, kind, now, false)
-    if (refused !== null) return refused
+    if (refused !== null) {
+      pending.refusedScope = now.scope
+      return refused
+    }
     pending.scope = now.scope
+    pending.refusedScope = undefined
     return null
   }
 
@@ -1471,11 +1480,12 @@ export class Carrier {
     }
     // 11 record
     const code = outcome.ok ? null : outcome.code
+    const scope = !outcome.ok && pending.refusedScope !== undefined ? pending.refusedScope : pending.scope
     this.recordCall({
       at: pending.started, caller: pending.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       root: pending.root.caller, action: pending.action,
-      ...(pending.scope !== undefined ? { scope: pending.scope } : {}),
+      ...(scope !== undefined ? { scope } : {}),
       code, ms: this.now() - pending.started, gate: pending.gate,
     }, pending.coalesce || code !== null)
   }
