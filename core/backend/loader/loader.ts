@@ -1,10 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
-import { change as changeSchema, changeEffect, mustType, type Change, type ClassRaised } from '../../api/changes.ts'
+import { AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, type AgentAsk, type Change, type ClassRaised } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
-import { VERSION, type Caller } from '../../api/envelope.ts'
+import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
   firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
@@ -62,6 +62,9 @@ export type LoaderOptions = {
   // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
   // the plugin's limits as they are now to its running halves
   limited?: (plugin: string) => void
+  // A clock no change of the wall clock moves, for how long a request is first in line and how long an agent's ask
+  // waits. performance.now unless a test names another
+  clock?: () => number
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -330,6 +333,9 @@ export class Loader implements Seam {
   private failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
   private readonly declinedAsks = new Set<string>()
+  // Agents whose ask the human cancelled, by label, with the time from which each may ask again
+  private readonly askPaused = new Map<string, number>()
+  private readonly clock: () => number
   // The pass at start has classed every entry, so the capabilities plugin coming up from here on is the human's switch-on
   private classedAtStart = false
 
@@ -347,6 +353,7 @@ export class Loader implements Seam {
     this.onFailure = options.onFailure
     this.trash = options.trash
     this.limited = options.limited
+    this.clock = options.clock ?? (() => performance.now())
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -363,13 +370,17 @@ export class Loader implements Seam {
       fingerprint: change => (change.kind === 'class.raised' ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
-      cancelled: change => (change.kind === 'class.raised' ? this.answered(change.plugin) : Promise.resolve()),
+      cancelled: change => {
+        if (change.kind === 'class.raised') return this.answered(change.plugin)
+        if (change.kind === 'agent.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
+        return Promise.resolve()
+      },
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
       resume: () => this.link.resume(),
       changed: () => this.refresh(),
-      clock: () => performance.now(),
+      clock: () => this.clock(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
       ...(options.confirmRecordMs !== undefined ? { recordMs: options.confirmRecordMs } : {}),
       declined: (plugin, change) => {
@@ -476,6 +487,9 @@ ${capabilityKey(change.capability)}`)
         return null
       case 'security.list':
         return this.securityList()
+      // The carrier's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
+      case 'core.agentAsk':
+        return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
       case 'core.stop':
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
@@ -1964,6 +1978,34 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     },
   }
 
+  // An agent's ask for items through the agent host, raised as a request only the core raises. The items the agent
+  // holds already are left out and the rest put in key order, so the same ask in another order finds the request
+  // waiting. One ask waits for a label at a time and a label whose ask the human cancelled waits AGENT_ASK_PAUSE_MS
+  private agentAsk(label: string | undefined, capabilities: Capability[]): ActionResults['core.agentAsk'] {
+    if (!agentLabel.safeParse(label).success) throw { code: 'invalid' }
+    const agent = label!
+    const entry = this.hostEntry()
+    if (entry === null) throw { code: 'unavailable' }
+    const paused = this.askPaused.get(agent)
+    if (paused !== undefined && this.clock() < paused) throw { code: 'throttled' }
+    const held = new Set((entry.agents ?? []).filter(item => item.agent === agent).map(item => capabilityKey(item.capability)))
+    const wanted = new Map<string, Capability>()
+    for (const capability of capabilities) if (!held.has(capabilityKey(capability))) wanted.set(capabilityKey(capability), capability)
+    if (wanted.size === 0) return { asked: 'granted' }
+    const keys = [...wanted.keys()].sort()
+    const change: AgentAsk = { kind: 'agent.ask', plugin: agentHost, agent, capabilities: keys.map(key => wanted.get(key)!) }
+    const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'agent.ask' && one.agent === agent)?.change as AgentAsk | undefined
+    if (waiting !== undefined && waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n')) throw { code: 'throttled' }
+    if (typeof this.requests.raise(change, null, MAX_PENDING, 'agent.ask') !== 'string') throw { code: 'throttled' }
+    return { asked: 'waiting' }
+  }
+
+  // The agent host's entry while the host is a plugin-folder plugin the human has on, the one entry agents' items sit in
+  private hostEntry(): Plugin | null {
+    const k = this.known.get(agentHost)
+    return k?.from === 'folder' && k.entry !== null && k.entry.enabled ? k.entry : null
+  }
+
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
   // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
   // directly
@@ -2047,6 +2089,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       // Answered: the class and its asks were stored when the notice was raised
       case 'class.raised':
         return this.answered(change.plugin)
+      case 'agent.ask':
+        throw new Error('no writer for an agent\'s items yet')
     }
   }
 

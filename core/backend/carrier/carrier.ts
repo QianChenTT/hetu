@@ -706,6 +706,8 @@ export class Carrier {
         || (from === 'trusted' && trusted)
         || (from === 'watchdog' && this.isWatchdog(way) && this.watchable(field(args, 'plugin')))
         || (from === 'http' && this.isDoor(way))
+        // The agent host under a live call from the door, so the agent it asks for is that call's and no other
+        || (from === 'agent' && host && agent !== undefined)
       // A from with no rule here refuses every caller
       return admitted ? { kind: 'core' } : { code: 'not-granted' }
     }

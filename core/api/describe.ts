@@ -83,6 +83,15 @@ export function describeChange(change: Change): Described {
         text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,
         notes: [`Why: ${why(change)}`, 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
       }
+    // The label is the agent's client id and the number of its authorization, in quotes as data
+    case 'agent.ask':
+      return {
+        text: `Give the agent ${quoted(change.agent)} what it asks for through ${change.plugin}`,
+        notes: [
+          ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
+          `The agent reaches only what ${change.plugin} holds as well`, 'Revoke it from the agent list at any time',
+        ],
+      }
   }
 }
 

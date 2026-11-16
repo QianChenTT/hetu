@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { change, type ChangeKind } from './changes.ts'
+import { folderCapability, MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
+import { change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
 import { token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
@@ -51,10 +51,11 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder or http's host
-// half in its utility process. The floor decides these and never the gate, so a failed gate can't block the way out.
-// A value the floor has no rule for refuses every caller
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http'
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder, http's host
+// half in its utility process or the agent host under a live call from that door, which names the agent. The floor
+// decides these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses
+// every caller
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http' | 'agent'
 
 // Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
@@ -161,6 +162,9 @@ const coreTable = {
   // http's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
   'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
+  // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
+  // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
+  'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(folderCapability).min(1).max(MAX_ASK_ITEMS) }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -345,6 +349,7 @@ export type ActionResults = {
   'core.filterReadable': string[]
   'core.agentRefused': null
   'core.bindFailed': null
+  'core.agentAsk': { asked: 'waiting' | 'granted' }
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

@@ -541,6 +541,64 @@ describe('what an agent may read and list through mcp', () => {
 
 type Judge = (paths: readonly string[]) => unknown
 
+describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
+  const inbox = { type: 'luoshu.read', paths: ['inbox/**'] }
+  function asking() {
+    const seen: Call[] = []
+    const parts = agents({ core: async call => { seen.push(call); return { asked: 'waiting' } } })
+    parts.loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    return { ...parts, seen }
+  }
+
+  it('reaches the core from mcp under a live call from the door, named by the chain\'s label', async () => {
+    const { door, mcp, seen } = asking()
+    const { parent } = await handled(door, mcp, 'client#1')
+    expect((await mcp.ask('core.agentAsk', { capabilities: [inbox] }, parent)).result).toEqual({ asked: 'waiting' })
+    expect(seen.map(call => [call.caller, call.onBehalf, call.args])).toEqual([[worker('mcp'), 'client#1', { capabilities: [inbox] }]])
+  })
+
+  it('refuses it from mcp with no door call, under another plugin\'s call, from another plugin and from a window', async () => {
+    const { carrier, mcp, beta, search, seen } = asking()
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
+    const fromBeta = await mcp.delivered('mcp.handle')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { parent: fromBeta.callId as string }))).toBe('not-granted')
+    expect(code(await search.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
+    const way = windowWay(carrier, { editor, trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    expect(code(await way.ask('editor', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
+    expect(code(await way.ask('trusted', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
+    expect(seen).toEqual([])
+  })
+
+  it('refuses it under a door call that ended, with a label in its arguments, past eight items and with a scope a screen hides', async () => {
+    const { door, mcp, seen } = asking()
+    const one = await handled(door, mcp, 'client#1')
+    const two = await handled(door, mcp, 'client#2')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox], agent: 'client#2' }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [] }, two.parent))).toBe('invalid')
+    const nine = Array.from({ length: 9 }, (_, i) => ({ type: 'luoshu.read', paths: [`n${i}/**`] }))
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: nine }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['in\nbox/**'] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: [`in${String.fromCharCode(0x202e)}box/**`] }] }, two.parent))).toBe('invalid')
+    mcp.answer(one.got.callId, null)
+    await door.reply(one.id)
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, one.parent))).toBe('invalid')
+    expect(seen).toEqual([])
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: Array.from({ length: 8 }, (_, i) => ({ type: 'luoshu.read', paths: [`n${i}/**`] })) }, two.parent))).toBe(null)
+  })
+
+  it('refuses it while the gate is not on, as any call for an agent', async () => {
+    const { door, mcp, loader, seen } = asking()
+    const { parent } = await handled(door, mcp, 'client#1')
+    for (const [state, expected] of [['off', 'policy-down'], ['failed', 'policy-down'], ['starting', 'starting']] as const) {
+      loader.slots.gate = state
+      expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, parent))).toBe(expected)
+    }
+    expect(seen).toEqual([])
+  })
+})
+
 describe('the second ask for an agent\'s call', () => {
   // A luoshu whose perform asks the call's judge again about each list of paths in turn, as the real one does when a
   // look at the disk reads a path otherwise than prepare did. before runs first, each time
