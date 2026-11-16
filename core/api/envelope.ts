@@ -33,8 +33,8 @@ const label = screenText(MAX_LABEL_LENGTH)
 
 // An agent's label as the agent door names it and as the agent host's entry holds it: the OAuth client id, # and the
 // number of the authorization, which has no leading zero. The client id is held to the characters a URL holds as
-// written (RFC 3986, no fragment), so a client id metadata document's address fits, and so no two labels a screen draws
-// alike are two agents and none draws as nothing
+// written (RFC 3986, no fragment). A client id metadata document's address fits, no two labels a screen draws alike are
+// two agents and none draws as nothing
 export const MAX_CLIENT_ID_LENGTH = 255
 export const MAX_AGENT_NUMBER_DIGITS = 15
 export const agentLabel = z.string()

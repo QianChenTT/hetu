@@ -491,7 +491,7 @@ describe('what an agent may read and list through mcp', () => {
     loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
-    // What mcp and beta may both read, and beta reads nothing
+    // What mcp and beta may both read, of which beta reads nothing
     expect((await mcp.ask('core.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
   })
 
