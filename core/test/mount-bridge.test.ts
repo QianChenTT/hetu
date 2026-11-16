@@ -11,7 +11,7 @@ import { fakeCore, settle } from './mount-fakes.ts'
 type Reach = { read?: string[], write?: string[], edit?: string[], uiRead?: string[], list?: string[], verbs?: string[] }
 
 // An open note as the drawer sees it, on a real text and real versions
-function note(id: string, path: string, text: string) {
+function note(id: string, path: string, text: string, selection = [{ anchor: 1, head: 2 }]) {
   let doc = Text.of(text.split('\n'))
   const versions = new Versions(doc.length)
   const marks = new Map<string, Map<string, Mark[]>>()
@@ -21,7 +21,7 @@ function note(id: string, path: string, text: string) {
     path,
     versions,
     text: () => doc.toString(),
-    selection: () => [{ anchor: 1, head: 2 }],
+    selection: () => selection.map(range => ({ ...range })),
     apply(changes, plugin) {
       doc = changes.apply(doc)
       versions.push(changes)
@@ -145,6 +145,126 @@ describe('ui.read', () => {
     await drawer.humanOpened(notes[0].instance)
     expect(await alpha.call('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']] })).toMatchObject({ ok: true })
     expect(notes[0].text()).toBe('hello world!')
+  })
+})
+
+// Where the human is in a note: the selection on a command and the range the editor draws, each only to a plugin that
+// reads the note, as every other event about it
+describe('the selection and the viewport', () => {
+  const twoNotes = () => [note('n1', 'a.md', 'one two three', [{ anchor: 3, head: 7 }]), note('n2', 'b.md', 'secret text', [{ anchor: 0, head: 6 }])]
+  const viewports = (made: ReturnType<typeof port>) => made.events().filter(event => event.topic === 'editor.viewport')
+
+  it("sends a command the selection and the version at the key, of that key's note and only to a plugin that reads it", async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'], verbs: ['ui.command'] } }, notes)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
+    notes[0].type(0, '> ')
+    drawer.key('n1', 'Mod-k')
+    drawer.key('n2', 'Mod-k')
+    drawer.key(null, 'Mod-k')
+    await settle()
+    expect(alpha.events().filter(event => event.topic === 'editor.command')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1', version: 1, selection: [{ anchor: 3, head: 7 }] },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+    ])
+  })
+
+  it('sends a command no selection on ui.read until the human opened the note', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { uiRead: ['a.md'], verbs: ['ui.command'] } }, notes)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
+    drawer.key('n1', 'Mod-k')
+    await settle()
+    await drawer.humanOpened(notes[0].instance)
+    drawer.key('n1', 'Mod-k')
+    await settle()
+    expect(alpha.events().filter(event => event.topic === 'editor.command')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1', version: 0, selection: [{ anchor: 3, head: 7 }] },
+    ])
+  })
+
+  it("sends each note's viewport with its own instance and version to its readers and to no other plugin", async () => {
+    const notes = twoNotes()
+    const { drawer } = started({
+      alpha: { read: ['a.md'] }, beta: { read: ['b.md'], verbs: ['ui.decoration'] }, shown: { uiRead: ['a.md'] }, other: { verbs: ['ui.decoration'] },
+    }, notes)
+    const plugins = { alpha: port(), beta: port(), shown: port(), other: port() }
+    for (const [id, made] of Object.entries(plugins)) drawer.connect(id, 1, made.port)
+    await settle()
+    drawer.viewport(notes[0].instance, 0, 9)
+    drawer.viewport(notes[1].instance, 2, 11)
+    notes[0].type(0, 'x')
+    drawer.viewport(notes[0].instance, 1, 12)
+    await settle()
+    expect(viewports(plugins.alpha)).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: 9 },
+      { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 1, from: 1, to: 12 },
+    ])
+    expect(viewports(plugins.beta)).toEqual([{ v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n2', version: 0, from: 2, to: 11 }])
+    expect(plugins.shown.events()).toEqual([])
+    expect(plugins.other.events()).toEqual([])
+  })
+
+  it('tells a plugin the last viewport with editor.opened, on ui.read once the human opened the note', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] }, shown: { uiRead: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const alpha = port()
+    const shown = port()
+    drawer.connect('alpha', 1, alpha.port)
+    drawer.connect('shown', 1, shown.port)
+    await settle()
+    expect(alpha.events()).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' },
+      { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: 9 },
+    ])
+    expect(shown.events()).toEqual([])
+    await drawer.humanOpened(notes[0].instance)
+    await settle()
+    expect(shown.events()).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' },
+      { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: 9 },
+    ])
+  })
+
+  it('stops sending the viewport and the selection once core.security narrowed the grant', async () => {
+    const notes = twoNotes()
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'], verbs: ['ui.command'] } }
+    const { drawer, core } = started(reach, notes)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
+    drawer.viewport(notes[0].instance, 0, 9)
+    await settle()
+    expect(viewports(alpha)).toHaveLength(1)
+    reach.alpha = { read: [], verbs: ['ui.command'] }
+    core.event('core.security')
+    await settle()
+    drawer.viewport(notes[0].instance, 3, 9)
+    drawer.key('n1', 'Mod-k')
+    await settle()
+    expect(viewports(alpha)).toHaveLength(1)
+    expect(alpha.events().filter(event => event.topic === 'editor.command')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+    ])
+  })
+
+  it('forgets the viewport of a closed note, so an instance opened under its id starts with none', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    drawer.closed('n1')
+    notes[0] = note('n1', 'a.md', 'again')
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await settle()
+    expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }])
   })
 })
 
@@ -317,7 +437,7 @@ describe("the bridge's drawer end", () => {
     await settle()
     const commands = alpha.events().filter(event => event.topic === 'editor.command')
     expect(commands).toEqual([
-      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1' },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n1', version: 0, selection: [{ anchor: 1, head: 2 }] },
       { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
     ])
     expect(beta.events()).toEqual([])

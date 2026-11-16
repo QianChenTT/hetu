@@ -121,12 +121,17 @@ export function refused(id: number, code: RefusalCode): BridgeReply {
   return { v: VERSION, kind: 'reply', id, ok: false, refusal: { code } }
 }
 
-// What the drawer tells a plugin unasked. Each event about an instance goes only to plugins that read its note
+// What the drawer tells a plugin unasked. Each event about an instance goes only to plugins that read its note. A
+// command names its note, the selection at the key and the version it was taken at only to a plugin that reads the
+// note. The viewport is the range of the text the editor draws, told again each time it moves and after editor.opened.
+// The selection and the viewport came within API version 3 as additions, which an SDK without them drops or reads past
 export type BridgeEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'editor.opened' | 'editor.closed', instance: string }
   | { topic: 'editor.changed', instance: string, version: number, changes: ChangeJson }
-  | { topic: 'editor.command', command: string, instance: string | null }
+  | { topic: 'editor.command', command: string, instance: null }
+  | { topic: 'editor.command', command: string, instance: string, version: number, selection: { anchor: number, head: number }[] }
   | { topic: 'editor.key', instance: string, key: string }
+  | { topic: 'editor.viewport', instance: string, version: number, from: number, to: number }
 )
 
 // What each verb answers with

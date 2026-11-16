@@ -73,6 +73,21 @@ describe("the SDK's editor side", () => {
     ])
   })
 
+  it('hands a viewport and a command with its selection to their handlers', () => {
+    const editor = new Editor()
+    const port = drawerPort()
+    editor.connect(port.transport)
+    const heard: unknown[] = []
+    editor.on('viewport', event => heard.push(event))
+    editor.on('command', event => heard.push(event.topic === 'editor.command' && event.instance !== null ? event.selection : null))
+    port.tells({ topic: 'editor.viewport', instance: 'n1', version: 3, from: 10, to: 900 })
+    port.tells({ topic: 'editor.command', command: 'kill', instance: 'n1', version: 3, selection: [{ anchor: 12, head: 12 }] })
+    expect(heard).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 3, from: 10, to: 900 },
+      [{ anchor: 12, head: 12 }],
+    ])
+  })
+
   it('on a new port sends its bindings and key stream again and fails what was in flight on the old one', async () => {
     const editor = new Editor()
     const first = drawerPort()

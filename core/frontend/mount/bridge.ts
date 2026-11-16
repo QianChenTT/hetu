@@ -90,6 +90,8 @@ export class Drawer {
   private reaches = new Map<string, Promise<Reach>>()
   // The instances the human opened, the only ones ui.read reaches
   private readonly human = new Set<string>()
+  // The range each open instance's editor draws as the page last told it, with the version it was measured at
+  private readonly viewports = new Map<string, { version: number, from: number, to: number }>()
   private readonly mac: boolean
   private readonly clock: () => number
   private readonly settings: () => SettingsValue
@@ -174,6 +176,7 @@ export class Drawer {
 
   closed(instance: string): void {
     this.human.delete(instance)
+    this.viewports.delete(instance)
     for (const conn of this.connections.values()) conn.told.delete(instance)
     for (const conn of this.connections.values()) {
       if (!conn.marked.delete(instance)) continue
@@ -190,10 +193,18 @@ export class Drawer {
     }
   }
 
+  // The editor of the instance draws another range of its text. Each plugin that reads the note hears it. One told of
+  // the note later hears the last range with editor.opened
+  viewport(instance: Instance, from: number, to: number): void {
+    const range = { version: instance.versions.version, from, to }
+    this.viewports.set(instance.id, range)
+    for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.viewport', instance: instance.id, ...range })
+  }
+
   // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
-  // with the note's instance only when it reads the note, and true says the key was taken. A key two plugins bind goes
-  // to the one the human picked in the views menu, else to neither. Otherwise each plugin holding the key stream that
-  // reads the note hears the key
+  // with the note's instance, the selection at the key and its version only when it reads the note. True says the key
+  // was taken. A key two plugins bind goes to the one the human picked in the views menu, else to neither.
+  // Otherwise each plugin holding the key stream that reads the note hears the key
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
@@ -203,10 +214,15 @@ export class Drawer {
     if (owner !== undefined) {
       const conn = owner
       const command = conn.bindings.get(key) as string
+      // Where the human was when the key came, sent once the core says the plugin reads the note
+      const at = open === undefined ? undefined : { version: open.versions.version, selection: open.selection() }
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
-        const named = open !== undefined && this.readsWith(reach, open) ? open.id : null
-        if (this.live(conn)) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.command', command, instance: named })))
+        if (!this.live(conn)) return
+        const body: EventBody = open !== undefined && at !== undefined && this.readsWith(reach, open)
+          ? { topic: 'editor.command', command, instance: open.id, ...at }
+          : { topic: 'editor.command', command, instance: null }
+        conn.port.postMessage(JSON.stringify(event(body)))
       })
       return true
     }
@@ -301,7 +317,8 @@ export class Drawer {
     return reach.read || (reach.uiRead && this.human.has(instance.id))
   }
 
-  // An event about an instance, to the plugin only when it reads the note
+  // An event about an instance, to the plugin only when it reads the note. editor.opened goes once and brings the last
+  // range the editor drew
   private async tell(conn: Connection, instance: Instance, body: EventBody): Promise<void> {
     const reach = await this.reachOf(conn.plugin, instance.path)
     if (!this.live(conn) || !this.readsWith(reach, instance)) return
@@ -310,6 +327,8 @@ export class Drawer {
       conn.told.add(instance.id)
     }
     conn.port.postMessage(JSON.stringify(event(body)))
+    const range = body.topic === 'editor.opened' ? this.viewports.get(instance.id) : undefined
+    if (range !== undefined) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.viewport', instance: instance.id, ...range })))
   }
 
   // A ui event to an owner's live port

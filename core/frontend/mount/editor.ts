@@ -25,6 +25,8 @@ export type ViewHooks = {
   key(instance: string, event: KeyboardEvent): boolean
   // The human moved into another open note
   focused?(instance: string): void
+  // The range of the text the editor draws moved, told once as it is made and again each time it moves
+  viewport(instance: Instance, from: number, to: number): void
 }
 
 // Which plugin made a change
@@ -169,6 +171,8 @@ export class EditorViews implements Editors {
               const hid = human ? hiddenBy(tr.startState.field(pluginMarks).owned, tr.changes) : []
               this.hooks.changed(instance, tr.changes, remote, hid)
             }
+            // After the changes reached versions, so the range counts in the version it was drawn at
+            if (update.viewportChanged) this.hooks.viewport(instance, update.view.viewport.from, update.view.viewport.to)
           }),
         ],
       }),
@@ -189,6 +193,7 @@ export class EditorViews implements Editors {
     }
     this.open.set(id, { view, element, instance })
     this.hooks.created(instance)
+    this.hooks.viewport(instance, view.viewport.from, view.viewport.to)
   }
 
   // The note's text as it saves, its own line breaks kept

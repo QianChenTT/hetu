@@ -24,7 +24,7 @@ export default definePlugin({
     const heard: unknown[] = []
     scope.heard = heard
     scope.follow = false
-    for (const topic of ['opened', 'changed', 'command'] as const) ctx.editor.on(topic, event => heard.push(event))
+    for (const topic of ['opened', 'changed', 'command', 'viewport'] as const) ctx.editor.on(topic, event => heard.push(event))
     ctx.editor.on('changed', event => {
       if (scope.follow !== true || event.topic !== 'editor.changed') return
       const marks = []
@@ -437,6 +437,76 @@ describe('the drawer', () => {
       await scope.editor.decorate(open.instance, open.version, 'words', [{ kind: 'mark', from: 0, to: 4, style: 'error' }])
     })
     await until(async () => (await editor.locator('.cm-hetu-error').count()) === 1)
+  })
+
+  it('sends a command the selection at the key only when its plugin reads the note', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      outsider: [{ type: 'luoshu.read', paths: ['other/**'] }, { type: 'ui.command' }],
+    }
+    const text = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n')
+    const { app, editor } = await started({ notes: { 'a.md': text }, plugins })
+    await open(editor, 'a.md')
+    const reader = await pluginWorker(app, 'reader')
+    const outsider = await pluginWorker(app, 'outsider')
+    await drive(reader, async scope => scope.editor.bind([{ key: 'Mod-k', command: 'here' }]))
+    await drive(outsider, async scope => scope.editor.bind([{ key: 'Mod-j', command: 'there' }]))
+    await shown(editor).click()
+    await editor.keyboard.press('ControlOrMeta+End')
+    await editor.keyboard.press('ControlOrMeta+k')
+    await editor.keyboard.press('ControlOrMeta+j')
+    const commands = async (worker: Worker) => (await drive(worker, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.command')
+    await until(async () => (await commands(reader)).length === 1 && (await commands(outsider)).length === 1)
+    expect(await commands(reader)).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'here', instance: 'n1', version: 0, selection: [{ anchor: text.length, head: text.length }] },
+    ])
+    expect(await commands(outsider)).toEqual([{ v: 1, kind: 'event', topic: 'editor.command', command: 'there', instance: null }])
+  })
+
+  it('sends the range the editor draws to a plugin that reads the note and to no other, again as it moves', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      outsider: [{ type: 'luoshu.read', paths: ['other/**'] }, { type: 'ui.command' }],
+    }
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
+    const text = lines.join('\n')
+    const short = 'short note'
+    const { app, editor } = await started({ notes: { 'a.md': text, 'b.md': short }, plugins })
+    const reader = await pluginWorker(app, 'reader')
+    const outsider = await pluginWorker(app, 'outsider')
+    await open(editor, 'a.md')
+    type Range = { topic: string, instance: string, version: number, from: number, to: number }
+    const ranges = async (worker: Worker) => (await drive(worker, async scope => scope.heard) as Range[]).filter(event => event.topic === 'editor.viewport')
+    const last = async () => (await ranges(reader)).filter(range => range.instance === 'n1').at(-1)
+    // Where line i of the note starts and ends
+    const start = (i: number) => lines.slice(0, i).reduce((at, line) => at + line.length + 1, 0)
+    const end = (i: number) => start(i) + lines[i].length
+    // The first and last line the editor holds in the page, the lines of its viewport
+    const drawn = async () => {
+      const held = await editor.locator('.editor:not([hidden]) .cm-line').allInnerTexts()
+      return [Number(held[0].slice(5)), Number(held.at(-1)!.slice(5))]
+    }
+    await until(async () => (await last())?.from === 0)
+    await tick(500)
+    const [top, bottom] = await drawn()
+    expect(top).toBe(0)
+    expect(await last()).toEqual({ v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: end(bottom) })
+    expect(bottom).toBeLessThan(lines.length - 1)
+    await shown(editor).click()
+    await editor.keyboard.press('ControlOrMeta+End')
+    // The editor draws the cursor's lines at the end too, which a window off screen may not keep scrolled to
+    await until(async () => (await ranges(reader)).some(range => range.instance === 'n1' && range.from > 0 && range.to === text.length))
+    // A change moves the range, which comes with the version it counts in
+    await editor.keyboard.type('!')
+    const typed = async () => (await ranges(reader)).find(range => range.instance === 'n1' && range.to === text.length + 1)
+    await until(async () => (await typed()) !== undefined)
+    expect((await typed())!.version).toBe(1)
+    // Another note's range names that note
+    await open(editor, 'b.md')
+    await until(async () => (await ranges(reader)).some(range => range.instance === 'n2' && range.to === short.length))
+    expect((await ranges(reader)).filter(range => range.instance === 'n2')).toContainEqual(expect.objectContaining({ from: 0, to: short.length }))
+    expect((await ranges(reader)).filter(range => range.instance === 'n1' && range.to === short.length)).toEqual([])
+    expect(await ranges(outsider)).toEqual([])
   })
 
   // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
