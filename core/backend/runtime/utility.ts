@@ -28,6 +28,14 @@ export type UtilityOptions = {
 
 type Child = { child: UtilityChild, cwd: string, killed: boolean, over: boolean }
 
+// The environment a utility half is forked with: the base and NODE_OPTIONS with no value. Electron forks with main's
+// whole environment when env holds no name, as the base on macOS and Linux holds none. Chromium leaves a name whose
+// value is empty out of the child's, so the half gets the base alone, and a NODE_OPTIONS that reached it empty would
+// set nothing
+export function utilityEnv(ambient: Readonly<Record<string, string | undefined>> = process.env, platform: NodeJS.Platform = process.platform): Record<string, string> {
+  return { ...baseEnv(ambient, platform), NODE_OPTIONS: '' }
+}
+
 // The utility halves' runtime: each a utilityProcess forked from the core's bootstrap, with an environment built from
 // empty, a new empty working folder in the system's temp folder and its first message the verified bytes, its limits and
 // the plugin's end of its channel. It records each kill it makes, so an exit reads killed from that record and never from
@@ -41,7 +49,7 @@ export function utilityRuntime(options: UtilityOptions): Pick<Runtime, 'startUti
       let child: UtilityChild
       try {
         child = options.fork(options.bootstrap, [], {
-          env: { ...baseEnv() },
+          env: utilityEnv(),
           cwd,
           stdio: options.locked ? 'ignore' : 'inherit',
           serviceName: `hetu ${start.id}`,

@@ -59,6 +59,10 @@ export default definePlugin({
 })
 `
 
+// What a child on macOS has from outside main's environment: Chromium's launcher passes every child its Mach port
+// validation policy, and CoreFoundation sets the user's text encoding from the uid when it is unset
+const notFromMain = process.platform === 'darwin' ? ['MACH_PORT_RENDEZVOUS_PEER_VALDATION', '__CF_USER_TEXT_ENCODING'] : []
+
 type Facts = { self: unknown, dataDir: string | null, envNames: string[], envText: string, cwd: string, cwdEntries: number, pid: number }
 
 // The shipped install with the hello plugin as http beside it
@@ -135,8 +139,7 @@ describe('a utility half', () => {
     const facts = await call<Facts>(worker, 'hello')
     expect(facts.self).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
     expect(facts.dataDir).toBe(null)
-    console.log(`DIAG half platform=${process.platform} given=${JSON.stringify(Object.keys(baseEnv()).sort())} count=${facts.envNames.length} names=${JSON.stringify(facts.envNames)}`)
-    expect(facts.envNames).toEqual(Object.keys(baseEnv()).sort())
+    expect(facts.envNames).toEqual([...Object.keys(baseEnv()), ...notFromMain].sort())
     expect(facts.envText).not.toContain(dataDir)
     expect(facts.cwdEntries).toBe(0)
     expect(facts.cwd.startsWith(dataDir)).toBe(false)

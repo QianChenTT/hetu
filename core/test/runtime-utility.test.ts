@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RelayLimits } from '../api/rate.ts'
 import type { UtilityStart } from '../backend/loader/seams.ts'
-import { type ForkOptions, utilityRuntime, type UtilityChild } from '../backend/runtime/utility.ts'
+import { type ForkOptions, utilityEnv, utilityRuntime, type UtilityChild } from '../backend/runtime/utility.ts'
 import { baseEnv } from '../lib/clean-env.ts'
 
 // Electron's UtilityProcess as the runtime sees it. exit hands over the exit code, which a kill sets to 0 on Windows
@@ -68,9 +68,19 @@ describe('the utility runtime', () => {
     const [{ modulePath, args, options }] = forks
     expect(modulePath).toBe(path.join('dist', 'utility.js'))
     expect(args).toEqual([])
-    expect({ ...options.env }).toEqual({ ...baseEnv() })
+    expect({ ...options.env }).toEqual(utilityEnv())
     expect(Object.values(options.env).join('\n')).not.toContain('main only')
     expect(options.serviceName).toBe('hetu http')
+  })
+
+  // Electron forks a utility process with main's whole environment when env holds no name, and Chromium leaves a name
+  // whose value is empty out of the child's
+  it.each(['darwin', 'linux', 'win32'] as const)('gives the fork on %s an env Electron can\'t read as none given, the child getting only the base', platform => {
+    const ambient = { PATH: '/usr/bin', SystemRoot: 'C:\\Windows', USERNAME: 'someone', HETU_SECRET_FOR_TEST: 'main only' }
+    const env = utilityEnv(ambient, platform)
+    expect(Object.keys(env).length).toBeGreaterThan(0)
+    const delivered = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''))
+    expect(delivered).toEqual({ ...baseEnv(ambient, platform) })
   })
 
   it('runs it in a new empty working folder outside the data folder, one per incarnation', async () => {
