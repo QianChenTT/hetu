@@ -261,7 +261,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     const first = await lookAt(prepared, folderState, judged)
     if (first.state === 'moved') throw refused('not-granted')
     // Through the note opened, so a note made under another case of the last name since prepare is judged before its
-    // version is compared or its bytes replaced
+    // version is compared. The rename below still acts on the name, so a note made there after this check is replaced
     const checked = await versionAt(prepared, first.target, judged)
     if (checked.version !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(prepared)) throw refused('not-granted')
@@ -388,7 +388,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     const looked = await unmoved(prepared, judged)
     if (!(await isNote(looked.absolute))) throw refused('not-found')
     // Through the note opened, so a note made under another case of the last name since prepare is judged before its
-    // version is compared and it goes to the bin
+    // version is compared. The bin still takes the note by name after it
     const { version: found, target } = await versionAt(prepared, looked, judged)
     if (found !== baseVersion) throw refused('stale')
     await trash(target.absolute)
