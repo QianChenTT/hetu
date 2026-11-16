@@ -440,7 +440,7 @@ describe('the gate over an agent\'s call, in every gate state', () => {
       expect(code(await door.reply(id))).toBe(expected)
       expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
     }
-    // The door's call with no label is refused for its form in every state, and a plugin's own call is judged as before
+    // The door's call with no label is refused for its form in every state. A plugin's own call is judged as before
     expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
     const own = await search.ask('luoshu.read', { path: 'inbox/a.md' })
     expect(code(own)).toBe(state === 'on' || state === 'off' ? null : state === 'starting' ? 'starting' : 'policy-down')

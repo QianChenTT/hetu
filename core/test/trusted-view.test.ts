@@ -156,7 +156,7 @@ describe('what the trusted window draws', () => {
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
   })
 
-  it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, and what it can\'t know', () => {
+  it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, then what it can\'t know', () => {
     const drawn = screen(calm({
       agents: [
         { agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['inbox/**'] }, { type: 'luoshu.write', paths: ['say "hi"/**'] }], revoked: false },

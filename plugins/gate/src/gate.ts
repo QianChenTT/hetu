@@ -136,7 +136,7 @@ export function createGate(): Gate {
   return {
     // A call for an agent needs the caller's own items and the agent's both to hold it. The agent's items are judged
     // first and their refusal is not-granted, so an agent learns nothing of the caller's own items it isn't granted. The
-    // caller's answer stands once the agent's allow, and an ask is only ever for the caller's own item
+    // caller's answer stands once the agent's allow. An ask is only ever for the caller's own item
     decide(access: Access): Decision {
       const own = judgeItems(itemsOf(access.caller), access, held!.view)
       if (access.agent === undefined) return own

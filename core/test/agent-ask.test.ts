@@ -144,7 +144,7 @@ describe('the Confirm of an agent\'s ask', () => {
     expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: fetch }])
   })
 
-  it('refuses as stale an ask another write of mcp\'s entry came after, and the agent asks again', async () => {
+  it('refuses as stale an ask another write of mcp\'s entry came after, then takes the agent\'s ask again', async () => {
     const { loader, ask, stored, link } = await started()
     await ask('client#1', [inbox])
     await ask('client#2', [write])
@@ -253,7 +253,7 @@ describe('revoke of an agent', () => {
     expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
   })
 
-  it('withdraws a waiting ask of a label that holds nothing yet and marks it, and changes nothing for a label it doesn\'t know', async () => {
+  it('withdraws a waiting ask of a label that holds nothing yet and marks it, changing nothing for a label it doesn\'t know', async () => {
     const { loader, ask, stored } = await started({ agents: seeded })
     await ask('client#2', [read])
     await loader.request({ kind: 'agent.revoke', agent: 'client#2' }, trusted)
@@ -309,7 +309,7 @@ describe('revoke of an agent', () => {
 })
 
 describe('an agent\'s ask that lapses or is withdrawn', () => {
-  it('lapses five minutes after it was raised, an ask of the same items meanwhile moving nothing, and then can\'t be confirmed', async () => {
+  it('lapses five minutes after it was raised, an ask of the same items meanwhile moving nothing, then can\'t be confirmed', async () => {
     const { loader, ask, clock, link, list } = await started()
     await ask('client#1', [inbox])
     const id = loader.pending()[0].id

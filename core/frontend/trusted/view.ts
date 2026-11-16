@@ -32,7 +32,7 @@ export type Screen = {
   limits: Limit[]
   luoshu: string
   install: string
-  // Each agent with its Revoke, a revoked one with none, and what the list can't know
+  // Each agent with its Revoke, a revoked one with none, then what the list can't know
   agents: { rows: Switch[], about: string }
 }
 

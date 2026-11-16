@@ -95,7 +95,7 @@ async function ask(half: Half, action: string, args: unknown, extra: object = {}
   throw new Error(`no reply to ${action}`)
 }
 
-// The door hands mcp a request for label, and mcp's call under it
+// The door hands mcp a request for label, giving the parent mcp's calls under it name
 const taken = new WeakSet<object>()
 async function request(door: Half, mcp: Half, label: string) {
   door.send({ v: 1, kind: 'call', id: 9000 + next++, action: 'mcp.handle', args: { body: '{}' }, onBehalf: label })

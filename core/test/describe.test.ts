@@ -51,7 +51,7 @@ describe("the core's words for a change", () => {
     expect(text).toBe('Give tree luoshu.list on "notes/**"')
   })
 
-  it('quotes an agent\'s label and each scope it asks for, and says what a revoke does', () => {
+  it('quotes an agent\'s label and each scope it asks for, then says what a revoke does', () => {
     expect(describeChange({ kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
       text: 'Give the agent "client#1" what it asks for through mcp',
       notes: ['It asks for: luoshu.read on "save note"', 'The agent reaches only what mcp holds as well', 'Revoke it from the agent list at any time'],

@@ -177,7 +177,7 @@ describe('agents through the joined core', () => {
     expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
   })
 
-  it('lets agent #2 read inside the items its ask was confirmed for, from its next call on, and nothing before', async () => {
+  it('lets agent #2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {
     const { loader, door, mcp } = await joined('on')
     const before = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
@@ -192,7 +192,7 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('inbox text')
   })
 
-  it('refuses agent #1\'s next judgement once revoked while its call waits, and tells http it is revoked until http heard', async () => {
+  it('refuses agent #1\'s next judgement once revoked while its call waits, then tells http it is revoked until http heard', async () => {
     const { loader, door, mcp } = await joined('on')
     const { parent } = await request(door, mcp, 'client#1')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('inbox text')

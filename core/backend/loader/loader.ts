@@ -2125,8 +2125,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
   }
 
-  // Every item of the label goes and its ask waiting with it, and the label is marked revoked until http says it ended
-  // its tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
+  // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
+  // tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
   // changes nothing, so a revoke names only an agent the human can see
   private async agentRevoke(agent: string): Promise<void> {
     const k = this.known.get(agentHost)
