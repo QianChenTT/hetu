@@ -71,6 +71,17 @@ describe('agents\' items in the agent host\'s entry', () => {
     expect(loaded.suspect).toBe(true)
   })
 
+  it('holds revoked labels on mcp\'s entry alone, each in the label\'s form and once, at most as many as items', async () => {
+    await store.writePlugin('mcp', entry({ agents, revoked: ['client#3', 'https://claude.ai/oauth/claude-code-client-metadata#4'] }))
+    expect((await store.load()).state.plugins.mcp.revoked).toEqual(['client#3', 'https://claude.ai/oauth/claude-code-client-metadata#4'])
+    await expect(store.writePlugin('search', entry({ revoked: ['client#3'] }))).rejects.toThrow()
+    await expect(store.writePlugin('mcp', entry({ revoked: ['client'] }))).rejects.toThrow()
+    await expect(store.writePlugin('mcp', entry({ revoked: ['client#3', 'client#3'] }))).rejects.toThrow()
+    await expect(store.writePlugin('mcp', entry({ revoked: Array.from({ length: 257 }, (_, i) => `client#${i + 1}`) }))).rejects.toThrow()
+    await plant('git', entry({ revoked: [] }))
+    expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'git', result: 'invalid' })
+  })
+
   it('keeps the agents\' items under the hash line, so a label changed by hand fails the check', async () => {
     await store.writePlugin('mcp', entry({ agents }))
     const text = await readFile(file('mcp'), 'utf8')

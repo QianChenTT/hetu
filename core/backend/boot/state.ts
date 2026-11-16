@@ -121,11 +121,15 @@ const plugin = z.strictObject({
   // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
   // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
   agents: agentItems.optional(),
+  // The labels the human revoked whose tokens http has not yet said it ended, each once. Only the agent host's entry
+  // holds the list. Left out of an entry with none
+  revoked: z.array(agentLabel).max(MAX_AGENT_ITEMS, { abort: true }).refine(labels => new Set(labels).size === labels.length, 'a label twice').optional(),
 })
 
-// An entry as the plugin id it is for may hold it: no other plugin's entry holds agents' items
-const pluginFor = (id: string) => (id === agentHost ? plugin : plugin.refine(entry => entry.agents === undefined, 'agents\' items'))
-const pluginFileFor = (id: string) => (id === agentHost ? pluginFile : pluginFile.refine(entry => entry.agents === undefined, 'agents\' items'))
+// An entry as the plugin id it is for may hold it: no other plugin's entry holds agents' items or revoked labels
+const hostOnly = (entry: { agents?: unknown, revoked?: unknown }) => entry.agents === undefined && entry.revoked === undefined
+const pluginFor = (id: string) => (id === agentHost ? plugin : plugin.refine(hostOnly, 'agents\' items'))
+const pluginFileFor = (id: string) => (id === agentHost ? pluginFile : pluginFile.refine(hostOnly, 'agents\' items'))
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against
 // whichever drive is current, which Node's isAbsolute takes as absolute

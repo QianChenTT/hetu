@@ -1,6 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
+import type {
+  ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
+} from '../../api/actions.ts'
 import { AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, type AgentAsk, type Change, type ClassRaised } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
@@ -490,6 +492,9 @@ ${capabilityKey(change.capability)}`)
       // The carrier's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
       case 'core.agentAsk':
         return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
+      // The floor let only http's half on its utility port through
+      case 'core.agents':
+        return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
       case 'core.stop':
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
@@ -585,8 +590,22 @@ ${capabilityKey(change.capability)}`)
       },
       luoshu: this.state.luoshu?.folder ?? null,
       requests,
+      agents: this.listedAgents(),
       stopped: this.stoppedMode,
     }
+  }
+
+  // The agent host's agents from its entry alone, on or off: each label holding items in the order the entry first names
+  // it, then each revoked label. Nothing here says whether a token is live or what a client calls itself
+  private listedAgents(): ListedAgent[] {
+    const k = this.known.get(agentHost)
+    const entry = k?.from === 'folder' ? k.entry : null
+    const listed = new Map<string, Capability[]>()
+    for (const { agent, capability } of entry?.agents ?? []) listed.set(agent, [...listed.get(agent) ?? [], capability])
+    return [
+      ...[...listed].map(([agent, items]) => ({ agent, items, revoked: false })),
+      ...(entry?.revoked ?? []).map(agent => ({ agent, items: [], revoked: true })),
+    ]
   }
 
   // What an approval or an update would load, from the one read it was found or staged with: the version and every
@@ -888,9 +907,11 @@ ${capabilityKey(change.capability)}`)
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
     const agents = cause === 'copy' ? before?.agents : undefined
+    // A revoked label stays marked either way, until http says it ended the label's tokens
+    const revoked = before?.revoked
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}),
+      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}), ...(revoked !== undefined ? { revoked } : {}),
     }
   }
 
@@ -1988,6 +2009,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const agent = label!
     const entry = this.hostEntry()
     if (entry === null) throw { code: 'unavailable' }
+    // A revoked authorization asks for nothing again, an agent comes back only as a new one with a new number
+    if (entry.revoked?.includes(agent) === true) throw { code: 'not-granted' }
     const paused = this.askPaused.get(agent)
     if (paused !== undefined && this.clock() < paused) throw { code: 'throttled' }
     const held = new Set((entry.agents ?? []).filter(item => item.agent === agent).map(item => capabilityKey(item.capability)))
@@ -2093,7 +2116,52 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.answered(change.plugin)
       case 'agent.ask':
         return this.agentGrant(change)
+      case 'agent.revoke':
+        return this.agentRevoke(change.agent)
     }
+  }
+
+  // Every item of the label goes and its ask waiting with it, and the label is marked revoked until http says it ended
+  // its tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
+  // changes nothing, so a revoke names only an agent the human can see
+  private async agentRevoke(agent: string): Promise<void> {
+    const k = this.known.get(agentHost)
+    const entry = k?.from === 'folder' ? k.entry : null
+    const waiting = (change: Change) => change.kind === 'agent.ask' && change.agent === agent
+    const asked = this.requests.changes().some(({ change }) => waiting(change))
+    this.requests.withdraw(waiting)
+    if (entry === null) return
+    const holds = (entry.agents ?? []).some(item => item.agent === agent)
+    if (!holds && !asked) return
+    const agents = (entry.agents ?? []).filter(item => item.agent !== agent)
+    const revoked = [...(entry.revoked ?? []).filter(label => label !== agent), agent]
+    const next: Plugin = { ...entry, revoked }
+    if (agents.length > 0) next.agents = agents
+    else delete next.agents
+    await this.store.writePlugin(agentHost, next)
+    this.putEntry(agentHost, next)
+    this.bump()
+  }
+
+  // For http, whether each label holds items, holds none or is revoked, after the marks of the labels http heard went.
+  // A mark goes only for a label marked, so a heard naming none writes nothing and stales no ask
+  private agentsFor(agents: string[], heard: string[]): Promise<ActionResults['core.agents']> {
+    return this.serial(async () => {
+      const k = this.known.get(agentHost)
+      let entry = k?.from === 'folder' ? k.entry : null
+      const marked = entry?.revoked ?? []
+      if (entry !== null && heard.some(label => marked.includes(label))) {
+        const next: Plugin = { ...entry, revoked: marked.filter(label => !heard.includes(label)) }
+        if (next.revoked!.length === 0) delete next.revoked
+        await this.store.writePlugin(agentHost, next)
+        this.putEntry(agentHost, next)
+        entry = next
+      }
+      return agents.map(agent => ({
+        agent,
+        holds: entry?.revoked?.includes(agent) === true ? 'revoked' : (entry?.agents ?? []).some(item => item.agent === agent) ? 'items' : 'none',
+      }))
+    })
   }
 
   // An agent's ask confirmed: its items added to that label's on the agent host's entry in one write through the entry's
@@ -2101,6 +2169,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async agentGrant(change: AgentAsk): Promise<void> {
     const entry = this.hostEntry()
     if (entry === null) throw new Error('the agent host is not on')
+    if (entry.revoked?.includes(change.agent) === true) throw new Error('a revoked agent')
     const items = [...entry.agents ?? []]
     for (const capability of change.capabilities) {
       const key = capabilityKey(capability)

@@ -599,6 +599,21 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
   })
 })
 
+describe('core.agents, what http asks about its agents', () => {
+  it('takes it from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
+    const seen: Call[] = []
+    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
+    const args = { agents: ['client#1'] }
+    expect((await door.ask('core.agents', args)).ok).toBe(true)
+    for (const side of [httpWorker, mcp, search]) expect(code(await side.ask('core.agents', args))).toBe('not-granted')
+    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    expect(code(await way.ask('trusted', 'core.agents', args))).toBe('not-granted')
+    expect(code(await door.ask('core.agents', { agents: ['client'] }))).toBe('invalid')
+    expect(code(await door.ask('core.agents', { agents: [] }))).toBe('invalid')
+    expect(seen.map(call => call.caller)).toEqual([host('http')])
+  })
+})
+
 describe('the second ask for an agent\'s call', () => {
   // A luoshu whose perform asks the call's judge again about each list of paths in turn, as the real one does when a
   // look at the disk reads a path otherwise than prepare did. before runs first, each time

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { folderCapability, MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
 import { change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
-import { token, type Caller } from './envelope.ts'
+import { agentLabel, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
@@ -64,6 +64,8 @@ export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate',
 export type AgentRefusal = typeof agentRefusals[number]
 // The most refusals one report counts, far above what the door can refuse in the second a report covers
 export const MAX_REFUSAL_COUNT = 1_000_000
+// The most labels one core.agents call names in each list
+export const MAX_AGENTS_ASKED = 64
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
@@ -165,6 +167,12 @@ const coreTable = {
   // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
   // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
   'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(folderCapability).min(1).max(MAX_ASK_ITEMS) }) },
+  // What http asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
+  // heard names the revoked labels whose tokens http ended, whose marks then go
+  'core.agents': {
+    from: 'http',
+    args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
+  },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -295,8 +303,12 @@ export type ListedPlugin = {
 // A request waiting for the human in the core's own words, with the word to type where the change asks for one
 export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null }
 
+// One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
+// whether the human revoked it and http has yet to say it ended its tokens
+export type ListedAgent = { agent: string, items: Capability[], revoked: boolean }
+
 // What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest
-// first, and the stopped mode
+// first, the agents and the stopped mode
 export type SecurityList = {
   plugins: ListedPlugin[]
   switches: {
@@ -312,6 +324,7 @@ export type SecurityList = {
   // The notes folder, null for none picked
   luoshu: string | null
   requests: HeldRequest[]
+  agents: ListedAgent[]
   stopped: StoppedMode | null
 }
 
@@ -350,6 +363,7 @@ export type ActionResults = {
   'core.agentRefused': null
   'core.bindFailed': null
   'core.agentAsk': { asked: 'waiting' | 'granted' }
+  'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

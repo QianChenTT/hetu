@@ -184,7 +184,7 @@ describe('agents\' items across an update of mcp and a Recover', () => {
       install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcpOf(installVersion), firstParty: true } },
       folder: { mcp: mcpOf('1.0.0') },
       // granted holds a widen the human gave beyond the manifest, which a copy resets
-      entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read, write], class: 1, agents }) },
+      entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read, write], class: 1, agents, revoked: ['client#5'] }) },
       behave: { gate: { exports: { gate } } },
       loader: { confirmDelayMs: 0 },
     })
@@ -192,17 +192,18 @@ describe('agents\' items across an update of mcp and a Recover', () => {
     return { ...made, gate, stored: async () => (await new StateStore(made.dataDir).load()).state.plugins.mcp }
   }
 
-  it('keeps each agent\'s items when hetu copies a newer mcp, granted back to the manifest\'s', async () => {
+  it('keeps each agent\'s items and the revoked marks when hetu copies a newer mcp, granted back to the manifest\'s', async () => {
     const { stored, gate, link } = await installed('1.1.0')
     expect(link.events('plugin.copied')).toEqual([{ plugin: 'mcp', version: '1.1.0' }])
     const entry = await stored()
     expect(entry.version).toBe('1.1.0')
     expect(entry.granted).toEqual([read])
     expect(entry.agents).toEqual(agents)
+    expect(entry.revoked).toEqual(['client#5'])
     expect(gate.seen.at(-1)!.agents).toEqual({ 'client#1': [item(inbox)], 'client#2': [item(write)] })
   })
 
-  it('drops every agent\'s items on a Recover of mcp, granted back to the manifest\'s', async () => {
+  it('drops every agent\'s items on a Recover of mcp and keeps the revoked marks, granted back to the manifest\'s', async () => {
     const { loader, stored, gate } = await installed('1.0.0')
     expect((await stored()).agents).toEqual(agents)
     await loader.apply({ kind: 'plugin.restore', plugin: 'mcp' })
@@ -210,6 +211,96 @@ describe('agents\' items across an update of mcp and a Recover', () => {
     const entry = await stored()
     expect(entry.granted).toEqual([read])
     expect(entry.agents).toBeUndefined()
+    // A revoked label stays marked until http ends its tokens, Recover or not
+    expect(entry.revoked).toEqual(['client#5'])
     expect(gate.seen.at(-1)!.agents).toEqual({})
+  })
+})
+
+describe('revoke of an agent', () => {
+  const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
+  const door: Caller = { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }
+  const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
+  const seeded = [{ agent: 'client#1', capability: inbox }, { agent: 'client#1', capability: write }, { agent: 'client#10', capability: inbox }]
+
+  it('takes every item of the label at once with no Confirm, keeps a label it prefixes and marks the label revoked', async () => {
+    const { loader, stored, gate, link } = await started({ agents: seeded })
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    const entry = await stored()
+    expect(entry.agents).toEqual([{ agent: 'client#10', capability: inbox }])
+    expect(entry.revoked).toEqual(['client#1'])
+    expect(entry.granted).toEqual([read])
+    expect(gate.seen.at(-1)!.agents).toEqual({ 'client#10': [item(inbox)] })
+    expect(loader.pending()).toEqual([])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', by: 'narrows' }])
+  })
+
+  it('applies a revoke from any window, as every narrowing change does', async () => {
+    const { loader, stored } = await started({ agents: seeded })
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'client#10' }, editor)).toEqual({ applied: true })
+    expect((await stored()).revoked).toEqual(['client#10'])
+  })
+
+  it('withdraws the label\'s waiting ask and refuses the revoked label\'s next ask', async () => {
+    const { loader, ask, link } = await started({ agents: seeded })
+    await ask('client#1', [read])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect(loader.pending()).toEqual([])
+    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.ask' }])
+    expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
+  })
+
+  it('withdraws a waiting ask of a label that holds nothing yet and marks it, and changes nothing for a label it doesn\'t know', async () => {
+    const { loader, ask, stored } = await started({ agents: seeded })
+    await ask('client#2', [read])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#2' }, trusted)
+    expect(loader.pending()).toEqual([])
+    expect((await stored()).revoked).toEqual(['client#2'])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#9' }, trusted)
+    expect((await stored()).revoked).toEqual(['client#2'])
+  })
+
+  it('lists for the trusted window each label with items and each revoked one, from mcp\'s entry alone', async () => {
+    const { loader, list } = await started({ agents: seeded, revoked: ['client#3'] })
+    expect((await list()).agents).toEqual([
+      { agent: 'client#1', items: [inbox, write], revoked: false }, { agent: 'client#10', items: [inbox], revoked: false },
+      { agent: 'client#3', items: [], revoked: true },
+    ])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect((await list()).agents).toEqual([
+      { agent: 'client#10', items: [inbox], revoked: false }, { agent: 'client#3', items: [], revoked: true }, { agent: 'client#1', items: [], revoked: true },
+    ])
+  })
+
+  it('answers http for each label it names and drops a revoked mark only once http says it heard', async () => {
+    const { loader, stored } = await started({ agents: seeded, revoked: ['client#3', 'client#4'] })
+    const agents = (args: object) => loader.serve({ callId: 'c', caller: door, action: 'core.agents', args, deadline: Date.now() + 30_000 } as Call)
+    expect(await agents({ agents: ['client#1', 'client#2', 'client#3'] })).toEqual([
+      { agent: 'client#1', holds: 'items' }, { agent: 'client#2', holds: 'none' }, { agent: 'client#3', holds: 'revoked' },
+    ])
+    expect((await stored()).revoked).toEqual(['client#3', 'client#4'])
+    expect(await agents({ agents: ['client#3', 'client#4'], heard: ['client#3', 'client#1'] })).toEqual([
+      { agent: 'client#3', holds: 'none' }, { agent: 'client#4', holds: 'revoked' },
+    ])
+    const entry = await stored()
+    expect(entry.revoked).toEqual(['client#4'])
+    expect(entry.agents).toEqual(seeded)
+  })
+
+  it('writes nothing when http names no revoked label as heard, so no waiting ask goes stale', async () => {
+    const { loader, ask, stored, store } = await started({ agents: seeded, revoked: ['client#3'] })
+    await ask('client#2', [read])
+    const before = await stored()
+    const writes: string[] = []
+    const writePlugin = store.writePlugin.bind(store)
+    store.writePlugin = async (id, entry) => {
+      writes.push(id)
+      return writePlugin(id, entry)
+    }
+    await loader.serve({ callId: 'c', caller: door, action: 'core.agents', args: { agents: ['client#2'], heard: ['client#2'] }, deadline: Date.now() + 30_000 } as Call)
+    expect(writes).toEqual([])
+    expect(await stored()).toEqual(before)
+    await loader.confirm(loader.pending()[0].id, {})
+    expect((await stored()).agents).toContainEqual({ agent: 'client#2', capability: read })
   })
 })

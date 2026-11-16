@@ -27,7 +27,7 @@ const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set',
+  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
@@ -49,6 +49,8 @@ export const change = z.discriminatedUnion('kind', [
     value: z.int().positive(),
     plugin: pluginId.nullable(),
   }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
+  // Every item of one agent's grant goes at once and the label is kept as revoked until http says it ended its tokens
+  z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
 // and for the capabilities plugin switched on again
@@ -108,6 +110,7 @@ export function changeEffect(change: Change): ChangeEffect {
       return 'widens'
     case 'grant.narrow':
     case 'item.off':
+    case 'agent.revoke':
       return 'narrows'
     case 'plugin.remove':
     case 'plugin.clearStorage':

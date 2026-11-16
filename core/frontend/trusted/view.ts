@@ -1,7 +1,7 @@
 // The trusted window's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
 // function that draws a screen as text. Every word on it is the core's or this file's, a plugin's only as an id or a
 // quoted scope
-import type { HeldRequest, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
+import type { HeldRequest, ListedAgent, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { floorConstantNames, floorConstants, type FloorConstant } from '../../api/floor.ts'
@@ -32,10 +32,21 @@ export type Screen = {
   limits: Limit[]
   luoshu: string
   install: string
+  // Each agent with its Revoke, a revoked one with none, and what the list can't know
+  agents: { rows: Switch[], about: string }
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
 const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s install'
+// What the agent list holds and what it can't: the core keeps the label and the items, http the client's name and the tokens
+const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s'
+
+// An agent's label in quotes as data, then its items, or that it is revoked
+function agentRow(agent: ListedAgent): Switch {
+  const label = JSON.stringify(agent.agent)
+  if (agent.revoked) return { line: `${label} · revoked, its tokens end once http hears`, change: null }
+  return { line: [label, ...agent.items.map(capabilityText)].join(' · '), change: { kind: 'agent.revoke', agent: agent.agent } }
+}
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   const lines: string[] = []
@@ -161,6 +172,7 @@ export function screen(list: SecurityList): Screen {
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
     install: INSTALL_LINE,
+    agents: { rows: list.agents.map(agentRow), about: AGENTS_LINE },
   }
 }
 

@@ -192,6 +192,21 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('inbox text')
   })
 
+  it('refuses agent #1\'s next judgement once revoked while its call waits, and tells http it is revoked until http heard', async () => {
+    const { loader, door, mcp } = await joined('on')
+    const { parent } = await request(door, mcp, 'client#1')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('inbox text')
+    const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')
+    expect((await ask(door, 'core.agents', { agents: ['client#1', 'client#3'] })).result).toEqual([
+      { agent: 'client#1', holds: 'revoked' }, { agent: 'client#3', holds: 'items' },
+    ])
+    // A revoked label asks again only under a number never used again
+    expect(outcome(await ask(mcp, 'core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, { parent }))).toBe('not-granted')
+    expect((await ask(door, 'core.agents', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
+  })
+
   it('refuses the door\'s call for agent #1 policy-down with the gate off before mcp sees it', async () => {
     const { door, mcp } = await joined('off')
     expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('policy-down')

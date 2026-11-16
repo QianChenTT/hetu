@@ -14,6 +14,7 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   limits: { all: {}, plugins: {} },
   luoshu: null,
   requests: [],
+  agents: [],
   stopped: null,
   ...over,
 })
@@ -153,6 +154,23 @@ describe('what the trusted window draws', () => {
     expect(limitChange('readyMs', '20000', null)).toEqual({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
     expect(limitChange('callsInFlight', ' 8 ', 'search')).toEqual({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'search' })
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
+  })
+
+  it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, and what it can\'t know', () => {
+    const drawn = screen(calm({
+      agents: [
+        { agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['inbox/**'] }, { type: 'luoshu.write', paths: ['say "hi"/**'] }], revoked: false },
+        { agent: 'https://claude.ai/oauth/claude-code-client-metadata#3', items: [], revoked: true },
+      ],
+    }))
+    expect(drawn.agents).toEqual({
+      rows: [
+        { line: '"client#1" · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
+        { line: '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears', change: null },
+      ],
+      about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s',
+    })
+    expect(screen(calm()).agents.rows).toEqual([])
   })
 
   describe('the stopped mode', () => {

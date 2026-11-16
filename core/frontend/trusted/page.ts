@@ -137,6 +137,18 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
     parts.push(luoshu)
 
+    const agents = element('section')
+    agents.className = 'agents'
+    agents.append(element('h2', 'Agents'), element('p', shown.agents.about))
+    for (const row of shown.agents.rows) {
+      const line = element('p', row.line)
+      line.className = 'agent'
+      const { change } = row
+      if (change !== null) line.append(button('Revoke', () => page.ask(change)))
+      agents.append(line)
+    }
+    parts.push(agents)
+
     const install = element('section')
     install.className = 'install'
     install.append(element('h2', 'Install'), element('p', shown.install))

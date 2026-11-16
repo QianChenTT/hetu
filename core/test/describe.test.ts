@@ -26,6 +26,7 @@ const everyKind = [
   { kind: 'recordNothing', on: true },
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
+  { kind: 'agent.revoke', agent: 'client#1' },
 ]
 
 describe("the core's words for a change", () => {
@@ -48,6 +49,16 @@ describe("the core's words for a change", () => {
   it('names the paths a list grant reaches', () => {
     const { text } = describeChange(one({ kind: 'grant.widen', plugin: 'tree', capability: { type: 'luoshu.list', paths: ['notes/**'] } }))
     expect(text).toBe('Give tree luoshu.list on "notes/**"')
+  })
+
+  it('quotes an agent\'s label and each scope it asks for, and says what a revoke does', () => {
+    expect(describeChange({ kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
+      text: 'Give the agent "client#1" what it asks for through mcp',
+      notes: ['It asks for: luoshu.read on "save note"', 'The agent reaches only what mcp holds as well', 'Revoke it from the agent list at any time'],
+    })
+    expect(describeChange(one({ kind: 'agent.revoke', agent: 'client#1' }))).toEqual({
+      text: 'Revoke the agent "client#1"', notes: ['It loses every item at once. Its number is never used again'],
+    })
   })
 
   it('quotes the notes folder', () => {
