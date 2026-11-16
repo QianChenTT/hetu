@@ -275,7 +275,8 @@ describe('the door made ready', () => {
     expect(await canConnect(port)).toBe(false)
     expect(await canConnect(DOOR_PORT)).toBe(false)
     await app.close()
-    expect(await canConnect(moved)).toBe(false)
+    // The utility process can outlive main by a moment
+    await until(async () => !(await canConnect(moved)))
     expect(await canConnect(DOOR_PORT)).toBe(false)
   })
 })
