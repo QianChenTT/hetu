@@ -39,6 +39,7 @@ function answering(side: Side) {
 describe('audit records', () => {
   it('writes one audit.call line per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
     const { carrier, connect, gate, loader, log } = harness()
+    loader.utility('http')
     loader.sandboxed('mcp', { handle: {} })
     gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
     gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]

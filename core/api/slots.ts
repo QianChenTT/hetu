@@ -57,8 +57,9 @@ export type Access = {
   readonly scope: Scope
 }
 
-// The agent door: http's host half calling mcp.handle on behalf of an agent, named by its label. Every call under that
-// call carries the label as the agent's and can't set its own. A label set anywhere else names nobody's agent
+// The agent door: http's host half in its utility process, on the port the loader minted, calling mcp.handle on behalf
+// of an agent, named by its label. Every call under that call carries the label as the agent's and can't set its own. A
+// label set anywhere else names nobody's agent, the same half on an in-process handle or with http placed elsewhere too
 export const agentDoor = frozen({ plugin: 'http', half: 'host', action: 'mcp.handle' } as const)
 // The plugin agents act through, whose entry holds their grants as labelled items
 export const agentHost = 'mcp'
