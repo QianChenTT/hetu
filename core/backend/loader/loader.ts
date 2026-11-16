@@ -14,7 +14,7 @@ import {
 import {
   FIRST_PARTY_SIGNER, INSTALL_LIST, installList, isNewer, MAX_INSTALL_LIST_BYTES, type InstallList, type Listed,
 } from '../../api/install.ts'
-import type { DepState, Init } from '../../api/lifecycle.ts'
+import { bindFailures, type BindFailure, type DepState, type Init, type StopReason } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
@@ -58,6 +58,9 @@ export type LoaderOptions = {
   confirmRecordMs?: number
   // The OS's bin the runtime gives, handed to the luoshu alone
   trash?: (absolute: string) => Promise<void>
+  // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
+  // the plugin's limits as they are now to its running halves
+  limited?: (plugin: string) => void
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -317,6 +320,7 @@ export class Loader implements Seam {
   private readonly requests: Requests
   private readonly onFailure: LoaderOptions['onFailure']
   private readonly trash: LoaderOptions['trash']
+  private readonly limited: LoaderOptions['limited']
   // controls while only the security controls may start, all once they are up, stopped once one failed
   private phase: 'controls' | 'all' | 'stopped' = 'controls'
   private stoppedMode: StoppedMode | null = null
@@ -341,6 +345,7 @@ export class Loader implements Seam {
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
     this.trash = options.trash
+    this.limited = options.limited
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -429,7 +434,7 @@ ${capabilityKey(change.capability)}`)
     this.die(found.k, reason)
   }
 
-  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped'): void {
+  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive'): void {
     const found = this.runOf(caller)
     if (found === null) return
     const { k, live, run } = found
@@ -440,7 +445,7 @@ ${capabilityKey(change.capability)}`)
     } else if (kind === 'stopped' && live.stop !== null) {
       run.stopped = true
       if ([...live.halves.values()].every(half => half.stopped)) this.finished(k, live)
-    } else if (kind === 'pong' && live.beat !== null) {
+    } else if ((kind === 'pong' || kind === 'alive') && live.beat !== null) {
       live.beat.misses = 0
       live.beat.waiting = false
       if (k.state === 'unresponsive') {
@@ -478,8 +483,20 @@ ${capabilityKey(change.capability)}`)
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
         if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
+        // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
+        // ended, so it is the human's in the trusted window alone, as its stop is. The place is the loader's to know,
+        // so the rule is here and not in the floor, which sees only that a window asked
+        if (call.action === 'core.restart' && k.place === 'utility' && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
         else await this.restart(k.id, 'human')
+        return null
+      }
+      // The calling half alone, which the carrier has checked is http's in its utility process
+      case 'core.bindFailed': {
+        const found = this.runOf(call.caller)
+        if (found === null) throw { code: 'not-found' }
+        if (found.k.place !== 'utility') throw { code: 'not-granted' }
+        this.die(found.k, args.reason as BindFailure)
         return null
       }
     }
@@ -1798,14 +1815,14 @@ ${capabilityKey(change.capability)}`)
     stop?.end()
   }
 
-  // A crash or a failed host half. The states change first, every dependent waiting, then the ways end, so no call is
-  // answered before the dependents moved
-  private die(k: Known, reason: string): void {
+  // A crash, a failed host half or a utility half whose bind failed, which crashed nothing. The states change first,
+  // every dependent waiting, then the ways end, so no call is answered before the dependents moved
+  private die(k: Known, reason: StopReason): void {
     const live = k.live
     if (live === null || live.over) return
     if (live.stop !== null) return this.finished(k, live)
     this.retire(k, live)
-    const state = k.place === 'host' ? 'failed' : 'crashed'
+    const state = k.place === 'host' || isOne(bindFailures, reason) ? 'failed' : 'crashed'
     k.held = { kind: 'held', state, reason }
     k.lastStop = reason
     this.note(`plugin.${state}`, { plugin: k.id, incarnation: live.n, reason })
@@ -1826,7 +1843,8 @@ ${capabilityKey(change.capability)}`)
   // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
   // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
   // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
-  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Host halves in main
+  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
+  // heard from a utility half answers a beat, a message dropped for its rate included. Host halves in main
   // get none, a host half that hangs holds main itself
   private beat(k: Known, live: Live): void {
     const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
@@ -1996,7 +2014,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         const plugins = bare({ ...limits.plugins })
         if (change.plugin === null) all[change.constant] = change.value
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
-        return this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
+        await this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
+        // A raise as well as a lowering, so a half paces itself to what the carrier now counts it against
+        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) {
+          try {
+            this.limited?.(id)
+          } catch {}
+        }
+        return
       }
       case 'luoshu.set': {
         await this.store.writeLuoshu({ folder: change.folder })

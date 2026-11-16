@@ -4,12 +4,12 @@ import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST } from '../../api/install.ts'
 import { API_VERSION } from '../../api/manifest.ts'
-import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
 import { baseEnv } from '../../lib/clean-env.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, records, repo, temp, until, workersPage } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, until, workersPage } from './helpers.ts'
 
 // The utility place's proof: http's host entry in a utility process, here a hello plugin standing in for http, called
 // by a folder plugin's worker
@@ -79,13 +79,14 @@ async function install(): Promise<string> {
 }
 
 // A data folder with the caller approved to call http, and http's heartbeat and rate lowered so a hang shows within a
-// test. more holds more of http's limits
-async function data(more: Record<string, number> = {}): Promise<string> {
+// test. more holds more of http's limits and switches more of the switches
+async function data(more: Record<string, number> = {}, switches: Partial<Switches> = {}): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({
     ...defaultSwitches(),
     limits: { all: {}, plugins: { http: { heartbeatMs: 300, heartbeatMisses: 2, messagesPerSecond: 10, floodMs: 1000, ...more } } },
+    ...switches,
   })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': caller })
@@ -97,8 +98,11 @@ async function data(more: Record<string, number> = {}): Promise<string> {
   return dataDir
 }
 
-async function started(more: Record<string, number> = {}): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
-  const dataDir = await data(more)
+async function started(
+  more: Record<string, number> = {},
+  switches: Partial<Switches> = {},
+): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
+  const dataDir = await data(more, switches)
   const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
@@ -151,19 +155,60 @@ describe('a utility half', () => {
     expect((await ask(editor, 'core.status')).ok).toBe(true)
   })
 
-  // A flood cap of 20 in a second, which the burst of the flood call crosses before http answers it or misses a beat.
-  // A half over its rate also loses its pongs and is killed unresponsive after two beats, so a cap the burst never
-  // reaches would read unresponsive. The answer never reaches main and the caller requires http, so it stops with
-  // http and its call is refused
-  it('has its way closed for a flood, reads crashed and starts again on core.restart', async () => {
-    const { worker, editor, dataDir } = await started({ floodFactor: 2 })
+  // A flood cap of 20 in a second, which the burst of the flood call crosses before http answers it. A half over its
+  // rate loses its pongs, but everything main hears from it counts as alive, so it is never read as hung while it floods
+  // and only the cap ends it. The answer never reaches main and the caller requires http, so it stops with http and
+  // its call is refused
+  it('has its way closed for a flood, reads crashed and starts again on core.restart from the trusted window alone', async () => {
+    const { app, worker, editor, dataDir } = await started({ floodFactor: 2 })
     const { pid } = await call<Facts>(worker, 'hello')
     const answer = await worker.evaluate(`globalThis.ctx.call('http', 'flood', {}).then(value => ({ value }), error => ({ refused: error.code }))`)
     expect(answer).toHaveProperty('refused')
     await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'http', reason: 'flood' }))
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
-    expect((await ask(editor, 'core.restart', { plugin: 'http' })).ok).toBe(true)
+    expect(await ask(editor, 'core.restart', { plugin: 'http' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    // Past the trusted window's input delay, inside which a request counts for nothing
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    expect((await ask(trusted, 'core.restart', { plugin: 'http' })).ok).toBe(true)
     await until(async () => (await records(dataDir)).filter(record => record.event === 'plugin.started' && record.plugin === 'http').length === 2)
+  })
+
+  // Lowered from 50 to 10 a second through the trusted window while the caller keeps 8 calls in flight for 6 s. Paced
+  // at the old rate the half would send about 45 a second and lose what main drops past 10, so calls would time out.
+  // Main hears it all the same, so a dropped pong never kills it
+  it('paces itself to a rate the human lowers while it runs and is never cut off for it', async () => {
+    const { app, editor, worker, dataDir } = await started({ heartbeatMs: 2000, messagesPerSecond: 50 }, { confirmOff: true })
+    const { pid } = await call<Facts>(worker, 'hello')
+    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    const trusted = await pageAt(app, 'hetu://trusted/')
+    // Past the trusted window's input delay, inside which a request counts for nothing
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    const change = { kind: 'limit.set', constant: 'messagesPerSecond', value: 10, plugin: 'http' }
+    expect(await ask(trusted, 'security.request', { change })).toMatchObject({ ok: true, result: { applied: true } })
+    const load = await worker.evaluate(`(async () => {
+      const end = Date.now() + 6000
+      let answered = 0
+      const refused = []
+      const one = async () => {
+        while (Date.now() < end) {
+          try {
+            await globalThis.ctx.call('http', 'hello', {})
+            answered++
+          } catch (error) {
+            refused.push(error.code)
+            return
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: 8 }, one))
+      return { answered, refused }
+    })()`) as { answered: number, refused: string[] }
+    expect(load.refused).toEqual([])
+    expect(load.answered).toBeGreaterThan(0)
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'http' })).toBe(false)
+    expect(alive(pid)).toBe(true)
   })
 })

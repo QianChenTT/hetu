@@ -101,6 +101,44 @@ describe('the heartbeat of a utility half', () => {
     expect(stateOf(made.loader, 'net')).toBe('waiting')
   })
 
+  // Everything main hears from it counts as alive, noted before its rate. Held far over the rate its pongs are dropped
+  // and it still lives while it sends, then dies once silent
+  it('keeps one over its rate whose pongs are dropped while main hears anything from it and kills it once it is silent', async () => {
+    const made = await harness({
+      install: install(),
+      limits: { heartbeatMs: 40, heartbeatMisses: 2 },
+      switches: { limits: { all: {}, plugins: { http: { messagesPerSecond: 5, floodFactor: 1000 } } } },
+    })
+    await made.loader.start()
+    const half = made.runtime.half('http', 1, 'utility')
+    const end = Date.now() + 500
+    let sent = 0
+    while (Date.now() < end) {
+      half.send({ v: 1, kind: 'busy', n: sent++ })
+      await tick(2)
+    }
+    expect(stateOf(made.loader, 'http')).toBe('ready')
+    expect(made.runtime.killed).toEqual([])
+    expect(made.link.sentTo('http', 'ping').length).toBeGreaterThanOrEqual(5)
+    made.runtime.behave.http = { pong: false }
+    await until(() => stateOf(made.loader, 'http') === 'crashed')
+    expect(reasonOf(made.loader, 'http')).toBe('unresponsive')
+  })
+
+  it('ends one past its flood cap as flood, though main heard it', async () => {
+    const made = await harness({
+      install: install(),
+      limits: { heartbeatMs: 40, heartbeatMisses: 2 },
+      switches: { limits: { all: {}, plugins: { http: { messagesPerSecond: 5, floodFactor: 2, floodMs: 1000 } } } },
+    })
+    await made.loader.start()
+    const half = made.runtime.half('http', 1, 'utility')
+    for (let i = 0; i < 20; i++) half.send({ v: 1, kind: 'busy', n: i })
+    await until(() => stateOf(made.loader, 'http') === 'crashed')
+    expect(reasonOf(made.loader, 'http')).toBe('flood')
+    expect(made.runtime.killed).toEqual([{ id: 'http', incarnation: 1 }])
+  })
+
   it('keeps one that answers ready and running', async () => {
     const made = await harness({ install: install(), limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
     await made.loader.start()
@@ -139,7 +177,7 @@ describe('a utility process that ends', () => {
   it('changes nothing when an incarnation that is over exits late', async () => {
     const made = await harness({ install: install() })
     await made.loader.start()
-    await made.loader.serve(windowCall('core.restart', 'http', 'editor'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
     await until(() => made.loader.plugin('http')?.incarnation === 2 && stateOf(made.loader, 'http') === 'ready')
     made.runtime.exit('http', 1, false)
     await tick(20)
@@ -171,7 +209,7 @@ describe('stops and restarts of a utility half', () => {
     await made.loader.start()
     made.runtime.exit('http', 1, false)
     await until(() => stateOf(made.loader, 'http') === 'crashed')
-    await made.loader.serve(windowCall('core.restart', 'http', 'editor'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
     await until(() => stateOf(made.loader, 'http') === 'ready')
     const starts = made.runtime.started.filter(start => start.id === 'http')
     expect(starts.map(start => start.incarnation)).toEqual([1, 2])
@@ -180,11 +218,112 @@ describe('stops and restarts of a utility half', () => {
     await expect(made.loader.serve(windowCall('core.restart', 'storage', 'editor'))).rejects.toEqual({ code: 'not-granted' })
   })
 
+  // The door is the human's to restart: a restart cuts every agent call in flight and brings back a door the core ended
+  it('is restarted from the trusted window alone, never from the editor window, running or failed', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await expect(made.loader.serve(windowCall('core.restart', 'http', 'editor'))).rejects.toEqual({ code: 'not-granted' })
+    expect(made.runtime.killed).toEqual([])
+    expect(made.loader.plugin('http')).toMatchObject({ state: 'ready', incarnation: 1 })
+    await made.loader.serve({ callId: 'c', caller: utilityCaller(), action: 'core.bindFailed', args: { reason: 'port-taken' }, deadline: Date.now() + 1000 })
+    await expect(made.loader.serve(windowCall('core.restart', 'http', 'editor'))).rejects.toEqual({ code: 'not-granted' })
+    expect(stateOf(made.loader, 'http')).toBe('failed')
+    await made.loader.serve(windowCall('core.restart', 'http'))
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(made.runtime.started.filter(start => start.id === 'http').map(start => start.incarnation)).toEqual([1, 2])
+  })
+
   it('is out of the watchdog\'s reach, which acts on sandboxed plugins only', async () => {
     const made = await harness({ install: install() })
     await made.loader.start()
     const call = { callId: 'c', caller: { kind: 'plugin', id: 'watchdog', half: 'host', incarnation: 1 } as Caller, action: 'watchdog.stop', args: { plugin: 'http' }, deadline: Date.now() + 1000 }
     await expect(made.loader.serve(call)).rejects.toEqual({ code: 'not-found' })
     expect(stateOf(made.loader, 'http')).toBe('ready')
+  })
+})
+
+describe('a utility half whose bind failed', () => {
+  const bindFailed = (reason: string, caller: Caller = utilityCaller()) =>
+    ({ callId: 'c', caller, action: 'core.bindFailed', args: { reason }, deadline: Date.now() + 1000 })
+  // A folder plugin would need an entry, so an install host plugin requires http here
+  const withDependent = () => ({ ...install(), net: host('net', { requires: ['http'] }) })
+
+  it.each(['port-taken', 'bind-failed'])('reads failed with %s, not crashed, its process ended and its dependents waiting', async reason => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve(bindFailed(reason))
+    expect(stateOf(made.loader, 'http')).toBe('failed')
+    expect(reasonOf(made.loader, 'http')).toBe(reason)
+    expect(made.loader.list().find(row => row.id === 'http')).toMatchObject({ place: 'utility', state: 'failed', reason })
+    expect(made.link.events('plugin.failed')).toEqual([{ plugin: 'http', incarnation: 1, reason }])
+    expect(made.link.events('plugin.crashed')).toEqual([])
+    expect(made.link.ended).toContainEqual({ caller: utilityCaller(), code: 'crashed' })
+    expect(made.runtime.killed).toEqual([{ id: 'http', incarnation: 1 }])
+  })
+
+  it('moves a plugin that requires it to waiting, naming it failed', async () => {
+    const made = await harness({ install: withDependent() })
+    await made.loader.start()
+    expect(stateOf(made.loader, 'net')).toBe('ready')
+    await made.loader.serve(bindFailed('port-taken'))
+    expect(stateOf(made.loader, 'net')).toBe('waiting')
+    expect(reasonOf(made.loader, 'net')).toBe('dependency:http:failed')
+  })
+
+  it('starts again on core.restart from the trusted window, a new incarnation from the same bytes', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await made.loader.serve(bindFailed('port-taken'))
+    await made.loader.serve(windowCall('core.restart', 'http'))
+    await until(() => stateOf(made.loader, 'http') === 'ready')
+    expect(made.runtime.started.filter(start => start.id === 'http').map(start => start.incarnation)).toEqual([1, 2])
+    expect(made.runtime.half('http', 2, 'utility').got('init')[0]).toMatchObject({ lastStop: 'port-taken' })
+  })
+
+  it('ends nothing for a caller whose incarnation is over or that is not a utility half', async () => {
+    const made = await harness({ install: install() })
+    await made.loader.start()
+    await expect(made.loader.serve(bindFailed('port-taken', utilityCaller(2)))).rejects.toEqual({ code: 'not-found' })
+    const storage: Caller = { kind: 'plugin', id: 'storage', half: 'host', incarnation: 1 }
+    await expect(made.loader.serve(bindFailed('port-taken', storage))).rejects.toEqual({ code: 'not-granted' })
+    expect(stateOf(made.loader, 'http')).toBe('ready')
+    expect(stateOf(made.loader, 'storage')).toBe('ready')
+    expect(made.runtime.killed).toEqual([])
+  })
+})
+
+describe('limits the human sets', () => {
+  // The runtime hears each change once it landed and reads the values as the carrier holds them at that moment
+  async function listening() {
+    const heard: [string, number][] = []
+    const holder: { made: Awaited<ReturnType<typeof harness>> | null } = { made: null }
+    holder.made = await harness({
+      install: install(),
+      loader: { limited: plugin => void heard.push([plugin, holder.made!.carrier.limit(plugin, 'messagesPerSecond')]) },
+    })
+    await holder.made.loader.start()
+    return { made: holder.made, heard }
+  }
+
+  it('reach the runtime for the plugin named once the new value is written, a raise as well as a lowering', async () => {
+    const { made, heard } = await listening()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'http' })
+    expect(heard).toEqual([['http', 20]])
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 300, plugin: 'http' })
+    expect(heard).toEqual([['http', 20], ['http', 300]])
+  })
+
+  it('reach the runtime for every plugin when set for all', async () => {
+    const { made, heard } = await listening()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 30, plugin: null })
+    expect(heard.map(([plugin]) => plugin).sort()).toEqual(['gate', 'http', 'storage'])
+    expect(heard.find(([plugin]) => plugin === 'http')).toEqual(['http', 30])
+  })
+
+  it('apply even when the runtime throws as it hears one', async () => {
+    const made = await harness({ install: install(), loader: { limited: () => { throw new Error('no child') } } })
+    await made.loader.start()
+    await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'http' })
+    expect(made.carrier.limit('http', 'messagesPerSecond')).toBe(20)
   })
 })

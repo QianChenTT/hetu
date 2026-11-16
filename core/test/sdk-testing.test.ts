@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
-import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer, type FakeMode } from '../sdk/testing/index.ts'
+import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer, type FakeMode, type StandIn } from '../sdk/testing/index.ts'
 import type { Capability } from '../api/capabilities.ts'
+import { API_VERSION } from '../api/manifest.ts'
 import { quotas } from '../api/storage.ts'
 import type { Call } from '../api/slots.ts'
 import { MemoryStorage } from '../sdk/testing/providers.ts'
@@ -363,5 +364,85 @@ describe('the fake drawer', () => {
     drawer.emit({ topic: 'layout.drop', instance: 'v1', zone: 'left', x: 0, y: 0.5 })
     await until(() => heard.length === 1)
     expect(heard[0]).toMatchObject({ topic: 'layout.drop', zone: 'left' })
+  })
+})
+
+describe('the fake core playing another plugin', () => {
+  const callerManifest = {
+    id: 'caller', name: 'Caller', version: '1.0.0', api: `^${API_VERSION}`, entries: { worker: 'dist/worker.js' },
+    capabilities: [{ type: 'plugin.call', targets: ['mcp'] }],
+  }
+  const started = async (manifest: object, standIns: (made: FakeCore) => void = () => {}) => {
+    const made = fakeCore({ manifest })
+    cores.push(made)
+    standIns(made)
+    const box: { ctx: PluginContext | null } = { ctx: null }
+    const state = await made.start(definePlugin({ start(ctx) { box.ctx = ctx } }))
+    return { made, ctx: box.ctx as unknown as PluginContext, state }
+  }
+
+  it('delivers a call to a stand-in\'s handle with the caller and the onBehalf sent, and hands its answer back', async () => {
+    let mcp: StandIn | null = null
+    const { ctx } = await started(callerManifest, made => {
+      mcp = made.standIn('mcp', {
+        actions: { handle: { from: ['caller'] } },
+        handle: call => ({ args: call.args, caller: call.caller, onBehalf: call.onBehalf ?? null }),
+      })
+    })
+    const answer = await ctx.call('mcp', 'handle', { body: '{"x":1}' }, { onBehalf: 'agent-1' })
+    const caller = { kind: 'plugin', id: 'caller', half: 'worker', incarnation: 1 }
+    expect(answer).toEqual({ args: { body: '{"x":1}' }, caller, onBehalf: 'agent-1' })
+    expect(mcp!.delivered).toEqual([{ action: 'mcp.handle', args: { body: '{"x":1}' }, caller, onBehalf: 'agent-1' }])
+  })
+
+  it('passes on a refusal the stand-in throws and refuses a caller its from leaves out, as the real carrier does', async () => {
+    let mcp: StandIn | null = null
+    const { ctx } = await started(callerManifest, made => {
+      mcp = made.standIn('mcp', {
+        actions: { handle: { from: ['caller'] }, admin: { from: ['http'] } },
+        handle: () => { throw { code: 'invalid' } },
+      })
+    })
+    await expect(ctx.call('mcp', 'handle', {})).rejects.toMatchObject({ code: 'invalid' })
+    await expect(ctx.call('mcp', 'admin', {})).rejects.toMatchObject({ code: 'not-granted' })
+    expect(mcp!.delivered.map(call => call.action)).toEqual(['mcp.handle'])
+  })
+
+  it('sends deps when a test sets a stand-in\'s state, so has and the onDeps hooks follow it', async () => {
+    const seen: boolean[] = []
+    const made = fakeCore({ manifest: callerManifest })
+    cores.push(made)
+    made.standIn('mcp', { actions: {}, state: 'unavailable' })
+    await made.start(definePlugin({ start(ctx) { seen.push(ctx.has('mcp')); ctx.onDeps(() => { seen.push(ctx.has('mcp')) }) } }))
+    made.setState('mcp', 'starting')
+    await until(() => seen.length === 2)
+    made.setState('mcp', 'ready')
+    await until(() => seen.length === 3)
+    made.setState('mcp', 'unavailable')
+    await until(() => seen.length === 4)
+    expect(seen).toEqual([false, true, true, false])
+  })
+
+  // http runs in a utility process, so the fake core places it there on a port, as the loader does
+  it('places http under test in a utility process on a port, where the floor takes its two core actions', async () => {
+    const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const { made, ctx } = await started(http)
+    expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
+    await until(() => made.floor.some(record => record.event === 'http.refused'))
+    expect(made.floor.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
+    // The core ends the half before any answer, as the loader ends the process, so the call never settles
+    void ctx.bindFailed('port-taken').catch(() => {})
+    await until(() => made.coreCalls.length === 1)
+    expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
+    expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
+  })
+
+  it('places any other host plugin in main, where the floor refuses both', async () => {
+    const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
+    const { made, ctx } = await started(net)
+    await expect(ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).rejects.toMatchObject({ code: 'not-granted' })
+    await expect(ctx.bindFailed('port-taken')).rejects.toMatchObject({ code: 'not-granted' })
+    expect(made.coreCalls).toEqual([])
+    expect(made.status()).toEqual({ state: 'ready', reason: null })
   })
 })

@@ -73,9 +73,10 @@ function actionsOf(plugin: ListedPlugin): PluginAction[] {
   const actions: PluginAction[] = []
   if (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new') return ['approve', 'remove']
   actions.push(plugin.on ? 'switch-off' : 'switch-on')
-  if (plugin.place === 'sandboxed' && plugin.on) {
+  // A sandboxed plugin or a utility half stops and starts again within a run, a utility half whose bind failed included
+  if ((plugin.place === 'sandboxed' || plugin.place === 'utility') && plugin.on) {
     if (plugin.state === 'ready' || plugin.state === 'unresponsive' || plugin.state === 'starting') actions.push('stop')
-    else if (plugin.state === 'stopped' || plugin.state === 'crashed') actions.push('restart')
+    else if (plugin.state === 'stopped' || plugin.state === 'crashed' || plugin.state === 'failed') actions.push('restart')
   }
   actions.push('reset')
   if (plugin.firstParty) actions.push('restore')

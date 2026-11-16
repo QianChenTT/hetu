@@ -128,8 +128,9 @@ export class FakeLink implements CarrierLink {
   }
 }
 
-// What a fake plugin does: answer init with ready and stop with stopped, or not
-export type Behaviour = { ready: boolean, stopped: boolean, pong: boolean, throws: boolean, exports: HostExports }
+// What a fake plugin does: answer init with ready and stop with stopped, or not. utility runs a utility half on its
+// port in place of the scripted half, such as a real plugin through the SDK
+export type Behaviour = { ready: boolean, stopped: boolean, pong: boolean, throws: boolean, exports: HostExports, utility?: (start: UtilityStart) => void }
 
 // A plugin half as the fake runtime started it. inbox holds what the core sent it
 export class Half {
@@ -263,6 +264,8 @@ export class FakeRuntime implements Runtime {
     this.started.push({ id: start.id, incarnation: start.incarnation, half: 'utility', code: start.code.toString() })
     this.utilityStarts.push(start)
     if (this.of(start.id).throws) throw new Error('the fork failed')
+    const run = this.of(start.id).utility
+    if (run !== undefined) return run(start)
     const port = start.port as MessagePort
     const half = new Half(message => port.postMessage(message), () => port.close())
     port.on('message', message => this.answer(half, start.id, message as Message))

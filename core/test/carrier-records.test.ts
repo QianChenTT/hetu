@@ -591,6 +591,37 @@ describe('the floor lane', () => {
     await tick()
     expect(log.events('frame.navigated').map(record => record.fields)).toContainEqual({ plugin: 'kanban', count: 2 })
   })
+
+  // The door counts and main counts again, so a taken-over http calling at its whole rate still leaves two records a
+  // reason a second
+  it('writes the refusals http reports as http.refused, at most two records a reason a second whose counts add up', async () => {
+    const { carrier, connect, loader, log } = harness()
+    loader.utility('http')
+    const http = connect(host('http'))
+    const reasons = ['host', 'origin', 'token']
+    const sent: Record<string, number> = {}
+    const asked = Array.from({ length: 1000 }, (_, i) => {
+      const reason = reasons[i % reasons.length]
+      const count = (i % 7) + 1
+      sent[reason] = (sent[reason] ?? 0) + count
+      return http.ask('core.agentRefused', { reason, count })
+    })
+    expect((await Promise.all(asked)).every(reply => reply.ok === true)).toBe(true)
+    await tick()
+    // The first of each reason at once, with the count it reported
+    expect(log.events('http.refused').map(record => record.fields)).toEqual([
+      { reason: 'host', count: 1 }, { reason: 'origin', count: 2 }, { reason: 'token', count: 3 },
+    ])
+    carrier.close()
+    await tick()
+    const records = log.events('http.refused')
+    for (const reason of reasons) {
+      const own = records.filter(record => record.fields.reason === reason)
+      expect(own).toHaveLength(2)
+      expect(own.reduce((sum, record) => sum + (record.fields.count as number), 0)).toBe(sent[reason])
+    }
+    expect(records.every(record => Object.keys(record.fields).sort().join() === 'count,reason')).toBe(true)
+  })
 })
 
 describe('record nothing', () => {

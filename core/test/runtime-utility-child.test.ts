@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import type { RelayLimits } from '../api/rate.ts'
-import { startChild } from '../backend/runtime/utility-child.ts'
+import { listenToMain, startChild } from '../backend/runtime/utility-child.ts'
 import { definePlugin } from '../sdk/plugin.ts'
 
 // The utility half's end of its channel inside the process, as Electron hands it over
@@ -15,6 +15,13 @@ class FakePortMain extends EventEmitter {
 
   gets(text: string): void {
     this.emit('message', { data: text, ports: [] })
+  }
+}
+
+// The child's parent port, which only main writes to
+class FakeParent extends EventEmitter {
+  gets(data: unknown, ports: unknown[] = []): void {
+    this.emit('message', { data, ports })
   }
 }
 
@@ -62,6 +69,60 @@ describe('the utility process\'s bootstrap', () => {
     await startChild({ data, ports }, deps)
     expect(imported).toEqual([])
     expect(exits).toEqual([1])
+  })
+
+  it('hands the limits main sends after the start to the running transport, a raise as well as a lowering', async () => {
+    const { deps } = child()
+    const parent = new FakeParent()
+    const set: RelayLimits[] = []
+    listenToMain(parent, deps, async () => (limits: RelayLimits) => void set.push(limits))
+    parent.gets({ v: 1, kind: 'start', code, limits }, [new FakePortMain()])
+    // It keeps listening after the start
+    expect(parent.listeners('message')).toHaveLength(1)
+    await Promise.resolve()
+    const lowered = { ...limits, messagesPerSecond: 20 }
+    const raised = { ...limits, messagesPerSecond: 400 }
+    parent.gets({ v: 1, kind: 'limits', limits: lowered })
+    parent.gets({ v: 1, kind: 'limits', limits: raised })
+    expect(set).toEqual([lowered, raised])
+  })
+
+  it('applies limits sent while the module still loads once it runs, the newest only', async () => {
+    const { deps } = child()
+    const parent = new FakeParent()
+    const set: RelayLimits[] = []
+    let release: (value: (limits: RelayLimits) => void) => void = () => {}
+    listenToMain(parent, deps, () => new Promise(resolve => {
+      release = resolve
+    }))
+    parent.gets({ v: 1, kind: 'start', code, limits }, [new FakePortMain()])
+    parent.gets({ v: 1, kind: 'limits', limits: { ...limits, messagesPerSecond: 30 } })
+    parent.gets({ v: 1, kind: 'limits', limits: { ...limits, messagesPerSecond: 20 } })
+    expect(set).toEqual([])
+    release(limits => void set.push(limits))
+    await vi.waitFor(() => expect(set).toEqual([{ ...limits, messagesPerSecond: 20 }]))
+  })
+
+  it('starts once and ignores a second start, a limits message with a port and limits that aren\'t whole positive numbers', async () => {
+    const { deps } = child()
+    const parent = new FakeParent()
+    const starts: unknown[] = []
+    const set: RelayLimits[] = []
+    listenToMain(parent, deps, async event => {
+      starts.push(event.data)
+      return (limits: RelayLimits) => void set.push(limits)
+    })
+    parent.gets({ v: 1, kind: 'start', code, limits }, [new FakePortMain()])
+    parent.gets({ v: 1, kind: 'start', code, limits }, [new FakePortMain()])
+    await Promise.resolve()
+    parent.gets({ v: 1, kind: 'limits', limits }, [new FakePortMain()])
+    parent.gets({ v: 1, kind: 'limits', limits: { ...limits, messagesPerSecond: 0 } })
+    parent.gets({ v: 2, kind: 'limits', limits })
+    parent.gets({ v: 1, kind: 'limit', limits })
+    parent.gets(JSON.stringify({ v: 1, kind: 'limits', limits }))
+    parent.gets(null)
+    expect(starts).toHaveLength(1)
+    expect(set).toEqual([])
   })
 
   it('exits with 1 when the module throws as it loads or has no plugin as its default export', async () => {
