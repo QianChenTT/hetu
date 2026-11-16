@@ -208,6 +208,16 @@ body {
   font-family: var(--hetu-font-editor, system-ui, sans-serif);
 }
 
+/* The caret and CodeMirror's dotted focus outline in the editor's text color, so they show wherever the text does.
+   Three classes outweigh the base theme's black caret and #212121 outline */
+.editor .cm-editor .cm-content {
+  caret-color: var(--hetu-color-editor-fg, #1f1f1f);
+}
+
+.editor .cm-editor.cm-focused {
+  outline-color: var(--hetu-color-editor-fg, #1f1f1f);
+}
+
 .editor .cm-selectionBackground,
 .editor .cm-focused .cm-selectionBackground {
   background: var(--hetu-color-selection, #d7e4f7) !important;

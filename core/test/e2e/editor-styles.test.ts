@@ -2,7 +2,10 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { buildPlugin } from '../../sdk/build/esbuild.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, tick, until } from './helpers.ts'
 
 afterEach(cleanup)
@@ -11,13 +14,32 @@ afterEach(cleanup)
 const LINES = 3000
 const long = Array.from({ length: LINES }, (_, i) => `line ${i} of a long note`).join('\n')
 
-async function started(notes: Record<string, string>): Promise<{ app: ElectronApplication, editor: Page, refused: string[] }> {
+const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
+// A plugin that hands its ctx to the test
+const fixture = `
+import { definePlugin } from '${sdk}'
+export default definePlugin({ start(ctx) { (globalThis as Record<string, unknown>).ctx = ctx } })
+`
+type Fixture = { granted: Capability[], theme?: object }
+
+async function started(notes: Record<string, string>, plugins: Record<string, Fixture> = {}): Promise<{ app: ElectronApplication, editor: Page, refused: string[] }> {
   const folder = await temp()
   for (const [name, text] of Object.entries(notes)) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
+  if (Object.keys(plugins).length > 0) {
+    const source = await temp()
+    await writeFolder(source, { 'src/worker.ts': fixture })
+    const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
+    for (const [id, plugin] of Object.entries(plugins)) {
+      const root = path.join(dataDir, 'plugins', id)
+      const manifest = workerManifest(id, { capabilities: plugin.granted, ...(plugin.theme === undefined ? {} : { theme: plugin.theme }) })
+      await writeFolder(root, filesFor(manifest, { 'worker.js': built!.text }))
+      await store.writePlugin(id, await entryFor(root, { granted: plugin.granted }))
+    }
+  }
   const app = await launch(dataDir)
   const editor = await editorPage(app)
   const refused: string[] = []
@@ -29,7 +51,7 @@ async function started(notes: Record<string, string>): Promise<{ app: ElectronAp
       console.error(`Content Security Policy refused ${event.violatedDirective} ${event.blockedURI}`)
     })
   })
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+  for (const id of ['luoshu', ...Object.keys(plugins)]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, refused }
 }
 
@@ -143,4 +165,57 @@ describe('the editor\'s own styles', () => {
     expect(held.attribute).toBe('')
     expect(held.selected).toBe(0)
   })
+
+  it('draws the caret and the focused editor\'s dotted outline in the editor\'s text color under hetu\'s colors and a dark theme', async () => {
+    const dusk = { tokens: { 'color-editor-fg': '#e8e8e8', 'color-editor-bg': '#101010', 'color-bg': '#181818', 'color-fg': '#e8e8e8' } }
+    const { editor } = await started({ 'a.md': 'some words to type after' }, { dusk: { granted: [], theme: dusk } })
+    await open(editor, 'a.md')
+    const plain = await focused(editor)
+    // hetu's own colors stay as they are and the caret and outline take the text's color
+    expect(plain).toMatchObject({ focused: true, text: 'rgb(31, 31, 31)', background: 'rgb(255, 255, 255)', caret: 'rgb(31, 31, 31)', outline: 'dotted 1px rgb(31, 31, 31)' })
+    expect(plain.caretContrast).toBeGreaterThanOrEqual(plain.textContrast)
+    expect(plain.outlineContrast).toBeGreaterThanOrEqual(plain.textContrast)
+
+    await editor.locator('#views').click()
+    await until(async () => editor.locator('#menu').isVisible())
+    await editor.locator('#menu select').nth(1).selectOption('dusk')
+    await until(async () => (await looks(editor)).background === 'rgb(16, 16, 16)')
+    await editor.locator('#menu-close').click()
+    const dark = await focused(editor)
+    expect(dark).toMatchObject({ focused: true, text: 'rgb(232, 232, 232)', caret: 'rgb(232, 232, 232)', outline: 'dotted 1px rgb(232, 232, 232)' })
+    expect(dark.caretContrast).toBeGreaterThanOrEqual(dark.textContrast)
+    expect(dark.outlineContrast).toBeGreaterThanOrEqual(dark.textContrast)
+  })
 })
+
+// The shown editor's text, background, caret and outline as computed, each color's contrast against the background
+const looks = (editor: Page) => editor.evaluate(() => {
+  const content = document.querySelector('.editor:not([hidden]) .cm-content') as HTMLElement
+  const cm = content.closest('.cm-editor') as HTMLElement
+  const luminance = (color: string) => {
+    const [r, g, b] = (/rgba?\((\d+), (\d+), (\d+)/.exec(color) ?? []).slice(1).map(value => {
+      const part = Number(value) / 255
+      return part <= 0.03928 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0)
+  }
+  const contrast = (a: string, b: string) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+    return (high + 0.05) / (low + 0.05)
+  }
+  const inner = getComputedStyle(content)
+  const outer = getComputedStyle(cm)
+  return {
+    focused: cm.classList.contains('cm-focused'), text: inner.color, background: outer.backgroundColor, caret: inner.caretColor,
+    outline: `${outer.outlineStyle} ${outer.outlineWidth} ${outer.outlineColor}`,
+    textContrast: contrast(inner.color, outer.backgroundColor), caretContrast: contrast(inner.caretColor, outer.backgroundColor),
+    outlineContrast: contrast(outer.outlineColor, outer.backgroundColor),
+  }
+})
+
+// The same once a click into the shown editor has CodeMirror mark it focused, which can come a moment after the click
+async function focused(editor: Page): Promise<Awaited<ReturnType<typeof looks>>> {
+  await editor.locator('.editor:not([hidden]) .cm-content').click()
+  await until(async () => (await looks(editor)).focused)
+  return looks(editor)
+}
