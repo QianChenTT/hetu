@@ -6,7 +6,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
-import { cleanup, editorPage, launch, logged, temp, tick, until } from './helpers.ts'
+import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -185,6 +185,30 @@ describe('the editor\'s own styles', () => {
     expect(dark).toMatchObject({ focused: true, text: 'rgb(232, 232, 232)', caret: 'rgb(232, 232, 232)', outline: 'dotted 1px rgb(232, 232, 232)' })
     expect(dark.caretContrast).toBeGreaterThanOrEqual(dark.textContrast)
     expect(dark.outlineContrast).toBeGreaterThanOrEqual(dark.textContrast)
+  })
+
+  it('indents a plugin\'s quote line 12px inside its border, over the 6px CodeMirror gives every line', async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
+    const { app, editor } = await started({ 'a.md': 'a first line\na quoted line\na last line' }, { quoter: { granted } })
+    await open(editor, 'a.md')
+    const host = await workersPage(app, 'quoter')
+    await until(() => host.workers().length === 1)
+    const plugin = host.workers()[0]!
+    type Ctx = { editor: { instances(): Promise<{ instance: string, version: number }[]>, decorate(instance: string, version: number, set: string, marks: unknown[]): Promise<void> } }
+    await until(async () => (await plugin.evaluate(() => (globalThis as unknown as { ctx: Ctx }).ctx.editor.instances())).length === 1)
+    const answer = await plugin.evaluate(async () => {
+      const { ctx } = globalThis as unknown as { ctx: Ctx }
+      const [open] = await ctx.editor.instances()
+      return ctx.editor.decorate(open!.instance, open!.version, 'quote', [{ kind: 'line', from: 13, style: 'quote' }]).then(() => 'drawn', (err: { code?: string }) => `refused ${err.code}`)
+    })
+    expect(answer).toBe('drawn')
+    const lines = editor.locator('.editor:not([hidden]) .cm-line')
+    await until(async () => (await editor.locator('.editor:not([hidden]) .cm-hetu-line-quote').count()) === 1)
+    const indents = await lines.evaluateAll(found => found.map(line => {
+      const style = getComputedStyle(line)
+      return `${line.textContent}: ${style.paddingLeft} inside ${style.borderLeftWidth} ${style.borderLeftStyle}`
+    }))
+    expect(indents).toEqual(['a first line: 6px inside 0px none', 'a quoted line: 12px inside 3px solid', 'a last line: 6px inside 0px none'])
   })
 })
 
