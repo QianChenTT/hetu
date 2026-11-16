@@ -135,6 +135,7 @@ describe('a utility half', () => {
     const facts = await call<Facts>(worker, 'hello')
     expect(facts.self).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
     expect(facts.dataDir).toBe(null)
+    console.log(`DIAG half platform=${process.platform} given=${JSON.stringify(Object.keys(baseEnv()).sort())} count=${facts.envNames.length} names=${JSON.stringify(facts.envNames)}`)
     expect(facts.envNames).toEqual(Object.keys(baseEnv()).sort())
     expect(facts.envText).not.toContain(dataDir)
     expect(facts.cwdEntries).toBe(0)
