@@ -33,7 +33,6 @@ type Child = { child: UtilityChild, cwd: string, killed: boolean, over: boolean 
 // value is empty out of the child's, so the half gets the base alone, and a NODE_OPTIONS that reached it empty would
 // set nothing
 export function utilityEnv(ambient: Readonly<Record<string, string | undefined>> = process.env, platform: NodeJS.Platform = process.platform): Record<string, string> {
-  if (ambient.HETU_DIAG_INHERIT === '1') return {}
   return { ...baseEnv(ambient, platform), NODE_OPTIONS: '' }
 }
 
