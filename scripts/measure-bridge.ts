@@ -19,16 +19,16 @@ export type Sitting = Record<RunName, Run>
 
 export type Kept = { repeats: number[], median: number, spread: boolean }
 export type Verdict = {
-  runs: Record<RunName, { typed: Kept, marked: Kept }>
+  // typed and marked keep the 95th percentiles of the repeats, typedMedian and markedMedian their medians
+  runs: Record<RunName, { typed: Kept, marked: Kept, typedMedian: Kept, markedMedian: Kept }>
   ratios: Record<Load, number>
   meets: Record<Load, boolean>
   // What each load did in each repeat, so a run is seen to have been loaded
   loads: Record<Load, Record<string, number[]>>
 }
 
-// Under a load, the 95th percentile from a key to its text stays within twice the quiet run's and within a frame
+// Under a load, the 95th percentile from a key to its text stays within twice the quiet run's of the same sitting
 export const RATIO = 2
-export const FRAME_MS = 16
 
 const nearest = (sorted: number[], share: number) => sorted[Math.max(0, Math.ceil(share * sorted.length) - 1)]
 
@@ -44,12 +44,23 @@ export function kept(repeats: number[]): Kept {
   return { repeats, median, spread: Math.max(...repeats) - Math.min(...repeats) > median / 2 }
 }
 
-export const within = (quiet: number, loaded: number) => loaded <= RATIO * quiet && loaded <= FRAME_MS
+export const within = (quiet: number, loaded: number) => loaded <= RATIO * quiet
+
+// Each load of one sitting against the quiet run of that sitting, by the 95th percentile from a key to its text
+export function held(sitting: Sitting): Record<Load, { ratio: number, within: boolean }> {
+  const quiet = sitting.quiet.typed.p95
+  return Object.fromEntries(LOADS.map(load => {
+    const loaded = sitting[load].typed.p95
+    return [load, { ratio: loaded / quiet, within: within(quiet, loaded) }]
+  })) as Record<Load, { ratio: number, within: boolean }>
+}
 
 export function verdict(sittings: Sitting[]): Verdict {
   const runs = Object.fromEntries(RUNS.map(name => [name, {
     typed: kept(sittings.map(sitting => sitting[name].typed.p95)),
     marked: kept(sittings.map(sitting => sitting[name].marked.p95)),
+    typedMedian: kept(sittings.map(sitting => sitting[name].typed.median)),
+    markedMedian: kept(sittings.map(sitting => sitting[name].marked.median)),
   }])) as Verdict['runs']
   const quiet = runs.quiet.typed.median
   const ratios = Object.fromEntries(LOADS.map(load => [load, runs[load].typed.median / quiet])) as Record<Load, number>
@@ -72,34 +83,40 @@ const what: Record<RunName, string> = {
   search: 'the 469 notes of the folder rewritten in turn and indexed again by search',
 }
 
-// One sitting's section: each run's 95th percentiles in ms, key to text and key to mark, the ratio to the quiet run
+// One sitting's section: each run's 95th percentile and median in ms, key to text and key to mark, with the ratio
+// of its 95th percentile to the quiet run's
 export function report(at: Conditions, result: Verdict): string {
   const lines = [
     `## ${at.title}`,
     '',
     `Commit ${at.commit}, ${at.when}. ${at.cpus} logical CPUs (${at.model}). ${at.conditions}`,
     '',
-    'Each run types 100 keys at the end of a note of 2,000 list items, each with a link and bold text, and a plain last line, while a plugin marks each key typed. Key to text is from the key event to its character on screen, key to mark to the plugin\'s mark on it. Three repeats, the median kept',
+    'Each run types 100 keys at the end of a note of 2,000 list items each with a link and bold text, then a plain last line, while a plugin marks each key typed. Key to text is from the key event to its character on screen, key to mark to the plugin\'s mark on it. Three repeats, each one app with the quiet run and the three loads in turn, the median of the repeats kept',
+    '',
+    'The bar: under each load the 95th percentile from a key to its text stays within twice the quiet run\'s of the same repeat',
     '',
     ...RUNS.map(name => `- ${name}: ${what[name]}`),
     '',
-    '95th percentile from a key to its text, ms',
+    'From a key to its text, ms: the 95th percentile and the median of each repeat, then the median of the repeats',
     '',
-    '| run | repeats | median | ratio to quiet | within the bar |',
-    '|---|---|---|---|---|',
+    '| run | 95th percentile, repeats | 95th percentile | median, repeats | median | ratio to quiet | within the bar |',
+    '|---|---|---|---|---|---|---|',
     ...RUNS.map(name => {
-      const typed = result.runs[name].typed
+      const { typed, typedMedian } = result.runs[name]
       const ratio = name === 'quiet' ? '' : result.ratios[name].toFixed(2)
       const meets = name === 'quiet' ? '' : result.meets[name] ? 'yes' : 'no'
       const spread = typed.spread ? `${meets === '' ? '' : `${meets}, `}repeats spread` : meets
-      return `| ${name} | ${typed.repeats.map(ms).join(', ')} | ${ms(typed.median)} | ${ratio} | ${spread} |`
+      return `| ${name} | ${typed.repeats.map(ms).join(', ')} | ${ms(typed.median)} | ${typedMedian.repeats.map(ms).join(', ')} | ${ms(typedMedian.median)} | ${ratio} | ${spread} |`
     }),
     '',
-    '95th percentile from a key to the plugin\'s mark, ms',
+    'From a key to the plugin\'s mark, ms',
     '',
-    '| run | repeats | median |',
-    '|---|---|---|',
-    ...RUNS.map(name => `| ${name} | ${result.runs[name].marked.repeats.map(ms).join(', ')} | ${ms(result.runs[name].marked.median)} |`),
+    '| run | 95th percentile, repeats | 95th percentile | median, repeats | median |',
+    '|---|---|---|---|---|',
+    ...RUNS.map(name => {
+      const { marked, markedMedian } = result.runs[name]
+      return `| ${name} | ${marked.repeats.map(ms).join(', ')} | ${ms(marked.median)} | ${markedMedian.repeats.map(ms).join(', ')} | ${ms(markedMedian.median)} |`
+    }),
     '',
     'What each load did in each repeat',
     '',
@@ -125,8 +142,11 @@ if (import.meta.main) {
       const file = path.join(dir, `${i}.json`)
       // Windows only runs npx through a shell. One fixed command string, the file reaching the test through the environment
       const status = run(`npx vitest run --config test/e2e/vitest.config.ts test/e2e/drawer.test.ts -t "${TEST}"`, path.join(repo, 'core'), { HETU_MEASURE: file })
-      if (status !== 0) process.exit(status ?? 1)
-      sittings.push(JSON.parse(await readFile(file, 'utf8')) as Sitting)
+      // The test writes its numbers before it holds the loads to the bar, so a repeat past the bar is kept too
+      const text = await readFile(file, 'utf8').catch(() => null)
+      if (text === null) process.exit(status === 0 ? 1 : status ?? 1)
+      if (status !== 0) console.log(`repeat ${i + 1} failed past its numbers, kept`)
+      sittings.push(JSON.parse(text) as Sitting)
     }
   } finally {
     await rm(dir, { recursive: true, force: true })

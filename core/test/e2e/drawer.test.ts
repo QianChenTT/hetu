@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
-import { type Run, type Sitting, summary } from '../../../scripts/measure-bridge.ts'
+import { held, type Run, type Sitting, summary } from '../../../scripts/measure-bridge.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
@@ -634,5 +634,7 @@ describe('the drawer', () => {
 
     const measured = process.env.HETU_MEASURE
     if (measured !== undefined) await writeFile(measured, JSON.stringify(sitting))
+    // Each load within twice the quiet run of this app by the 95th percentile from a key to its text
+    expect(held(sitting as Sitting)).toMatchObject({ view: { within: true }, flood: { within: true }, search: { within: true } })
   }, 300_000)
 })
