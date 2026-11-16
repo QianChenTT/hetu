@@ -172,3 +172,44 @@ describe('the Confirm of an agent\'s ask', () => {
     expect((await stored()).agents).toHaveLength(256)
   })
 })
+
+describe('agents\' items across an update of mcp and a Recover', () => {
+  const agents = [{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: write }]
+  const mcpOf = (version: string) => filesFor(workerManifest('mcp', { version, capabilities: [read] }))
+  const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
+
+  async function installed(installVersion: string) {
+    const gate = allowAll()
+    const made = await harness({
+      install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcpOf(installVersion), firstParty: true } },
+      folder: { mcp: mcpOf('1.0.0') },
+      // granted holds a widen the human gave beyond the manifest, which a copy resets
+      entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read, write], class: 1, agents }) },
+      behave: { gate: { exports: { gate } } },
+      loader: { confirmDelayMs: 0 },
+    })
+    await made.loader.start()
+    return { ...made, gate, stored: async () => (await new StateStore(made.dataDir).load()).state.plugins.mcp }
+  }
+
+  it('keeps each agent\'s items when hetu copies a newer mcp, granted back to the manifest\'s', async () => {
+    const { stored, gate, link } = await installed('1.1.0')
+    expect(link.events('plugin.copied')).toEqual([{ plugin: 'mcp', version: '1.1.0' }])
+    const entry = await stored()
+    expect(entry.version).toBe('1.1.0')
+    expect(entry.granted).toEqual([read])
+    expect(entry.agents).toEqual(agents)
+    expect(gate.seen.at(-1)!.agents).toEqual({ 'client#1': [item(inbox)], 'client#2': [item(write)] })
+  })
+
+  it('drops every agent\'s items on a Recover of mcp, granted back to the manifest\'s', async () => {
+    const { loader, stored, gate } = await installed('1.0.0')
+    expect((await stored()).agents).toEqual(agents)
+    await loader.apply({ kind: 'plugin.restore', plugin: 'mcp' })
+    await loader.settled()
+    const entry = await stored()
+    expect(entry.granted).toEqual([read])
+    expect(entry.agents).toBeUndefined()
+    expect(gate.seen.at(-1)!.agents).toEqual({})
+  })
+})

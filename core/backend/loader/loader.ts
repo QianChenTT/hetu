@@ -621,7 +621,7 @@ ${capabilityKey(change.capability)}`)
       const read = this.bundled.get(change.plugin)
       const listed = this.install?.plugins[change.plugin]
       if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
+      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true, 'restore')
       return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('restore', change.plugin, after, true))]
     }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
@@ -881,14 +881,16 @@ ${capabilityKey(change.capability)}`)
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
   }
 
-  // A first-party copy's entry before it is classed, with the human's item switches carried over
-  private copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
+  // A first-party copy's entry before it is classed, with the human's item switches carried over. A newer version's copy
+  // keeps the agents' items, so an update leaves each agent what the human gave it. A restore is Recover and drops them
+  private copied(id: string, read: Read, listed: Listed, enabled: boolean, cause: 'copy' | 'restore'): Plugin {
     const granted = read.manifest!.capabilities ?? []
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
+    const agents = cause === 'copy' ? before?.agents : undefined
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}),
+      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}),
     }
   }
 
@@ -1263,7 +1265,7 @@ ${capabilityKey(change.capability)}`)
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
-    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled), confirm)
+    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
     const entry = change.own.entry!
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
