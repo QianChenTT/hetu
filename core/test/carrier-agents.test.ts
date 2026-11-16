@@ -346,6 +346,7 @@ function gated() {
       http: [{ capability: { type: 'plugin.call', targets: ['mcp'] }, off: false, firstUse: false }],
       mcp: [
         ...items('inbox/**', 'private/**'), { capability: { type: 'luoshu.read', paths: ['asks/**'] }, off: false, firstUse: true },
+        { capability: { type: 'luoshu.read', paths: ['off/**'] }, off: true, firstUse: false },
         { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }, { capability: { type: 'storage' }, off: false, firstUse: false },
       ],
       search: items('**'),
@@ -444,6 +445,17 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     const own = await search.ask('luoshu.read', { path: 'inbox/a.md' })
     expect(code(own)).toBe(state === 'on' || state === 'off' ? null : state === 'starting' ? 'starting' : 'policy-down')
     expect(luoshu.performed.filter(done => done.call.caller.kind === 'plugin' && done.call.caller.id === 'mcp')).toEqual([])
+  })
+
+  it.each([
+    ['on', 'not-granted'], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'], ['tampered', 'policy-down'], ['starting', 'starting'],
+  ] as const)('tells an agent its items don\'t allow nothing of mcp\'s switched-off or asking items, raising no prompt, with the gate %s', async (state, expected) => {
+    const { door, mcp, loader, asks, luoshu } = gated()
+    luoshu.files.set('off/n.md', 'off')
+    const two = await handled(door, mcp, 'client#2')
+    loader.slots.gate = state
+    for (const path of ['off/n.md', 'asks/a.md', 'secret/c.md']) expect(code(await mcp.ask('luoshu.read', { path }, two.parent))).toBe(expected)
+    expect(asks).toEqual([])
   })
 
   it('answers stopped for the door\'s mcp.handle with the gate off once shutdown began', async () => {

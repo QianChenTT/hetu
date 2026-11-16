@@ -86,9 +86,37 @@ describe('an agent\'s call', () => {
     }
   })
 
-  it('keeps the caller\'s switched-off answer under an agent', () => {
+  it('keeps the caller\'s switched-off answer under an agent whose own items allow the call', () => {
     const gate = gateWith({ plugins: table({ mcp: [item(read('inbox/**'), { off: true })] }) })
     expect(gate.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md')))).toEqual({ allow: false, code: 'switched-off', view: 4 })
+  })
+
+  // What mcp's own items answer on on/, off/, asks/ and none/: allow, switched-off, an ask and not-granted. Agent #1 holds
+  // every folder, #2 nothing and #4 an item outside the four
+  describe('answers not-granted to an agent whose own items don\'t allow, whatever mcp\'s own items would have answered', () => {
+    const own = [item(read('on/**')), item(read('off/**'), { off: true }), item(read('asks/**'), { firstUse: true })]
+    const gate = gateWith({
+      plugins: table({ mcp: own, search: own }),
+      agents: table({ 'client#1': [item(read('on/**', 'off/**', 'asks/**', 'none/**'))], 'client#4': [item(read('elsewhere/**'))] }),
+    })
+    const asked = { ask: JSON.stringify([['paths', ['asks/**']], ['type', 'luoshu.read']]), view: 4 }
+    const allow = { allow: true, view: 4 }
+    const refused = (code: string) => ({ allow: false, code, view: 4 })
+    const ownAnswers = { on: allow, off: refused('switched-off'), asks: asked, none: refused('not-granted') }
+    const none = { on: refused('not-granted'), off: refused('not-granted'), asks: refused('not-granted'), none: refused('not-granted') }
+    const cases: [string, string | undefined, Record<string, object>][] = [
+      ['its own call', undefined, ownAnswers], ['an agent whose items cover it', 'client#1', ownAnswers],
+      ['an agent with no item', 'client#2', none], ['an agent with an item outside', 'client#4', none],
+    ]
+    it.each(cases)('for %s', (_who, agent, expected) => {
+      for (const folder of ['on', 'off', 'asks', 'none']) {
+        for (const from of [mcp, search]) expect(gate.decide(access(from, agent, 'luoshu.read', reads(`${folder}/n.md`)))).toEqual(expected[folder])
+        // The raw stage never asks. An agent its own items refuse is refused there too, so no prompt is ever raised for it
+        const raw = gate.decide(access(mcp, agent, 'luoshu.read', reads(`${folder}/n.md`), 'raw'))
+        expect('ask' in raw).toBe(false)
+        if (expected === none) expect(raw).toEqual(refused('not-granted'))
+      }
+    })
   })
 
   it('needs the agent\'s item of the call\'s own type, so a read item gives no write and no plugin call', () => {

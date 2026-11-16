@@ -134,11 +134,12 @@ export function createGate(): Gate {
     items.some(item => (item.type === 'luoshu.list' || item.type === 'luoshu.read') && on(item) && item.covers(path))
 
   return {
-    // A call for an agent needs the caller's own items and the agent's both to hold it. The caller's answer stands when
-    // it refuses, the agent's refusal is not-granted and an ask is only ever for the caller's own item
+    // A call for an agent needs the caller's own items and the agent's both to hold it. The agent's items are judged
+    // first and their refusal is not-granted, so an agent learns nothing of the caller's own items it isn't granted. The
+    // caller's answer stands once the agent's allow, and an ask is only ever for the caller's own item
     decide(access: Access): Decision {
       const own = judgeItems(itemsOf(access.caller), access, held!.view)
-      if (access.agent === undefined || ('allow' in own && own.allow === false)) return own
+      if (access.agent === undefined) return own
       const agent = judgeItems(agentItems(access.agent), access, held!.view)
       if (!('allow' in agent) || agent.allow !== true) return { allow: false, code: 'not-granted', view: held!.view }
       return own
