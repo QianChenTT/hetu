@@ -71,6 +71,7 @@ describe('a commit', () => {
     expect((await logOf(history, 'a.md')).map(entry => entry.commit)).toEqual([first])
   })
 
+  // Three commits, three logs and two reads, each running git, took up to 3.9 s on a shared Windows runner
   it('lists a note\'s commits newest first, only those that changed it, and keeps every old version readable', async () => {
     const history = await started(where)
     const first = await commitOf(history, ['a.md', 'journal/b.md'], 'both')
@@ -83,7 +84,7 @@ describe('a commit', () => {
     expect((await logOf(history, 'a.md', 1)).map(entry => entry.commit)).toEqual([second])
     expect(await ask(history, 'history.read', { path: 'a.md', commit: first })).toMatchObject({ text: 'note a' })
     expect(await ask(history, 'history.read', { path: 'a.md', commit: third })).toMatchObject({ text: 'note a, edited' })
-  })
+  }, 20_000)
 
   it('records a note that is gone as removed, and one never there as nothing', async () => {
     const history = await started(where)
@@ -216,6 +217,8 @@ describe('a commit', () => {
     expect(await logOf(history, 'a.md')).toHaveLength(1)
   })
 
+  // Eight commits in turn, then a log and a read of each, all running git, took 3 to 4.5 s on a shared Windows runner
+  // and once 5.6 s, past vitest's 5 s
   it('runs commits one at a time, so many at once all land', async () => {
     const history = await started(where)
     const names = Array.from({ length: 8 }, (_, i) => `n${i}.md`)
@@ -226,7 +229,7 @@ describe('a commit', () => {
       expect((await logOf(history, name)).map(entry => entry.commit)).toEqual([commits[i]])
       expect(await ask(history, 'history.read', { path: name, commit: commits[i] })).toMatchObject({ text: `note ${name}` })
     }
-  })
+  }, 30_000)
 })
 
 describe('the paths it takes', () => {
