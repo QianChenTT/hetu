@@ -523,9 +523,13 @@ describe('the requests Node would answer itself', () => {
 
 type Held = { socket: net.Socket, raw: () => string, ended: () => boolean, error: () => string | null }
 
-// A socket that never closes its own side and reads what comes until the test ends
-async function hold(port: number, text: string): Promise<Held> {
-  const socket = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
+// The door's next connection once its server has taken it. The client's connect can come first, and on macOS it does
+const accepted = (door: Door) => new Promise<void>(resolve => door.server.once('connection', () => resolve()))
+
+// A socket that never closes its own side and reads what comes until the test ends, once the door holds it
+async function hold(door: Door, text: string): Promise<Held> {
+  const taken = accepted(door)
+  const socket = net.connect({ host: '127.0.0.1', port: door.address.port, allowHalfOpen: true })
   sockets.push(socket)
   let raw = ''
   let ended = false
@@ -539,7 +543,7 @@ async function hold(port: number, text: string): Promise<Held> {
   socket.on('error', err => {
     error = (err as NodeJS.ErrnoException).code ?? 'error'
   })
-  await new Promise(resolve => socket.once('connect', resolve))
+  await Promise.all([new Promise(resolve => socket.once('connect', resolve)), taken])
   if (text.length > 0) socket.write(text)
   return { socket, raw: () => raw, ended: () => ended, error: () => error }
 }
@@ -566,7 +570,7 @@ describe('sockets answered past Node\'s response', () => {
     ['headers past the limit', (port: number) => post(port, [`X-Pad: ${'a'.repeat(9000)}`]), 431, 'size'],
   ])('lets go of a socket it answered %s on within a second, the client keeping its side open', async (_name, text, status, reason) => {
     const { door, port, refused } = await made({ token: anyToken })
-    const held = await hold(port, text(port))
+    const held = await hold(door, text(port))
     expect(await drained(door, 1000)).toBe(0)
     const [response] = responses(held.raw())
     expect(response.status).toBe(status)
@@ -578,7 +582,7 @@ describe('sockets answered past Node\'s response', () => {
 
   it('lets go of a silent socket once it answered 408, the client keeping its side open', async () => {
     const { door, port, refused } = await made({ limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
-    const held = await hold(port, '')
+    const held = await hold(door, '')
     expect(await drained(door, 2000)).toBe(0)
     expect(responses(held.raw()).map(response => response.status)).toEqual([408])
     expect(refused).toEqual(['timeout'])
@@ -587,7 +591,7 @@ describe('sockets answered past Node\'s response', () => {
   it('answers a good request while 64 refused CONNECT sockets are held open by their client', async () => {
     const { door, port, refused } = await made({ token: anyToken })
     const holders: Held[] = []
-    for (let i = 0; i < doorLimits.connections; i++) holders.push(await hold(port, connect(port)))
+    for (let i = 0; i < doorLimits.connections; i++) holders.push(await hold(door, connect(port)))
     await new Promise(resolve => setTimeout(resolve, 300))
     expect(holders.every(holder => holder.raw().startsWith('HTTP/1.1 403'))).toBe(true)
     expect(await drained(door, 1000)).toBe(0)
@@ -603,7 +607,7 @@ describe('sockets answered past Node\'s response', () => {
       if (typeof data === 'string') this.write(data)
       return this
     })
-    await hold(port, connect(port))
+    await hold(door, connect(port))
     expect(await drained(door, 300)).toBe(1)
     expect(await drained(door, 1500)).toBe(0)
   })
@@ -611,10 +615,11 @@ describe('sockets answered past Node\'s response', () => {
   it('hands the whole answer to a client that reads it only after the door let go', async () => {
     const { door, port } = await made({ token: anyToken })
     for (const text of [connect(port), 'GARBAGE\r\n\r\n']) {
+      const taken = accepted(door)
       const socket = net.connect({ host: '127.0.0.1', port, allowHalfOpen: true })
       sockets.push(socket)
       socket.on('error', () => {})
-      await new Promise(resolve => socket.once('connect', resolve))
+      await Promise.all([new Promise(resolve => socket.once('connect', resolve)), taken])
       socket.pause()
       socket.write(text)
       expect(await drained(door, 1000)).toBe(0)
@@ -664,7 +669,7 @@ describe('a refusal behind a request still being served', () => {
       const { counts, serve } = slowCalls(300)
       const { door, port, refused } = await made({ token: anyToken, serve })
       const good = post(port, ['Authorization: Bearer good'])
-      const held = await hold(port, apartMs === 0 ? good + behind(port) : good)
+      const held = await hold(door, apartMs === 0 ? good + behind(port) : good)
       if (apartMs > 0) {
         await new Promise(resolve => setTimeout(resolve, apartMs))
         held.socket.write(behind(port))
@@ -681,7 +686,7 @@ describe('a refusal behind a request still being served', () => {
     const { counts, serve } = slowCalls(300)
     const { door, port, refused } = await made({ token: anyToken, serve })
     const good = post(port, ['Authorization: Bearer good'])
-    const held = await hold(port, good + good + connect(port))
+    const held = await hold(door, good + good + connect(port))
     expect(await drained(door, 1500)).toBe(0)
     expect(responses(held.raw()).map(response => response.status)).toEqual([200, 200, 403])
     expect(responses(held.raw()).map(response => response.body).slice(0, 2).sort()).toEqual(['{"n":1}', '{"n":2}'])
@@ -693,7 +698,7 @@ describe('a refusal behind a request still being served', () => {
   it('keeps the first refusal\'s answer when the headers time also runs out while it waits', async () => {
     const { counts, serve } = slowCalls(900)
     const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 2000, keepAliveMs: 300, checkMs: 50 } })
-    const held = await hold(port, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
+    const held = await hold(door, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
     expect(await drained(door, 2500)).toBe(0)
     expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [400, '']])
     expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
@@ -705,7 +710,7 @@ describe('a refusal behind a request still being served', () => {
     const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
     const good = post(port, ['Authorization: Bearer good'])
     const late = good.replace('Content-Length: 2', 'Content-Length: 50')
-    const held = await hold(port, good + late)
+    const held = await hold(door, good + late)
     expect(await drained(door, 2500)).toBe(0)
     expect(responses(held.raw()).map(response => [response.status, response.body])).toEqual([[200, '{"n":1}'], [408, '']])
     expect(counts).toEqual({ made: 1, ended: 1, cancelled: 0 })
@@ -715,7 +720,7 @@ describe('a refusal behind a request still being served', () => {
   it('writes nothing ahead of an answer that never comes and lets go of the socket after the request time, the call cancelled', async () => {
     const { counts, serve } = slowCalls(60_000)
     const { door, port, refused } = await made({ token: anyToken, serve, limits: { headersMs: 300, requestMs: 600, keepAliveMs: 300, checkMs: 50 } })
-    const held = await hold(port, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
+    const held = await hold(door, post(port, ['Authorization: Bearer good']) + 'GARBAGE\r\n\r\n')
     expect(await drained(door, 300)).toBe(1)
     expect(held.raw()).toBe('')
     expect(await drained(door, 1500)).toBe(0)
@@ -898,7 +903,7 @@ describe('diagnostic: event order', () => {
 
   it('prints what the existing helpers see for a CONNECT', async () => {
     const { door, port } = await made({ token: anyToken })
-    const held = await hold(port, connect(port))
+    const held = await hold(door, connect(port))
     const first = await openAt(door)
     const drainedTo = await drained(door, 1000)
     const rawThen = held.raw().length
