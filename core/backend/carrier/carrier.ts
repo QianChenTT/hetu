@@ -857,9 +857,10 @@ export class Carrier {
 
   private async run(pending: Pending, target: Target, args: unknown, kind: Kind): Promise<void> {
     // A call for an agent goes on only while the gate is on, a free one or a core action with nothing to judge included,
-    // so no call for an agent runs while the agent's grant can't be judged. A call with power is judged at decideFor too
-    if (pending.agent !== undefined) {
-      const open = this.gateOpen(pending.agent)
+    // so no call for an agent runs while the agent's grant can't be judged. The door's own call lends its label, so it is
+    // refused here before mcp sees any of the agent's request. A call with power is judged at decideFor too
+    if (pending.lends !== undefined) {
+      const open = this.gateOpen(pending.lends)
       if (open !== 'decide') return this.finish(pending, no(open as RefusalCode))
     }
     // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused

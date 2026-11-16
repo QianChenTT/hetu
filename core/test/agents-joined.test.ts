@@ -173,11 +173,10 @@ describe('agents through the joined core', () => {
     expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
   })
 
-  it('refuses agent #1 both notes with the gate off, while the door\'s own call still reaches mcp', async () => {
+  it('refuses the door\'s call for agent #1 policy-down with the gate off before mcp sees it', async () => {
     const { door, mcp } = await joined('off')
-    const { parent } = await request(door, mcp, 'client#1')
-    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('policy-down')
-    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, { parent }))).toBe('policy-down')
+    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('policy-down')
+    expect(mcp.inbox.filter(message => message.kind === 'call' && message.action === 'mcp.handle')).toEqual([])
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
   })
 

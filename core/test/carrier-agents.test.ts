@@ -427,6 +427,33 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     expect(luoshu.performed.map(done => done.call.caller)).toEqual([worker('search')])
   })
 
+  it.each([
+    ['on', null], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'], ['tampered', 'policy-down'], ['starting', 'starting'],
+  ] as const)('answers the door\'s mcp.handle with a label with the gate %s before mcp sees it, a plugin\'s own call beside it as before', async (state, expected) => {
+    const { door, mcp, search, loader, luoshu } = gated()
+    loader.slots.gate = state
+    const id = door.call('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' })
+    if (expected === null) {
+      expect((await mcp.delivered('mcp.handle')).onBehalf).toBe('client#1')
+    } else {
+      expect(code(await door.reply(id))).toBe(expected)
+      expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+    }
+    // The door's call with no label is refused for its form in every state, and a plugin's own call is judged as before
+    expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
+    const own = await search.ask('luoshu.read', { path: 'inbox/a.md' })
+    expect(code(own)).toBe(state === 'on' || state === 'off' ? null : state === 'starting' ? 'starting' : 'policy-down')
+    expect(luoshu.performed.filter(done => done.call.caller.kind === 'plugin' && done.call.caller.id === 'mcp')).toEqual([])
+  })
+
+  it('answers stopped for the door\'s mcp.handle with the gate off once shutdown began', async () => {
+    const { carrier, door, mcp, loader } = gated()
+    loader.slots.gate = 'off'
+    carrier.stopping()
+    expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
   it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
     const { carrier, door, mcp, loader } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
