@@ -45,7 +45,8 @@ async function started(setup: { notes?: Record<string, string>, plugins?: Record
   for (const [name, text] of Object.entries(setup.notes ?? {})) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), off: [] })
+  // These tests hold one fixture view, so the file explorer's view is kept out
+  await store.writeSwitches({ ...defaultSwitches(), off: [], removed: ['file-explorer'] })
   await store.writeLuoshu({ folder })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': fixture })

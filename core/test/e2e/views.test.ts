@@ -46,7 +46,8 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   for (const [name, text] of Object.entries(setup.notes ?? {})) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [] })
+  // These tests hold one fixture view, so the file explorer's view is kept out
+  await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [], removed: ['file-explorer'] })
   await store.writeLuoshu({ folder })
   if (setup.plugins !== undefined) {
     const source = await temp()
