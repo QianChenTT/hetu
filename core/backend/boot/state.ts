@@ -79,6 +79,9 @@ const switches = z.strictObject({
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
   recordNothing: z.boolean(),
+  // The labels the human revoked whose tokens http has not yet said it ended, held here while the agent host has no
+  // entry and handed to the entry it gets next. Left out of a file with none
+  revokedAgents: list(agentLabel).optional(),
 })
 // Items for agents an entry holds in all, across every agent
 export const MAX_AGENT_ITEMS = 256

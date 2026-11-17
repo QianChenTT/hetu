@@ -21,7 +21,7 @@ const refusal = (work: Promise<unknown>) => work.then(() => null, (err: unknown)
 
 // mcp as the install's own copy in the plugin folder, holding read on everything, the agents' items its entry is seeded
 // with, http as the install's utility plugin and a clock the test moves
-async function started(over: { agents?: { agent: string, capability: Capability }[], revoked?: string[] } = {}) {
+async function started(over: { agents?: { agent: string, capability: Capability }[], revoked?: string[] } = {}, aside?: string[]) {
   const clock = { now: 1000 }
   const gate = allowAll()
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
@@ -32,6 +32,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
     },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
+    ...(aside !== undefined ? { switches: { revokedAgents: aside } } : {}),
     behave: { gate: { exports: { gate } } },
     loader: { clock: () => clock.now, confirmDelayMs: 0 },
   })
@@ -351,6 +352,88 @@ describe('revoke of an agent', () => {
     expect(await stored()).toEqual(before)
     await loader.confirm(loader.pending()[0].id, {})
     expect((await stored()).agents).toContainEqual({ agent: 'client#2', capability: read })
+  })
+})
+
+describe('the revoked marks at their cap and through a Reset or a Remove of mcp', () => {
+  const door: Caller = { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }
+  const marks = Array.from({ length: 256 }, (_, n) => `gone#${n + 1}`)
+  const agentsOf = (loader: { serve(call: Call): Promise<unknown> }, args: object) =>
+    loader.serve({ callId: 'c', caller: door, action: 'core.agents', args, deadline: Date.now() + 30_000 } as Call)
+  const switchesOf = async (dataDir: string) => (await new StateStore(dataDir).load()).state.switches
+
+  it('takes the label\'s items with 256 marks held, the oldest mark dropped to make room with a record naming it', async () => {
+    const { loader, stored, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: inbox }], revoked: marks })
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    const entry = await stored()
+    expect(entry.agents).toEqual([{ agent: 'client#2', capability: inbox }])
+    expect(entry.revoked).toHaveLength(256)
+    expect(entry.revoked![0]).toBe('gone#2')
+    expect(entry.revoked!.at(-1)).toBe('client#1')
+    expect(link.events('agent.markDropped')).toEqual([{ target: 'gone#1', for: 'client#1' }])
+    expect(await agentsOf(loader, { agents: ['client#1', 'gone#1', 'gone#2'] })).toEqual([
+      { agent: 'client#1', holds: 'revoked' }, { agent: 'gone#1', holds: 'none' }, { agent: 'gone#2', holds: 'revoked' },
+    ])
+  })
+
+  it('drops no mark below the cap', async () => {
+    const { loader, stored, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: marks.slice(0, 255) })
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect((await stored()).revoked).toEqual([...marks.slice(0, 255), 'client#1'])
+    expect(link.events('agent.markDropped')).toEqual([])
+  })
+
+  it.each(['plugin.reset', 'plugin.remove'] as const)('keeps the marks through a %s of mcp and hands them to the entry a Restore writes', async kind => {
+    const { loader, stored, ask, list, dataDir } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: inbox }], revoked: ['client#3'] })
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    const held = await loader.request({ kind, plugin: 'mcp' }, trusted)
+    if ('held' in held) await loader.confirm(held.held, {})
+    await loader.settled()
+    expect(await stored()).toBeUndefined()
+    expect((await switchesOf(dataDir)).revokedAgents).toEqual(['client#3', 'client#1'])
+    // While mcp has no entry the marks still answer http and still show
+    expect(await agentsOf(loader, { agents: ['client#1', 'client#2', 'client#3'] })).toEqual([
+      { agent: 'client#1', holds: 'revoked' }, { agent: 'client#2', holds: 'none' }, { agent: 'client#3', holds: 'revoked' },
+    ])
+    expect((await list()).agents).toEqual([{ agent: 'client#3', items: [], revoked: true }, { agent: 'client#1', items: [], revoked: true }])
+    const back = await loader.request({ kind: 'plugin.restore', plugin: 'mcp' }, trusted)
+    if ('held' in back) await loader.confirm(back.held, {})
+    await loader.settled()
+    const entry = await stored()
+    expect(entry.revoked).toEqual(['client#3', 'client#1'])
+    expect(entry.agents).toBeUndefined()
+    expect((await switchesOf(dataDir)).revokedAgents).toBeUndefined()
+    expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
+    expect(await code(ask('client#2', [inbox]))).toBeNull()
+  })
+
+  it('drops a mark held while mcp has no entry once http says it heard', async () => {
+    const { loader, dataDir } = await started({ revoked: ['client#3', 'client#4'] })
+    const held = await loader.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)
+    if ('held' in held) await loader.confirm(held.held, {})
+    await loader.settled()
+    expect(await agentsOf(loader, { agents: ['client#3', 'client#4'], heard: ['client#3'] })).toEqual([
+      { agent: 'client#3', holds: 'none' }, { agent: 'client#4', holds: 'revoked' },
+    ])
+    expect((await switchesOf(dataDir)).revokedAgents).toEqual(['client#4'])
+  })
+
+  it('takes a mark the switches still hold beside mcp\'s entry, as a stop between the two writes of a hand back leaves it', async () => {
+    const { loader, ask, list, dataDir } = await started({ agents: [{ agent: 'client#2', capability: inbox }], revoked: ['client#3'] }, ['client#1'])
+    expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
+    expect(await agentsOf(loader, { agents: ['client#1', 'client#3'] })).toEqual([{ agent: 'client#1', holds: 'revoked' }, { agent: 'client#3', holds: 'revoked' }])
+    expect((await list()).agents.filter(row => row.revoked).map(row => row.agent)).toEqual(['client#1', 'client#3'])
+    await agentsOf(loader, { agents: ['client#1'], heard: ['client#1'] })
+    expect(Object.hasOwn(await switchesOf(dataDir), 'revokedAgents')).toBe(false)
+    expect(await code(ask('client#1', [inbox]))).toBeNull()
+  })
+
+  it('writes no mark into the switches for a Reset of mcp that holds none', async () => {
+    const { loader, dataDir } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
+    const held = await loader.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)
+    if ('held' in held) await loader.confirm(held.held, {})
+    await loader.settled()
+    expect(Object.hasOwn(await switchesOf(dataDir), 'revokedAgents')).toBe(false)
   })
 })
 

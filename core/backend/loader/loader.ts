@@ -35,6 +35,7 @@ import {
   writeMarker, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
+import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
@@ -611,8 +612,9 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // The agent host's agents from its entry alone, on or off: each label holding items in the order the entry first names
-  // it, then each revoked label. Nothing here says whether a token is live or what a client calls itself
+  // The agent host's agents from the state alone, its entry on or off or gone: each label holding items in the order the
+  // entry first names it, then each revoked label. Nothing here says whether a token is live or what a client calls
+  // itself
   private listedAgents(): ListedAgent[] {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
@@ -620,7 +622,7 @@ ${capabilityKey(change.capability)}`)
     for (const { agent, capability } of entry?.agents ?? []) listed.set(agent, [...listed.get(agent) ?? [], capability])
     return [
       ...[...listed].map(([agent, items]) => ({ agent, items, revoked: false })),
-      ...(entry?.revoked ?? []).map(agent => ({ agent, items: [], revoked: true })),
+      ...marksOf(entry, this.state.switches).map(agent => ({ agent, items: [], revoked: true })),
     ]
   }
 
@@ -1303,10 +1305,11 @@ ${capabilityKey(change.capability)}`)
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
     const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
-    const entry = change.own.entry!
+    const entry = this.withMarks(id, change.own.entry!)
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.marksHandedBack(id)
     await this.settle(change.others, false)
     this.raiseOwed(this.touched(change))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
@@ -2028,7 +2031,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const entry = this.hostEntry()
     if (entry === null) throw { code: 'unavailable' }
     // A revoked authorization asks for nothing again, an agent comes back only as a new one with a new number
-    if (entry.revoked?.includes(agent) === true) throw { code: 'not-granted' }
+    if (marksOf(entry, this.state.switches).includes(agent)) throw { code: 'not-granted' }
     const paused = this.askPaused.get(agent)
     if (paused !== undefined && this.clock() < paused) throw { code: 'throttled' }
     const held = new Set((entry.agents ?? []).filter(item => item.agent === agent).map(item => capabilityKey(item.capability)))
@@ -2149,25 +2152,57 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
-  // tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
-  // changes nothing and answers unchanged, so a revoke names only an agent the human can see
+  // tokens, on the entry or in the switches while the agent host has none. Only that label: a label another one begins
+  // with keeps its own. A label with no item and no ask waiting changes nothing and answers unchanged, so a revoke names
+  // only an agent the human can see
   private async agentRevoke(agent: string): Promise<void | 'unchanged'> {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
     const waiting = (change: Change) => change.kind === 'agent.ask' && change.agent === agent
     const asked = this.requests.changes().some(({ change }) => waiting(change))
     this.requests.withdraw(waiting)
-    if (entry === null) return asked ? undefined : 'unchanged'
-    const holds = (entry.agents ?? []).some(item => item.agent === agent)
+    const holds = (entry?.agents ?? []).some(item => item.agent === agent)
     if (!holds && !asked) return 'unchanged'
-    const agents = (entry.agents ?? []).filter(item => item.agent !== agent)
-    const revoked = [...(entry.revoked ?? []).filter(label => label !== agent), agent]
-    const next: Plugin = { ...entry, revoked }
-    if (agents.length > 0) next.agents = agents
-    else delete next.agents
-    await this.store.writePlugin(agentHost, next)
-    this.putEntry(agentHost, next)
+    if (entry === null) {
+      const aside = revokedAside(this.state.switches, agent)
+      await this.writeSwitches(aside.switches)
+      return this.markDropped(aside.dropped, agent)
+    }
+    const next = revoked(entry, agent)
+    await this.store.writePlugin(agentHost, next.entry)
+    this.putEntry(agentHost, next.entry)
     this.bump()
+    this.markDropped(next.dropped, agent)
+  }
+
+  // A mark dropped to make room for a newer one, recorded with the label whose revoke or hand back dropped it
+  private markDropped(dropped: readonly string[], agent: string | null): void {
+    for (const target of dropped) this.note('agent.markDropped', { target, for: agent })
+  }
+
+  // Before the agent host's entry goes in a Reset or a Remove: its marks held in the switches, so no revoked label is
+  // taken as unknown while the host has no entry
+  private async setMarksAside(id: string): Promise<void> {
+    if (id !== agentHost) return
+    const aside = setAside(this.state.switches, this.state.plugins[id] ?? null)
+    if (aside === null) return
+    await this.writeSwitches(aside.switches)
+    this.markDropped(aside.dropped, null)
+  }
+
+  // The agent host's next entry with the marks the switches hold
+  private withMarks(id: string, entry: Plugin): Plugin {
+    if (id !== agentHost) return entry
+    const back = handedBack(entry, this.state.switches)
+    this.markDropped(back.dropped, null)
+    return back.entry
+  }
+
+  // Once the agent host's entry holds the marks, the switches hold none
+  private async marksHandedBack(id: string): Promise<void> {
+    if (id !== agentHost) return
+    const next = cleared(this.state.switches)
+    if (next !== null) await this.writeSwitches(next)
   }
 
   // For http, whether each label holds items, holds none or is revoked, after the marks of the labels http heard went.
@@ -2176,17 +2211,17 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return this.serial(async () => {
       const k = this.known.get(agentHost)
       let entry = k?.from === 'folder' ? k.entry : null
-      const marked = entry?.revoked ?? []
-      if (entry !== null && heard.some(label => marked.includes(label))) {
-        const next: Plugin = { ...entry, revoked: marked.filter(label => !heard.includes(label)) }
-        if (next.revoked!.length === 0) delete next.revoked
-        await this.store.writePlugin(agentHost, next)
-        this.putEntry(agentHost, next)
-        entry = next
+      const out = heardOut(entry, this.state.switches, heard)
+      if (out.entry !== null) {
+        await this.store.writePlugin(agentHost, out.entry)
+        this.putEntry(agentHost, out.entry)
+        entry = out.entry
       }
+      if (out.switches !== null) await this.writeSwitches(out.switches)
+      const marks = marksOf(entry, this.state.switches)
       return agents.map(agent => ({
         agent,
-        holds: entry?.revoked?.includes(agent) === true ? 'revoked' : (entry?.agents ?? []).some(item => item.agent === agent) ? 'items' : 'none',
+        holds: marks.includes(agent) ? 'revoked' : (entry?.agents ?? []).some(item => item.agent === agent) ? 'items' : 'none',
       }))
     })
   }
@@ -2196,7 +2231,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async agentGrant(change: AgentAsk): Promise<void> {
     const entry = this.hostEntry()
     if (entry === null) throw new Error('the agent host is not on')
-    if (entry.revoked?.includes(change.agent) === true) throw new Error('a revoked agent')
+    if (marksOf(entry, this.state.switches).includes(change.agent)) throw new Error('a revoked agent')
     const next: Plugin = { ...entry, agents: withAsked(entry.agents ?? [], change) }
     await this.store.writePlugin(agentHost, next)
     this.putEntry(agentHost, next)
@@ -2268,6 +2303,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       if (k.from === 'folder' && k.entry !== null) {
         const change = this.changeOf('reset', id, null, confirm)
         await this.settle(change.others, true)
+        await this.setMarksAside(id)
         await this.store.removePlugin(id)
         delete this.state.plugins[id]
         await this.settle(change.others, false)
@@ -2468,10 +2504,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       throw new Error(`nothing to approve for ${id}`)
     }
     const change = this.changeOf('approve', id, this.approval(k), confirm)
-    const entry = change.own.entry!
+    const entry = this.withMarks(id, change.own.entry!)
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
+    await this.marksHandedBack(id)
     await this.settle(change.others, false)
     this.raiseOwed(this.touched(change))
     this.bump()
@@ -2488,6 +2525,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
       await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
     }
+    await this.setMarksAside(id)
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
     await this.settle(change.others, false)
