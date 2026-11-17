@@ -30,36 +30,36 @@ const heard = (messages: Message[], topic: string) => messages.filter(message =>
 const signals = (messages: Message[], topic: 'events.dropped' | 'events.ended') => heard(messages, topic).map(message => message.topics)
 
 // The luoshu's host half publishes luoshu.changed with a path, search publishes search.indexed with none. search reads
-// notes/**, mcp reads every path and git hears search.indexed. way is the editor window and trustedWay the trusted one,
+// notes/**, scribe reads every path and git hears search.indexed. way is the editor window and trustedWay the trusted one,
 // each holding its window grants and each with its own inbox
 function setup(over: Partial<CarrierOptions> = {}) {
   const parts = harness(over)
   const { carrier, loader, gate, connect } = parts
   loader.sandboxed('search')
   loader.plugins.search.topics = ['indexed']
-  loader.sandboxed('mcp')
+  loader.sandboxed('scribe')
   loader.sandboxed('git')
   gate.grants.search = [
     { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
     { type: 'luoshu.read', paths: ['notes/**'] },
   ]
-  gate.grants.mcp = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
+  gate.grants.scribe = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
   gate.grants.git = [{ type: 'events.subscribe', topics: ['search.indexed'] }]
   const luoshuHalf = hostHalf(carrier, host('luoshu'))
   const way = windowWay(carrier, { 'editor-1': editor })
   const trustedWay = windowWay(carrier, { trusted })
   const search = connect(worker('search'))
-  const mcp = connect(worker('mcp'))
+  const scribe = connect(worker('scribe'))
   const git = connect(worker('git'))
   // The luoshu telling its subscribers a note changed
   const edited = (path: string) => luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path })
   const indexed = () => search.ask('events.publish', { topic: 'search.indexed' })
-  return { ...parts, luoshuHalf, way, trustedWay, search, mcp, git, edited, indexed }
+  return { ...parts, luoshuHalf, way, trustedWay, search, scribe, git, edited, indexed }
 }
 
 describe('a gate outage end to end, the bus\'s proof', () => {
   it('holds every path back while the gate is down, keeps path-less events flowing and resyncs each path subscriber exactly once', async () => {
-    const { carrier, connect, loader, search, mcp, git, way, trustedWay, edited, indexed } = setup()
+    const { carrier, connect, loader, search, scribe, git, way, trustedWay, edited, indexed } = setup()
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     expect((await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed', 'core.status'] })).result).toEqual({ standing: [] })
@@ -70,9 +70,9 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
     loader.slots.gate = 'failed'
     carrier.changed()
-    // Subscribes made while the gate is down stand. mcp holds the grant and ghost doesn't, which nobody can tell yet
+    // Subscribes made while the gate is down stand. scribe holds the grant and ghost doesn't, which nobody can tell yet
     const ghost = connect(worker('ghost'))
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/b.md')
     await indexed()
@@ -86,9 +86,9 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     // Nothing with a path arrived while the gate was down and nobody was told of a drop yet
     expect(paths(search.events())).toEqual(['notes/a.md'])
     expect(paths(way.events())).toEqual(['notes/a.md'])
-    expect(paths(mcp.events())).toEqual([])
+    expect(paths(scribe.events())).toEqual([])
     expect(paths(ghost.events())).toEqual([])
-    for (const messages of [search.events(), git.events(), way.events(), trustedWay.events(), mcp.events(), ghost.events()]) {
+    for (const messages of [search.events(), git.events(), way.events(), trustedWay.events(), scribe.events(), ghost.events()]) {
       expect(signals(messages, 'events.dropped')).toEqual([])
     }
     // Path-less events kept arriving, core.status to each window once per change among them
@@ -98,7 +98,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     loader.slots.gate = 'on'
     carrier.changed()
     await edited('notes/d.md')
-    await until(() => paths(mcp.events()).length === 1 && paths(search.events()).length === 2)
+    await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 2)
     await settle()
     // Every path subscriber gets exactly one events.dropped, the trusted window, which hears only core.*, none
     expect(signals(search.events(), 'events.dropped')).toEqual([['luoshu.changed']])
@@ -107,14 +107,14 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(signals(trustedWay.events(), 'events.dropped')).toEqual([])
     expect(heard(trustedWay.events(), 'core.status')).toHaveLength(3)
     // The standing subscription the gate allows starts with one events.dropped, the one it refuses ends with events.ended
-    expect(signals(mcp.events(), 'events.dropped')).toEqual([['luoshu.changed']])
+    expect(signals(scribe.events(), 'events.dropped')).toEqual([['luoshu.changed']])
     expect(signals(ghost.events(), 'events.ended')).toEqual([['luoshu.changed']])
     expect(signals(ghost.events(), 'events.dropped')).toEqual([])
     expect(paths(ghost.events())).toEqual([])
     // Paths flow again, each after its subscriber's events.dropped
     expect(paths(search.events())).toEqual(['notes/a.md', 'notes/d.md'])
-    expect(paths(mcp.events())).toEqual(['notes/d.md'])
-    for (const messages of [search.events(), mcp.events()]) {
+    expect(paths(scribe.events())).toEqual(['notes/d.md'])
+    for (const messages of [search.events(), scribe.events()]) {
       const resync = messages.findIndex(message => message.topic === 'events.dropped')
       const next = messages.findIndex(message => message.path === 'notes/d.md')
       expect(resync).toBeGreaterThanOrEqual(0)
@@ -124,7 +124,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
   // Sent whether or not a path was held back, so the signal can't tell a subscriber that a note it can't read changed
   it('gives each outage its own events.dropped, one with nothing published included, and none to a later subscriber', async () => {
-    const { carrier, loader, search, mcp, edited } = setup()
+    const { carrier, loader, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let round = 1; round <= 2; round++) {
       loader.slots.gate = 'failed'
@@ -134,27 +134,27 @@ describe('a gate outage end to end, the bus\'s proof', () => {
       carrier.changed()
       await until(() => signals(search.events(), 'events.dropped').length === round)
     }
-    // mcp subscribes only now and gets nothing to resync
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    // scribe subscribes only now and gets nothing to resync
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     carrier.changed()
     await edited('notes/y.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(signals(mcp.events(), 'events.dropped')).toEqual([])
+    await until(() => paths(scribe.events()).length === 1)
+    expect(signals(scribe.events(), 'events.dropped')).toEqual([])
     expect(signals(search.events(), 'events.dropped')).toEqual([['luoshu.changed'], ['luoshu.changed']])
   })
 
   it.each(['absent', 'tampered'] as const)('keeps a subscribe made while the gate is %s standing', async state => {
-    const { carrier, loader, mcp, edited } = setup()
+    const { carrier, loader, scribe, edited } = setup()
     loader.slots.gate = state
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/a.md')
     await settle()
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
     loader.slots.gate = 'on'
     carrier.changed()
     await edited('notes/b.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(signals(mcp.events(), 'events.dropped')).toEqual([['luoshu.changed']])
+    await until(() => paths(scribe.events()).length === 1)
+    expect(signals(scribe.events(), 'events.dropped')).toEqual([['luoshu.changed']])
   })
 
   it('sees a gate that came back though the loader never said so, before the next path goes out', async () => {
@@ -190,31 +190,31 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   it('stands a subscribe while the gate is on with no holder, as the bus holds paths back then', async () => {
     let holder = true
     let held: FakeGate | null = null
-    const { carrier, mcp, edited, gate } = setup({ gate: () => holder ? held : null })
+    const { carrier, scribe, edited, gate } = setup({ gate: () => holder ? held : null })
     held = gate
     holder = false
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     holder = true
     carrier.changed()
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(mcp.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
+    await until(() => paths(scribe.events()).length === 1)
+    expect(scribe.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
   })
 
   it('holds paths back and stands a subscribe while the StateView can\'t be read, since every call is refused then', async () => {
-    const { carrier, loader, search, mcp, edited } = setup()
+    const { carrier, loader, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     loader.view = () => { throw new Error('unreadable') }
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/secret-while-unreadable.md')
     await settle()
     expect(search.events()).toEqual([])
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
     loader.view = () => loader.current
     carrier.changed()
     await edited('notes/b.md')
-    await until(() => paths(search.events()).length === 1 && paths(mcp.events()).length === 1)
-    for (const subscriber of [search, mcp]) {
+    await until(() => paths(search.events()).length === 1 && paths(scribe.events()).length === 1)
+    for (const subscriber of [search, scribe]) {
       expect(subscriber.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
     }
   })
@@ -222,11 +222,11 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   // A gate that throws when asked again gave no answer, so nothing it holds hears anything until it answers. The bus
   // asks again at every sync rather than waiting for the key to move
   it('holds back every subscription the gate throws on when asked again and starts them at the next sync it answers', async () => {
-    const { carrier, loader, gate, search, mcp, edited, log } = setup()
+    const { carrier, loader, gate, search, scribe, edited, log } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     loader.slots.gate = 'failed'
     carrier.changed()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.decision = () => { throw new Error('broken') }
     loader.slots.gate = 'on'
     carrier.changed()
@@ -234,13 +234,13 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     await settle()
     // Neither started nor ended. The live one waits too, since the gate gave no answer
     expect(search.events()).toEqual([])
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
     gate.decision = null
     // No state and no StateView moved
     carrier.changed()
     await edited('notes/b.md')
-    await until(() => paths(mcp.events()).length === 1 && paths(search.events()).length === 1)
-    for (const subscriber of [search, mcp]) {
+    await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
+    for (const subscriber of [search, scribe]) {
       expect(subscriber.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
     }
     carrier.close()
@@ -249,10 +249,10 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   })
 
   it('ends a live subscription a new StateView took away though the gate threw when first asked again', async () => {
-    const { carrier, loader, gate, mcp, git, edited, indexed } = setup()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    const { carrier, loader, gate, scribe, git, edited, indexed } = setup()
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
+    gate.grants.scribe = [{ type: 'luoshu.read', paths: ['**'] }]
     gate.grants.git = []
     let throws = true
     gate.decision = access => {
@@ -265,34 +265,34 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     await indexed()
     await settle()
     // Path-less events wait too
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
     expect(git.events()).toEqual([])
     throws = false
     await edited('notes/b.md')
     await indexed()
-    await until(() => signals(mcp.events(), 'events.ended').length === 1 && signals(git.events(), 'events.ended').length === 1)
+    await until(() => signals(scribe.events(), 'events.ended').length === 1 && signals(git.events(), 'events.ended').length === 1)
     await settle()
-    expect(paths(mcp.events())).toEqual([])
+    expect(paths(scribe.events())).toEqual([])
     expect(heard(git.events(), 'search.indexed')).toEqual([])
   })
 })
 
 describe('asking again', () => {
   it('ends a subscription a new StateView no longer grants with events.ended and sends it nothing more', async () => {
-    const { carrier, loader, gate, search, mcp, edited, luoshuHalf } = setup()
+    const { carrier, loader, gate, search, scribe, edited, luoshuHalf } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.outside'] }, { type: 'luoshu.read', paths: ['**'] }]
     loader.current = 2
     carrier.changed()
     await edited('notes/a.md')
     await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/b.md' })
-    await until(() => paths(mcp.events()).length === 1 && paths(search.events()).length === 1)
+    await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
     await settle()
     expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
     // The other subscription and the other subscriber stay
     expect(paths(search.events())).toEqual(['notes/b.md'])
-    expect(signals(mcp.events(), 'events.ended')).toEqual([])
+    expect(signals(scribe.events(), 'events.ended')).toEqual([])
   })
 
   it('asks the gate nothing again while neither its state nor the StateView moved', async () => {
@@ -537,17 +537,17 @@ describe('a path with a dot segment', () => {
   const dotted = ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config']
 
   it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while the publish answers as any other', async state => {
-    const { carrier, loader, gate, search, mcp, edited } = setup()
+    const { carrier, loader, gate, search, scribe, edited } = setup()
     gate.listable = () => true
     loader.slots.gate = state
     carrier.changed()
-    for (const side of [search, mcp]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    for (const side of [search, scribe]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     for (const path of dotted) expect((await edited(path)).ok, path).toBe(true)
     await edited('notes/a.md')
-    await until(() => [search, mcp].every(side => paths(side.events()).includes('notes/a.md')))
+    await until(() => [search, scribe].every(side => paths(side.events()).includes('notes/a.md')))
     await settle()
     expect(paths(search.events())).toEqual(['notes/a.md'])
-    expect(paths(mcp.events())).toEqual(['notes/a.md'])
+    expect(paths(scribe.events())).toEqual(['notes/a.md'])
     expect(gate.lists.filter(asked => asked.path !== 'notes/a.md')).toEqual([])
   })
 })
@@ -559,7 +559,7 @@ describe('the gate off by the human', () => {
     const parts = setup({ clock: () => now })
     parts.loader.slots.gate = 'off'
     parts.log.failing = true
-    await parts.mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
+    await parts.scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
     return { ...parts, at: (ms: number) => { now = ms } }
   }
 
@@ -577,12 +577,12 @@ describe('the gate off by the human', () => {
   })
 
   it('answers a subscribe policy-down once the log has failed for logFailMs, as any call with power', async () => {
-    const { at, mcp } = await failing()
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    const { at, scribe } = await failing()
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     at(30_000)
-    expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe('policy-down')
+    expect(code(await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe('policy-down')
     // Free subscribes have no power and still pass
-    expect((await mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    expect((await scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
   })
 
   // canList is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
@@ -626,18 +626,18 @@ describe('the gate off by the human', () => {
 
   // The floor keeps identity, not limits, so its rules stay with the gate off
   it('still keeps core.* to windows and a plugin to its own declared topics', async () => {
-    const { carrier, loader, search, mcp } = setup()
+    const { carrier, loader, search, scribe } = setup()
     loader.slots.gate = 'off'
     carrier.changed()
-    expect(code(await mcp.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
-    expect(code(await mcp.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }))).toBe('not-granted')
+    expect(code(await scribe.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
+    expect(code(await scribe.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }))).toBe('not-granted')
     expect(code(await search.ask('events.publish', { topic: 'search.other' }))).toBe('not-granted')
   })
 })
 
 describe('owned topics', () => {
   it.each(['on', 'off', 'failed'] as const)('lets a plugin publish only the topics its manifest declared, with the gate %s', async state => {
-    const { loader, connect, gate, search, mcp, way, trustedWay, luoshuHalf } = setup()
+    const { loader, connect, gate, search, scribe, way, trustedWay, luoshuHalf } = setup()
     loader.slots.gate = state
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     // Its own declared topic from any of its halves
@@ -650,7 +650,7 @@ describe('owned topics', () => {
       expect(code(await search.ask('events.publish', { topic }))).toBe('not-granted')
     }
     expect(code(await connect(worker('ghost')).ask('events.publish', { topic: 'ghost.indexed' }))).toBe('not-granted')
-    expect(code(await mcp.ask('events.publish', { topic: 'mcp.handle' }))).toBe('not-granted')
+    expect(code(await scribe.ask('events.publish', { topic: 'scribe.handle' }))).toBe('not-granted')
     // Windows publish nothing
     expect(code(await way.ask('editor-1', 'events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }))).toBe('not-granted')
     expect(code(await trustedWay.ask('trusted', 'events.publish', { topic: 'core.status' }))).toBe('not-granted')
@@ -797,24 +797,24 @@ describe('subscribing', () => {
   })
 
   it('starts a standing subscription with events.dropped when a repeat finds the gate up', async () => {
-    const { carrier, loader, mcp, edited } = setup()
+    const { carrier, loader, scribe, edited } = setup()
     loader.slots.gate = 'failed'
     carrier.changed()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     loader.slots.gate = 'on'
     // The bus sees the gate again before it judges the repeat, so the subscription starts once
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(signals(mcp.events(), 'events.dropped')).toEqual([['luoshu.changed']])
+    await until(() => paths(scribe.events()).length === 1)
+    expect(signals(scribe.events(), 'events.dropped')).toEqual([['luoshu.changed']])
   })
 
   // Nothing moved for the bus to ask again, so only the repeat's own judgement can start it
   it('starts a standing subscription with events.dropped when a repeat is allowed after the gate could not answer about it', async () => {
-    const { carrier, loader, gate, mcp, edited } = setup()
+    const { carrier, loader, gate, scribe, edited } = setup()
     loader.slots.gate = 'failed'
     carrier.changed()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     let throws = true
     gate.decision = access => {
       if (throws) throw new Error('broken')
@@ -823,13 +823,13 @@ describe('subscribing', () => {
     loader.slots.gate = 'on'
     carrier.changed()
     await settle()
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
     throws = false
-    expect((await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
-    expect(signals(mcp.events(), 'events.dropped')).toEqual([['luoshu.changed']])
-    expect(mcp.events()[0].topic).toBe('events.dropped')
+    await until(() => paths(scribe.events()).length === 1)
+    expect(signals(scribe.events(), 'events.dropped')).toEqual([['luoshu.changed']])
+    expect(scribe.events()[0].topic).toBe('events.dropped')
   })
 
   it('judges a subscribe under events.subscribe scoped by the topics the gate holds, at both stages', async () => {
@@ -962,25 +962,25 @@ describe('subscribing', () => {
 
 describe('unsubscribing', () => {
   it('stops delivery to that half and to no other', async () => {
-    const { search, mcp, edited } = setup()
+    const { search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
-    await until(() => paths(search.events()).length === 1 && paths(mcp.events()).length === 1)
+    await until(() => paths(search.events()).length === 1 && paths(scribe.events()).length === 1)
     await search.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
     await edited('notes/b.md')
-    await until(() => paths(mcp.events()).length === 2)
+    await until(() => paths(scribe.events()).length === 2)
     await settle()
     expect(paths(search.events())).toEqual(['notes/a.md'])
   })
 
   it('does nothing the second time or for a topic it never held, and removes nobody else', async () => {
-    const { search, mcp, way, edited } = setup()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    const { search, scribe, way, edited } = setup()
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
     for (let i = 0; i < 2; i++) expect((await search.ask('events.unsubscribe', { topics: ['luoshu.changed', 'git.log'] })).ok).toBe(true)
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
+    await until(() => paths(scribe.events()).length === 1)
     expect(paths(way.events())).toEqual(['notes/a.md'])
   })
 
@@ -997,29 +997,29 @@ describe('unsubscribing', () => {
   })
 
   it('never starts a standing subscription it took back', async () => {
-    const { carrier, loader, mcp } = setup()
+    const { carrier, loader, scribe } = setup()
     loader.slots.gate = 'failed'
     carrier.changed()
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
     loader.slots.gate = 'on'
     carrier.changed()
     await settle()
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
   })
 })
 
 describe('read scope', () => {
   it('never hands a subscriber a path outside its read scope', async () => {
-    const { search, mcp, way, edited } = setup()
+    const { search, scribe, way, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
     for (const path of ['notes/a.md', 'secret/b.md', '.trash/c.md', 'notes/.todo.md', 'notes/d.md']) await edited(path)
-    await until(() => paths(mcp.events()).length === 3)
+    await until(() => paths(scribe.events()).length === 3)
     await settle()
     expect(paths(search.events())).toEqual(['notes/a.md', 'notes/d.md'])
-    expect(paths(mcp.events())).toEqual(['notes/a.md', 'secret/b.md', 'notes/d.md'])
+    expect(paths(scribe.events())).toEqual(['notes/a.md', 'secret/b.md', 'notes/d.md'])
     expect(paths(way.events())).toEqual(['notes/a.md', 'secret/b.md', 'notes/d.md'])
   })
 
@@ -1074,26 +1074,26 @@ describe('read scope', () => {
     ['a promise of yes', Promise.resolve(true)],
     ['undefined', undefined],
   ])('reads %s from canList as a no', async (_name, answer) => {
-    const { search, mcp, edited, gate } = setup()
+    const { search, scribe, edited, gate } = setup()
     gate.listable = caller => (caller as { id: string }).id === 'search' ? answer : true
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
+    await until(() => paths(scribe.events()).length === 1)
     await settle()
     expect(search.events()).toEqual([])
   })
 
   it('treats a canList that throws as a no, records the fault and still serves the others', async () => {
-    const { carrier, search, mcp, edited, gate, log } = setup()
+    const { carrier, search, scribe, edited, gate, log } = setup()
     gate.listable = caller => {
       if ((caller as { id: string }).id === 'search') throw new Error('matcher bug at /Users/han/luoshu')
       return true
     }
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
-    await until(() => paths(mcp.events()).length === 1)
+    await until(() => paths(scribe.events()).length === 1)
     await settle()
     expect(search.events()).toEqual([])
     carrier.close()
@@ -1158,13 +1158,13 @@ describe('what a subscriber receives', () => {
     ['a path with a control character', { topic: 'luoshu.changed', path: `notes/a${String.fromCharCode(10)}.md` }],
     ['a path past the longest scope', { topic: 'luoshu.changed', path: `${'a/'.repeat(300)}b.md` }],
   ])('refuses a publish with %s and tells nobody', async (_name, args) => {
-    const { search, mcp, luoshuHalf } = setup()
+    const { search, scribe, luoshuHalf } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     expect(code(await luoshuHalf.ask('events.publish', args))).toBe('invalid')
     await settle()
     expect(search.events()).toEqual([])
-    expect(mcp.events()).toEqual([])
+    expect(scribe.events()).toEqual([])
   })
 
   it('matches a topic exactly, never as a prefix', async () => {
@@ -1192,14 +1192,14 @@ describe('what a subscriber receives', () => {
   })
 
   it('numbers each half\'s events on its own from 1', async () => {
-    const { search, mcp, edited } = setup()
+    const { search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/b.md')
-    await until(() => search.events().length === 2 && mcp.events().length === 1)
+    await until(() => search.events().length === 2 && scribe.events().length === 1)
     expect(search.events().map(message => message.seq)).toEqual([1, 2])
-    expect(mcp.events().map(message => message.seq)).toEqual([1])
+    expect(scribe.events().map(message => message.seq)).toEqual([1])
   })
 })
 
@@ -1262,34 +1262,34 @@ describe('credits', () => {
   })
 
   it('frees no credits of another half with an ack', async () => {
-    const { loader, git, search, mcp, edited } = setup()
-    loader.human.plugins.mcp = { eventCredits: 1 }
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    const { loader, git, search, scribe, edited } = setup()
+    loader.human.plugins.scribe = { eventCredits: 1 }
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
-    await until(() => mcp.events().length === 1)
+    await until(() => scribe.events().length === 1)
     git.ack(1)
     search.ack(1)
     await roundTrip(git)
     await roundTrip(search)
     await edited('notes/b.md')
     await settle()
-    expect(mcp.events()).toHaveLength(1)
+    expect(scribe.events()).toHaveLength(1)
   })
 
   it('stops sending to a subscriber that never acknowledges and keeps the others going', async () => {
-    const { loader, search, mcp, edited } = setup()
+    const { loader, search, scribe, edited } = setup()
     loader.human.all = { eventCredits: 4 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let i = 0; i < 8; i++) {
       await edited(`notes/${i}.md`)
-      await until(() => mcp.events().length === i + 1)
-      mcp.ack(i + 1)
-      await roundTrip(mcp)
+      await until(() => scribe.events().length === i + 1)
+      scribe.ack(i + 1)
+      await roundTrip(scribe)
     }
     await settle()
     expect(search.events()).toHaveLength(4)
-    expect(mcp.events()).toHaveLength(8)
+    expect(scribe.events()).toHaveLength(8)
   })
 
   it('reaches a subscriber past its credits with events.ended, since a signal takes no credit', async () => {
@@ -1393,10 +1393,10 @@ describe('credits', () => {
 
 describe('the end of a way', () => {
   it('drops a crashed half\'s subscriptions and credits at once and a new incarnation starts with none', async () => {
-    const { connect, loader, search, mcp, edited } = setup()
+    const { connect, loader, search, scribe, edited } = setup()
     loader.human.plugins.search = { eventCredits: 1 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
     await until(() => search.events().length === 1)
     search.port.close()
@@ -1404,7 +1404,7 @@ describe('the end of a way', () => {
     loader.sandboxed('search', {}, 'ready', 2)
     const again = connect(worker('search', 2))
     await edited('notes/b.md')
-    await until(() => mcp.events().length === 2)
+    await until(() => scribe.events().length === 2)
     await settle()
     expect(again.events()).toEqual([])
     // Its credits start full and its events count from 1 again
@@ -1419,23 +1419,23 @@ describe('the end of a way', () => {
     ['a revoked incarnation', (parts: ReturnType<typeof setup>) => parts.carrier.end(worker('search'), 'crashed')],
   ])('drops a half\'s subscriptions on %s', async (_name, end) => {
     const parts = setup()
-    const { search, mcp, edited } = parts
+    const { search, scribe, edited } = parts
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     end(parts)
     await edited('notes/a.md')
-    await until(() => mcp.events().length === 1)
+    await until(() => scribe.events().length === 1)
     await settle()
     expect(search.events()).toEqual([])
   })
 
   // A shut way gets no event either way, so only the gate shows what the bus still holds
   it('asks the gate nothing about the subscriptions of a way that ended by a stop or a crash', async () => {
-    const { carrier, loader, gate, search, mcp } = setup()
+    const { carrier, loader, gate, search, scribe } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     carrier.end(worker('search'))
-    mcp.port.close()
+    scribe.port.close()
     await until(() => loader.crashes.length === 1)
     gate.asked.length = 0
     loader.current = 2
@@ -1445,14 +1445,14 @@ describe('the end of a way', () => {
 
   it('drops the subscriptions of a half closed for a flood', async () => {
     const clock = 1_000_000
-    const { loader, search, mcp, edited } = setup({ clock: () => clock })
+    const { loader, search, scribe, edited } = setup({ clock: () => clock })
     loader.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let i = 0; i < 21; i++) search.post({ v: 1, kind: 'pong' })
     await until(() => loader.crashes.length === 1)
     await edited('notes/a.md')
-    await until(() => mcp.events().length === 1)
+    await until(() => scribe.events().length === 1)
     await settle()
     expect(search.events()).toEqual([])
   })
@@ -1488,7 +1488,7 @@ describe('failing subscribers', () => {
     const record = (err: unknown) => { escaped.push(err) }
     process.on('uncaughtException', record)
     try {
-      const { carrier, gate, mcp, edited } = setup()
+      const { carrier, gate, scribe, edited } = setup()
       gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
       let calls = 0
       const handle = carrier.handle(host('history'), message => {
@@ -1498,10 +1498,10 @@ describe('failing subscribers', () => {
       })
       handle.post({ v: 1, kind: 'call', id: 1, action: 'events.subscribe', args: { topics: ['luoshu.changed'] } })
       await settle()
-      await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+      await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
       await edited('notes/a.md')
       await edited('notes/b.md')
-      await until(() => mcp.events().length === 2 && calls === 2)
+      await until(() => scribe.events().length === 2 && calls === 2)
       await settle()
       expect(escaped).toEqual([])
     } finally {
@@ -1514,14 +1514,14 @@ describe('failing subscribers', () => {
     const record = (reason: unknown) => { unhandled.push(reason) }
     process.on('unhandledRejection', record)
     try {
-      const { carrier, gate, mcp, edited } = setup()
+      const { carrier, gate, scribe, edited } = setup()
       gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
       const handle = carrier.handle(host('history'), async () => { throw new Error('plugin failed later') })
       handle.post({ v: 1, kind: 'call', id: 1, action: 'events.subscribe', args: { topics: ['luoshu.changed'] } })
       await settle()
-      await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+      await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
       await edited('notes/a.md')
-      await until(() => mcp.events().length === 1)
+      await until(() => scribe.events().length === 1)
       await tick(30)
       expect(unhandled).toEqual([])
     } finally {
@@ -1554,21 +1554,21 @@ describe('records', () => {
   // decides about it is recorded with the topics
   it('records what stands apart from the call, then what asking again started, held back or ended, with the topics', async () => {
     const clock = 1_000_000
-    const { carrier, loader, gate, log, search, mcp, connect, git } = setup({ now: () => clock })
+    const { carrier, loader, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     const before = (await written(carrier, log)).length
     loader.slots.gate = 'failed'
     carrier.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     const ghost = connect(worker('ghost'))
-    await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })
     // Its own topic goes live with no power and the luoshu's stands
     await panel.ask('events.subscribe', { topics: ['search.indexed', 'luoshu.changed'] })
     const records = (await written(carrier, log)).slice(before)
     expect(records.map(record => [idOf(record), record.topics, record.code, record.gate, record.count])).toEqual([
-      ['mcp', undefined, null, 'failed', 1],
+      ['scribe', undefined, null, 'failed', 1],
       ['ghost', undefined, null, 'failed', 2],
       ['search', '["search.indexed"]', null, 'failed', 1],
     ])
@@ -1582,7 +1582,7 @@ describe('records', () => {
     await tick()
     const fields = (event: string) => log.events(event).map(record => record.fields)
     expect(fields('events.waiting')).toEqual([
-      { plugin: 'mcp', half: 'worker', topics: 'luoshu.changed', count: 1 },
+      { plugin: 'scribe', half: 'worker', topics: 'luoshu.changed', count: 1 },
       { plugin: 'ghost', half: 'worker', topics: 'luoshu.changed', count: 1 },
       { plugin: 'search', half: 'panel', topics: 'luoshu.changed', count: 1 },
       { plugin: 'git', half: 'worker', topics: 'search.indexed', count: 1 },
@@ -1590,7 +1590,7 @@ describe('records', () => {
       { plugin: 'ghost', half: 'worker', topics: 'luoshu.changed', count: 1 },
     ])
     expect(fields('events.started')).toEqual([
-      { plugin: 'mcp', half: 'worker', topics: 'luoshu.changed', count: 1 },
+      { plugin: 'scribe', half: 'worker', topics: 'luoshu.changed', count: 1 },
       { plugin: 'search', half: 'panel', topics: 'luoshu.changed', count: 1 },
     ])
     expect(fields('events.ended')).toEqual([

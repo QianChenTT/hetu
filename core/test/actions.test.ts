@@ -38,6 +38,8 @@ describe('the core actions', () => {
       'watchdog.limit': 'watchdog',
       'core.agentRefused': 'http',
       'core.bindFailed': 'http',
+      'core.agentAsk': 'agent',
+      'core.agents': 'http',
     })
   })
 

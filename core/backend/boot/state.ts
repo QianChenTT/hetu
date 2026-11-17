@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { folderCapabilities, screenText } from '../../api/capabilities.ts'
+import { capabilityKey, folderCapabilities, folderCapability, screenText, type Capability } from '../../api/capabilities.ts'
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
+import { agentLabel } from '../../api/envelope.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
 import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { agentHost } from '../../api/slots.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
@@ -78,6 +80,21 @@ const switches = z.strictObject({
   limits,
   recordNothing: z.boolean(),
 })
+// Items for agents an entry holds in all, across every agent
+export const MAX_AGENT_ITEMS = 256
+// One item of an agent's grant: the label the agent door names the agent by in the agent label's form and an item in
+// the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
+const agentItems = z.array(z.strictObject({ agent: agentLabel, capability: folderCapability }))
+  .max(MAX_AGENT_ITEMS, { abort: true })
+  .superRefine((items, ctx) => {
+    const byAgent = new Map<string, Capability[]>()
+    for (const { agent, capability } of items) byAgent.set(agent, [...byAgent.get(agent) ?? [], capability])
+    for (const held of byAgent.values()) {
+      if (new Set(held.map(capabilityKey)).size !== held.length) ctx.addIssue({ code: 'custom', message: 'an item twice for one agent' })
+      if (!folderCapabilities.safeParse(held).success) ctx.addIssue({ code: 'custom', message: 'past the caps for one agent' })
+    }
+  })
+
 const plugin = z.strictObject({
   version: text,
   contentHash: sha256Hex,
@@ -101,7 +118,18 @@ const plugin = z.strictObject({
   // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human
   // answers it: the class last shown, null for one never known, what moved it and the plugin whose change it was
   owed: z.strictObject({ from: z.int().min(0).max(4).nullable(), cause: z.enum(classCauses), by: pluginId.nullable() }).optional(),
+  // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
+  // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
+  agents: agentItems.optional(),
+  // The labels the human revoked whose tokens http has not yet said it ended, each once. Only the agent host's entry
+  // holds the list. Left out of an entry with none
+  revoked: z.array(agentLabel).max(MAX_AGENT_ITEMS, { abort: true }).refine(labels => new Set(labels).size === labels.length, 'a label twice').optional(),
 })
+
+// An entry as the plugin id it is for may hold it: no other plugin's entry holds agents' items or revoked labels
+const hostOnly = (entry: { agents?: unknown, revoked?: unknown }) => entry.agents === undefined && entry.revoked === undefined
+const pluginFor = (id: string) => (id === agentHost ? plugin : plugin.refine(hostOnly, 'agents\' items'))
+const pluginFileFor = (id: string) => (id === agentHost ? pluginFile : pluginFile.refine(hostOnly, 'agents\' items'))
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against
 // whichever drive is current, which Node's isAbsolute takes as absolute
@@ -302,7 +330,7 @@ export class StateStore {
   }
 
   async writePlugin(id: string, input: unknown): Promise<void> {
-    const entry = plugin.parse(input)
+    const entry = pluginFor(id).parse(input)
     await this.put(this.file('plugins', `${pluginId.parse(id)}.json`), entry)
   }
 
@@ -377,7 +405,7 @@ export class StateStore {
     const { ids, invalid } = sortEntryNames(names)
     for (const id of invalid) checks.push({ check: 'plugin-entry', id, result: 'invalid' })
     for (const id of ids) {
-      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile)
+      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFileFor(id))
       checks.push({ check: 'plugin-entry', id, result: read.result })
       // With no valid entry there is no hash to check the code against, so the plugin is left out
       if (read.value) state.plugins[id] = withoutFormat(read.value)

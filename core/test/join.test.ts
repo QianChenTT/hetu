@@ -827,7 +827,7 @@ describe('the off states', () => {
 // for. A request through a seam that names a client reaches mcp as http's host half on behalf of that client
 describe('the door through the joined core', () => {
   const callMcp = { type: 'plugin.call' as const, targets: ['mcp'] }
-  const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata' } : null)
+  const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
 
   async function freePort(): Promise<number> {
     const server = net.createServer()
@@ -896,7 +896,7 @@ describe('the door through the joined core', () => {
     await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'mcp.handle'), 5000)
     const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle')!
     expect(delivered.caller).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
-    expect(delivered.onBehalf).toBe('https://client.example/metadata')
+    expect(delivered.onBehalf).toBe('https://client.example/metadata#1')
     expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
     mcp.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: { status: 200, body: '{"jsonrpc":"2.0"}' } })
     expect(await asked).toEqual({ status: 200, body: '{"jsonrpc":"2.0"}' })

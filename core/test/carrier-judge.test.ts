@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, Call, GuardCall, Prepared } from '../api/slots.ts'
-import { cleanup, FakeGuard, harness, worker } from './carrier-fakes.ts'
+import { cleanup, FakeGuard, harness, host, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -59,13 +59,13 @@ describe('the judge a call with power carries to its provider', () => {
     guarded.loader.slots.leases = 'on'
     guarded.guards.leases = new FakeGuard()
     guarded.guards.leases.answer = (call: GuardCall) => (call.scope.paths?.[0] === 'other/a.md' ? 'deny' : 'allow')
-    guarded.gate.grants.mcp = [{ type: 'luoshu.write', paths: ['**'] }]
+    guarded.gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }]
     const answers: unknown[] = []
     guarded.luoshu.perform_ = (call: Call) => {
       answers.push((call as Call & { judge?: Judge }).judge?.(['other/a.md']))
       return null
     }
-    await guarded.connect(worker('mcp')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await guarded.connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(guarded.guards.leases.calls.map(call => call.scope.paths)).toEqual([['notes/a.md'], ['other/a.md']])
     expect(answers).toEqual([{ code: 'guard-refused' }])
   })
@@ -104,14 +104,18 @@ describe('the judge a call with power carries to its provider', () => {
   })
 
   // Whatever the first judgement asks, the second asks too with only the paths changed: the gate on each requirement
-  // with the same caller, onBehalf and action, then each guard with the same call
-  it('asks the gate and the guards the same things on the second ask as on the first, with only the paths changed', async () => {
+  // with the same caller, onBehalf, agent and action, then each guard with the same call. For a plugin's own call with
+  // its own label and for an agent's call under the door, whose label is the agent's on both asks
+  it.each([
+    ['a plugin\'s own call with its own label', 'scribe', undefined],
+    ['an agent\'s call under the door', 'mcp', 'client#1'],
+  ] as const)('asks the gate and the guards the same things on the second ask as on the first, with only the paths changed, for %s', async (_name, id, agent) => {
     const parts = harness({ guardsFor: () => ['leases', 'second'] })
-    for (const id of ['leases', 'second']) {
-      parts.loader.slots[id] = 'on'
-      parts.guards[id] = new FakeGuard()
+    for (const guard of ['leases', 'second']) {
+      parts.loader.slots[guard] = 'on'
+      parts.guards[guard] = new FakeGuard()
     }
-    parts.gate.grants.mcp = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
+    parts.gate.grants[id] = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
     parts.luoshu.files.set('notes/a.md', 'a')
     let first: { asked: number, guarded: number } | null = null
     parts.luoshu.perform_ = (call: Call) => {
@@ -119,15 +123,26 @@ describe('the judge a call with power carries to its provider', () => {
       expect((call as Call & { judge?: Judge }).judge?.(['moved/a.md', 'moved/b.md'])).toBe(null)
       return null
     }
-    const reply = await parts.connect(worker('mcp')).ask('luoshu.move', { from: 'notes/a.md', to: 'notes/b.md' }, { onBehalf: 'agent-a' })
+    const caller = parts.connect(worker(id))
+    let extra: object = { onBehalf: 'agent-a' }
+    if (agent !== undefined) {
+      parts.loader.utility('http')
+      parts.loader.sandboxed('mcp', { handle: { from: ['http'] } })
+      parts.gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
+      parts.connect(host('http')).call('mcp.handle', {}, { onBehalf: agent })
+      extra = { parent: (await caller.delivered('mcp.handle')).callId }
+    }
+    const reply = await caller.ask('luoshu.move', { from: 'notes/a.md', to: 'notes/b.md' }, extra)
     expect(reply.ok).toBe(true)
-    const canonical = parts.gate.asked.slice(0, first!.asked).filter(access => access.stage === 'canonical')
+    // The door's own mcp.handle is asked about before the move
+    const canonical = parts.gate.asked.slice(0, first!.asked).filter(access => access.stage === 'canonical' && access.action === 'luoshu.move')
     const again = parts.gate.asked.slice(first!.asked)
     const renamed = (paths: readonly string[] | undefined) => paths?.map(path => path.replace(/^notes\//, 'moved/'))
     expect(canonical.length).toBeGreaterThan(1)
     expect(again).toEqual(canonical.map(access => ({ ...access, scope: { ...access.scope, paths: renamed(access.scope.paths) } })))
-    for (const id of ['leases', 'second']) {
-      const [one, two] = parts.guards[id].calls
+    expect([...canonical, ...again].map(access => [access.onBehalf, access.agent])).toEqual(Array(canonical.length * 2).fill([agent ?? 'agent-a', agent]))
+    for (const guard of ['leases', 'second']) {
+      const [one, two] = parts.guards[guard].calls
       expect(two).toEqual({ ...one, scope: { ...one.scope, paths: renamed(one.scope.paths) } })
     }
   })

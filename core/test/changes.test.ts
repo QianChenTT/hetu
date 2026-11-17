@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
+import { agentAsk, change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
 import { isSecurityControl, securityControls } from '../api/ids.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
 
@@ -28,16 +28,28 @@ const everyKind = [
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'recordNothing', on: true },
+  { kind: 'agent.revoke', agent: 'client#1' },
 ]
 
 describe('the change kinds', () => {
-  it("are the twenty change kinds the trusted window applies", () => {
+  it("are the twenty-one change kinds the trusted window applies", () => {
     expect(changeKinds).toEqual([
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.set', 'devMode', 'exec.anyCommand', 'skipVerification',
-      'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set',
+      'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set', 'agent.revoke',
     ])
+  })
+
+  it('keeps an agent\'s ask out of what a window may send and has it widen, with its label in the agent label\'s form', () => {
+    const asked = { kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }
+    expect(change.safeParse(asked).success).toBe(false)
+    expect(agentAsk.parse(asked)).toEqual(asked)
+    expect(changeEffect(asked as Change)).toBe('widens')
+    expect(agentAsk.safeParse({ ...asked, plugin: 'search' }).success).toBe(false)
+    expect(agentAsk.safeParse({ ...asked, agent: 'client' }).success).toBe(false)
+    expect(agentAsk.safeParse({ ...asked, capabilities: [] }).success).toBe(false)
+    expect(change.safeParse({ kind: 'agent.revoke', agent: 'client' }).success).toBe(false)
   })
 
   it('have a schema for every listed kind and no other', () => {
@@ -210,6 +222,7 @@ describe('whether a change widens', () => {
     ['an unsigned build no longer trusted', { kind: 'allowUnsigned', hash: HASH, on: false }],
     ['the Confirm back', { kind: 'confirmOff', on: false }],
     ['recording again', { kind: 'recordNothing', on: false }],
+    ['an agent revoked', { kind: 'agent.revoke', agent: 'client#1' }],
   ])('narrows with %s', (_name, one) => {
     expect(effect(one)).toBe('narrows')
   })

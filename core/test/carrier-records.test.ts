@@ -39,24 +39,25 @@ function answering(side: Side) {
 describe('audit records', () => {
   it('writes one audit.call line per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
     const { carrier, connect, gate, loader, log } = harness()
+    loader.utility('http')
     loader.sandboxed('mcp', { handle: {} })
     gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
     gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    const http = connect(worker('http'))
+    const http = connect(host('http'))
     const mcp = connect(worker('mcp'))
-    const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a' })
+    const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a#1' })
     const parent = await mcp.delivered('mcp.handle')
-    const write = await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'secret note text' }, { parent: parent.callId, onBehalf: 'agent-a' })
+    const write = await mcp.ask('luoshu.write', { path: 'notes/a.md', text: 'secret note text' }, { parent: parent.callId })
     expect(write.ok).toBe(true)
     mcp.answer(parent.callId, { said: 'secret result' })
     await http.reply(id)
     const records = await written(carrier, log)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
-      caller: 'mcp/worker#1', onBehalf: 'agent-a', root: 'http/worker#1', action: 'luoshu.write',
+      caller: 'mcp/worker#1', onBehalf: 'agent-a#1', root: 'http/host#1', action: 'luoshu.write',
       paths: '["notes/a.md"]', pathCount: 1, code: null, gate: 'on', count: 1,
     })
-    expect(records[1]).toMatchObject({ caller: 'http/worker#1', root: 'http/worker#1', action: 'mcp.handle', target: 'mcp', code: null })
+    expect(records[1]).toMatchObject({ caller: 'http/host#1', root: 'http/host#1', action: 'mcp.handle', target: 'mcp', code: null })
     expect(typeof records[0].ms).toBe('number')
     const text = JSON.stringify(log.records)
     for (const secret of ['secret prompt', 'secret note text', 'secret result']) expect(text).not.toContain(secret)
@@ -89,7 +90,8 @@ describe('audit records', () => {
     loader.human.plugins.http = { callsInFlight: 1 }
     http.call('mcp.handle', {}, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
-    const under = { parent: parent.callId, onBehalf: 'agent-a' }
+    // The parent's label, which a call under it can't set
+    const under = { parent: parent.callId }
     expect(code(await mcp.ask('luoshu.read', { path: '' }, under))).toBe('invalid')
     expect(code(await mcp.ask('security.request', { change: { kind: 'plugin.on', plugin: 'search' } }, under))).toBe('not-granted')
     expect(code(await mcp.ask('core.self', undefined, under))).toBe('throttled')

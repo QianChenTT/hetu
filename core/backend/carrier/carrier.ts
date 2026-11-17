@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreAction, type ProviderAction } from '../../api/actions.ts'
 import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
-  ack as ackSchema, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
+  ack as ackSchema, agentLabel, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
@@ -14,8 +14,8 @@ import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
-  pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared, type Sample, type Scope,
-  type SlotState,
+  agentDoor, agentHost, agentOwn, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
+  type Sample, type Scope, type SlotState,
 } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
@@ -58,7 +58,12 @@ type Pending = {
   way: Way
   answer: Send
   caller: Caller
+  // The parent's for a sub-call, the caller's own text otherwise
   onBehalf: string | undefined
+  // The agent the call is judged for, inherited from the door's call down the chain
+  agent: string | undefined
+  // The agent its sub-calls act for: the label of the door's own call, an agent's call's agent
+  lends: string | undefined
   action: string
   parent: Pending | null
   root: Root
@@ -105,15 +110,16 @@ type Kind =
 type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
 type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
 
-// What the audit record of a call names, read from the envelope once it parsed. parent is the live call it named
+// What the audit record of a call names, read from the envelope once it parsed. parent is the live call it named, whose
+// onBehalf a call under it records whatever its own envelope said
 type About = { id: number | null, action: string, onBehalf: string | undefined, parent: Pending | null }
 
 // Who the gate is asked for: a call, or a subscription the bus asks about again
-type Asker = { caller: Caller, onBehalf: string | undefined, action: string }
+type Asker = { caller: Caller, onBehalf: string | undefined, agent?: string | undefined, action: string }
 
 type Shaped =
   | ({ ok: false, no: No } & About)
-  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number } & About)
+  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number, agent: string | undefined, lends: string | undefined } & About)
 
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
@@ -611,7 +617,7 @@ export class Carrier {
       const callId = newId()
       const shaped = this.shape(way, message)
       if (!shaped.ok) return this.early(way, answer, callId, shaped, shaped.no, started)
-      const kind = this.floorOf(way, shaped.target, shaped.args)
+      const kind = this.floorOf(way, shaped.target, shaped.args, shaped.agent)
       if ('code' in kind) return this.early(way, answer, callId, shaped, kind, started)
       pending = this.admit(way, answer, callId, shaped, kind, started)
       if (pending === null) return this.early(way, answer, callId, shaped, { code: 'throttled' }, started)
@@ -624,17 +630,19 @@ export class Carrier {
   }
 
   // 2 shape: the strict envelope, args within the caller's cap, the schema of a core or provider action and a parent
-  // that names a live call delivered on this same way
+  // that names a live call delivered on this same way. A call under a parent takes the parent's onBehalf and can't set
+  // its own
   private shape(way: Way, message: unknown): Shaped {
     const parsed = requestEnvelope.safeParse(message)
     if (!parsed.success) {
       return { ok: false, id: readId(message), action: readAction(message), onBehalf: undefined, parent: null, no: { code: 'invalid' } }
     }
-    const { id, action, parent: parentId, onBehalf } = parsed.data
+    const { id, action, parent: parentId } = parsed.data
     // Looked up first so a refused call's record still names its root. A call past its due time is as good as over,
     // though its timer hasn't run yet
     const named = parentId === undefined ? null : way.delivered.get(parentId) ?? null
     const parent = named !== null && !named.done && this.clock() < named.due ? named : null
+    const onBehalf = parent !== null ? parent.onBehalf : parsed.data.onBehalf
     const refuse = (code: RefusalCode, reason?: ReasonCode): Shaped =>
       ({ ok: false, id, action, onBehalf, parent, no: reason ? { code, reason } : { code } })
     const measured = measurePlain(parsed.data.args, this.limits.of(way.plugin, 'argumentBytes'))
@@ -671,17 +679,29 @@ export class Carrier {
     }
 
     if (parentId !== undefined) {
-      if (parent === null) return refuse('invalid')
+      if (parent === null || parsed.data.onBehalf !== undefined) return refuse('invalid')
       if (parent.depth + 1 > this.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')
     }
-    return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent }
+    // A label is an agent's only down a chain that started at the door's own call with a label, the door known by the
+    // way that call came on. The door's call is still http's own. Any other call keeps a label as text that grants
+    // nothing. A call from the door names the agent it is for in the agent label's form, so one with no label or another
+    // is refused before mcp sees it
+    const agent = parent?.lends
+    const door = parent === null && action === agentDoor.action && this.isDoor(way)
+    if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
+    return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
-  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions
-  // and the free actions that skip the gate. Never asks the gate
-  private floorOf(way: Way, target: Target, args: unknown): Kind | No {
+  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
+  // the agent host held to the door's calls past its own and the free actions that skip the gate. Never asks the gate
+  private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
     const { caller } = way
     const trusted = caller.kind === 'window' && caller.role === 'trusted'
+    // The agent host reaches a provider but its own storage and a plugin but itself only for an agent whose call from
+    // the door is live, so a plugin that reads for it can't read for no one
+    const host = caller.kind === 'plugin' && caller.id === agentHost
+    const beyond = target.kind === 'provider' ? !isOne(agentOwn, target.provider) : target.kind === 'plugin' && target.target !== agentHost
+    if (host && beyond && agent === undefined) return { code: 'not-granted' }
     if (target.kind === 'core') {
       const { from } = target.spec
       const admitted = from === 'any'
@@ -689,10 +709,17 @@ export class Carrier {
         || (from === 'trusted' && trusted)
         || (from === 'watchdog' && this.isWatchdog(way) && this.watchable(field(args, 'plugin')))
         || (from === 'http' && this.isDoor(way))
+        // The agent host under a live call from the door, so the agent it asks for is that call's and no other
+        || (from === 'agent' && host && agent !== undefined)
       // A from with no rule here refuses every caller
       return admitted ? { kind: 'core' } : { code: 'not-granted' }
     }
-    if (target.kind === 'events') return this.eventsFloor(caller, target.action, args)
+    if (target.kind === 'events') {
+      // A subscription outlives the call it was made under and what it delivers is filtered for the subscriber alone,
+      // so the agent host subscribes to no topic but its own, under an agent's call or not
+      const kind = this.eventsFloor(caller, target.action, args)
+      return host && 'kind' in kind && kind.kind === 'power' ? { code: 'not-granted' } : kind
+    }
     // The trusted window holds core actions and the core topics only and never note content
     if (trusted) return { code: 'not-granted' }
     if (target.kind === 'served') return { kind: 'served' }
@@ -801,6 +828,8 @@ export class Carrier {
       answer,
       caller: way.caller,
       onBehalf: shaped.onBehalf,
+      agent: shaped.agent,
+      lends: shaped.lends,
       action: shaped.action,
       parent,
       root,
@@ -833,6 +862,13 @@ export class Carrier {
   }
 
   private async run(pending: Pending, target: Target, args: unknown, kind: Kind): Promise<void> {
+    // A call for an agent goes on only while the gate is on, a free one or a core action with nothing to judge included,
+    // so no call for an agent runs while the agent's grant can't be judged. The door's own call lends its label, so it is
+    // refused here before mcp sees any of the agent's request. A call with power is judged at decideFor too
+    if (pending.lends !== undefined) {
+      const open = this.gateOpen(pending.lends)
+      if (open !== 'decide') return this.finish(pending, no(open as RefusalCode))
+    }
     // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
     if (target.kind === 'events') return this.events(pending, args, kind)
     // 5 precheck, for calls with power only
@@ -848,12 +884,14 @@ export class Carrier {
   }
 
   // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-  // call with power passes while its record can still land and passes unrecorded once the human turned recording off
-  private gateOpen(): 'decide' | 'pass' | RefusalCode {
+  // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
+  // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
+  // that is down
+  private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
-    if (gate !== 'off') return this.down('policy-down')
+    if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
     if (this.muted() || !this.logFailing()) return 'pass'
     return this.down('policy-down')
   }
@@ -877,16 +915,17 @@ export class Carrier {
   }
 
   // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
-  // since a live subscription is its item in use
+  // since a live subscription is its item in use. Every judgement of a call comes here, so a call for an agent is
+  // judged against the agent's own grant beside the caller's at each one and passes at none while the gate isn't on
   private decideFor(asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-    const open = this.gateOpen()
+    const open = this.gateOpen(asker.agent)
     if (open === 'pass') return null
     if (open !== 'decide') return { code: open }
     const gate = this.holder(() => this.options.gate())
     if (gate === null) return { code: this.down('policy-down') }
     const access: Access = frozen({
       stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
-      action: asker.action, capability, scope,
+      ...(asker.agent !== undefined ? { agent: asker.agent } : {}), action: asker.action, capability, scope,
     })
     let allow: unknown, view: unknown, code: unknown, ask: unknown
     try {
@@ -1009,10 +1048,19 @@ export class Carrier {
   // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
   // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
   // gate or the StateView changed, so no answer from before a narrowing stands
+  // For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
+  // The door's own call names http as its caller, which reads nothing and passes the answer on to the agent, so there the
+  // agent's grant stands in for the caller's
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)
     const paths = field(args, 'paths') as string[]
     if (live === undefined || live.done) return no('invalid')
+    const agent = live.lends
+    const door = agent !== undefined && live.agent === undefined
+    if (agent !== undefined) {
+      const open = this.gateOpen(agent)
+      if (open !== 'decide') return no(open as RefusalCode)
+    }
     const state = this.slot('gate')
     if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
@@ -1030,7 +1078,8 @@ export class Carrier {
     try {
       while (progress.asked < paths.length) {
         const path = paths[progress.asked]
-        if (!dotted(path) && gate.canRead(way.caller, path) === true && gate.canRead(live.caller, path) === true) progress.kept.push(progress.asked)
+        const kept = !dotted(path) && gate.canRead(way.caller, path, agent) === true && (door || gate.canRead(live.caller, path) === true)
+        if (kept) progress.kept.push(progress.asked)
         progress.asked++
         if (progress.asked < paths.length && spent.spent + this.clock() - started >= budget) break
       }
@@ -1378,21 +1427,23 @@ export class Carrier {
   }
 
   // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
-  // caller, every name passing with the gate off by the human. A throw counts as a no and fails the listing. The whole
-  // listing, the walk and the gate's time alike, counts against the caller's second as filterReadable's does
+  // caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
+  // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
+  // the caller's second as filterReadable's does
   private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
     const off = this.slot('gate') === 'off'
     const gate = off ? null : this.holder(() => this.options.gate())
+    const { agent } = pending
     let threw = false
     const started = this.clock()
     let charged = false
     return {
       canList: path => {
         if (dotted(path)) return false
-        if (off) return true
+        if (off) return agent === undefined
         if (gate === null || threw) return false
         try {
-          return gate.canList(pending.caller, path) === true
+          return gate.canList(pending.caller, path, agent) === true
         } catch {
           threw = true
           return false

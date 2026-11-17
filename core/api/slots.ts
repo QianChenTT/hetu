@@ -45,15 +45,27 @@ export type GuardCall = {
 }
 
 // What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing
+// never decided on, so it grants nothing. agent is set by the carrier alone for a call under a chain that started at
+// the agent door. It names the agent whose own grant the call is judged against beside the caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
   readonly caller: Caller
   readonly onBehalf?: string
+  readonly agent?: string
   readonly action: string
   readonly capability: CapabilityType
   readonly scope: Scope
 }
+
+// The agent door: http's host half in its utility process, on the port the loader minted, calling mcp.handle on behalf
+// of an agent, named by its label. Every call under that call carries the label as the agent's and can't set its own. A
+// label set anywhere else names nobody's agent, the same half on an in-process handle or with http placed elsewhere too
+export const agentDoor = frozen({ plugin: 'http', half: 'host', action: 'mcp.handle' } as const)
+// The plugin agents act through, whose entry holds their grants as labelled items
+export const agentHost = 'mcp'
+// The providers the agent host reaches with no live call from the door: its own storage and cache, which hold nothing
+// of the notes. Every other provider and every other plugin it reaches only under that call
+export const agentOwn = frozen(['storage'] as const)
 
 // view is the number of the StateView the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only
@@ -69,19 +81,23 @@ export type GrantedItem = { readonly capability: Capability, readonly off: boole
 // What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
-// volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists
+// volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
+// agents holds each agent's own grant by its label, the labelled items of the agent host's entry, none of which is in
+// the host's own items. A view with no agents gives every agent nothing
 export type StateView = {
   readonly n: number
   readonly foldCase: boolean
   readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
   readonly execAny: readonly string[]
+  readonly agents?: Readonly<Record<string, readonly GrantedItem[]>>
 }
 
+// With an agent, canRead and canList answer for the caller's own items and the agent's both
 export type Gate = {
   decide(access: Access): Decision
-  canRead(caller: Caller, path: string): boolean
+  canRead(caller: Caller, path: string, agent?: string): boolean
   // Whether the caller may see the path's name: an on item of luoshu.list or luoshu.read covering it
-  canList(caller: Caller, path: string): boolean
+  canList(caller: Caller, path: string, agent?: string): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
   stateChanged(view: StateView): void

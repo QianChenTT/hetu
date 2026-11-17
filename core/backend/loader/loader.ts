@@ -1,10 +1,14 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode } from '../../api/actions.ts'
-import { change as changeSchema, changeEffect, mustType, type Change, type ClassRaised } from '../../api/changes.ts'
+import type {
+  ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
+} from '../../api/actions.ts'
+import {
+  AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, withdrawnWith, type AgentAsk, type Change, type ClassRaised,
+} from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
-import { VERSION, type Caller } from '../../api/envelope.ts'
+import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
   firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
@@ -19,6 +23,7 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import { agentHost } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -61,6 +66,9 @@ export type LoaderOptions = {
   // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
   // the plugin's limits as they are now to its running halves
   limited?: (plugin: string) => void
+  // A clock no change of the wall clock moves, for how long a request is first in line and how long an agent's ask
+  // waits. performance.now unless a test names another
+  clock?: () => number
 }
 
 // What the runtime does about a security control that failed while hetu ran
@@ -329,6 +337,9 @@ export class Loader implements Seam {
   private failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
   private readonly declinedAsks = new Set<string>()
+  // Agents whose ask the human cancelled, by label, with the time from which each may ask again
+  private readonly askPaused = new Map<string, number>()
+  private readonly clock: () => number
   // The pass at start has classed every entry, so the capabilities plugin coming up from here on is the human's switch-on
   private classedAtStart = false
 
@@ -346,6 +357,7 @@ export class Loader implements Seam {
     this.onFailure = options.onFailure
     this.trash = options.trash
     this.limited = options.limited
+    this.clock = options.clock ?? (() => performance.now())
     this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -362,13 +374,17 @@ export class Loader implements Seam {
       fingerprint: change => (change.kind === 'class.raised' ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
-      cancelled: change => (change.kind === 'class.raised' ? this.answered(change.plugin) : Promise.resolve()),
+      cancelled: change => {
+        if (change.kind === 'class.raised') return this.answered(change.plugin)
+        if (change.kind === 'agent.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
+        return Promise.resolve()
+      },
       record: (event, fields, signal) => this.link.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
       drain: ms => this.link.drain(ms),
       resume: () => this.link.resume(),
       changed: () => this.refresh(),
-      clock: () => performance.now(),
+      clock: () => this.clock(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
       ...(options.confirmRecordMs !== undefined ? { recordMs: options.confirmRecordMs } : {}),
       declined: (plugin, change) => {
@@ -475,6 +491,12 @@ ${capabilityKey(change.capability)}`)
         return null
       case 'security.list':
         return this.securityList()
+      // The carrier's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
+      case 'core.agentAsk':
+        return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
+      // The floor let only http's half on its utility port through
+      case 'core.agents':
+        return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
       case 'core.stop':
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
@@ -570,8 +592,22 @@ ${capabilityKey(change.capability)}`)
       },
       luoshu: this.state.luoshu?.folder ?? null,
       requests,
+      agents: this.listedAgents(),
       stopped: this.stoppedMode,
     }
+  }
+
+  // The agent host's agents from its entry alone, on or off: each label holding items in the order the entry first names
+  // it, then each revoked label. Nothing here says whether a token is live or what a client calls itself
+  private listedAgents(): ListedAgent[] {
+    const k = this.known.get(agentHost)
+    const entry = k?.from === 'folder' ? k.entry : null
+    const listed = new Map<string, Capability[]>()
+    for (const { agent, capability } of entry?.agents ?? []) listed.set(agent, [...listed.get(agent) ?? [], capability])
+    return [
+      ...[...listed].map(([agent, items]) => ({ agent, items, revoked: false })),
+      ...(entry?.revoked ?? []).map(agent => ({ agent, items: [], revoked: true })),
+    ]
   }
 
   // What an approval or an update would load, from the one read it was found or staged with: the version and every
@@ -606,7 +642,7 @@ ${capabilityKey(change.capability)}`)
       const read = this.bundled.get(change.plugin)
       const listed = this.install?.plugins[change.plugin]
       if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
+      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true, 'restore')
       return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('restore', change.plugin, after, true))]
     }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
@@ -866,14 +902,18 @@ ${capabilityKey(change.capability)}`)
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
   }
 
-  // A first-party copy's entry before it is classed, with the human's item switches carried over
-  private copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
+  // A first-party copy's entry before it is classed, with the human's item switches carried over. A newer version's copy
+  // keeps the agents' items, so an update leaves each agent what the human gave it. A restore is Recover and drops them
+  private copied(id: string, read: Read, listed: Listed, enabled: boolean, cause: 'copy' | 'restore'): Plugin {
     const granted = read.manifest!.capabilities ?? []
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
+    const agents = cause === 'copy' ? before?.agents : undefined
+    // A revoked label stays marked either way, until http says it ended the label's tokens
+    const revoked = before?.revoked
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}),
+      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}), ...(revoked !== undefined ? { revoked } : {}),
     }
   }
 
@@ -1248,7 +1288,7 @@ ${capabilityKey(change.capability)}`)
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
-    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled), confirm)
+    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
     const entry = change.own.entry!
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
@@ -1878,8 +1918,10 @@ ${capabilityKey(change.capability)}`)
     if (k.live === live) k.live = null
   }
 
-  // Ends the worker and revokes the incarnation's ways, so nothing it sends counts again
+  // Ends the worker and revokes the incarnation's ways, so nothing it sends counts again. A request whose change is the
+  // plugin's to use goes with it, so no Confirm applies one for a plugin that stopped
   private release(k: Known, live: Live, code: 'stopped' | 'crashed'): void {
+    this.requests.withdraw(change => withdrawnWith(change).includes(k.id))
     for (const run of live.halves.values()) {
       try {
         this.link.end(run.caller, code)
@@ -1961,6 +2003,36 @@ ${capabilityKey(change.capability)}`)
 ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       return this.requests.raise({ kind: 'item.on', plugin: caller.id, capability: item }, caller.id, this.link.limit(caller.id, 'firstUseAsks'))
     },
+  }
+
+  // An agent's ask for items through the agent host, raised as a request only the core raises. The items the agent
+  // holds already are left out and the rest put in key order, so the same ask in another order finds the request
+  // waiting. One ask waits for a label at a time and a label whose ask the human cancelled waits AGENT_ASK_PAUSE_MS
+  private agentAsk(label: string | undefined, capabilities: Capability[]): ActionResults['core.agentAsk'] {
+    if (!agentLabel.safeParse(label).success) throw { code: 'invalid' }
+    const agent = label!
+    const entry = this.hostEntry()
+    if (entry === null) throw { code: 'unavailable' }
+    // A revoked authorization asks for nothing again, an agent comes back only as a new one with a new number
+    if (entry.revoked?.includes(agent) === true) throw { code: 'not-granted' }
+    const paused = this.askPaused.get(agent)
+    if (paused !== undefined && this.clock() < paused) throw { code: 'throttled' }
+    const held = new Set((entry.agents ?? []).filter(item => item.agent === agent).map(item => capabilityKey(item.capability)))
+    const wanted = new Map<string, Capability>()
+    for (const capability of capabilities) if (!held.has(capabilityKey(capability))) wanted.set(capabilityKey(capability), capability)
+    if (wanted.size === 0) return { asked: 'granted' }
+    const keys = [...wanted.keys()].sort()
+    const change: AgentAsk = { kind: 'agent.ask', plugin: agentHost, agent, capabilities: keys.map(key => wanted.get(key)!) }
+    const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'agent.ask' && one.agent === agent)?.change as AgentAsk | undefined
+    if (waiting !== undefined && waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n')) throw { code: 'throttled' }
+    if (typeof this.requests.raise(change, null, MAX_PENDING, 'agent.ask') !== 'string') throw { code: 'throttled' }
+    return { asked: 'waiting' }
+  }
+
+  // The agent host's entry while the host is a plugin-folder plugin the human has on, the one entry agents' items sit in
+  private hostEntry(): Plugin | null {
+    const k = this.known.get(agentHost)
+    return k?.from === 'folder' && k.entry !== null && k.entry.enabled ? k.entry : null
   }
 
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
@@ -2046,7 +2118,71 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       // Answered: the class and its asks were stored when the notice was raised
       case 'class.raised':
         return this.answered(change.plugin)
+      case 'agent.ask':
+        return this.agentGrant(change)
+      case 'agent.revoke':
+        return this.agentRevoke(change.agent)
     }
+  }
+
+  // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
+  // tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
+  // changes nothing, so a revoke names only an agent the human can see
+  private async agentRevoke(agent: string): Promise<void> {
+    const k = this.known.get(agentHost)
+    const entry = k?.from === 'folder' ? k.entry : null
+    const waiting = (change: Change) => change.kind === 'agent.ask' && change.agent === agent
+    const asked = this.requests.changes().some(({ change }) => waiting(change))
+    this.requests.withdraw(waiting)
+    if (entry === null) return
+    const holds = (entry.agents ?? []).some(item => item.agent === agent)
+    if (!holds && !asked) return
+    const agents = (entry.agents ?? []).filter(item => item.agent !== agent)
+    const revoked = [...(entry.revoked ?? []).filter(label => label !== agent), agent]
+    const next: Plugin = { ...entry, revoked }
+    if (agents.length > 0) next.agents = agents
+    else delete next.agents
+    await this.store.writePlugin(agentHost, next)
+    this.putEntry(agentHost, next)
+    this.bump()
+  }
+
+  // For http, whether each label holds items, holds none or is revoked, after the marks of the labels http heard went.
+  // A mark goes only for a label marked, so a heard naming none writes nothing and stales no ask
+  private agentsFor(agents: string[], heard: string[]): Promise<ActionResults['core.agents']> {
+    return this.serial(async () => {
+      const k = this.known.get(agentHost)
+      let entry = k?.from === 'folder' ? k.entry : null
+      const marked = entry?.revoked ?? []
+      if (entry !== null && heard.some(label => marked.includes(label))) {
+        const next: Plugin = { ...entry, revoked: marked.filter(label => !heard.includes(label)) }
+        if (next.revoked!.length === 0) delete next.revoked
+        await this.store.writePlugin(agentHost, next)
+        this.putEntry(agentHost, next)
+        entry = next
+      }
+      return agents.map(agent => ({
+        agent,
+        holds: entry?.revoked?.includes(agent) === true ? 'revoked' : (entry?.agents ?? []).some(item => item.agent === agent) ? 'items' : 'none',
+      }))
+    })
+  }
+
+  // An agent's ask confirmed: its items added to that label's on the agent host's entry in one write through the entry's
+  // own schema, so none are written when one can't be. No class moves, since no agent's item counts as the host's own
+  private async agentGrant(change: AgentAsk): Promise<void> {
+    const entry = this.hostEntry()
+    if (entry === null) throw new Error('the agent host is not on')
+    if (entry.revoked?.includes(change.agent) === true) throw new Error('a revoked agent')
+    const items = [...entry.agents ?? []]
+    for (const capability of change.capabilities) {
+      const key = capabilityKey(capability)
+      if (!items.some(item => item.agent === change.agent && capabilityKey(item.capability) === key)) items.push({ agent: change.agent, capability })
+    }
+    const next: Plugin = { ...entry, agents: items }
+    await this.store.writePlugin(agentHost, next)
+    this.putEntry(agentHost, next)
+    this.bump()
   }
 
   // A capability added to a folder plugin's entry or taken out with its switch. Adding one it holds changes nothing
@@ -2194,7 +2330,17 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand] })
+    // Each agent's items by its label, from the agent host's entry while the human has the host on. None of them is the
+    // host's own, so none switches off or asks at first use
+    const agents: Record<string, GrantedItem[]> = Object.create(null)
+    const host = this.state.plugins[agentHost]
+    if (host?.enabled === true && this.known.get(agentHost)?.from !== 'install') {
+      for (const { agent, capability } of host.agents ?? []) {
+        if (!Object.hasOwn(agents, agent)) agents[agent] = []
+        agents[agent].push({ capability: structuredClone(capability), off: false, firstUse: false })
+      }
+    }
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], agents })
   }
 
   // The folder in the state and hetu's own folders, which the luoshu refuses to reach into

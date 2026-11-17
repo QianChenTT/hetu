@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
 import { cleanup, editorPage, exists, exited, launch, logged, pageAt, repo, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
@@ -311,6 +311,45 @@ describe('the switches and limits', () => {
     await page.getByLabel('New value for readyMs').fill('ten')
     await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
     await showing(page, 'Type a whole number from 1 up')
+  })
+})
+
+describe('the agent list', () => {
+  it('lists each agent of mcp by its label in quotes with its items, revokes one at once with no Confirm and shows it revoked', async () => {
+    const mcp = filesFor(workerManifest('mcp', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': lifecycle() })
+    const installDir = await temp()
+    await writeInstall(installDir, { gate: { files: await shipped('gate') }, mcp: { files: mcp, firstParty: true } })
+    const inbox = { type: 'luoshu.read' as const, paths: ['inbox/**'] }
+    const dataDir = await data({
+      before: async dir => {
+        const root = path.join(dir, 'plugins', 'mcp')
+        await writeFolder(root, mcp)
+        await new StateStore(dir).writePlugin('mcp', firstPartyEntry(await hashOf(root), {
+          granted: [{ type: 'luoshu.read', paths: ['**'] }], class: 1,
+          agents: [{ agent: 'https://claude.ai/oauth/claude-code-client-metadata#3', capability: inbox }, { agent: 'client#10', capability: inbox }],
+          revoked: ['client#2'],
+        }))
+      },
+    })
+    const app = await start(dataDir, installDir)
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · luoshu.read on "inbox/**"')
+    const agents = page.locator('section.agents')
+    expect(await agents.innerText()).toContain('Its name and whether its token is live are http’s to know, not this list’s')
+    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once http hears')
+    expect(await agents.locator('p.agent', { hasText: '"client#2"' }).getByRole('button').count()).toBe(0)
+    await tick(PAST_DELAY)
+    await agents.locator('p.agent', { hasText: 'claude-code-client-metadata#3' }).getByRole('button', { name: 'Revoke' }).click()
+    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears')
+    // Applied at once, nothing waits for a Confirm
+    expect(await page.locator('section.request').count()).toBe(0)
+    const entry = (await new StateStore(dataDir).load()).state.plugins.mcp
+    expect(entry.agents).toEqual([{ agent: 'client#10', capability: inbox }])
+    expect(entry.revoked).toEqual(['client#2', 'https://claude.ai/oauth/claude-code-client-metadata#3'])
+    expect(await logged(dataDir, 'security.applied', { kind: 'agent.revoke', by: 'narrows' })).toBe(true)
   })
 })
 

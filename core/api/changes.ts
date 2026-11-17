@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
+import { agentLabel } from './envelope.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
 import { isSecurityControl, pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
+import { agentHost } from './slots.ts'
 
 export const MAX_FOLDER_LENGTH = 4096
 
@@ -25,7 +27,7 @@ const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set',
+  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
@@ -47,6 +49,8 @@ export const change = z.discriminatedUnion('kind', [
     value: z.int().positive(),
     plugin: pluginId.nullable(),
   }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
+  // Every item of one agent's grant goes at once and the label is kept as revoked until http says it ended its tokens
+  z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
 // and for the capabilities plugin switched on again
@@ -66,7 +70,24 @@ export const classRaised = z.strictObject({
 })
 export type ClassRaised = z.infer<typeof classRaised>
 
-export type Change = z.infer<typeof change> | ClassRaised
+// The most items one ask names, how long it waits for the human before it lapses and how long a label whose ask the
+// human cancelled waits before it may ask again
+export const MAX_ASK_ITEMS = 8
+export const AGENT_ASK_LAPSE_MS = 5 * 60_000
+export const AGENT_ASK_PAUSE_MS = 60_000
+
+// An agent's ask the core raises alone from the agent host's core.agentAsk, never one security.request carries. agent
+// is the label of the call from the door the ask was made under and never an argument, capabilities the items it lacks
+// in key order. A Confirm adds them to that label's items on the host's entry
+export const agentAsk = z.strictObject({
+  kind: z.literal('agent.ask'),
+  plugin: z.literal(agentHost),
+  agent: agentLabel,
+  capabilities: z.array(folderCapability).min(1).max(MAX_ASK_ITEMS),
+})
+export type AgentAsk = z.infer<typeof agentAsk>
+
+export type Change = z.infer<typeof change> | ClassRaised | AgentAsk
 export type ChangeKind = Change['kind']
 
 // What applying a change does to what hetu lets through. A narrowing change applies at once with its record. A
@@ -89,6 +110,7 @@ export function changeEffect(change: Change): ChangeEffect {
       return 'widens'
     case 'grant.narrow':
     case 'item.off':
+    case 'agent.revoke':
       return 'narrows'
     case 'plugin.remove':
     case 'plugin.clearStorage':
@@ -109,8 +131,21 @@ export function changeEffect(change: Change): ChangeEffect {
       return 'widens'
     // Only the core raises one and it always waits for the human
     case 'class.raised':
+    case 'agent.ask':
       return 'widens'
   }
+}
+
+// How long a request of this kind waits for the human before it lapses, null for one that waits until answered. Only
+// a request a plugin's call brought about lapses, since the call that asked is long over
+export function lapseOf(change: Change): number | null {
+  return change.kind === 'agent.ask' ? AGENT_ASK_LAPSE_MS : null
+}
+
+// The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
+// is for an agent of the agent host that http's door named
+export function withdrawnWith(change: Change): readonly string[] {
+  return change.kind === 'agent.ask' ? [change.plugin, 'http'] : []
 }
 
 // What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to
