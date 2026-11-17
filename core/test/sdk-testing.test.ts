@@ -12,6 +12,11 @@ import type { Call, Provider } from '../api/slots.ts'
 import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
 import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
 import { tick } from './carrier-fakes.ts'
+import { Drawer, type Instance, type PortLike } from '../frontend/mount/bridge.ts'
+import { CoreLink } from '../frontend/mount/link.ts'
+import { Versions } from '../frontend/mount/versions.ts'
+import { Editor, type EditorClient } from '../sdk/editor.ts'
+import { fakeCore as mountCore } from './mount-fakes.ts'
 
 const cores: FakeCore[] = []
 afterEach(async () => {
@@ -490,6 +495,230 @@ describe('the fake drawer', () => {
     drawer.emit({ topic: 'layout.drop', instance: 'v1', zone: 'left', x: 0, y: 0.5 })
     await until(() => heard.length === 1)
     expect(heard[0]).toMatchObject({ topic: 'layout.drop', zone: 'left' })
+  })
+})
+
+// Where the human is, as hetu's drawer tells it: a range only after the plugin asked with editor.viewports and only of a
+// note it reads, the range drawn then at the ask and at an open, none after a stop. A bound command comes with the note,
+// its version and the selection at the key
+describe("the fake drawer's ranges and commands", () => {
+  type Heard = Record<string, unknown>
+  const capabilities = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.command' }]
+  const range = (instance: string, version: number, from: number, to: number) => ({ v: 1, kind: 'event', topic: 'editor.viewport', instance, version, from, to })
+  const opened = (instance: string) => ({ v: 1, kind: 'event', topic: 'editor.opened', instance })
+  const ranges = (heard: Heard[]) => heard.filter(event => event.topic === 'editor.viewport')
+
+  // A plugin that keeps each editor event it hears
+  async function listening(drawer: FakeDrawer) {
+    const made = fakeCore({ manifest: manifest({ capabilities }), drawer })
+    cores.push(made)
+    const heard: Heard[] = []
+    let given: PluginContext | null = null
+    await made.start(definePlugin({
+      start(ctx) {
+        given = ctx
+        for (const topic of ['opened', 'viewport', 'command'] as const) ctx.editor.on(topic, event => heard.push({ ...event }))
+      },
+    }))
+    return { heard, ctx: given as unknown as PluginContext }
+  }
+
+  it('sends no range to a plugin that never asked, as a note opens and its view moves', async () => {
+    const drawer = new FakeDrawer()
+    const { heard } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello world')
+    drawer.viewport(instance, 2, 11)
+    await tick(5)
+    expect(heard).toEqual([opened(instance)])
+  })
+
+  it('sends a plugin that asked the range drawn at its ask, each move after with its version and the whole of a short note opened since', async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const first = drawer.openNote('notes/a.md', 'hello world')
+    await ctx.editor.viewports(true)
+    await until(() => ranges(heard).length === 1)
+    await ctx.editor.edit(first, 0, [11, [0, '!']])
+    drawer.viewport(first, 2, 12)
+    const second = drawer.openNote('notes/b.md', 'two')
+    await until(() => ranges(heard).length === 3)
+    expect(heard).toEqual([opened(first), range(first, 0, 0, 11), range(first, 1, 2, 12), opened(second), range(second, 0, 0, 3)])
+  })
+
+  it("sends the range the editor still draws in the note's version when sent, after an edit past it", async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello world', { from: 0, to: 5 })
+    await ctx.editor.edit(instance, 0, [11, [0, '!']])
+    await ctx.editor.viewports(true)
+    await until(() => ranges(heard).length === 1)
+    expect(ranges(heard)).toEqual([range(instance, 1, 0, 5)])
+  })
+
+  it("sends no range of a note the plugin can't read", async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const secret = drawer.openNote('secret/a.md', 'hidden')
+    await ctx.editor.viewports(true)
+    drawer.viewport(secret, 1, 6)
+    await tick(5)
+    expect(heard).toEqual([])
+  })
+
+  it('sends no range after the plugin stopped them and the range drawn then once it asks again', async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello world')
+    await ctx.editor.viewports(true)
+    await ctx.editor.viewports(false)
+    drawer.viewport(instance, 2, 11)
+    drawer.viewport(instance, 3, 11)
+    await tick(5)
+    expect(ranges(heard)).toEqual([range(instance, 0, 0, 11)])
+    await ctx.editor.viewports(true)
+    await until(() => ranges(heard).length === 2)
+    expect(ranges(heard)).toEqual([range(instance, 0, 0, 11), range(instance, 0, 3, 11)])
+  })
+
+  it('sends each range once to a plugin that asked twice', async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello world')
+    await ctx.editor.viewports(true)
+    await ctx.editor.viewports(true)
+    drawer.viewport(instance, 2, 11)
+    await until(() => ranges(heard).length === 2)
+    await tick(5)
+    expect(ranges(heard)).toEqual([range(instance, 0, 0, 11), range(instance, 0, 2, 11)])
+  })
+
+  it('fires a bound command with the note, its version and the selection only for a note the plugin reads and never one left unbound', async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    const secret = drawer.openNote('secret/a.md', 'hidden')
+    expect(drawer.command('kill', instance)).toBe(false)
+    await ctx.editor.bind([{ key: 'Mod-k', command: 'kill' }])
+    await ctx.editor.edit(instance, 0, [5, [0, '!']])
+    expect(drawer.command('kill', instance, [{ anchor: 1, head: 4 }])).toBe(true)
+    expect(drawer.command('kill', secret)).toBe(true)
+    expect(drawer.command('kill')).toBe(true)
+    await until(() => heard.filter(event => event.topic === 'editor.command').length === 3)
+    expect(heard.filter(event => event.topic === 'editor.command')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance, version: 1, selection: [{ anchor: 1, head: 4 }] },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: null },
+    ])
+  })
+
+  it('starts each run of the plugin with no ask and no binding, as each new port in hetu', async () => {
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: manifest({ capabilities }), drawer })
+    cores.push(made)
+    const runs: Heard[][] = []
+    const plugin = definePlugin({
+      async start(ctx) {
+        const heard: Heard[] = []
+        runs.push(heard)
+        ctx.editor.on('viewport', event => heard.push({ ...event }))
+        if (runs.length > 1) return
+        await ctx.editor.viewports(true)
+        await ctx.editor.bind([{ key: 'Mod-k', command: 'kill' }])
+      },
+    })
+    await made.start(plugin)
+    const instance = drawer.openNote('notes/a.md', 'hello world')
+    await until(() => runs[0].length === 1)
+    await made.stop()
+    await made.start(plugin)
+    drawer.viewport(instance, 2, 11)
+    await tick(5)
+    expect(runs).toEqual([[range(instance, 0, 0, 11)], []])
+    expect(drawer.command('kill', instance)).toBe(false)
+  })
+
+  // The same plugin code against hetu's drawer and against the fake, the human doing the same before each
+  it("hands a plugin the same ranges and commands as hetu's drawer, in the same order", async () => {
+    type Human = { open(path: string, text: string): string, move(instance: string, from: number, to: number): void, key(instance: string, selection: { anchor: number, head: number }[]): void }
+    const play = async (editor: EditorClient, human: Human) => {
+      const heard: Heard[] = []
+      for (const topic of ['opened', 'viewport', 'command'] as const) editor.on(topic, event => heard.push({ ...event }))
+      await editor.bind([{ key: 'Mod-k', command: 'kill' }])
+      human.open('notes/early.md', 'before the ask')
+      await tick(5)
+      await editor.viewports(true)
+      const a = human.open('notes/a.md', 'hello world')
+      await tick(5)
+      human.move(a, 2, 11)
+      human.open('secret/b.md', 'hidden')
+      await tick(5)
+      await editor.viewports(false)
+      human.move(a, 3, 11)
+      await tick(5)
+      await editor.viewports(true)
+      await editor.viewports(true)
+      await tick(5)
+      human.key(a, [{ anchor: 1, head: 4 }])
+      await tick(5)
+      return heard
+    }
+
+    // hetu's drawer, the plugin's client on a port to it
+    const notes: Instance[] = []
+    const selections = new Map<string, { anchor: number, head: number }[]>()
+    const core = mountCore({
+      'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
+      'editor.reach': args => {
+        const { path: asked } = args as { path?: string }
+        return { ok: true, result: { read: asked !== undefined && asked.startsWith('notes/'), edit: false, uiRead: false, list: false, verbs: ['ui.command'] } }
+      },
+    })
+    const link = new CoreLink(core.bridge)
+    link.start()
+    const real = new Drawer(link, () => notes, () => {})
+    real.start()
+    let toPlugin: ((message: unknown) => void) | null = null
+    const port: PortLike = { onmessage: null, close() {}, postMessage: message => toPlugin?.(JSON.parse(message as string)) }
+    real.connect('reader', 1, port)
+    const client = new Editor()
+    client.connect({ post: message => port.onmessage?.({ data: JSON.stringify(message) }), listen: next => { toPlugin = next } })
+    const find = (id: string) => notes.find(each => each.id === id) as Instance
+    const fromReal = await play(client, {
+      open(at, text) {
+        const id = `n${notes.length + 1}`
+        const made: Instance = {
+          id, path: at, versions: new Versions(text.length), text: () => text, selection: () => selections.get(id) ?? [{ anchor: 0, head: 0 }],
+          apply() {}, setMarks() {}, clearMarks() {},
+        }
+        notes.push(made)
+        real.opened(made)
+        real.viewport(made, 0, text.length)
+        return id
+      },
+      move: (id, from, to) => real.viewport(find(id), from, to),
+      key(id, selection) {
+        selections.set(id, selection)
+        real.key(id, 'Mod-k')
+      },
+    })
+
+    const drawer = new FakeDrawer()
+    const made = fakeCore({ manifest: manifest({ capabilities }), drawer })
+    cores.push(made)
+    let given: PluginContext | null = null
+    await made.start(definePlugin({ start(ctx) { given = ctx } }))
+    const fromFake = await play((given as unknown as PluginContext).editor, {
+      open: (at, text) => drawer.openNote(at, text),
+      move: (id, from, to) => drawer.viewport(id, from, to),
+      key: (id, selection) => void drawer.command('kill', id, selection),
+    })
+
+    expect(fromReal).toEqual([
+      // The ask after a stop sends the range of every note it reads again
+      opened('n1'), range('n1', 0, 0, 14), opened('n2'), range('n2', 0, 0, 11), range('n2', 0, 2, 11), range('n1', 0, 0, 14), range('n2', 0, 3, 11),
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'kill', instance: 'n2', version: 0, selection: [{ anchor: 1, head: 4 }] },
+    ])
+    expect(fromFake).toEqual(fromReal)
   })
 })
 

@@ -9,7 +9,7 @@ import type { Transport } from './transport.ts'
 // ctx.ui sends on the same port. The runtime hands a new port for each editor page load and none while no editor page is
 // open or the plugin holds no ui item, so every call answers unavailable then. The drawer checks every call against
 // what the gate gives the plugin
-export type EditorTopic = 'opened' | 'closed' | 'changed' | 'command' | 'key'
+export type EditorTopic = 'opened' | 'closed' | 'changed' | 'command' | 'key' | 'viewport'
 
 export type EditorClient = {
   // The open notes the plugin reads
@@ -22,6 +22,8 @@ export type EditorClient = {
   // Replaces every binding. The command named comes back as a command event
   bind(bindings: { key: string, command: string }[]): Promise<void>
   keys(on: boolean): Promise<void>
+  // Asks for the range each open note's editor draws as viewport events, of the notes the plugin reads, or stops them
+  viewports(on: boolean): Promise<void>
   // Opens a note in the editor. Needs ui.view and luoshu.read on the path and on the note it resolves to, a list or
   // ui.read grant isn't enough
   open(path: string): Promise<void>
@@ -41,9 +43,10 @@ export class Editor implements EditorClient {
   private readonly connected: (() => void)[] = []
   // Events that came before the plugin's start ran, which registers its handlers. Null once released
   private held: unknown[] | null = null
-  // What a new port is told again: the last bindings and the key stream
+  // What a new port is told again: the last bindings, the key stream and the ask for ranges
   private bindings: { key: string, command: string }[] | null = null
   private stream = false
+  private ranges = false
 
   // A port to a new editor page load. Calls in flight on the last one fail unavailable
   connect(transport: Transport): void {
@@ -56,6 +59,7 @@ export class Editor implements EditorClient {
     })
     if (this.bindings !== null) this.send('editor.bind', { bindings: this.bindings }).catch(() => {})
     if (this.stream) this.send('editor.keys', { on: true }).catch(() => {})
+    if (this.ranges) this.send('editor.viewports', { on: true }).catch(() => {})
     for (const hook of this.connected) hook()
   }
 
@@ -116,6 +120,11 @@ export class Editor implements EditorClient {
   async keys(on: boolean): Promise<void> {
     this.stream = on
     await this.send('editor.keys', { on })
+  }
+
+  async viewports(on: boolean): Promise<void> {
+    this.ranges = on
+    await this.send('editor.viewports', { on })
   }
 
   on(topic: EditorTopic, handler: (event: BridgeEvent) => void): void {

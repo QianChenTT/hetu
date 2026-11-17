@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
+import { held, type Run, type Sitting, summary } from '../../../scripts/measure-bridge.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
@@ -23,7 +24,7 @@ export default definePlugin({
     const heard: unknown[] = []
     scope.heard = heard
     scope.follow = false
-    for (const topic of ['opened', 'changed', 'command'] as const) ctx.editor.on(topic, event => heard.push(event))
+    for (const topic of ['opened', 'changed', 'command', 'viewport'] as const) ctx.editor.on(topic, event => heard.push(event))
     ctx.editor.on('changed', event => {
       if (scope.follow !== true || event.topic !== 'editor.changed') return
       const marks = []
@@ -43,7 +44,113 @@ export default definePlugin({
 })
 `
 
-type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, off?: string[] }
+// Loads for the bridge's measurement, each started and stopped from the test and counting what it did. redraw draws a
+// view of 100 rows ten times a second, each row's text new each time. flood sends decorations of 2,500 marks over the
+// note's lines of more than 20 characters, which leaves out the plain last one, eight at a time and again as each
+// answers, which passes the marks a second the drawer takes
+const loads = `
+import { definePlugin } from '${sdk}'
+export default definePlugin({
+  start(ctx) {
+    const scope = globalThis as Record<string, unknown>
+    scope.editor = ctx.editor
+    const counts = { draws: 0, refusedDraws: 0, drawn: 0, throttled: 0, refused: 0 }
+    scope.counts = counts
+    let view: string | null = null
+    ctx.ui.on('view.opened', event => {
+      view = event.instance
+    })
+    const rows = (tick: number) => ({
+      kind: 'box', id: 'root',
+      children: Array.from({ length: 100 }, (_, i) => ({ kind: 'text', id: 'row' + i, text: 'row ' + i + ' at ' + tick })),
+    })
+    let redrawing: ReturnType<typeof setInterval> | null = null
+    scope.redraw = (on: boolean) => {
+      if (redrawing !== null) clearInterval(redrawing)
+      redrawing = null
+      if (!on) return
+      let tick = 0
+      redrawing = setInterval(() => {
+        if (view === null) return
+        tick++
+        ctx.ui.views.draw(view, rows(tick) as never).then(() => {
+          counts.draws++
+        }, () => {
+          counts.refusedDraws++
+        })
+      }, 100)
+    }
+    let version = 0
+    ctx.editor.on('changed', event => {
+      if (event.topic === 'editor.changed') version = event.version
+    })
+    let flooding = false
+    let inFlight = 0
+    let idle: (() => void) | null = null
+    scope.flood = async (on: boolean) => {
+      flooding = on
+      const [open] = await ctx.editor.instances()
+      if (!on) {
+        if (inFlight > 0) await new Promise<void>(resolve => {
+          idle = resolve
+        })
+        for (;;) {
+          const cleared = await ctx.editor.decorate(open.instance, version, 'flood', []).then(() => true, () => false)
+          if (cleared) return
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+      }
+      const read = await ctx.editor.read(open.instance)
+      version = read.version
+      const starts: number[] = []
+      let at = 0
+      for (const line of read.text.split('\\n').slice(0, -1)) {
+        if (line.length > 20) starts.push(at)
+        at += line.length + 1
+      }
+      let tick = 0
+      const marks = () => {
+        tick++
+        const out = []
+        for (let k = 0; k < 2500; k++) {
+          const from = starts[k % starts.length] + Math.floor(k / starts.length) * 5 + (tick % 2)
+          out.push({ kind: 'mark' as const, from, to: from + 4, style: tick % 2 === 0 ? 'muted' as const : 'em' as const })
+        }
+        return out
+      }
+      const pump = () => {
+        while (flooding && inFlight < 8) {
+          inFlight++
+          ctx.editor.decorate(open.instance, version, 'flood', marks()).then(() => {
+            counts.drawn += 2500
+          }, (err: { code?: string }) => {
+            if (err.code === 'throttled') counts.throttled++
+            else counts.refused++
+          }).finally(() => {
+            inFlight--
+            if (inFlight === 0 && idle !== null) {
+              idle()
+              idle = null
+            }
+            pump()
+          })
+        }
+      }
+      pump()
+    }
+  },
+})
+`
+
+type Load = { granted: Capability[], manifest?: object }
+type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, loads?: Record<string, Load>, off?: string[] }
+
+async function built(code: string): Promise<string> {
+  const source = await temp()
+  await writeFolder(source, { 'src/worker.ts': code })
+  const [one] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
+  return one.text
+}
 
 async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string }> {
   const folder = await temp()
@@ -52,15 +159,19 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [] })
   await store.writeLuoshu({ folder })
+  const plugins: [string, Load, string][] = []
   if (setup.plugins !== undefined) {
-    const source = await temp()
-    await writeFolder(source, { 'src/worker.ts': fixture })
-    const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
-    for (const [id, granted] of Object.entries(setup.plugins)) {
-      const root = path.join(dataDir, 'plugins', id)
-      await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built.text }))
-      await store.writePlugin(id, await entryFor(root, { granted }))
-    }
+    const code = await built(fixture)
+    for (const [id, granted] of Object.entries(setup.plugins)) plugins.push([id, { granted }, code])
+  }
+  if (setup.loads !== undefined) {
+    const code = await built(loads)
+    for (const [id, load] of Object.entries(setup.loads)) plugins.push([id, load, code])
+  }
+  for (const [id, { granted, manifest }, code] of plugins) {
+    const root = path.join(dataDir, 'plugins', id)
+    await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted, ...manifest }), { 'worker.js': code }))
+    await store.writePlugin(id, await entryFor(root, { granted }))
   }
   return { dataDir, folder }
 }
@@ -70,7 +181,9 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   const app = await launch(dataDir)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
-  for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.loads ?? {})]) {
+    await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  }
   return { app, editor, dataDir, folder }
 }
 
@@ -326,29 +439,166 @@ describe('the drawer', () => {
     await until(async () => (await editor.locator('.cm-hetu-error').count()) === 1)
   })
 
-  // #73: how long a keystroke takes to come back from a worker as a decoration, on a large note
-  it('measures the bridge from a key to a decoration from a worker', async () => {
-    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
-    // The last line is plain, so its text on screen is the text typed
-    const lines = Array.from({ length: 2000 }, (_, i) => `line ${i} with **some** text and a [link](https://example.com/${i})`)
-    const big = [...lines, 'plain'].join('\n')
-    const { app, editor } = await started({ notes: { 'big.md': big }, plugins: { marker: granted } })
-    await open(editor, 'big.md')
-    const worker = await pluginWorker(app, 'marker')
-    await until(async () => (await drive(worker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
-    await drive(worker, async scope => {
-      scope.follow = true
-    })
+  it('sends a command the selection at the key only when its plugin reads the note', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      outsider: [{ type: 'luoshu.read', paths: ['other/**'] }, { type: 'ui.command' }],
+    }
+    const text = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n')
+    const { app, editor } = await started({ notes: { 'a.md': text }, plugins })
+    await open(editor, 'a.md')
+    const reader = await pluginWorker(app, 'reader')
+    const outsider = await pluginWorker(app, 'outsider')
+    await drive(reader, async scope => scope.editor.bind([{ key: 'Mod-k', command: 'here' }]))
+    await drive(outsider, async scope => scope.editor.bind([{ key: 'Mod-j', command: 'there' }]))
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
-    // For each key: when the character itself is on screen, then when the worker's mark on it is
+    await editor.keyboard.press('ControlOrMeta+k')
+    await editor.keyboard.press('ControlOrMeta+j')
+    const commands = async (worker: Worker) => (await drive(worker, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.command')
+    await until(async () => (await commands(reader)).length === 1 && (await commands(outsider)).length === 1)
+    expect(await commands(reader)).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.command', command: 'here', instance: 'n1', version: 0, selection: [{ anchor: text.length, head: text.length }] },
+    ])
+    expect(await commands(outsider)).toEqual([{ v: 1, kind: 'event', topic: 'editor.command', command: 'there', instance: null }])
+  })
+
+  it('sends the range the editor draws to a plugin that asked for it and reads the note and to no other, again as it moves', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      outsider: [{ type: 'luoshu.read', paths: ['other/**'] }, { type: 'ui.command' }],
+      unasked: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+    }
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
+    const text = lines.join('\n')
+    const short = 'short note'
+    const { app, editor } = await started({ notes: { 'a.md': text, 'b.md': short }, plugins })
+    const reader = await pluginWorker(app, 'reader')
+    const outsider = await pluginWorker(app, 'outsider')
+    const unasked = await pluginWorker(app, 'unasked')
+    for (const worker of [reader, outsider]) await drive(worker, async scope => scope.editor.viewports(true))
+    await open(editor, 'a.md')
+    type Range = { topic: string, instance: string, version: number, from: number, to: number }
+    const ranges = async (worker: Worker) => (await drive(worker, async scope => scope.heard) as Range[]).filter(event => event.topic === 'editor.viewport')
+    const last = async () => (await ranges(reader)).filter(range => range.instance === 'n1').at(-1)
+    // Where line i of the note starts and ends
+    const start = (i: number) => lines.slice(0, i).reduce((at, line) => at + line.length + 1, 0)
+    const end = (i: number) => start(i) + lines[i].length
+    // The first and last line the editor holds in the page, the lines of its viewport
+    const drawn = async () => {
+      const held = await editor.locator('.editor:not([hidden]) .cm-line').allInnerTexts()
+      return [Number(held[0].slice(5)), Number(held.at(-1)!.slice(5))]
+    }
+    await until(async () => (await last())?.from === 0)
+    await tick(500)
+    const [top, bottom] = await drawn()
+    expect(top).toBe(0)
+    expect(await last()).toEqual({ v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: end(bottom) })
+    expect(bottom).toBeLessThan(lines.length - 1)
+    await shown(editor).click()
+    await editor.keyboard.press('ControlOrMeta+End')
+    await until(async () => (await ranges(reader)).some(range => range.instance === 'n1' && range.from > 0 && range.to === text.length))
+    // A change moves the range, which comes with the version it counts in
+    await editor.keyboard.type('!')
+    const typed = async () => (await ranges(reader)).find(range => range.instance === 'n1' && range.to === text.length + 1)
+    await until(async () => (await typed()) !== undefined)
+    expect((await typed())!.version).toBe(1)
+    // Another note's range names that note
+    await open(editor, 'b.md')
+    await until(async () => (await ranges(reader)).some(range => range.instance === 'n2' && range.to === short.length))
+    expect((await ranges(reader)).filter(range => range.instance === 'n2')).toContainEqual(expect.objectContaining({ from: 0, to: short.length }))
+    expect((await ranges(reader)).filter(range => range.instance === 'n1' && range.to === short.length)).toEqual([])
+    expect(await ranges(outsider)).toEqual([])
+    expect(await ranges(unasked)).toEqual([])
+    expect((await drive(unasked, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.opened')).toHaveLength(2)
+  })
+
+  // CodeMirror's viewport is what it draws: the lines on screen with a margin past them and a stretch hidden in it
+  // whole. Its visibleRanges leaves out each hidden stretch of 20 characters or more, the margin kept
+  it('sends the range the editor draws, past the lines on screen and over a stretch another plugin hid', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      hider: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }],
+    }
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
+    const start = (i: number) => lines.slice(0, i).reduce((at, line) => at + line.length + 1, 0)
+    const end = (i: number) => start(i) + lines[i].length
+    const { app, editor } = await started({ notes: { 'a.md': lines.join('\n') }, plugins })
+    const reader = await pluginWorker(app, 'reader')
+    const hider = await pluginWorker(app, 'hider')
+    await drive(reader, async scope => scope.editor.viewports(true))
+    await open(editor, 'a.md')
+    type Range = { topic: string, from: number, to: number }
+    const last = async () => (await drive(reader, async scope => scope.heard) as Range[]).filter(event => event.topic === 'editor.viewport').at(-1)
+    // The last line inside the editor's scroll box
+    const screen = () => editor.evaluate(() => {
+      const box = document.querySelector('.editor:not([hidden]) .cm-scroller')!.getBoundingClientRect()
+      const shown = [...document.querySelectorAll('.editor:not([hidden]) .cm-line')].filter(line => {
+        const at = line.getBoundingClientRect()
+        return at.bottom > box.top && at.top < box.bottom && /^line \d+$/.test(line.textContent ?? '')
+      })
+      return Number(shown.at(-1)!.textContent!.slice(5))
+    })
+    await until(async () => (await last())?.from === 0)
+    await tick(500)
+    const bottom = await screen()
+    expect(bottom).toBeGreaterThan(10)
+    // A margin of lines past the screen
+    expect((await last())!.to).toBeGreaterThan(end(bottom + 5))
+    await until(async () => (await drive(hider, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
+    await drive(hider, async scope => {
+      const [open] = await scope.editor.instances() as { instance: string, version: number }[]
+      // Lines 10 to 1999
+      await scope.editor.decorate(open.instance, open.version, 'fold', [{ kind: 'hide', from: 70, to: 18_889 }])
+    })
+    expect([start(10), end(1999)]).toEqual([70, 18_889])
+    // The editor now draws lines 0 to 9 and lines past 1999, one range over the hidden stretch
+    await until(async () => ((await last())?.to ?? 0) > start(2000))
+    expect(await last()).toMatchObject({ from: 0 })
+  })
+
+  // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
+  // note, with nothing else running and under three loads in turn, in one app. HETU_MEASURE names a file for the numbers,
+  // which npm run measure:bridge takes three times and writes under docs/measurements
+  it('measures the bridge from a key to the text and to a decoration, quiet and under three loads', async () => {
+    const reader: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
+    // The last line is plain, so its text on screen is the text typed. Each line above it is an item of a list, as a long
+    // note's lines sit in blocks of their own: one paragraph of 2,000 lines would have every key parse all its links again
+    const lines = Array.from({ length: 2000 }, (_, i) => `- line ${i} with **some** text and a [link](https://example.com/${i})`)
+    const big = [...lines, '', 'plain'].join('\n')
+    // A folder of a real one's size for search to index
+    const note = (i: number, sweep: number) => `# Note ${i}\n\n${Array.from({ length: 40 }, (_, j) => `word${(i * 7 + j) % 997} sweep ${sweep} line ${j}`).join('\n')}\n`
+    const notes: Record<string, string> = { 'big.md': big }
+    for (let i = 0; i < 469; i++) notes[`note-${String(i).padStart(3, '0')}.md`] = note(i, 0)
+    const { app, editor, dataDir, folder } = await started({
+      notes,
+      plugins: { marker: reader },
+      loads: { painter: { granted: [{ type: 'ui.view' }], manifest: { views: { rows: { title: 'Rows', kind: 'view' } } } }, flooder: { granted: reader } },
+    })
+    await open(editor, 'big.md')
+    const marker = await pluginWorker(app, 'marker')
+    const painter = await pluginWorker(app, 'painter')
+    const flooder = await pluginWorker(app, 'flooder')
+    await until(async () => (await drive(marker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
+    await until(async () => (await drive(flooder, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
+    // The marking plugin also hears the range the editor draws, as a plugin marking only what is drawn would
+    await drive(marker, async scope => {
+      scope.follow = true
+      await scope.editor.viewports(true)
+    })
+    const ranges = async () => (await drive(marker, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.viewport').length
+    await until(async () => (await ranges()) > 0)
+    await shown(editor).click()
+    await editor.keyboard.press('ControlOrMeta+End')
+    // For each key: when its event was made, when the character itself is on screen, then when the worker's mark on it is.
+    // The event's own time counts what the key waited behind other work on the page
     await editor.evaluate(() => {
       const scope = window as unknown as { timings: { typed: number, marked: number }[], expect: string, length: number }
       scope.timings = []
       let started = 0
       let typed = 0
-      window.addEventListener('keydown', () => {
-        started = performance.now()
+      window.addEventListener('keydown', event => {
+        started = event.timeStamp
         typed = 0
       }, true)
       new MutationObserver(() => {
@@ -363,26 +613,84 @@ describe('the drawer', () => {
         }
       }).observe(document.getElementById('editors')!, { subtree: true, childList: true, characterData: true, attributes: true })
     })
+    let count = 0
     const letters = 'abcdefghij'
-    for (let i = 0; i < 100; i++) {
-      const letter = letters[i % letters.length]
-      await editor.evaluate(([next, length]) => {
-        Object.assign(window, { expect: next, length })
-      }, [letter, 'plain'.length + i + 1] as const)
-      await editor.keyboard.press(letter)
-      await until(async () => (await editor.evaluate(() => (window as unknown as { timings: unknown[] }).timings.length)) === i + 1, 5000)
+    // Ten keys a second, a fast typist's pace, so each run lasts ten seconds of its load
+    const PACE_MS = 100
+    const keys = async (): Promise<Run> => {
+      await editor.evaluate(() => {
+        (window as unknown as { timings: unknown[] }).timings = []
+      })
+      const rangesBefore = await ranges()
+      for (let i = 0; i < 100; i++) {
+        const letter = letters[i % letters.length]
+        const next = Date.now() + PACE_MS
+        count++
+        await editor.evaluate(([next, length]) => {
+          Object.assign(window, { expect: next, length })
+        }, [letter, 'plain'.length + count] as const)
+        await editor.keyboard.press(letter)
+        await until(async () => (await editor.evaluate(() => (window as unknown as { timings: unknown[] }).timings.length)) === i + 1, 15_000)
+        await tick(next - Date.now())
+      }
+      const timings = await editor.evaluate(() => (window as unknown as { timings: { typed: number, marked: number }[] }).timings)
+      expect(timings).toHaveLength(100)
+      // Each key typed on the drawn last line moves the end of the range
+      const heard = await ranges() - rangesBefore
+      expect(heard).toBeGreaterThan(0)
+      return { typed: summary(timings.map(each => each.typed)), marked: summary(timings.map(each => each.marked)), ranges: heard }
     }
-    const timings = await editor.evaluate(() => (window as unknown as { timings: { typed: number, marked: number }[] }).timings)
-    const sorted = (values: number[]) => [...values].sort((a, b) => a - b)
-    const marked = sorted(timings.map(each => each.marked))
-    const typed = sorted(timings.map(each => each.typed))
-    const bridge = sorted(timings.map(each => each.marked - each.typed))
-    const summary = (values: number[]) => ({ median: values[49], p95: values[94], max: values[99] })
-    // HETU_MEASURE names a file for the numbers, for the record
+    const counts = (worker: Worker) => drive(worker, async scope => ({ ...(scope as unknown as { counts: Record<string, number> }).counts }))
+    const reads = async () => (await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'luoshu.read'
+      && String(record.caller).includes('search')).length
+    const sitting: Partial<Sitting> = {}
+
+    sitting.quiet = await keys()
+
+    await drive(painter, async scope => (scope as unknown as { redraw: (on: boolean) => void }).redraw(true))
+    // The painter's view is on screen beside the note
+    await until(async () => (await editor.locator('#editors .hetu-surface:not([hidden])', { hasText: 'row 0 at' }).count()) === 1)
+    const drawsBefore = await counts(painter)
+    sitting.view = await keys()
+    const drawsAfter = await counts(painter)
+    await drive(painter, async scope => (scope as unknown as { redraw: (on: boolean) => void }).redraw(false))
+    sitting.view.load = { draws: drawsAfter.draws - drawsBefore.draws, refused: drawsAfter.refusedDraws - drawsBefore.refusedDraws }
+    expect(sitting.view.load.draws).toBeGreaterThan(0)
+    await tick(500)
+
+    await drive(flooder, async scope => (scope as unknown as { flood: (on: boolean) => Promise<void> }).flood(true))
+    await tick(500)
+    const floodBefore = await counts(flooder)
+    sitting.flood = await keys()
+    const floodAfter = await counts(flooder)
+    await drive(flooder, async scope => (scope as unknown as { flood: (on: boolean) => Promise<void> }).flood(false))
+    sitting.flood.load = { drawn: floodAfter.drawn - floodBefore.drawn, throttled: floodAfter.throttled - floodBefore.throttled }
+    expect(sitting.flood.load.throttled).toBeGreaterThan(0)
+    await tick(500)
+
+    // Each note rewritten in turn, about 470 a second, each read again by search
+    let rewriting = true
+    const readsBefore = await reads()
+    const rewrites = (async () => {
+      for (let sweep = 1; rewriting; sweep++) {
+        for (let i = 0; i < 469 && rewriting; i++) {
+          await writeFile(path.join(folder, `note-${String(i).padStart(3, '0')}.md`), note(i, sweep))
+          if (i % 47 === 46) await tick(100)
+        }
+      }
+    })()
+    await tick(1000)
+    sitting.search = await keys()
+    const readsTyped = await reads()
+    rewriting = false
+    await rewrites
+    await tick(2000)
+    sitting.search.load = { reads: readsTyped - readsBefore }
+    expect(sitting.search.load.reads).toBeGreaterThan(0)
+
     const measured = process.env.HETU_MEASURE
-    if (measured !== undefined) {
-      await writeFile(measured, JSON.stringify({ marked: summary(marked), typed: summary(typed), bridge: summary(bridge), timings }))
-    }
-    expect(timings).toHaveLength(100)
-  })
+    if (measured !== undefined) await writeFile(measured, JSON.stringify(sitting))
+    // Each load within twice the quiet run of this app by the 95th percentile from a key to its text
+    expect(held(sitting as Sitting)).toMatchObject({ view: { within: true }, flood: { within: true }, search: { within: true } })
+  }, 300_000)
 })

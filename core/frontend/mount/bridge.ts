@@ -52,6 +52,9 @@ export const RESERVED_KEYS: readonly string[] = Object.freeze([
 type Reach = { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: readonly string[] }
 const none: Reach = Object.freeze({ read: false, edit: false, uiRead: false, list: false, verbs: Object.freeze([]) })
 
+// A range of a note's text its editor draws, in the version it was drawn at, stamped in the order the page told them
+type Drawn = { version: number, from: number, to: number, stamp: number }
+
 // The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
 export const NODES_PER_SECOND = 200_000
 
@@ -64,6 +67,9 @@ type Connection = {
   readonly port: PortLike
   bindings: Map<string, string>
   keys: boolean
+  // Whether it asked for the range each editor draws and the stamp of the last range it was sent, by instance
+  viewports: boolean
+  readonly ranges: Map<string, number>
   // The instances it holds marks on
   readonly marked: Set<string>
   // How many marks each of its sets holds, by instance
@@ -90,6 +96,10 @@ export class Drawer {
   private reaches = new Map<string, Promise<Reach>>()
   // The instances the human opened, the only ones ui.read reaches
   private readonly human = new Set<string>()
+  // The range each open instance's editor draws as the page last told it, with the version it was measured at and a
+  // stamp, so a plugin is sent each range once
+  private readonly viewports = new Map<string, Drawn>()
+  private stamped = 0
   private readonly mac: boolean
   private readonly clock: () => number
   private readonly settings: () => SettingsValue
@@ -133,7 +143,7 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(), told: new Set(),
+      plugin, incarnation, port, bindings: new Map(), keys: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
       spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
@@ -174,7 +184,11 @@ export class Drawer {
 
   closed(instance: string): void {
     this.human.delete(instance)
-    for (const conn of this.connections.values()) conn.told.delete(instance)
+    this.viewports.delete(instance)
+    for (const conn of this.connections.values()) {
+      conn.told.delete(instance)
+      conn.ranges.delete(instance)
+    }
     for (const conn of this.connections.values()) {
       if (!conn.marked.delete(instance)) continue
       conn.port.postMessage(JSON.stringify(event({ topic: 'editor.closed', instance })))
@@ -190,10 +204,20 @@ export class Drawer {
     }
   }
 
+  // The editor of the instance draws another range of its text. Each plugin that asked for ranges and reads the note
+  // hears it. One told of the note later hears the last range with editor.opened, one that asks later at its ask
+  viewport(instance: Instance, from: number, to: number): void {
+    const range = { version: instance.versions.version, from, to, stamp: ++this.stamped }
+    this.viewports.set(instance.id, range)
+    for (const conn of this.connections.values()) {
+      if (conn.viewports) void this.tellRange(conn, instance, range)
+    }
+  }
+
   // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
-  // with the note's instance only when it reads the note, and true says the key was taken. A key two plugins bind goes
-  // to the one the human picked in the views menu, else to neither. Otherwise each plugin holding the key stream that
-  // reads the note hears the key
+  // with the note's instance, the selection at the key and its version only when it reads the note. True says the key
+  // was taken. A key two plugins bind goes to the one the human picked in the views menu, else to neither.
+  // Otherwise each plugin holding the key stream that reads the note hears the key
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
@@ -203,10 +227,15 @@ export class Drawer {
     if (owner !== undefined) {
       const conn = owner
       const command = conn.bindings.get(key) as string
+      // Where the human was when the key came, sent once the core says the plugin reads the note
+      const at = open === undefined ? undefined : { version: open.versions.version, selection: open.selection() }
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
-        const named = open !== undefined && this.readsWith(reach, open) ? open.id : null
-        if (this.live(conn)) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.command', command, instance: named })))
+        if (!this.live(conn)) return
+        const body: EventBody = open !== undefined && at !== undefined && this.readsWith(reach, open)
+          ? { topic: 'editor.command', command, instance: open.id, ...at }
+          : { topic: 'editor.command', command, instance: null }
+        conn.port.postMessage(JSON.stringify(event(body)))
       })
       return true
     }
@@ -243,7 +272,10 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.recheck(conn)
   }
 
+  // A note the plugin no longer reads is forgotten as told, so once it reads the note again it hears editor.opened, reads
+  // the text afresh and hears the range drawn then. A check overtaken by a newer core.security leaves told to the newer
   private async recheck(conn: Connection): Promise<void> {
+    const asked = this.reaches
     const held = await this.reachOf(conn.plugin)
     if (!this.live(conn)) return
     this.ui.held(conn.plugin, held.verbs)
@@ -257,6 +289,17 @@ export class Drawer {
       conn.marked.delete(id)
       conn.sets.delete(id)
     }
+    for (const instance of [...this.instances()]) {
+      const reach = await this.reachOf(conn.plugin, instance.path)
+      if (!this.live(conn) || this.reaches !== asked) return
+      if (this.readsWith(reach, instance)) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
+      else this.untell(conn, instance.id)
+    }
+  }
+
+  private untell(conn: Connection, instance: string): void {
+    conn.told.delete(instance)
+    conn.ranges.delete(instance)
   }
 
   private drop(conn: Connection): void {
@@ -268,6 +311,8 @@ export class Drawer {
     conn.sets.clear()
     conn.bindings = new Map()
     conn.keys = false
+    conn.viewports = false
+    conn.ranges.clear()
   }
 
   private live(conn: Connection): boolean {
@@ -301,15 +346,42 @@ export class Drawer {
     return reach.read || (reach.uiRead && this.human.has(instance.id))
   }
 
-  // An event about an instance, to the plugin only when it reads the note
+  // An event about an instance, to the plugin only when it reads the note. editor.opened goes once and brings the last
+  // range the editor drew to a plugin that asked for ranges. An event held back forgets the note as told, so the plugin
+  // hears editor.opened again once it reads the note: at the next check, or now when a newer core.security came while
+  // the core answered
   private async tell(conn: Connection, instance: Instance, body: EventBody): Promise<void> {
+    const asked = this.reaches
     const reach = await this.reachOf(conn.plugin, instance.path)
-    if (!this.live(conn) || !this.readsWith(reach, instance)) return
+    if (!this.live(conn)) return
+    if (!this.readsWith(reach, instance)) {
+      this.untell(conn, instance.id)
+      if (this.reaches !== asked && this.find(instance.id) === instance) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
+      return
+    }
     if (body.topic === 'editor.opened') {
       if (conn.told.has(instance.id)) return
       conn.told.add(instance.id)
     }
     conn.port.postMessage(JSON.stringify(event(body)))
+    if (body.topic === 'editor.opened') this.sendRange(conn, instance, reach, this.viewports.get(instance.id))
+  }
+
+  private async tellRange(conn: Connection, instance: Instance, range: Drawn | undefined): Promise<void> {
+    this.sendRange(conn, instance, await this.reachOf(conn.plugin, instance.path), range)
+  }
+
+  // A range the instance's editor drew, to a plugin that asked for ranges, was told the note opened and reads it with
+  // this reach. A range no newer than the last it was sent doesn't go, so none goes twice or out of order. The range
+  // the editor still draws goes with the note's version now: the page tells each change of its ends, a change that
+  // shifts them included, so changes since left it where it was. An older one goes with the version it was drawn at
+  private sendRange(conn: Connection, instance: Instance, reach: Reach, range: Drawn | undefined): void {
+    if (range === undefined || !this.live(conn) || !conn.viewports || !conn.told.has(instance.id)) return
+    if (!this.readsWith(reach, instance) || range.stamp <= (conn.ranges.get(instance.id) ?? 0)) return
+    conn.ranges.set(instance.id, range.stamp)
+    const { from, to } = range
+    const version = this.viewports.get(instance.id) === range ? instance.versions.version : range.version
+    conn.port.postMessage(JSON.stringify(event({ topic: 'editor.viewport', instance: instance.id, version, from, to })))
   }
 
   // A ui event to an owner's live port
@@ -419,6 +491,13 @@ export class Drawer {
       }
       case 'editor.keys':
         conn.keys = call.args.on
+        return null
+      // An ask sends the range each note it reads is drawn at now, one it was sent already excepted. A stop forgets what
+      // was sent, so the next ask sends the ranges of then
+      case 'editor.viewports':
+        conn.viewports = call.args.on
+        if (!call.args.on) conn.ranges.clear()
+        if (call.args.on) for (const instance of this.instances()) void this.tellRange(conn, instance, this.viewports.get(instance.id))
         return null
     }
   }

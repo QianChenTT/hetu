@@ -1,6 +1,6 @@
 import { ChangeSet, Text } from '@codemirror/state'
 import type { Capability } from '../../api/capabilities.ts'
-import type { Mark } from '../../api/editor.ts'
+import type { BridgeEvent, Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
 import { applyOps, parseDrawerCall, type UiEvent, type UiNode } from '../../api/ui.ts'
 import { Editor } from '../editor.ts'
@@ -10,10 +10,17 @@ import { holds } from './gate.ts'
 // An editor page's drawer in memory, for a plugin's tests: the plugin's views and skeleton applied as the drawer would,
 // notes the test opens served through the editor bridge, and events the test sends. It holds the plugin to its
 // manifest's ui items and scopes. Edits are taken only at the note's current version, with no rebase, and marks are
-// kept as sent
+// kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's editor draws only after the
+// plugin asked with editor.viewports and only of a note it reads, each range once. A command goes only when the plugin
+// bound a key to it, with the note, its version and the selection only when it reads the note
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
-type Note = { path: string, text: Text, version: number }
+type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
+type Selection = { anchor: number, head: number }[]
+// The range the note's editor draws, stamped in the order the test moved it. It goes in the note's version when sent,
+// as hetu's drawer sends the range the editor still draws
+type Drawn = { from: number, to: number, stamp: number }
+type Note = { path: string, text: Text, version: number, drawn: Drawn }
 
 class Refusal {
   readonly code: string
@@ -37,6 +44,12 @@ export class FakeDrawer {
   private readonly notes = new Map<string, Note>()
   private toPlugin: ((message: unknown) => void) | null = null
   private n = 0
+  // What the plugin's port asked for: ranges, with the stamp of the last range sent by instance. The commands it bound
+  // a key to. A new port starts with none, as each run's does in hetu
+  private asked = false
+  private readonly sent = new Map<string, number>()
+  private commands = new Set<string>()
+  private stamped = 0
 
   // A client for the next run of the plugin
   fresh(): Editor {
@@ -50,6 +63,9 @@ export class FakeDrawer {
   connect(granted: readonly Capability[], views: Record<string, ViewSpec>): void {
     this.granted = granted
     this.views = views
+    this.asked = false
+    this.sent.clear()
+    this.commands = new Set()
     const transport: Transport = {
       post: message => void this.serve(message),
       listen: next => {
@@ -79,12 +95,38 @@ export class FakeDrawer {
     return [...this.instancesOf].map(([instance, view]) => ({ instance, view }))
   }
 
-  // A note open in the editor, which the plugin hears of when it reads the path
-  openNote(path: string, text: string): string {
+  // A note open in the editor, which the plugin hears of when it reads the path, then the range its editor draws when
+  // the plugin asked for ranges: drawn, or the whole text as the editor draws a short note
+  openNote(path: string, text: string, drawn?: { from: number, to: number }): string {
     const instance = `n${++this.n}`
-    this.notes.set(instance, { path, text: Text.of(text.split('\n')), version: 0 })
-    if (this.reads(path)) this.emit({ topic: 'editor.opened', instance } as unknown as Body)
+    const doc = Text.of(text.split('\n'))
+    const note: Note = { path, text: doc, version: 0, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
+    this.notes.set(instance, note)
+    if (!this.reads(path)) return instance
+    this.tell({ topic: 'editor.opened', instance })
+    this.sendRange(instance, note)
     return instance
+  }
+
+  // The note's editor draws another range of its text
+  viewport(instance: string, from: number, to: number): void {
+    const note = this.notes.get(instance)
+    if (note === undefined) throw new Error(`no note ${instance} is open`)
+    note.drawn = { from, to, stamp: ++this.stamped }
+    this.sendRange(instance, note)
+  }
+
+  // The human pressed the key the plugin bound to the command, in the note when one is named. False when the plugin
+  // bound no key to it, so nothing is sent
+  command(command: string, instance?: string, selection: Selection = [{ anchor: 0, head: 0 }]): boolean {
+    if (!this.commands.has(command)) return false
+    const note = instance === undefined ? undefined : this.notes.get(instance)
+    if (instance !== undefined && note !== undefined && this.reads(note.path)) {
+      this.tell({ topic: 'editor.command', command, instance, version: note.version, selection: selection.map(range => ({ ...range })) })
+    } else {
+      this.tell({ topic: 'editor.command', command, instance: null })
+    }
+    return true
   }
 
   text(instance: string): string | null {
@@ -93,6 +135,19 @@ export class FakeDrawer {
 
   private has(item: string): boolean {
     return this.granted.some(granted => granted.type === item)
+  }
+
+  private tell(body: EditorBody): void {
+    const message = { v: 1, kind: 'event', ...body }
+    queueMicrotask(() => this.toPlugin?.(message))
+  }
+
+  // The note's range, to a plugin that asked for ranges and reads the note, unless it was sent that range already
+  private sendRange(instance: string, note: Note): void {
+    if (!this.asked || !this.reads(note.path) || note.drawn.stamp <= (this.sent.get(instance) ?? 0)) return
+    this.sent.set(instance, note.drawn.stamp)
+    const { from, to } = note.drawn
+    this.tell({ topic: 'editor.viewport', instance, version: note.version, from, to })
   }
 
   // Every note the test opens is the human's, so ui.read reaches it as hetu's drawer would
@@ -192,9 +247,16 @@ export class FakeDrawer {
       }
       case 'editor.bind':
         need('ui.command')
+        this.commands = new Set(call.args.bindings.map(binding => binding.command))
         return null
       case 'editor.keys':
         need('ui.keys')
+        return null
+      // An ask sends the range of each note the plugin reads, one sent already excepted. A stop forgets what was sent
+      case 'editor.viewports':
+        this.asked = call.args.on
+        if (!call.args.on) this.sent.clear()
+        for (const [instance, note] of this.notes) this.sendRange(instance, note)
         return null
     }
   }

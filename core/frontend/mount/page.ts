@@ -96,6 +96,7 @@ function start(bridge: Bridge): void {
   let frames: Frames | null = null
   const views = new EditorViews(element('editors'), {
     created: instance => drawer?.opened(instance),
+    viewport: (instance, from, to) => drawer?.viewport(instance, from, to),
     changed: (instance, changes, remote, hid) => {
       drawer?.changed(instance, changes)
       if (!remote) notes?.changed(instance.id)
