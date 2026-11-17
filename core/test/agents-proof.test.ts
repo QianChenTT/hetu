@@ -28,8 +28,8 @@ const mcpOf = (version: string) => filesFor({ ...workerManifest('mcp', { capabil
 
 // One folder of notes and one install, booted as often as the proof needs: the real boot, loader, carrier, gate and
 // luoshu, http the install's utility plugin the test drives as the door and mcp the install's own copy, a worker the
-// test answers for, holding read on every note and no agent's item
-async function world() {
+// test answers for, holding read on every note and the agents' items and marks seed gives it, none unless named
+async function world(seed: { agents?: { agent: string, capability: Capability }[], revoked?: string[] } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
@@ -50,7 +50,7 @@ async function world() {
   await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcpOf('1.0.0'))
-  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: [everything], class: 1 }))
+  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: [everything], class: 1, ...seed }))
   open.push(() => rm(base, { recursive: true, force: true }))
 
   // One run of hetu over that folder, ended by the next start or the test's end
@@ -196,5 +196,82 @@ describe('step 5a part A in the joined core', () => {
     const before = mcp.inbox.length
     expect(outcome(await ask(run.door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#2' }))).toBe('policy-down')
     expect(mcp.inbox.slice(before).filter(message => message.kind === 'call')).toEqual([])
+  })
+})
+
+describe('step 5a part B, the connect, in the joined core', () => {
+  const CLAUDE = 'https://claude.ai/oauth/claude-code-client-metadata'
+  const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code', redirect: 'http://localhost:33418/callback', number })
+  const handleOf = (reply: Message) => (reply.result as { handle: string }).handle
+  // The newest incarnation of a plugin's half, the one a call is delivered to
+  const latest = (runtime: FakeRuntime, id: string, place: 'worker' | 'utility' = 'worker') => {
+    let found: Half | null = null
+    for (let n = 1; n <= 20; n++) {
+      try {
+        found = runtime.half(id, n, place)
+      } catch {}
+    }
+    return found!
+  }
+  const answerOf = async (door: Half, handle: string) => ((await ask(door, 'core.agentConnected', { handle })).result as { answer: string }).answer
+
+  it('connects a new agent under a client id another agent holds a grant under, once, refuses a second, drops it with http and refuses a revoked label', async () => {
+    const proof = await world({ agents: [{ agent: `${CLAUDE}#1`, capability: inbox }], revoked: [`${CLAUDE}#2`] })
+    const run = await proof.start()
+    const mcp = run.runtime.half('mcp')
+
+    // http raises a connect for #3 under the client id #1 holds inbox under. The trusted window shows the host first,
+    // the name in quotes and the new label
+    const handle = handleOf(await ask(run.door, 'core.agentConnect', asked(3)))
+    const shown = (await run.list()).requests
+    expect(shown.map(held => [held.kind, held.text, held.agent])).toEqual([[
+      'agent.connect', `Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${CLAUDE}#3"`, `${CLAUDE}#3`,
+    ]])
+    // Before the Confirm the collect answers waiting, a second connect while it waits is refused
+    expect(await answerOf(run.door, handle)).toBe('waiting')
+    expect(outcome(await ask(run.door, 'core.agentConnect', asked(1, 'other-client')))).toBe('throttled')
+    await run.loader.confirm(shown[0]!.id, {})
+    expect(await answerOf(run.door, handle)).toBe('yes')
+    expect(await answerOf(run.door, handle)).toBe('gone')
+    // The new agent holds nothing, #1 still holds its grant
+    expect((await ask(run.door, 'core.agents', { agents: [`${CLAUDE}#1`, `${CLAUDE}#3`] })).result).toEqual([
+      { agent: `${CLAUDE}#1`, holds: 'items' }, { agent: `${CLAUDE}#3`, holds: 'none' },
+    ])
+    const three = await request(run.door, mcp, `${CLAUDE}#3`)
+    expect(await read(mcp, three, 'inbox/a.md')).toBe('not-granted')
+    const one = await request(run.door, mcp, `${CLAUDE}#1`)
+    expect(await read(mcp, one, 'inbox/a.md')).toBe('inbox text')
+
+    // A connect waiting when http restarts is gone and can't be confirmed
+    const waiting = handleOf(await ask(run.door, 'core.agentConnect', asked(4)))
+    const id = run.loader.pending()[0]!.id
+    await run.loader.serve({ callId: 'restart', caller: trusted, action: 'core.restart', args: { plugin: 'http' }, deadline: Date.now() + 30_000 } as Call)
+    await run.loader.settled()
+    const door = latest(run.runtime, 'http', 'utility')
+    expect(run.loader.pending()).toEqual([])
+    await expect(run.loader.confirm(id, {})).rejects.toMatchObject({ code: 'not-found' })
+    expect(await answerOf(door, waiting)).toBe('gone')
+
+    // A connect for a revoked label is refused and a door call under it never reaches mcp
+    expect(outcome(await ask(door, 'core.agentConnect', asked(2)))).toBe('not-granted')
+    expect(run.loader.pending()).toEqual([])
+    const mcpThen = latest(run.runtime, 'mcp')
+    const before = mcpThen.inbox.length
+    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: `${CLAUDE}#2` }))).toBe('not-granted')
+    expect(mcpThen.inbox.slice(before).filter(message => message.kind === 'call')).toEqual([])
+
+    // With the gate switched off a connect is raised and confirmed while the new agent's door call is refused before mcp
+    const off = await run.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
+    if (!('held' in off)) throw new Error('the gate went off at once')
+    await run.loader.confirm(off.held, { typed: 'gate' })
+    await run.loader.settled()
+    const now = latest(run.runtime, 'http', 'utility')
+    const five = handleOf(await ask(now, 'core.agentConnect', asked(5)))
+    await run.loader.confirm(run.loader.pending()[0]!.id, {})
+    expect(await answerOf(now, five)).toBe('yes')
+    const mcpNow = latest(run.runtime, 'mcp')
+    const seen = mcpNow.inbox.length
+    expect(outcome(await ask(now, 'mcp.handle', { body: '{}' }, { onBehalf: `${CLAUDE}#5` }))).toBe('policy-down')
+    expect(mcpNow.inbox.slice(seen).filter(message => message.kind === 'call')).toEqual([])
   })
 })
