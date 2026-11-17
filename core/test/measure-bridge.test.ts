@@ -42,15 +42,26 @@ describe('the bridge measurement', () => {
     expect(held(tail).flood).toEqual({ ratio: 2.5, within: false })
   })
 
-  it('takes each ratio from the medians of the repeats of one sitting', () => {
+  it('takes each ratio from the medians of the repeats and holds each repeat to its own quiet run', () => {
     const result = verdict([sitting(2, 3, 9, 4), sitting(4, 5, 12, 4), sitting(3, 20, 6, 4)])
     expect(result.runs.quiet.typed.median).toBe(3)
     expect(result.runs.view.typed).toEqual({ repeats: [3, 5, 20], median: 5, spread: true })
     expect(result.ratios).toEqual({ view: 5 / 3, flood: 9 / 3, search: 4 / 3 })
-    expect(result.meets).toEqual({ view: true, flood: false, search: true })
+    // view's medians are within twice quiet's while its third repeat is not
+    expect(result.meets).toEqual({ view: false, flood: false, search: true })
     expect(result.runs.flood.typedMedian).toEqual({ repeats: [4.5, 6, 3], median: 4.5, spread: true })
     expect(result.runs.quiet.markedMedian.median).toBe(2)
     expect(result.loads.flood).toEqual({ drawn: [20_000, 20_000, 20_000], throttled: [3, 3, 3] })
+  })
+
+  it('keeps the viewport events the marking plugin heard in each run of each repeat and none for a sitting that counted none', () => {
+    const counted = (n: number) => {
+      const made = sitting(2, 3, 3, 3)
+      for (const name of ['quiet', 'view', 'flood', 'search'] as const) made[name].ranges = n
+      return made
+    }
+    expect(verdict([counted(100), counted(101), counted(99)]).ranges).toEqual({ quiet: [100, 101, 99], view: [100, 101, 99], flood: [100, 101, 99], search: [100, 101, 99] })
+    expect(verdict([sitting(2, 3, 3, 3)]).ranges).toBeNull()
   })
 
   it('writes each run with its repeats, its ratio and the conditions it was taken under', () => {
@@ -62,10 +73,24 @@ describe('the bridge measurement', () => {
     expect(text).toContain('16 logical CPUs')
     expect(text).toContain('other suites running')
     expect(text).toContain('| flood | 9.0, 12.0, 6.0 | 9.0 | 4.5, 6.0, 3.0 | 4.5 | 3.00 | no, repeats spread |')
-    expect(text).toContain('| view | 3.0, 5.0, 20.0 | 5.0 | 1.5, 2.5, 10.0 | 2.5 | 1.67 | yes, repeats spread |')
+    expect(text).toContain('| view | 3.0, 5.0, 20.0 | 5.0 | 1.5, 2.5, 10.0 | 2.5 | 1.67 | no, repeats spread |')
     expect(text).toContain('| quiet | 2.0, 4.0, 3.0 | 3.0 | 1.0, 2.0, 1.5 | 1.5 |  | repeats spread |')
     expect(text).toContain('| search | 4.0, 4.0, 4.0 | 4.0 | 2.0, 2.0, 2.0 | 2.0 | 1.33 | yes |')
     expect(text).toContain('within twice the quiet run')
+    // What the table computes: the ratio of the medians and the bar held by each repeat
+    expect(text).toContain('| run | 95th percentile, repeats | 95th percentile | median, repeats | median | ratio of the medians to quiet | each repeat within the bar |')
+    expect(text).toContain("The ratio is the median of the three 95th percentiles of a load over the quiet run's")
+    expect(text).not.toContain('editor.viewport events')
     expect(text).not.toMatch(/;/)
+  })
+
+  it('writes the viewport events the marking plugin heard in each run when the sittings counted them', () => {
+    const made = sitting(2, 3, 3, 3)
+    made.quiet.ranges = 100
+    made.view.ranges = 101
+    made.flood.ranges = 100
+    made.search.ranges = 102
+    const text = report({ title: 'On', commit: 'abc1234', when: 'now', cpus: 16, model: 'Some CPU', conditions: '' }, verdict([made]))
+    expect(text).toContain('- editor.viewport events the marking plugin heard while the keys were typed: quiet 100, view 101, flood 100, search 102')
   })
 })

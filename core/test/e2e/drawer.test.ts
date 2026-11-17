@@ -581,9 +581,13 @@ describe('the drawer', () => {
     const flooder = await pluginWorker(app, 'flooder')
     await until(async () => (await drive(marker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
     await until(async () => (await drive(flooder, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
+    // The marking plugin also hears the range the editor draws, as a plugin marking only what is drawn would
     await drive(marker, async scope => {
       scope.follow = true
+      await scope.editor.viewports(true)
     })
+    const ranges = async () => (await drive(marker, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.viewport').length
+    await until(async () => (await ranges()) > 0)
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
     // For each key: when its event was made, when the character itself is on screen, then when the worker's mark on it is.
@@ -617,6 +621,7 @@ describe('the drawer', () => {
       await editor.evaluate(() => {
         (window as unknown as { timings: unknown[] }).timings = []
       })
+      const rangesBefore = await ranges()
       for (let i = 0; i < 100; i++) {
         const letter = letters[i % letters.length]
         const next = Date.now() + PACE_MS
@@ -630,7 +635,10 @@ describe('the drawer', () => {
       }
       const timings = await editor.evaluate(() => (window as unknown as { timings: { typed: number, marked: number }[] }).timings)
       expect(timings).toHaveLength(100)
-      return { typed: summary(timings.map(each => each.typed)), marked: summary(timings.map(each => each.marked)) }
+      // Each key typed on the drawn last line moves the end of the range
+      const heard = await ranges() - rangesBefore
+      expect(heard).toBeGreaterThan(0)
+      return { typed: summary(timings.map(each => each.typed)), marked: summary(timings.map(each => each.marked)), ranges: heard }
     }
     const counts = (worker: Worker) => drive(worker, async scope => ({ ...(scope as unknown as { counts: Record<string, number> }).counts }))
     const reads = async () => (await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'luoshu.read'

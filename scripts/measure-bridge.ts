@@ -9,7 +9,8 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 
 export type Summary = { median: number, p95: number, max: number }
-export type Run = { typed: Summary, marked: Summary, load?: Record<string, number> }
+// ranges counts the editor.viewport events the marking plugin heard while the keys were typed
+export type Run = { typed: Summary, marked: Summary, load?: Record<string, number>, ranges?: number }
 export const LOADS = ['view', 'flood', 'search'] as const
 export type Load = typeof LOADS[number]
 export type RunName = 'quiet' | Load
@@ -21,10 +22,14 @@ export type Kept = { repeats: number[], median: number, spread: boolean }
 export type Verdict = {
   // typed and marked keep the 95th percentiles of the repeats, typedMedian and markedMedian their medians
   runs: Record<RunName, { typed: Kept, marked: Kept, typedMedian: Kept, markedMedian: Kept }>
+  // The median of a load's 95th percentiles over the quiet run's median
   ratios: Record<Load, number>
+  // Whether every repeat held the load within twice its own quiet run
   meets: Record<Load, boolean>
   // What each load did in each repeat, so a run is seen to have been loaded
   loads: Record<Load, Record<string, number[]>>
+  // The marking plugin's viewport events in each run of each repeat, null when the sittings counted none
+  ranges: Record<RunName, number[]> | null
 }
 
 // Under a load, the 95th percentile from a key to its text stays within twice the quiet run's of the same sitting
@@ -64,12 +69,14 @@ export function verdict(sittings: Sitting[]): Verdict {
   }])) as Verdict['runs']
   const quiet = runs.quiet.typed.median
   const ratios = Object.fromEntries(LOADS.map(load => [load, runs[load].typed.median / quiet])) as Record<Load, number>
-  const meets = Object.fromEntries(LOADS.map(load => [load, within(quiet, runs[load].typed.median)])) as Record<Load, boolean>
+  const meets = Object.fromEntries(LOADS.map(load => [load, sittings.every(sitting => held(sitting)[load].within)])) as Record<Load, boolean>
   const loads = Object.fromEntries(LOADS.map(load => {
     const names = [...new Set(sittings.flatMap(sitting => Object.keys(sitting[load].load ?? {})))]
     return [load, Object.fromEntries(names.map(name => [name, sittings.map(sitting => sitting[load].load?.[name] ?? 0)]))]
   })) as Verdict['loads']
-  return { runs, ratios, meets, loads }
+  const counted = sittings.some(sitting => RUNS.some(name => sitting[name].ranges !== undefined))
+  const ranges = counted ? Object.fromEntries(RUNS.map(name => [name, sittings.map(sitting => sitting[name].ranges ?? 0)])) as Record<RunName, number[]> : null
+  return { runs, ratios, meets, loads, ranges }
 }
 
 export type Conditions = { title: string, commit: string, when: string, cpus: number, model: string, conditions: string }
@@ -84,7 +91,7 @@ const what: Record<RunName, string> = {
 }
 
 // One sitting's section: each run's 95th percentile and median in ms, key to text and key to mark, with the ratio
-// of its 95th percentile to the quiet run's
+// of the median of its 95th percentiles to the quiet run's and whether each repeat held the bar
 export function report(at: Conditions, result: Verdict): string {
   const lines = [
     `## ${at.title}`,
@@ -93,13 +100,13 @@ export function report(at: Conditions, result: Verdict): string {
     '',
     'Each run types 100 keys at the end of a note of 2,000 list items each with a link and bold text, then a plain last line, while a plugin marks each key typed. Key to text is from the key event to its character on screen, key to mark to the plugin\'s mark on it. Three repeats, each one app with the quiet run and the three loads in turn, the median of the repeats kept',
     '',
-    'The bar: under each load the 95th percentile from a key to its text stays within twice the quiet run\'s of the same repeat',
+    'The bar: under each load the 95th percentile from a key to its text stays within twice the quiet run\'s of the same repeat. The last column says whether each repeat held it. The ratio is the median of the three 95th percentiles of a load over the quiet run\'s',
     '',
     ...RUNS.map(name => `- ${name}: ${what[name]}`),
     '',
     'From a key to its text, ms: the 95th percentile and the median of each repeat, then the median of the repeats',
     '',
-    '| run | 95th percentile, repeats | 95th percentile | median, repeats | median | ratio to quiet | within the bar |',
+    '| run | 95th percentile, repeats | 95th percentile | median, repeats | median | ratio of the medians to quiet | each repeat within the bar |',
     '|---|---|---|---|---|---|---|',
     ...RUNS.map(name => {
       const { typed, typedMedian } = result.runs[name]
@@ -121,6 +128,7 @@ export function report(at: Conditions, result: Verdict): string {
     'What each load did in each repeat',
     '',
     ...LOADS.map(load => `- ${load}: ${Object.entries(result.loads[load]).map(([name, each]) => `${name} ${each.join(', ')}`).join(', ')}`),
+    ...result.ranges === null ? [] : [`- editor.viewport events the marking plugin heard while the keys were typed: ${RUNS.map(name => `${name} ${result.ranges![name].join(', ')}`).join(', ')}`],
     '',
   ]
   return lines.join('\n')
