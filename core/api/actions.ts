@@ -315,7 +315,7 @@ export type ListedPlugin = {
 }
 
 // A request waiting for the human in the core's own words, with the word to type where the change asks for one. agent is
-// the label of an agent's ask, which its text holds in quotes, null for every other request
+// the label of an agent's ask or the one a connect gives, which its text holds in quotes, null for every other request
 export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and

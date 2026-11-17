@@ -431,3 +431,25 @@ describe('the Confirm of a connect', () => {
     expect(await collect(handle)).toBe('waiting')
   })
 })
+
+describe('a connect in the line of requests', () => {
+  it('waits in the order it was raised, behind the asks before it and before the asks after it', async () => {
+    const { loader, connect, agentAsk, list } = await started()
+    await agentAsk('client#1', [inbox])
+    await connect()
+    await agentAsk('client#2', [inbox])
+    expect(loader.pending().map(one => one.kind)).toEqual(['agent.ask', 'agent.connect', 'agent.ask'])
+    expect((await list()).requests[1]!.agent).toBe(LABEL)
+  })
+
+  it('is taken behind sixteen asks, in a place of its own, lapsing there if they are not answered within its minute', async () => {
+    const { loader, connect, collect, agentAsk, clock } = await started()
+    for (let i = 1; i <= 16; i++) await agentAsk(`client#${i}`, [inbox])
+    expect(await code(agentAsk('client#17', [inbox]))).toBe('throttled')
+    const handle = await connect()
+    expect(loader.pending().map(one => one.kind).indexOf('agent.connect')).toBe(16)
+    clock.now += 60_000
+    expect(await collect(handle)).toBe('gone')
+    expect(loader.pending()).toHaveLength(16)
+  })
+})
