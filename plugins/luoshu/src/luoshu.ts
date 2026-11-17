@@ -510,16 +510,18 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         linked = false
       }
       if (linked) {
-        const at = from
+        // The file at the to end once linked. None there already leaves nothing to take back and the from end as it was
+        const made = await lstat(to.absolute, { bigint: true }).catch(() => null)
+        if (made === null) throw refused('stale')
         try {
           // The file linked is the one the from end holds as judged, else the link is taken back: another program can
           // put a note under another case of the last name between the look and the link
-          const still = await namedAgain(source, at, await lstat(to.absolute, { bigint: true }), end(0))
+          const still = await namedAgain(source, from, made, end(0))
           if (still === null) throw refused('stale')
           from = still
           await retried(() => unlink(still.absolute), still.absolute)
         } catch (err) {
-          await unlink(to.absolute).catch(() => {})
+          await takenBack(to.absolute, from.absolute, there)
           throw err
         }
       }
@@ -533,6 +535,23 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     publish('changed', from.relative)
     publish('changed', to.relative)
     return null
+  }
+
+  // A move's link at the to end taken back once the move is refused, only while the to end holds a file the link can
+  // have made: the one the from end was looked at as or the one at the from end now, which the link gave a second
+  // name. So another program's note made at the to end since is left. A link that can't be taken back throws what the
+  // carrier answers failed with a fault and records, so the caller isn't told the move was refused while its note sits
+  // at the to end too
+  async function takenBack(to: string, from: string, looked: Opened): Promise<void> {
+    const there = await lstat(to, { bigint: true }).catch(() => null)
+    if (there === null) return
+    const atFrom = await lstat(from, { bigint: true }).catch(() => null)
+    if (![looked, atFrom].some(file => file !== null && file.ino === there.ino && file.dev === there.dev)) return
+    try {
+      await retried(() => unlink(to), to)
+    } catch (err) {
+      throw new Error(`a move's link at the to end could not be taken back: ${(err as NodeJS.ErrnoException).code ?? err}`)
+    }
   }
 
   // Every file under start, relative to root, past dot files and dot folders at any depth (.git and the temp files a
