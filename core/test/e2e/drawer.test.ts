@@ -513,7 +513,7 @@ describe('the drawer', () => {
     expect((await drive(unasked, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.opened')).toHaveLength(2)
   })
 
-  // CodeMirror's viewport is what it draws: the lines on screen with a margin past them, and a stretch hidden in it
+  // CodeMirror's viewport is what it draws: the lines on screen with a margin past them and a stretch hidden in it
   // whole. Its visibleRanges leaves out each hidden stretch of 20 characters or more, the margin kept
   it('sends the range the editor draws, past the lines on screen and over a stretch another plugin hid', async () => {
     const plugins: Record<string, Capability[]> = {

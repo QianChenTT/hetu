@@ -67,7 +67,7 @@ type Connection = {
   readonly port: PortLike
   bindings: Map<string, string>
   keys: boolean
-  // Whether it asked for the range each editor draws, and the stamp of the last range it was sent by instance
+  // Whether it asked for the range each editor draws and the stamp of the last range it was sent, by instance
   viewports: boolean
   readonly ranges: Map<string, number>
   // The instances it holds marks on

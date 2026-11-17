@@ -217,7 +217,7 @@ describe('the selection and the viewport', () => {
     expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 2, 9)])
   })
 
-  it('sends no range after the plugin stopped them, and the range drawn then once it asks again', async () => {
+  it('sends no range after the plugin stopped them and the range drawn then once it asks again', async () => {
     const notes = twoNotes()
     const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
     drawer.viewport(notes[0].instance, 0, 9)
@@ -260,7 +260,7 @@ describe('the selection and the viewport', () => {
     expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }, range('n1', 0, 0, 13)])
   })
 
-  it('sends no range while a plugin that asked has lost its read of the note, and the next one once it reads again', async () => {
+  it('sends no range while a plugin that asked has lost its read of the note and the next one once it reads again', async () => {
     const notes = twoNotes()
     const reach: Record<string, Reach> = { alpha: { read: ['a.md'] } }
     const { drawer, core } = started(reach, notes)
@@ -280,7 +280,7 @@ describe('the selection and the viewport', () => {
     expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 3, 9)])
   })
 
-  it('sends a restarted plugin no range until its new run asks, and its stopped run none', async () => {
+  it('sends a restarted plugin no range until its new run asks and its stopped run none', async () => {
     const notes = twoNotes()
     const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
     drawer.viewport(notes[0].instance, 0, 9)
