@@ -197,7 +197,12 @@ export class Requests {
         void this.host.record('security.stale', fields)
         throw { code: 'stale' }
       }
-      await this.landThenApply(one.change, { ...fields, by: 'confirm' })
+      // Looked up again once the record landed: a request withdrawn or lapsed while it landed applies nothing
+      const still = () => {
+        this.lapse()
+        return this.held.get(id) === one
+      }
+      await this.landThenApply(one.change, { ...fields, by: 'confirm' }, still)
       this.drop(id)
     })
   }
@@ -230,8 +235,8 @@ export class Requests {
   // applies nothing, and a write that fails applies nothing either. Turning recording off is the one exception: it
   // writes what waits first and counts what still does in its own record, which is then the last one written,
   // and it applies even when that record is lost, since the log it switches off is what can't write. The drain and the
-  // record share the one wait
-  private async landThenApply(change: Change, fields: Record<string, Field>): Promise<void> {
+  // record share the one wait. still says whether the request is still held once its record landed, for a Confirm
+  private async landThenApply(change: Change, fields: Record<string, Field>, still: () => boolean = () => true): Promise<void> {
     const stopping = change.kind === 'recordNothing' && change.on
     const whole = this.host.recordMs ?? CONFIRM_RECORD_MS
     const wait = stopping ? whole / 2 : whole
@@ -245,6 +250,10 @@ export class Requests {
       clearTimeout(timer)
     }
     if (landing === 'lost' && !stopping) throw { code: 'failed' }
+    if (!still()) {
+      if (stopping) this.host.resume()
+      throw { code: 'not-found' }
+    }
     try {
       await this.host.applyNow(change, fields.by === 'confirm')
     } catch {

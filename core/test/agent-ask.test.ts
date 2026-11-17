@@ -4,7 +4,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/slots.ts'
 import { StateStore } from '../backend/boot/state.ts'
-import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './loader-fakes.ts'
+import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, until, workerManifest, type FakeLink } from './loader-fakes.ts'
 
 afterEach(cleanup)
 
@@ -355,6 +355,55 @@ describe('an agent\'s ask that lapses or is withdrawn', () => {
     expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.ask' }, { kind: 'agent.ask' }])
     expect(await code(loader.confirm(id, {}))).toBe('not-found')
     expect((await stored()).agents).toBeUndefined()
+  })
+
+  // The Confirm's record held back until the test lands it, so the ask can go while the Confirm waits on it. Resolves
+  // once the Confirm waits on its record, with what lands it
+  function holdConfirm(link: FakeLink): Promise<() => void> {
+    return new Promise(held => {
+      link.landing = event => (event === 'security.confirm' ? new Promise(resolve => held(() => resolve('landed'))) : 'landed')
+    })
+  }
+  const securityEvents = (link: FakeLink) => link.records.map(record => record.event).filter(event => event.startsWith('security.'))
+
+  it('applies nothing for a Confirm whose ask was withdrawn while its record landed and answers not-found', async () => {
+    const { loader, ask, link, stored, runtime } = await started()
+    await ask('client#1', [inbox])
+    const holding = holdConfirm(link)
+    const confirming = code(loader.confirm(loader.pending()[0].id, {}))
+    const land = await holding
+    runtime.half('mcp').crash()
+    await until(() => loader.pending().length === 0)
+    land()
+    expect(await confirming).toBe('not-found')
+    expect((await stored()).agents).toBeUndefined()
+    expect(securityEvents(link)).toEqual(['security.request', 'security.confirm', 'security.withdrawn'])
+  })
+
+  it('applies nothing for a Confirm whose ask lapsed while its record landed and answers not-found', async () => {
+    const { loader, ask, link, stored, clock } = await started()
+    await ask('client#1', [inbox])
+    clock.now += 5 * 60_000 - 1
+    const holding = holdConfirm(link)
+    const confirming = code(loader.confirm(loader.pending()[0].id, {}))
+    const land = await holding
+    clock.now += 1
+    land()
+    expect(await confirming).toBe('not-found')
+    expect((await stored()).agents).toBeUndefined()
+    expect(securityEvents(link)).toEqual(['security.request', 'security.confirm', 'security.lapsed'])
+  })
+
+  it('still applies a Confirm whose ask stayed while its record landed', async () => {
+    const { loader, ask, link, stored } = await started()
+    await ask('client#1', [inbox])
+    const holding = holdConfirm(link)
+    const confirming = code(loader.confirm(loader.pending()[0].id, {}))
+    const land = await holding
+    land()
+    expect(await confirming).toBeNull()
+    expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }])
+    expect(securityEvents(link)).toEqual(['security.request', 'security.confirm', 'security.applied'])
   })
 
   it('withdraws every waiting ask when the human switches mcp off', async () => {
