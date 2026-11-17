@@ -4,9 +4,11 @@ import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
+import { communitySource } from './community.ts'
 
-// The first-party plugins built, each a worker from src/worker.ts
-const FIRST_PARTY = ['search', 'layout']
+// The first-party plugins built, each a worker from src/worker.ts, and where its source is: hetu's own plugins folder
+// or the community package npm installed at the commit package.json pins
+const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
 const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu', 'history', 'exec', 'http']
 // The in-page install plugins, each a module the editor page compiles in from core/frontend/mount. The install's copy
@@ -15,6 +17,7 @@ const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu', 'history', 'exec',
 const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
 
 const core = path.join(import.meta.dirname, '..')
+const repo = path.join(core, '..')
 const frontend = path.join(core, 'frontend')
 // Electron 45's Node and Chromium
 const NODE = 'node24.22'
@@ -85,9 +88,10 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   // The first-party plugins the install carries, each built the same way and listed as first-party, which the loader
-  // copies into the plugin folder. Today these are search and the layout
-  for (const id of FIRST_PARTY) {
-    const source = path.join(core, '..', 'plugins', id)
+  // copies into the plugin folder. A community plugin's manifest is copied and its source bundled with hetu's own SDK.
+  // Nothing of the package is run and its hash is of what this build wrote, as every other plugin's is
+  for (const [id, from] of Object.entries(FIRST_PARTY)) {
+    const source = from === 'hetu' ? path.join(repo, 'plugins', id) : await communitySource(repo, id)
     const root = path.join(outDir, 'plugins', id)
     await rm(root, { recursive: true, force: true })
     await mkdir(path.join(root, 'dist'), { recursive: true })

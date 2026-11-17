@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,12 +6,16 @@ import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST, installList } from '../api/install.ts'
 import { installManifest } from '../api/manifest.ts'
-import { buildMain } from '../build/main.ts'
+import { type BuildKind, buildMain } from '../build/main.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
+import { buildPlugin } from '../sdk/build/esbuild.ts'
 
+const repo = path.join(import.meta.dirname, '..', '..')
 const made: string[] = []
+
+type Exactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 
 afterEach(async () => {
   for (const dir of made.splice(0)) await rm(dir, { recursive: true, force: true })
@@ -37,7 +41,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'gate', 'hidden-marks', 'history', 'http', 'layout', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'file-explorer', 'gate', 'hidden-marks', 'history', 'http', 'layout', 'luoshu', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -50,6 +54,59 @@ describe('the main bundle', () => {
     expect(list.plugins.layout).toEqual({ path: 'plugins/layout', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
     expect(await checkManifest(root, { built: true })).toEqual([])
+  })
+
+  // Its source is the community package npm installed at the commit package.json pins. Its manifest is held here in
+  // full, so a new commit that changes what the explorer may do shows in hetu's own diff and not only as a new hash
+  it('writes the file explorer into the install as a first-party copy built from the community package, with the hash of its files', async () => {
+    const out = await outDir()
+    await buildMain(out)
+    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
+    const root = path.join(out, 'plugins', 'file-explorer')
+    expect(list.plugins['file-explorer']).toEqual({ path: 'plugins/file-explorer', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
+    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
+    expect(await checkManifest(root, { built: true })).toEqual([])
+    expect(JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8'))).toEqual({
+      id: 'file-explorer',
+      name: 'Files',
+      version: '0.1.0',
+      api: '^3',
+      entries: { worker: 'dist/worker.js' },
+      requires: ['luoshu'],
+      views: { files: { title: 'Files', kind: 'view' } },
+      capabilities: [
+        { type: 'luoshu.list', paths: ['**'] },
+        { type: 'luoshu.read', paths: ['**'] },
+        { type: 'luoshu.write', paths: ['**'] },
+        { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] },
+        { type: 'ui.view' },
+        { type: 'storage' },
+      ],
+    })
+    const source = path.join(repo, 'node_modules', 'hetu-plugins', 'file-explorer')
+    expect(await readFile(path.join(root, 'hetu-plugin.json'))).toEqual(await readFile(path.join(source, 'hetu-plugin.json')))
+    const [built] = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+    expect(await readFile(path.join(root, 'dist', 'worker.js'), 'utf8')).toBe(built!.text)
+    // Bundled with hetu's own SDK: everything it takes in is the plugin's folder, the core this build runs from or the
+    // core @hetu/sdk links to, one folder in a checkout
+    const own = await realpath(source)
+    const cores = [await realpath(path.join(repo, 'core')), path.dirname(await realpath(path.join(repo, 'node_modules', '@hetu', 'sdk')))]
+    const inputs = await Promise.all(built!.inputs.map(input => realpath(path.resolve(source, input.replace(/^hetu-worker:/, '')))))
+    expect(inputs.filter(input => input.startsWith(own + path.sep)).length).toBeGreaterThan(0)
+    expect(inputs.filter(input => ![own, ...cores].some(folder => input.startsWith(folder + path.sep)))).toEqual([])
+  })
+
+  // The build takes source only from this repository and the package npm installed here, so nothing outside the
+  // repository can name another folder for it
+  it('reads no environment variable and no argument in the modules that pick where a plugin is built from', async () => {
+    for (const file of ['main.ts', 'community.ts']) {
+      const text = await readFile(path.join(repo, 'core', 'build', file), 'utf8')
+      expect(text, file).not.toMatch(/process\s*\.\s*(env|argv)|['"](node:)?process['"]|import\.meta\.env|\bgetenv\b/)
+    }
+    // Its caller names an output folder and the build's kind, never a source. The typecheck holds both
+    const kindNamesNoSource: Exactly<keyof BuildKind, 'packaged' | 'locked'> = true
+    const takesTwo: Exactly<Parameters<typeof buildMain>, [outDir?: string, kind?: BuildKind]> = true
+    expect([kindNamesNoSource, takesTwo]).toEqual([true, true])
   })
 
   it('writes the gate and the capabilities plugin into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
