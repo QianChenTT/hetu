@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
-import { agentLabel } from './envelope.ts'
+import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './envelope.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
 import { isSecurityControl, pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
-import { agentHost } from './slots.ts'
+import { agentDoor, agentHost } from './slots.ts'
 
 export const MAX_FOLDER_LENGTH = 4096
 
@@ -93,7 +93,41 @@ export const agentAsk = z.strictObject({
 })
 export type AgentAsk = z.infer<typeof agentAsk>
 
-export type Change = z.infer<typeof change> | ClassRaised | AgentAsk
+// The longest name from a client's document and the longest redirect a connect takes, the highest number of an
+// authorization and how long a connect waits for the human before it lapses
+export const MAX_CLIENT_NAME_LENGTH = 128
+export const MAX_REDIRECT_LENGTH = 2048
+export const MAX_AGENT_NUMBER = 10 ** MAX_AGENT_NUMBER_DIGITS - 1
+export const AGENT_CONNECT_LAPSE_MS = 60_000
+
+// A format character, such as a zero-width one, draws as nothing and a line or paragraph separator breaks the line,
+// neither of which the quotes escape
+const unseen = /[\p{Cf}\p{Zl}\p{Zp}]/u
+// A client's name as its document gives it: screen text with nothing that draws as nothing
+export const clientName = screenText(MAX_CLIENT_NAME_LENGTH).refine(name => name.isWellFormed() && !unseen.test(name), 'a character that draws as nothing')
+
+// The label an authorization of the client gets: the client id, # and the number
+export function connectLabel(connect: { client: string, number: number }): string {
+  return `${connect.client}#${connect.number}`
+}
+
+// A client's connect through http's door the core raises alone from core.agentConnect, never one security.request
+// carries. client is the client id, clientHost its host when it is a URL with one and null otherwise, name the one its
+// document gives or null, redirect where the client gets its answer and redirectHost that address's host. The core
+// took both hosts. number is the authorization's, which with the client id makes the label. A Confirm changes no state
+export const agentConnect = z.strictObject({
+  kind: z.literal('agent.connect'),
+  plugin: z.literal(agentDoor.plugin),
+  client: z.string().max(MAX_CLIENT_ID_LENGTH),
+  clientHost: screenText(MAX_CLIENT_ID_LENGTH).nullable(),
+  name: clientName.nullable(),
+  redirect: screenText(MAX_REDIRECT_LENGTH),
+  redirectHost: screenText(MAX_REDIRECT_LENGTH),
+  number: z.int().min(1).max(MAX_AGENT_NUMBER),
+}).refine(connect => agentLabel.safeParse(connectLabel(connect)).success, 'no agent label')
+export type AgentConnect = z.infer<typeof agentConnect>
+
+export type Change = z.infer<typeof change> | ClassRaised | AgentAsk | AgentConnect
 export type ChangeKind = Change['kind']
 
 // What applying a change does to what hetu lets through. A narrowing change applies at once with its record. A
@@ -138,6 +172,7 @@ export function changeEffect(change: Change): ChangeEffect {
     // Only the core raises one and it always waits for the human
     case 'class.raised':
     case 'agent.ask':
+    case 'agent.connect':
       return 'widens'
   }
 }
@@ -145,12 +180,14 @@ export function changeEffect(change: Change): ChangeEffect {
 // How long a request of this kind waits for the human before it lapses, null for one that waits until answered. Only
 // a request a plugin's call brought about lapses, since the call that asked is long over
 export function lapseOf(change: Change): number | null {
+  if (change.kind === 'agent.connect') return AGENT_CONNECT_LAPSE_MS
   return change.kind === 'agent.ask' ? AGENT_ASK_LAPSE_MS : null
 }
 
 // The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
-// is for an agent of the agent host that http's door named
+// is for an agent of the agent host that http's door named, a connect is http's to collect
 export function withdrawnWith(change: Change): readonly string[] {
+  if (change.kind === 'agent.connect') return [agentDoor.plugin]
   return change.kind === 'agent.ask' ? [change.plugin, 'http'] : []
 }
 

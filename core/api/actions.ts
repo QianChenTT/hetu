@@ -1,13 +1,13 @@
 import { z } from 'zod'
-import { MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { askedCapability, change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
-import { agentLabel, token, type Caller } from './envelope.ts'
-import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
+import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
+import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
+import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
+import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
-import { hidesOnScreen, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
+import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
 import type { ThemeSpec } from './ui.ts'
@@ -73,7 +73,8 @@ export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
 // which the carrier puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
-// filter list keeps only the result's paths the gate's canList allows
+// filter list keeps only the result's paths the gate's canList allows. agent makes the action a tool an agent may call
+// through mcp and an action with none stays closed to agents
 export type ProviderAction = {
   readonly capability: CapabilityType | null
   readonly args: z.ZodType
@@ -82,7 +83,15 @@ export type ProviderAction = {
   readonly also?: { readonly capability: CapabilityType, readonly ends: readonly End[] }
   readonly write: boolean
   readonly filter?: 'list'
+  readonly agent?: AgentTool
 }
+
+// A provider action as an agent sees it: the tool's name, the core's words for it and the arguments an agent sends. The
+// tool calls its own row's action with what args parsed and the action's own args parse that again, so args only
+// narrow them. Each argument's words go in its schema, since a refinement never reaches the JSON Schema an agent reads
+export type AgentTool = { readonly name: string, readonly description: string, readonly args: z.ZodObject }
+
+const tool = (name: string, description: string, args: z.ZodObject): AgentTool => Object.freeze({ name, description, args })
 
 // A move's two ends, in the order its raw and canonical scopes hold them
 export const ends = frozen(['from', 'to'] as const)
@@ -173,6 +182,20 @@ const coreTable = {
     from: 'http',
     args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
   },
+  // http's door asks the human to connect a client as the agent the client id and the number make. The core raises the
+  // request and answers at once with a handle it made, which http collects the answer with. Never a label or a handle
+  // from http
+  'core.agentConnect': {
+    from: 'http',
+    args: z.strictObject({
+      client: z.string().max(MAX_CLIENT_ID_LENGTH, { abort: true }),
+      name: clientName.nullable(),
+      redirect: screenText(MAX_REDIRECT_LENGTH),
+      number: z.int().min(1).max(MAX_AGENT_NUMBER),
+    }),
+  },
+  // The human's answer to the connect a handle names: waiting, yes or no, each of yes and no once, then gone
+  'core.agentConnected': { from: 'http', args: z.strictObject({ handle: token }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -196,12 +219,42 @@ const commitMessage = z.string().min(1).max(MAX_COMMIT_MESSAGE, { abort: true })
 // A commit by its full id, never a name git would resolve
 const commitId = z.string().regex(/^[0-9a-f]{40}$/)
 
+// A path as an agent sends it: what path takes less a dot segment, which names no note. Its length is spelled as checks
+// the JSON Schema an agent reads keeps, since a refinement leaves it. Its grammar is given in words
+const PATH_WORDS = 'A note path inside the notes folder, its segments split by /, at most 512 characters. No segment is empty, . or .. or starts with a dot and none holds a backslash, a colon or a control character'
+const notePath = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
+  const problem = pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
+  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
+})
+
 const providerTable = {
-  'luoshu.read': { capability: 'luoshu.read', args: z.strictObject({ path }), scope: 'path', write: false },
+  'luoshu.read': {
+    capability: 'luoshu.read',
+    args: z.strictObject({ path }),
+    scope: 'path',
+    write: false,
+    agent: tool(
+      'read_note',
+      'Read one note from the notes folder. Answers its text, its path and its version, the SHA-256 of its bytes in hex. Only a note this agent holds a grant to read is answered',
+      z.strictObject({ path: notePath.describe(PATH_WORDS) }),
+    ),
+  },
   // The file paths under folder, the whole luoshu when it is left out, in name order after the one named, a page at a
   // time. A caller sees the names it may list or read and never a version, which would say what a note holds
   'luoshu.list': {
-    capability: null, args: z.strictObject({ folder: path.optional(), after: path.optional() }), scope: null, write: false, filter: 'list',
+    capability: null,
+    args: z.strictObject({ folder: path.optional(), after: path.optional() }),
+    scope: null,
+    write: false,
+    filter: 'list',
+    agent: tool(
+      'list_notes',
+      `List the paths of the notes under a folder, or in the whole notes folder when none is named, in name order and at most ${LIST_PAGE} at a time. Answers paths and next, the after of the next page or null on the last. Only paths this agent holds a grant to list or read are listed`,
+      z.strictObject({
+        folder: notePath.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
+        after: notePath.describe('The next of the page before. Left out for the first page').optional(),
+      }),
+    ),
   },
   // baseVersion is the hash of the bytes the writer read, left out for a note that doesn't exist yet
   'luoshu.write': {
@@ -209,6 +262,15 @@ const providerTable = {
     args: z.strictObject({ path, text: z.string(), baseVersion: sha256.optional() }),
     scope: 'path',
     write: true,
+    agent: tool(
+      'write_note',
+      'Write the whole text of one note. Answers its new version. baseVersion is the version the note has now, left out only when no note is at that path, or the write answers stale and changes nothing. Only a path this agent holds a grant to write is written',
+      z.strictObject({
+        path: notePath.describe(PATH_WORDS),
+        text: z.string().describe('The whole new text of the note'),
+        baseVersion: sha256.describe('The version the note has now, 64 lowercase hex digits. Left out for a new note').optional(),
+      }),
+    ),
   },
   // To the OS's bin. baseVersion is the hash of the bytes the remover read, and a note that moved on since answers
   // stale, so a plugin that writes a note and can't read it can't bin it any more than it can write over it
@@ -255,6 +317,14 @@ const providerTable = {
     args: z.strictObject({ path, limit: z.int().min(1).max(MAX_LOG_PAGE).optional() }),
     scope: 'path',
     write: false,
+    agent: tool(
+      'note_history',
+      'List the commits in hetu\'s history that changed one note, newest first, each with its id, author, committer, date and message. Only a note this agent holds a grant to read the history of is answered',
+      z.strictObject({
+        path: notePath.describe(PATH_WORDS),
+        limit: z.int().min(1).max(MAX_LOG_PAGE).describe(`The most commits to answer, ${LOG_PAGE} when left out`).optional(),
+      }),
+    ),
   },
   // One note's text as a commit holds it. A restore writes it back through luoshu.write
   'history.read': {
@@ -301,7 +371,7 @@ export type ListedPlugin = {
 }
 
 // A request waiting for the human in the core's own words, with the word to type where the change asks for one. agent is
-// the label of an agent's ask, which its text holds in quotes, null for every other request
+// the label of an agent's ask or the one a connect gives, which its text holds in quotes, null for every other request
 export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
@@ -365,6 +435,8 @@ export type ActionResults = {
   'core.bindFailed': null
   'core.agentAsk': { asked: 'waiting' | 'granted' }
   'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
+  'core.agentConnect': { handle: string }
+  'core.agentConnected': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

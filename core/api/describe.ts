@@ -1,4 +1,4 @@
-import type { Change, ClassRaised } from './changes.ts'
+import { connectLabel, type Change, type ClassRaised } from './changes.ts'
 import { isSecurityControl } from './ids.ts'
 import { classNames } from './slots.ts'
 import { capabilityText } from './trusted.ts'
@@ -94,6 +94,19 @@ export function describeChange(change: Change): Described {
           `The agent reaches only what ${change.plugin} holds as well`, 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item',
         ],
       }
+    // Where the client comes from first, then what it calls itself, where it gets its answer and the label it gets last,
+    // each in quotes as data. The label's place last is where the trusted window finds it to draw apart
+    case 'agent.connect': {
+      const from = change.clientHost === null ? `the client ${quoted(change.client)}` : `the client from ${quoted(change.clientHost)}`
+      const named = change.name === null ? 'with no name' : `named ${quoted(change.name)}`
+      return {
+        text: `Connect ${from} ${named}, which returns to ${quoted(change.redirectHost)}, as the agent ${quoted(connectLabel(change))}`,
+        notes: [
+          'Any program on this computer can connect under that client id and that name, so confirm only a connect you started just now',
+          'It reaches no note yet. It asks for items later and each ask waits for your Confirm',
+        ],
+      }
+    }
   }
 }
 

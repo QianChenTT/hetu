@@ -56,10 +56,11 @@ function agentRow(agent: ListedAgent): AgentRow {
 }
 
 // A request's heading with the agent's label in quotes as a part of its own, the whole text as one part for any other
-// request or one whose text doesn't hold the label
+// request or one whose text doesn't hold the label. The last place it is found, where a connect's words put the label,
+// so a client's name that reads as the label is never the part drawn apart
 export function headingOf(request: HeldRequest): Part[] {
   const label = request.agent === null ? '' : JSON.stringify(request.agent)
-  const at = label === '' ? -1 : request.text.indexOf(label)
+  const at = label === '' ? -1 : request.text.lastIndexOf(label)
   if (at < 0) return [{ text: request.text, label: false }]
   const parts = [
     { text: request.text.slice(0, at), label: false }, { text: label, label: true }, { text: request.text.slice(at + label.length), label: false },

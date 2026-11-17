@@ -4,7 +4,7 @@ import type {
   ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
 import {
-  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, mustType, withdrawnWith, type AgentAsk, type Change,
+  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, mustType, withdrawnWith, type AgentAsk, type Change,
   type ClassRaised,
 } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
@@ -24,7 +24,7 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
-import { agentHost } from '../../api/slots.ts'
+import { agentDoor, agentHost } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -35,6 +35,7 @@ import {
   writeMarker, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
+import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
 import type { CarrierLink, HostExports, Runtime } from './seams.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
@@ -354,6 +355,8 @@ export class Loader implements Seam {
   private readonly declinedAsks = new Set<string>()
   // Agents whose ask the human cancelled, by label, with the time from which each may ask again
   private readonly askPaused = new Map<string, number>()
+  // The connects http asks for: the one waiting, the answers not yet collected and the client ids paused
+  private readonly connects: Connects
   private readonly clock: () => number
   // The pass at start has classed every entry, so the capabilities plugin coming up from here on is the human's switch-on
   private classedAtStart = false
@@ -385,13 +388,16 @@ export class Loader implements Seam {
       .map(kind => (kind === 'plugin-entry' ? 'plugins' : kind))
     this.requests = new Requests({
       effect: change => changeEffect(change),
-      // A notice of a class moved up changes nothing when answered, so no state it read can go stale under it
-      fingerprint: change => (change.kind === 'class.raised' ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
+      // A notice of a class moved up and a connect change nothing when answered, so no state they read can go stale under
+      // them. A connect's Confirm looks at the label again instead
+      fingerprint: change => (change.kind === 'class.raised' || change.kind === 'agent.connect'
+        ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
       cancelled: change => {
         if (change.kind === 'class.raised') return this.answered(change.plugin)
         if (change.kind === 'agent.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
+        if (change.kind === 'agent.connect') this.connects.cancelled(change)
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.link.record(event, fields, signal),
@@ -406,6 +412,17 @@ export class Loader implements Seam {
         if (change.kind === 'item.on') this.declinedAsks.add(`${plugin}
 ${capabilityKey(change.capability)}`)
       },
+    })
+    // A connect takes one place of its own and is found by the very change it raised, so one that reads the same as
+    // another is never taken for it
+    this.connects = new Connects({
+      clock: () => this.clock(),
+      held: change => this.requests.changes().some(one => one.change === change),
+      raise: change => {
+        const id = this.requests.raise(change, null, 1, 'agent.connect')
+        return typeof id === 'string' && this.requests.changes().some(one => one.id === id && one.change === change)
+      },
+      inUse: label => this.labelHeld(label),
     })
   }
 
@@ -519,6 +536,11 @@ ${capabilityKey(change.capability)}`)
       // The floor let only http's half on its utility port through
       case 'core.agents':
         return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
+      // The floor let only http's half on its utility port through. The handle is the core's own, never an argument
+      case 'core.agentConnect':
+        return { handle: this.connects.ask(args as ConnectAsked) }
+      case 'core.agentConnected':
+        return { answer: this.connects.answer(args.handle as string) }
       case 'core.stop':
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
@@ -599,7 +621,7 @@ ${capabilityKey(change.capability)}`)
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: mustType(change), agent: change.kind === 'agent.ask' ? change.agent : null,
+        type: mustType(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
       }
     })
     return {
@@ -1946,6 +1968,7 @@ ${capabilityKey(change.capability)}`)
   // plugin's to use goes with it, so no Confirm applies one for a plugin that stopped
   private release(k: Known, live: Live, code: 'stopped' | 'crashed'): void {
     this.requests.withdraw(change => withdrawnWith(change).includes(k.id))
+    if (k.id === agentDoor.plugin) this.connects.ended()
     for (const run of live.halves.values()) {
       try {
         this.link.end(run.caller, code)
@@ -2155,7 +2178,19 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.agentGrant(change)
       case 'agent.revoke':
         return this.agentRevoke(change.agent)
+      // Hands http its yes and changes no state
+      case 'agent.connect':
+        return this.connects.confirmed(change)
     }
+  }
+
+  // Whether the core holds the label already, from what it holds for the agent host and no list of its own: items on
+  // the entry, a revoked mark or an ask waiting. A connect for such a label would hand a new authorization another's
+  private labelHeld(label: string): boolean {
+    const k = this.known.get(agentHost)
+    const entry = k?.from === 'folder' ? k.entry : null
+    return (entry?.agents ?? []).some(item => item.agent === label) || marksOf(entry, this.state.switches).includes(label)
+      || this.requests.changes().some(({ change }) => change.kind === 'agent.ask' && change.agent === label)
   }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its

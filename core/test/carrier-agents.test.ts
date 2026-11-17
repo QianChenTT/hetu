@@ -684,6 +684,56 @@ describe('core.agents, what http asks about its agents', () => {
   })
 })
 
+describe('core.agentConnect and core.agentConnected, the connect http asks the core', () => {
+  const connect = { client: 'https://claude.ai/oauth/claude-code-client-metadata', name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 }
+  const collect = { handle: 'A'.repeat(32) }
+
+  it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
+    const seen: Call[] = []
+    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
+    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
+    for (const [action, args] of [['core.agentConnect', connect], ['core.agentConnected', collect]] as const) {
+      expect((await door.ask(action, args)).ok).toBe(true)
+      for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
+      for (const role of ['trusted', 'editor']) expect(code(await way.ask(role, action, args))).toBe('not-granted')
+    }
+    expect(seen.map(call => [call.action, call.caller])).toEqual([['core.agentConnect', host('http')], ['core.agentConnected', host('http')]])
+  })
+
+  it.each([
+    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('http')],
+    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('http')],
+  ])('refuses both from http\'s host half with http placed %s', async (_place, place) => {
+    const seen: Call[] = []
+    const parts = agents({ core: async call => { seen.push(call); return null } })
+    place(parts.loader)
+    expect(code(await parts.door.ask('core.agentConnect', connect))).toBe('not-granted')
+    expect(code(await parts.door.ask('core.agentConnected', collect))).toBe('not-granted')
+    expect(seen).toEqual([])
+  })
+
+  it('takes no handle from http and no label, a handle only in a token\'s form', async () => {
+    const seen: Call[] = []
+    const { door } = agents({ core: async call => { seen.push(call); return null } })
+    expect(code(await door.ask('core.agentConnect', { ...connect, handle: collect.handle }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnect', { ...connect, agent: 'client#3' }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnected', { handle: 'not a token' }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnected', {}))).toBe('invalid')
+    expect(seen).toEqual([])
+  })
+
+  it('serves both while the gate is not on, since a connect gives the agent nothing', async () => {
+    const seen: Call[] = []
+    const { door, loader } = agents({ core: async call => { seen.push(call); return null } })
+    for (const state of ['off', 'failed', 'starting'] as const) {
+      loader.slots.gate = state
+      expect((await door.ask('core.agentConnect', connect)).ok).toBe(true)
+      expect((await door.ask('core.agentConnected', collect)).ok).toBe(true)
+    }
+    expect(seen).toHaveLength(6)
+  })
+})
+
 describe('the second ask for an agent\'s call', () => {
   // A luoshu whose perform asks the call's judge again about each list of paths in turn, as the real one does when a
   // look at the disk reads a path otherwise than prepare did. before runs first, each time
@@ -761,5 +811,141 @@ describe('the audit record of an agent\'s call', () => {
       ['mcp.handle', null, 'http/host#1', 'http/host#1', 'client#1'],
     ])
     expect(JSON.stringify(log.records)).not.toContain('client#2')
+  })
+})
+
+// The real gate on one StateView where mcp, search and agent #1 each hold an item for every provider action the tests
+// reach, so a refusal comes from the table and never from a missing item. history, exec and leases are providers that
+// note what reached them and act on nothing
+function tabled() {
+  const real = createGate()
+  const decided: Access[] = []
+  const gate: Gate = {
+    ...real,
+    decide: access => {
+      decided.push(access)
+      return real.decide(access)
+    },
+  }
+  const held = (...capabilities: object[]) => capabilities.map(capability => ({ capability, off: false, firstUse: false }))
+  const every = held(
+    { type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }, { type: 'history', access: 'read', paths: ['**'] },
+    { type: 'history', access: 'commit', paths: ['**'] }, { type: 'exec', commands: [['cat', 'inbox/a.md']], env: [] }, { type: 'storage' },
+  )
+  const table = <T>(entries: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), entries)
+  gate.stateChanged({
+    n: 1, foldCase: false, execAny: [],
+    plugins: table({
+      http: held({ type: 'plugin.call', targets: ['mcp'] }),
+      mcp: [...every, ...held({ type: 'plugin.call', targets: ['search'] })],
+      search: every,
+    }),
+    agents: table({ 'client#1': [...every, ...held({ type: 'plugin.call', targets: ['search'] })] }),
+  } as never)
+  const parts = agents({ gate: () => gate })
+  const reached: Record<string, string[]> = { history: [], exec: [], leases: [] }
+  for (const id of Object.keys(reached)) {
+    parts.loader.installed(id)
+    parts.providers[id] = {
+      prepare: async (call: Call) => {
+        reached[id].push(call.action)
+        const args = call.args as { path?: string, paths?: string[] } | undefined
+        const paths = args?.path !== undefined ? [args.path] : args?.paths
+        return { scope: paths === undefined ? {} : { paths } }
+      },
+      perform: async () => ({ done: true }),
+    }
+  }
+  return { ...parts, decided, reached }
+}
+
+const SHA = '0'.repeat(64)
+// Every provider action no tool marks that an agent's item could cover, each with arguments its schema takes
+const closed: [string, unknown][] = [
+  ['luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }],
+  ['luoshu.remove', { path: 'inbox/a.md', baseVersion: SHA }],
+  ['exec.run', { command: ['cat', 'inbox/a.md'] }],
+  ['history.commit', { paths: ['inbox/a.md'], message: 'm' }],
+  ['history.read', { path: 'inbox/a.md', commit: '0'.repeat(40) }],
+  ['leases.acquire', { paths: ['inbox/a.md'] }],
+  ['leases.renew', undefined],
+  ['leases.release', undefined],
+  ['leases.list', undefined],
+]
+
+describe('the tool table at the floor, for a call under an agent\'s chain', () => {
+  // What reached a provider or the gate for the actions named
+  const touched = (parts: ReturnType<typeof tabled>, actions: string[]) => ({
+    luoshu: parts.luoshu.prepared.filter(call => actions.includes(call.action)).map(call => call.action),
+    others: Object.values(parts.reached).flat().filter(action => actions.includes(action)),
+    gate: parts.decided.filter(access => actions.includes(access.action)).map(access => access.action),
+  })
+  const names = closed.map(([action]) => action)
+
+  it.each(['on', 'off', 'failed', 'absent', 'tampered', 'starting'] as const)('refuses each action no tool marks as not-granted before the gate and the provider, the agent holding an item for it, with the gate %s', async state => {
+    const parts = tabled()
+    const { parent } = await handled(parts.door, parts.mcp, 'client#1')
+    parts.loader.slots.gate = state
+    const answers: [string, string | null][] = []
+    for (const [action, args] of closed) answers.push([action, code(await parts.mcp.ask(action, args, parent))])
+    expect(answers).toEqual(closed.map(([action]) => [action, 'not-granted']))
+    expect(touched(parts, names)).toEqual({ luoshu: [], others: [], gate: [] })
+    expect(parts.luoshu.files.get('inbox/a.md')).toBe('a')
+  })
+
+  it('lets the four marked actions on to the gate and their providers, then answers each as the gate\'s state has it', async () => {
+    const parts = tabled()
+    const { parent } = await handled(parts.door, parts.mcp, 'client#1')
+    const marked: [string, unknown][] = [
+      ['luoshu.read', { path: 'inbox/a.md' }], ['luoshu.list', {}], ['luoshu.write', { path: 'inbox/n.md', text: 'n' }],
+      ['history.log', { path: 'inbox/a.md' }],
+    ]
+    for (const [action, args] of marked) expect([action, code(await parts.mcp.ask(action, args, parent))]).toEqual([action, null])
+    expect(touched(parts, marked.map(([action]) => action))).toEqual({
+      luoshu: ['luoshu.read', 'luoshu.list', 'luoshu.write'], others: ['history.log'], gate: ['luoshu.read', 'luoshu.read', 'luoshu.write', 'luoshu.write', 'history.log', 'history.log'],
+    })
+    // With the gate not on, a marked action is refused for the gate's state and never for the table
+    for (const [state, down] of [['off', 'policy-down'], ['starting', 'starting']] as const) {
+      parts.loader.slots.gate = state
+      for (const [action, args] of marked) expect([action, code(await parts.mcp.ask(action, args, parent))]).toEqual([action, down])
+    }
+  })
+
+  it('holds a plugin\'s call three calls deep to the table as it holds mcp, its own storage and cache left to it', async () => {
+    const parts = tabled()
+    const { parent } = await handled(parts.door, parts.mcp, 'client#1')
+    parts.mcp.call('search.query', {}, parent)
+    const under = { parent: (await parts.search.delivered('search.query')).callId as string }
+    for (const [action, args] of closed) expect([action, code(await parts.search.ask(action, args, under))]).toEqual([action, 'not-granted'])
+    expect(touched(parts, names)).toEqual({ luoshu: [], others: [], gate: [] })
+    expect(code(await parts.search.ask('luoshu.read', { path: 'inbox/a.md' }, under))).toBe(null)
+    for (const action of ['storage.set', 'cache.set']) {
+      expect(code(await parts.search.ask(action, { key: 'k', value: 1 }, under))).toBe(null)
+      expect(code(await parts.mcp.ask(action, { key: 'k', value: 1 }, parent))).toBe(null)
+    }
+  })
+
+  it('leaves the same calls with no agent as before: mcp with no parent refused, another plugin\'s own judged by its own items', async () => {
+    const parts = tabled()
+    for (const [action, args] of closed) expect([action, code(await parts.mcp.ask(action, args))]).toEqual([action, 'not-granted'])
+    expect(touched(parts, names)).toEqual({ luoshu: [], others: [], gate: [] })
+    for (const [action, args] of closed) await parts.search.ask(action, args)
+    expect(touched(parts, names)).toEqual({
+      luoshu: ['luoshu.move', 'luoshu.remove'],
+      others: ['history.commit', 'history.read', 'exec.run', 'leases.acquire', 'leases.renew', 'leases.release', 'leases.list'],
+      gate: ['luoshu.move', 'luoshu.move', 'luoshu.move', 'luoshu.move', 'luoshu.remove', 'luoshu.remove', 'exec.run', 'exec.run', 'history.commit', 'history.commit', 'history.read', 'history.read', 'leases.acquire', 'leases.acquire'],
+    })
+    // A label a plugin sends on its own call is text and marks no agent, so the table holds nothing to it
+    parts.luoshu.files.set('inbox/l.md', 'l')
+    expect(code(await parts.search.ask('luoshu.move', { from: 'inbox/l.md', to: 'inbox/c.md' }, { onBehalf: 'client#1' }))).toBe(null)
+    expect(parts.luoshu.files.has('inbox/c.md')).toBe(true)
+  })
+
+  it('writes the refusal\'s record with the agent\'s label, the door at its root', async () => {
+    const { carrier, door, mcp, log } = tabled()
+    const { parent } = await handled(door, mcp, 'client#1')
+    expect(code(await mcp.ask('luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }, parent))).toBe('not-granted')
+    const records = (await written(carrier, log)).filter(record => record.action === 'luoshu.move')
+    expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'http/host#1', 'client#1']])
   })
 })

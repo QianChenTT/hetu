@@ -695,7 +695,8 @@ export class Carrier {
   }
 
   // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
-  // the agent host held to the door's calls past its own and the free actions that skip the gate. Never asks the gate
+  // the agent host held to the door's calls past its own, an agent's chain held to the tool table and the free actions
+  // that skip the gate. Never asks the gate
   private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
     const { caller } = way
     const trusted = caller.kind === 'window' && caller.role === 'trusted'
@@ -704,6 +705,12 @@ export class Carrier {
     const host = caller.kind === 'plugin' && caller.id === agentHost
     const beyond = target.kind === 'provider' ? !isOne(agentOwn, target.provider) : target.kind === 'plugin' && target.target !== agentHost
     if (host && beyond && agent === undefined) return { code: 'not-granted' }
+    // A call for an agent from any plugin down the chain reaches its caller's own storage and cache and the provider
+    // actions core/api's table marks as tools, whatever the agent or the caller holds. Marking an action in the table is
+    // what opens it
+    if (agent !== undefined && target.kind === 'provider' && target.spec.agent === undefined && !isOne(agentOwn, target.provider)) {
+      return { code: 'not-granted' }
+    }
     if (target.kind === 'core') {
       const { from } = target.spec
       const admitted = from === 'any'

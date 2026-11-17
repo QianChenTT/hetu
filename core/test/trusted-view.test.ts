@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import type { HeldRequest, ListedPlugin, SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
+import { describeChange } from '../api/describe.ts'
 import { floorConstantNames, floorConstants } from '../api/floor.ts'
+import { connectChange } from '../backend/loader/connects.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
@@ -184,6 +186,28 @@ describe('what the trusted window draws', () => {
     expect(drawn.request!.heading.find(part => part.label)!.text).toBe('"client#2"')
     expect(drawn.request!.revoke).toEqual({ kind: 'agent.revoke', agent: 'client#2' })
     expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.revoke).toBeNull()
+  })
+
+  it('draws a connect from the core\'s words, the label it gets apart at the heading\'s end, with Confirm and Cancel alone', () => {
+    const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'
+    const connect = describeChange(connectChange({ client: label.slice(0, -2), name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 })!)
+    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'http', notes: connect.notes, type: null, text: connect.text, agent: label }
+    const drawn = screen(calm({ requests: [held] })).request!
+    expect(drawn.heading).toEqual([
+      { text: 'Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent ', label: false },
+      { text: JSON.stringify(label), label: true },
+    ])
+    expect(drawn.notes).toEqual(connect.notes)
+    expect(drawn.revoke).toBeNull()
+  })
+
+  it('draws apart the label at a connect\'s end and not a name that reads as the label', () => {
+    const connect = describeChange(connectChange({ client: 'client', name: 'client#3', redirect: 'http://127.0.0.1:5000/cb', number: 3 })!)
+    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'http', notes: [], type: null, text: connect.text, agent: 'client#3' }
+    expect(screen(calm({ requests: [held] })).request!.heading).toEqual([
+      { text: 'Connect the client "client" named "client#3", which returns to "127.0.0.1:5000", as the agent ', label: false },
+      { text: '"client#3"', label: true },
+    ])
   })
 
   it('finds a stylesheet rule by its selector as written, a backslash and every other metacharacter in it taken as text', () => {
