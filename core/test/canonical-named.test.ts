@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { canonical, named, type Canonical } from '../lib/canonical.ts'
+import { canonical, lastNamed, named, type Canonical } from '../lib/canonical.ts'
 
 // What another program does right before a realpath of the path given, once
 const disk = { at: '', before: null as null | (() => Promise<void>) }
@@ -121,5 +121,33 @@ describe('a file looked at again by name once it is open', () => {
       }
       expect(await named(target, opened, async () => target, () => true)).toEqual({ state: 'replaced' })
     })
+  })
+})
+
+describe('the last name alone resolved again once the folder\'s look held', () => {
+  it('gives what canonical gives for a note there, spelled as stored or in another case', async () => {
+    await writeFile(path.join(notes, 'box', 'N.md'), 'n')
+    const target = await resolved('box/N.md')
+    expect(await lastNamed(target, 'box/N.md')).toEqual(await canonical(notes, 'box/N.md'))
+    expect(await lastNamed(target, 'box/n.md')).toEqual(await canonical(notes, 'box/n.md'))
+  })
+
+  it('gives null for a folder swapped for a junction, a dot name and a note in hetu\'s own folder', async () => {
+    await writeFile(path.join(notes, 'box', 'n.md'), 'n')
+    const target = await resolved('box/n.md')
+    await mkdir(path.join(notes, 'other'))
+    await writeFile(path.join(notes, 'other', 'n.md'), 'other')
+    await rename(path.join(notes, 'box'), path.join(notes, 'was'))
+    await symlink(path.join(notes, 'other'), path.join(notes, 'box'), 'junction')
+    expect(await lastNamed(target, 'box/n.md')).toBeNull()
+    await rm(path.join(notes, 'box'))
+    await rename(path.join(notes, 'was'), path.join(notes, 'box'))
+    await writeFile(path.join(notes, 'box', '.hidden'), 'dot')
+    expect(await lastNamed(target, 'box/.hidden')).toBeNull()
+    expect(await lastNamed(target, 'box/n.md', { dataDir: path.join(notes, 'box') })).toBeNull()
+    // A folder of hetu's own that can't be resolved, as canonical refuses every path then
+    expect(await lastNamed(target, 'box/n.md', { dataDir: path.join(base, 'data') })).toBeNull()
+    await mkdir(path.join(base, 'data'))
+    expect(await lastNamed(target, 'box/n.md', { dataDir: path.join(base, 'data') })).toEqual(await canonical(notes, 'box/n.md'))
   })
 })

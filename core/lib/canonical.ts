@@ -170,6 +170,28 @@ export async function named(
   return { state: 'held', target: now }
 }
 
+// The caller's spelling resolved again for a note whose folder's look held, as canonical would give it, by one realpath
+// of the folder looked at joined to the last name as the caller wrote it, in place of one a part from the luoshu down:
+// what a look inside a queue every caller shares can afford for a deep path. The realpath resolves every part on the
+// way, so it gives a name in that same folder only while the folder still resolves to itself. null when it gives
+// anything else, a dot name or a path in hetu's own folders, so the caller resolves the whole spelling with canonical,
+// which answers as for a folder that moved
+export async function lastNamed(target: Canonical, input: string, options: CanonicalOptions = {}): Promise<Canonical | null> {
+  const last = input.slice(input.lastIndexOf('/') + 1)
+  const folder = path.dirname(target.absolute)
+  const real = await realpath(path.join(folder, last)).catch(() => null)
+  if (real === null || path.dirname(real) !== folder) return null
+  const name = path.basename(real)
+  if (isDotName(name) || isDotName(last)) return null
+  for (const own of [options.dataDir, options.installDir]) {
+    if (own === undefined) continue
+    const resolved = await realpath(own).catch(() => null)
+    if (resolved === null || within(resolved, real)) return null
+  }
+  const relative = target.relative.slice(0, target.relative.lastIndexOf('/') + 1) + name
+  return { ok: true, absolute: real, relative, key: keyOf(relative) }
+}
+
 // Whether the name holds the file given, by file id, never through a link at the name
 async function holdsFile(absolute: string, file: Opened): Promise<boolean> {
   const there = await lstat(absolute, { bigint: true }).catch(() => null)
