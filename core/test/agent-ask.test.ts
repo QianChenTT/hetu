@@ -473,6 +473,22 @@ describe('the revoked marks at their cap and through a Reset or a Remove of mcp'
     expect(await code(ask('client#1', [inbox]))).toBeNull()
   })
 
+  it('answers the carrier whether a label is revoked from the marks wherever they are, a mark dropped as the oldest no longer one', async () => {
+    const { loader } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: marks })
+    expect(loader.revoked('gone#1')).toBe(true)
+    expect(loader.revoked('client#1')).toBe(false)
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect(loader.revoked('client#1')).toBe(true)
+    expect(loader.revoked('gone#1')).toBe(false)
+    expect(loader.revoked('gone#2')).toBe(true)
+    const held = await loader.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)
+    if ('held' in held) await loader.confirm(held.held, {})
+    await loader.settled()
+    // Held in the switches while mcp has no entry
+    expect(loader.revoked('client#1')).toBe(true)
+    expect(loader.revoked('never#1')).toBe(false)
+  })
+
   it('writes no mark into the switches for a Reset of mcp that holds none', async () => {
     const { loader, dataDir } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
     const held = await loader.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)

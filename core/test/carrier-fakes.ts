@@ -24,6 +24,8 @@ export class FakeLoader implements Loader {
   // Writable here, so a test can set the human's limits
   human: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> } = { all: {}, plugins: {} }
   nothing = false
+  // The labels the human revoked, none unless a test names one
+  revokedLabels = new Set<string>()
   crashes: { caller: Caller, reason: string }[] = []
   lifecycle: { caller: Caller, kind: string }[] = []
 
@@ -45,6 +47,10 @@ export class FakeLoader implements Loader {
 
   recordNothing(): boolean {
     return this.nothing
+  }
+
+  revoked(label: string): boolean {
+    return this.revokedLabels.has(label)
   }
 
   crashed(caller: Caller, reason: 'closed' | 'flood'): void {

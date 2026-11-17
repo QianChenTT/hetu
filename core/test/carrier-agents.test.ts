@@ -158,6 +158,47 @@ describe('an agent\'s label down a chain of calls', () => {
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
+  it('refuses the door\'s mcp.handle for a label the loader says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
+    const { door, mcp, loader, gate, carrier, log } = agents()
+    loader.revokedLabels.add('client#1')
+    for (const state of ['on', 'off', 'starting', 'failed'] as const) {
+      loader.slots.gate = state
+      expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    }
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+    expect(asked(gate, 'mcp.handle')).toEqual([])
+    const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
+    expect(records.map(record => record.code)).toEqual(['not-granted', 'not-granted', 'not-granted', 'not-granted'])
+    loader.slots.gate = 'on'
+    // A label the first begins with is another agent
+    const { got } = await handled(door, mcp, 'client#10')
+    expect(got.onBehalf).toBe('client#10')
+  })
+
+  it('refuses the door\'s mcp.handle with a label as not-granted while the loader\'s view of revoked labels throws or answers anything but false', async () => {
+    const { door, mcp, loader } = agents()
+    loader.revoked = () => { throw new Error('no view') }
+    expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    // An answer that is not plainly false refuses too
+    loader.revoked = () => undefined as unknown as boolean
+    expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  it('asks the loader about the door\'s mcp.handle alone, a revoked label on any other call kept as text', async () => {
+    const { door, httpWorker, search, loader } = agents()
+    const seen: string[] = []
+    loader.revoked = label => {
+      seen.push(label)
+      return true
+    }
+    door.call('search.query', {}, { onBehalf: 'client#1' })
+    expect((await search.delivered('search.query')).onBehalf).toBe('client#1')
+    httpWorker.call('mcp.handle', {}, { onBehalf: 'client#1' })
+    await tick(30)
+    expect(seen).toEqual([])
+  })
+
   it('marks an agent whose client id is a metadata document\'s address', async () => {
     const { door, mcp, gate } = agents()
     const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'

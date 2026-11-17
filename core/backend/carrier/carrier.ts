@@ -686,6 +686,8 @@ export class Carrier {
     const agent = parent?.lends
     const door = parent === null && action === agentDoor.action && this.isDoor(way)
     if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
+    // A label the human revoked is refused at the door with no word from http, so a revoke holds while http's token lives
+    if (door && this.revoked(onBehalf as string)) return refuse('not-granted')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
@@ -1635,6 +1637,15 @@ export class Carrier {
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
+    }
+  }
+
+  // Revoked unless the loader says plainly it is not, so a view that throws refuses
+  private revoked(label: string): boolean {
+    try {
+      return this.options.loader.revoked(label) !== false
+    } catch {
+      return true
     }
   }
 

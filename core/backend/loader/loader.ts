@@ -455,6 +455,13 @@ ${capabilityKey(change.capability)}`)
     return this.state.switches.recordNothing
   }
 
+  // For the carrier, which refuses the door's call for a revoked label before the agent host sees it: the marks on the
+  // agent host's entry or in the switches while it has none
+  revoked(label: string): boolean {
+    const k = this.known.get(agentHost)
+    return marksOf(k?.from === 'folder' ? k.entry : null, this.state.switches).includes(label)
+  }
+
   // A way closed under its plugin, was closed for a flood or the worker host page cut its worker off for a flood or a
   // message that wasn't text within the cap. Every dependent is waiting before this returns, then the
   // ways of the plugin's other halves end. A close during a planned stop is that stop ending. A caller from an
