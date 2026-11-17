@@ -76,6 +76,12 @@ export const MAX_ASK_ITEMS = 8
 export const AGENT_ASK_LAPSE_MS = 5 * 60_000
 export const AGENT_ASK_PAUSE_MS = 60_000
 
+// Every list of scopes an item holds names one at least, so no item asks for nothing and draws as a type alone. The
+// variables of an exec item are no scope, an exec item may pass none
+const scoped = (item: object) => Object.entries(item).every(([field, value]) => field === 'env' || !Array.isArray(value) || value.length > 0)
+// An item an agent may ask for: any type a plugin-folder plugin may hold, with a scope where its type has one
+export const askedCapability = folderCapability.refine(scoped, 'an item with no scope')
+
 // An agent's ask the core raises alone from the agent host's core.agentAsk, never one security.request carries. agent
 // is the label of the call from the door the ask was made under and never an argument, capabilities the items it lacks
 // in key order. A Confirm adds them to that label's items on the host's entry
@@ -83,7 +89,7 @@ export const agentAsk = z.strictObject({
   kind: z.literal('agent.ask'),
   plugin: z.literal(agentHost),
   agent: agentLabel,
-  capabilities: z.array(folderCapability).min(1).max(MAX_ASK_ITEMS),
+  capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS),
 })
 export type AgentAsk = z.infer<typeof agentAsk>
 

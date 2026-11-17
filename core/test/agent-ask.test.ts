@@ -14,6 +14,7 @@ const write: Capability = { type: 'luoshu.write', paths: ['inbox/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
+const refusal = (work: Promise<unknown>) => work.then(() => null, (err: unknown) => err)
 
 // mcp as the install's own copy in the plugin folder, holding read on everything, the agents' items its entry is seeded
 // with, http as the install's utility plugin and a clock the test moves
@@ -109,6 +110,54 @@ describe('an agent\'s ask', () => {
     expect(loader.pending()).toHaveLength(1)
   })
 
+  const paths = (n: number, from = 0) => Array.from({ length: n }, (_, i) => `p${from + i}/**`)
+
+  it('refuses at the raise an ask that would put the agent past its caps, the items it holds counted, then raises one that fits', async () => {
+    const { loader, ask, link } = await started({ agents: [{ agent: 'client#1', capability: { type: 'luoshu.read', paths: paths(60) } }] })
+    expect(await refusal(ask('client#1', [{ type: 'luoshu.read', paths: paths(5, 60) }]))).toEqual({ code: 'invalid', reason: 'too-large' })
+    expect(loader.pending()).toEqual([])
+    expect(link.events('security.request')).toEqual([])
+    // The same five for a label that holds none fit, so do four more for the first
+    expect(await ask('client#2', [{ type: 'luoshu.read', paths: paths(5, 60) }])).toEqual({ asked: 'waiting' })
+    expect(await ask('client#1', [{ type: 'luoshu.read', paths: paths(4, 60) }])).toEqual({ asked: 'waiting' })
+    expect(loader.pending()).toHaveLength(2)
+  })
+
+  it('refuses at the raise eight items of 64 scopes each, which no Confirm could write', async () => {
+    const { loader, ask } = await started()
+    const eight = Array.from({ length: 8 }, (_, n) => ({ type: 'luoshu.read' as const, paths: paths(64, n * 64) }))
+    expect(await refusal(ask('client#1', eight))).toEqual({ code: 'invalid', reason: 'too-large' })
+    expect(loader.pending()).toEqual([])
+  })
+
+  it('refuses at the raise an ask that would put the entry past 256 items in all, then writes one that fits', async () => {
+    const many = Array.from({ length: 254 }, (_, i) => ({ agent: `client#${i + 1}`, capability: inbox }))
+    const { loader, ask, stored } = await started({ agents: many })
+    expect(await refusal(ask('client#300', [write, read, { type: 'luoshu.list', paths: ['**'] }]))).toEqual({ code: 'invalid', reason: 'too-large' })
+    expect(loader.pending()).toEqual([])
+    expect(await ask('client#300', [write, read])).toEqual({ asked: 'waiting' })
+    await loader.confirm(loader.pending()[0].id, {})
+    expect((await stored()).agents).toHaveLength(256)
+  })
+
+  it.each([
+    ['luoshu.read', { type: 'luoshu.read', paths: [] }], ['luoshu.write', { type: 'luoshu.write', paths: [] }],
+    ['luoshu.list', { type: 'luoshu.list', paths: [] }], ['ui.edit', { type: 'ui.edit', paths: [] }], ['ui.read', { type: 'ui.read', paths: [] }],
+    ['history', { type: 'history', access: 'read', paths: [] }], ['net.fetch', { type: 'net.fetch', hosts: [] }],
+    ['events.subscribe', { type: 'events.subscribe', topics: [] }], ['plugin.call', { type: 'plugin.call', targets: [] }],
+  ] as [string, Capability][])('refuses an item of %s with no scope beside one that has one', async (_type, empty) => {
+    const { loader, ask } = await started()
+    expect(await code(ask('client#1', [inbox, empty]))).toBe('invalid')
+    expect(loader.pending()).toEqual([])
+  })
+
+  it('takes an exec item that passes no variable and an item of a type with no scope at all', async () => {
+    const { loader, ask, list } = await started()
+    expect(await ask('client#1', [{ type: 'exec', commands: [['git', 'status']], env: [] }, { type: 'storage' }])).toEqual({ asked: 'waiting' })
+    expect(loader.pending()).toHaveLength(1)
+    expect((await list()).requests[0].notes.slice(0, 2)).toEqual(['It asks for: exec of ["git","status"]', 'It asks for: storage'])
+  })
+
   it('refuses a label out of the agent label\'s form, which the carrier never hands over', async () => {
     const { loader, ask } = await started()
     expect(await code(ask('client', [inbox]))).toBe('invalid')
@@ -159,21 +208,6 @@ describe('the Confirm of an agent\'s ask', () => {
     expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: write }])
   })
 
-  it('writes nothing for an ask that would put the entry past 256 items in all', async () => {
-    const many = Array.from({ length: 254 }, (_, i) => ({ agent: `client#${i + 1}`, capability: inbox }))
-    const { loader, ask, stored, gate, clock } = await started({ agents: many })
-    const views = gate.seen.length
-    await ask('client#1', [write, read, { type: 'luoshu.list', paths: ['**'] }])
-    expect(await code(loader.confirm(loader.pending()[0].id, {}))).toBe('failed')
-    expect((await stored()).agents).toHaveLength(254)
-    expect(gate.seen).toHaveLength(views)
-    // A Confirm that failed leaves the request for the human to cancel, as any request. Two fit
-    await loader.cancel(loader.pending()[0].id)
-    clock.now += 60_000
-    await ask('client#1', [write, read])
-    await loader.confirm(loader.pending()[0].id, {})
-    expect((await stored()).agents).toHaveLength(256)
-  })
 })
 
 describe('agents\' items across an update of mcp and a Recover', () => {

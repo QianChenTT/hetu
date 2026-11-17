@@ -4,7 +4,8 @@ import type {
   ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
 import {
-  AGENT_ASK_PAUSE_MS, change as changeSchema, changeEffect, mustType, withdrawnWith, type AgentAsk, type Change, type ClassRaised,
+  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, mustType, withdrawnWith, type AgentAsk, type Change,
+  type ClassRaised,
 } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
@@ -27,7 +28,7 @@ import { agentHost } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
-import type { FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/state.ts'
+import { agentItems, type FileResult, type Plugin, type SecurityState, type StateStore, type Switches } from '../boot/state.ts'
 import type { AskRefusal, Asks, HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
 import {
   clear, clearFailedOnce, folders, readFailedOnce, readInstalled, removeMarker, stage, swapIn, writeFailedOnce, writeInstalled,
@@ -282,6 +283,19 @@ function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
 // A table with no prototype that can still be written, as the state's own limit tables are
 function bare<T extends object>(entries: T): T {
   return Object.assign(Object.create(null), entries)
+}
+
+type AgentItem = NonNullable<Plugin['agents']>[number]
+
+// The agents' items an ask's Confirm writes: those held, then each asked item the label doesn't hold yet. The raise
+// parses the same list, so an ask that waits is one its Confirm can write
+function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
+  const items = [...held]
+  for (const capability of change.capabilities) {
+    const key = capabilityKey(capability)
+    if (!items.some(item => item.agent === change.agent && capabilityKey(item.capability) === key)) items.push({ agent: change.agent, capability })
+  }
+  return items
 }
 
 // The loader: what may run, where, when and as whom. It checks every plugin's bytes once before they run, places each
@@ -2023,6 +2037,10 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (wanted.size === 0) return { asked: 'granted' }
     const keys = [...wanted.keys()].sort()
     const change: AgentAsk = { kind: 'agent.ask', plugin: agentHost, agent, capabilities: keys.map(key => wanted.get(key)!) }
+    // Refused here what a Confirm could never write, so no ask waits in front of the human only to fail: an item with
+    // no scope or the items every agent holds with these added past the entry's caps for one agent or for all
+    if (!agentAskChange.safeParse(change).success) throw { code: 'invalid' }
+    if (!agentItems.safeParse(withAsked(entry.agents ?? [], change)).success) throw { code: 'invalid', reason: 'too-large' }
     const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'agent.ask' && one.agent === agent)?.change as AgentAsk | undefined
     if (waiting !== undefined && waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n')) throw { code: 'throttled' }
     if (typeof this.requests.raise(change, null, MAX_PENDING, 'agent.ask') !== 'string') throw { code: 'throttled' }
@@ -2174,12 +2192,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const entry = this.hostEntry()
     if (entry === null) throw new Error('the agent host is not on')
     if (entry.revoked?.includes(change.agent) === true) throw new Error('a revoked agent')
-    const items = [...entry.agents ?? []]
-    for (const capability of change.capabilities) {
-      const key = capabilityKey(capability)
-      if (!items.some(item => item.agent === change.agent && capabilityKey(item.capability) === key)) items.push({ agent: change.agent, capability })
-    }
-    const next: Plugin = { ...entry, agents: items }
+    const next: Plugin = { ...entry, agents: withAsked(entry.agents ?? [], change) }
     await this.store.writePlugin(agentHost, next)
     this.putEntry(agentHost, next)
     this.bump()

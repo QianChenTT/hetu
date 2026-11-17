@@ -583,7 +583,7 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
     expect(seen).toEqual([])
   })
 
-  it('refuses it under a door call that ended, with a label in its arguments, past eight items and with a scope a screen hides', async () => {
+  it('refuses it under a door call that ended, with a label in its arguments, past eight items, with a scope a screen hides and with an item with no scope', async () => {
     const { door, mcp, seen } = asking()
     const one = await handled(door, mcp, 'client#1')
     const two = await handled(door, mcp, 'client#2')
@@ -593,6 +593,8 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
     expect(code(await mcp.ask('core.agentAsk', { capabilities: nine }, two.parent))).toBe('invalid')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['in\nbox/**'] }] }, two.parent))).toBe('invalid')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: [`in${String.fromCharCode(0x202e)}box/**`] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox, { type: 'luoshu.read', paths: [] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'plugin.call', targets: [] }] }, two.parent))).toBe('invalid')
     mcp.answer(one.got.callId, null)
     await door.reply(one.id)
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, one.parent))).toBe('invalid')
