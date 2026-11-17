@@ -25,7 +25,8 @@ export type ViewHooks = {
   key(instance: string, event: KeyboardEvent): boolean
   // The human moved into another open note
   focused?(instance: string): void
-  // The range of the text the editor draws moved, told once as it is made and again each time it moves
+  // The range of the text the editor draws moved, told once as it is made and again each time it moves. CodeMirror's
+  // viewport: the lines on screen with a margin past them and any hidden stretch inside it whole
   viewport(instance: Instance, from: number, to: number): void
 }
 

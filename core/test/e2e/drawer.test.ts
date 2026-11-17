@@ -497,7 +497,6 @@ describe('the drawer', () => {
     expect(bottom).toBeLessThan(lines.length - 1)
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
-    // The editor draws the cursor's lines at the end too, which a window off screen may not keep scrolled to
     await until(async () => (await ranges(reader)).some(range => range.instance === 'n1' && range.from > 0 && range.to === text.length))
     // A change moves the range, which comes with the version it counts in
     await editor.keyboard.type('!')
@@ -512,6 +511,50 @@ describe('the drawer', () => {
     expect(await ranges(outsider)).toEqual([])
     expect(await ranges(unasked)).toEqual([])
     expect((await drive(unasked, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.opened')).toHaveLength(2)
+  })
+
+  // CodeMirror's viewport is what it draws: the lines on screen with a margin past them, and a stretch hidden in it
+  // whole. Its visibleRanges leaves out each hidden stretch of 20 characters or more, the margin kept
+  it('sends the range the editor draws, past the lines on screen and over a stretch another plugin hid', async () => {
+    const plugins: Record<string, Capability[]> = {
+      reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
+      hider: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }],
+    }
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
+    const start = (i: number) => lines.slice(0, i).reduce((at, line) => at + line.length + 1, 0)
+    const end = (i: number) => start(i) + lines[i].length
+    const { app, editor } = await started({ notes: { 'a.md': lines.join('\n') }, plugins })
+    const reader = await pluginWorker(app, 'reader')
+    const hider = await pluginWorker(app, 'hider')
+    await drive(reader, async scope => scope.editor.viewports(true))
+    await open(editor, 'a.md')
+    type Range = { topic: string, from: number, to: number }
+    const last = async () => (await drive(reader, async scope => scope.heard) as Range[]).filter(event => event.topic === 'editor.viewport').at(-1)
+    // The last line inside the editor's scroll box
+    const screen = () => editor.evaluate(() => {
+      const box = document.querySelector('.editor:not([hidden]) .cm-scroller')!.getBoundingClientRect()
+      const shown = [...document.querySelectorAll('.editor:not([hidden]) .cm-line')].filter(line => {
+        const at = line.getBoundingClientRect()
+        return at.bottom > box.top && at.top < box.bottom && /^line \d+$/.test(line.textContent ?? '')
+      })
+      return Number(shown.at(-1)!.textContent!.slice(5))
+    })
+    await until(async () => (await last())?.from === 0)
+    await tick(500)
+    const bottom = await screen()
+    expect(bottom).toBeGreaterThan(10)
+    // A margin of lines past the screen
+    expect((await last())!.to).toBeGreaterThan(end(bottom + 5))
+    await until(async () => (await drive(hider, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
+    await drive(hider, async scope => {
+      const [open] = await scope.editor.instances() as { instance: string, version: number }[]
+      // Lines 10 to 1999
+      await scope.editor.decorate(open.instance, open.version, 'fold', [{ kind: 'hide', from: 70, to: 18_889 }])
+    })
+    expect([start(10), end(1999)]).toEqual([70, 18_889])
+    // The editor now draws lines 0 to 9 and lines past 1999, one range over the hidden stretch
+    await until(async () => ((await last())?.to ?? 0) > start(2000))
+    expect(await last()).toMatchObject({ from: 0 })
   })
 
   // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
