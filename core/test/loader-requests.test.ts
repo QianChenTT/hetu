@@ -491,7 +491,7 @@ describe('the core actions the loader serves', () => {
       items: [{ capability: notes, off: false, firstUse: false }, { capability: panel, off: true, firstUse: false }],
     })
     expect(list.requests).toEqual([{
-      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate',
+      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', agent: null,
     }])
     expect(list.switches).toEqual({
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,

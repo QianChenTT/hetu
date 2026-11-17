@@ -591,7 +591,7 @@ ${capabilityKey(change.capability)}`)
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: mustType(change),
+        type: mustType(change), agent: change.kind === 'agent.ask' ? change.agent : null,
       }
     })
     return {

@@ -51,6 +51,7 @@ describe('an agent\'s ask', () => {
     expect(pending).toEqual([{ id: pending[0].id, kind: 'agent.ask', plugin: 'mcp' }])
     const shown = (await list()).requests[0]
     expect(shown.text).toBe('Give the agent "client#1" what it asks for through mcp')
+    expect(shown.agent).toBe('client#1')
     expect(shown.notes).toEqual([
       'It asks for: luoshu.read on "inbox/**"', 'It asks for: luoshu.write on "inbox/**"',
       'The agent reaches only what mcp holds as well', 'Revoke it from the agent list at any time',

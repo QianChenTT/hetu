@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ListedPlugin, SecurityList } from '../api/actions.ts'
+import { readFile } from 'node:fs/promises'
+import type { HeldRequest, ListedPlugin, SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import { floorConstantNames, floorConstants } from '../api/floor.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
@@ -24,8 +25,8 @@ describe('what the trusted window draws', () => {
   it('shows the oldest request first and counts the ones behind it', () => {
     const drawn = screen(calm({
       requests: [
-        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate' },
-        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null },
+        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate', agent: null },
+        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null, agent: null },
       ],
     }))
     expect(drawn.request).toMatchObject({ id: 'r1', text: 'Switch gate off', type: 'gate' })
@@ -157,6 +158,29 @@ describe('what the trusted window draws', () => {
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
   })
 
+  it('draws an agent\'s label in an ask\'s heading as a part of its own and every other heading whole', () => {
+    const asked: Omit<HeldRequest, 'text' | 'agent'> = { id: 'r1', kind: 'agent.ask', plugin: 'mcp', notes: [], type: null }
+    const label = `https://claude.ai/${'a'.repeat(200)}#12`
+    expect(screen(calm({ requests: [{ ...asked, text: `Give the agent "${label}" what it asks for through mcp`, agent: label }] })).request!.heading).toEqual([
+      { text: 'Give the agent ', label: false }, { text: `"${label}"`, label: true }, { text: ' what it asks for through mcp', label: false },
+    ])
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.heading)
+      .toEqual([{ text: 'Switch gate off', label: false }])
+    // A label the text doesn't hold leaves the text whole, so nothing is drawn twice or out of order
+    expect(screen(calm({ requests: [{ ...asked, text: 'Give the agent "a#1" what it asks for through mcp', agent: 'b#1' }] })).request!.heading)
+      .toEqual([{ text: 'Give the agent "a#1" what it asks for through mcp', label: false }])
+  })
+
+  // The page's own stylesheet, which the trusted window's policy lets load from its own origin and nothing else
+  it('draws a label in a fixed-width face the system has and wraps it and the lines holding it anywhere', async () => {
+    const css = await readFile(new URL('../frontend/trusted/trusted.css', import.meta.url), 'utf8')
+    const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*]/g, '\\$&')}[^{]*\\{([^}]*)\\}`))?.[1] ?? ''
+    expect(rule('.label')).toMatch(/font-family:[^;]*\bmonospace;/)
+    expect(rule('.label')).toMatch(/overflow-wrap: anywhere;/)
+    expect(css).toMatch(/\.request h1,\s*\.agent \{\s*overflow-wrap: anywhere;/)
+    expect(css).not.toMatch(/@font-face|url\(/)
+  })
+
   it('quotes each target, topic and variable in a plugin\'s items and an agent\'s', () => {
     const items: Capability[] = [
       { type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }, { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
@@ -180,8 +204,8 @@ describe('what the trusted window draws', () => {
     }))
     expect(drawn.agents).toEqual({
       rows: [
-        { line: '"client#1" · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
-        { line: '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears', change: null },
+        { label: '"client#1"', line: ' · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
+        { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' · revoked, its tokens end once http hears', change: null },
       ],
       about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s',
     })

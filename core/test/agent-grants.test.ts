@@ -109,7 +109,8 @@ describe('agents\' items in the agent host\'s entry', () => {
     expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'mcp', result: 'invalid' })
   })
 
-  // Labels a screen draws as another one or as nothing, then labels out of the <client id>#<n> form
+  // Labels with a character outside ASCII, which could read as another label, as two or as nothing, then labels out of
+  // the <client id>#<n> form
   const cp = (...points: number[]) => String.fromCodePoint(...points)
   it.each([
     ['one space', ' '], ['a zero width space alone', cp(0x200b)], ['client#1 then a zero width space', `client#1${cp(0x200b)}`],

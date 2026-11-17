@@ -300,8 +300,9 @@ export type ListedPlugin = {
   class: number | null
 }
 
-// A request waiting for the human in the core's own words, with the word to type where the change asks for one
-export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null }
+// A request waiting for the human in the core's own words, with the word to type where the change asks for one. agent is
+// the label of an agent's ask, which its text holds in quotes, null for every other request
+export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
 // whether the human revoked it and http has yet to say it ended its tokens
