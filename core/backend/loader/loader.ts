@@ -2040,6 +2040,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     // Refused here what a Confirm could never write, so no ask waits in front of the human only to fail: an item with
     // no scope or the items every agent holds with these added past the entry's caps for one agent or for all
     if (!agentAskChange.safeParse(change).success) throw { code: 'invalid' }
+    // A plugin.call target names a plugin hetu knows, so an ask can't put words of its choosing in the target's place
+    const unknown = (capability: Capability) => capability.type === 'plugin.call' && capability.targets.some(target => !this.known.has(target))
+    if (change.capabilities.some(unknown)) throw { code: 'not-found' }
     if (!agentItems.safeParse(withAsked(entry.agents ?? [], change)).success) throw { code: 'invalid', reason: 'too-large' }
     const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'agent.ask' && one.agent === agent)?.change as AgentAsk | undefined
     if (waiting !== undefined && waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n')) throw { code: 'throttled' }

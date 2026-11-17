@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ListedPlugin, SecurityList } from '../api/actions.ts'
+import type { Capability } from '../api/capabilities.ts'
 import { floorConstantNames, floorConstants } from '../api/floor.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -154,6 +155,20 @@ describe('what the trusted window draws', () => {
     expect(limitChange('readyMs', '20000', null)).toEqual({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
     expect(limitChange('callsInFlight', ' 8 ', 'search')).toEqual({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'search' })
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
+  })
+
+  it('quotes each target, topic and variable in a plugin\'s items and an agent\'s', () => {
+    const items: Capability[] = [
+      { type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }, { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
+    ]
+    const drawn = screen(calm({
+      plugins: [plugin({ items: items.map(capability => ({ capability, off: false, firstUse: false })) })],
+      agents: [{ agent: 'client#1', items: [items[0]], revoked: false }],
+    }))
+    expect(drawn.plugins[0].items.map(item => item.line)).toEqual([
+      'plugin.call to "notes" · on', 'events.subscribe to "notes.saved" · on', 'exec of ["git","status"] with "HOME" from your environment · on',
+    ])
+    expect(drawn.agents.rows[0].line).toContain('plugin.call to "notes"')
   })
 
   it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, then what it can\'t know', () => {

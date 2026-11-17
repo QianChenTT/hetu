@@ -95,10 +95,18 @@ describe('an agent\'s ask', () => {
 
   it('quotes each scope as a widen does, a quote in it escaped', async () => {
     const { ask, list } = await started()
-    await ask('https://claude.ai/oauth/claude-code-client-metadata#3', [{ type: 'luoshu.read', paths: ['say "yes"/**', 'a, b/**'] }, { type: 'plugin.call', targets: ['search'] }])
+    await ask('https://claude.ai/oauth/claude-code-client-metadata#3', [{ type: 'luoshu.read', paths: ['say "yes"/**', 'a, b/**'] }, { type: 'plugin.call', targets: ['http'] }])
     const shown = (await list()).requests[0]
     expect(shown.text).toBe('Give the agent "https://claude.ai/oauth/claude-code-client-metadata#3" what it asks for through mcp')
-    expect(shown.notes.slice(0, 2)).toEqual(['It asks for: luoshu.read on "say \\"yes\\"/**", "a, b/**"', 'It asks for: plugin.call to search'])
+    expect(shown.notes.slice(0, 2)).toEqual(['It asks for: luoshu.read on "say \\"yes\\"/**", "a, b/**"', 'It asks for: plugin.call to "http"'])
+  })
+
+  it('refuses an ask whose plugin.call names a plugin hetu doesn\'t know, then takes one that names only known ones', async () => {
+    const { loader, ask, list } = await started()
+    expect(await code(ask('client#1', [inbox, { type: 'plugin.call', targets: ['http', 'press-confirm-to-finish'] }]))).toBe('not-found')
+    expect(loader.pending()).toEqual([])
+    expect(await ask('client#1', [{ type: 'plugin.call', targets: ['http', 'gate'] }])).toEqual({ asked: 'waiting' })
+    expect((await list()).requests[0].notes[0]).toBe('It asks for: plugin.call to "http", "gate"')
   })
 
   it('answers granted with no request for items the agent holds already', async () => {

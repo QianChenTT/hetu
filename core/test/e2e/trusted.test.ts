@@ -233,7 +233,7 @@ describe('a prompt a plugin\'s call raises', () => {
     await tick(PAST_DELAY)
     await notice.click()
     const page = await trustedPage(app)
-    await showing(page, 'Let asker use plugin.call to target')
+    await showing(page, 'Let asker use plugin.call to "target"')
     // Inside the delay: the core refuses a Confirm whatever the page sends, and main drops a click on Cancel
     expect((await ask(page, 'security.confirm', { requestId: request.id })).refusal?.code).toBe('throttled')
     await page.getByRole('button', { name: 'Cancel' }).click()
