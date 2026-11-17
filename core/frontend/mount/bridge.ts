@@ -272,7 +272,10 @@ export class Drawer {
     for (const conn of this.connections.values()) void this.recheck(conn)
   }
 
+  // A note the plugin no longer reads is forgotten as told, so once it reads the note again it hears editor.opened, reads
+  // the text afresh and hears the range drawn then. A check overtaken by a newer core.security leaves told to the newer
   private async recheck(conn: Connection): Promise<void> {
+    const asked = this.reaches
     const held = await this.reachOf(conn.plugin)
     if (!this.live(conn)) return
     this.ui.held(conn.plugin, held.verbs)
@@ -286,6 +289,17 @@ export class Drawer {
       conn.marked.delete(id)
       conn.sets.delete(id)
     }
+    for (const instance of [...this.instances()]) {
+      const reach = await this.reachOf(conn.plugin, instance.path)
+      if (!this.live(conn) || this.reaches !== asked) return
+      if (this.readsWith(reach, instance)) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
+      else this.untell(conn, instance.id)
+    }
+  }
+
+  private untell(conn: Connection, instance: string): void {
+    conn.told.delete(instance)
+    conn.ranges.delete(instance)
   }
 
   private drop(conn: Connection): void {
@@ -333,10 +347,18 @@ export class Drawer {
   }
 
   // An event about an instance, to the plugin only when it reads the note. editor.opened goes once and brings the last
-  // range the editor drew to a plugin that asked for ranges
+  // range the editor drew to a plugin that asked for ranges. An event held back forgets the note as told, so the plugin
+  // hears editor.opened again once it reads the note: at the next check, or now when a newer core.security came while
+  // the core answered
   private async tell(conn: Connection, instance: Instance, body: EventBody): Promise<void> {
+    const asked = this.reaches
     const reach = await this.reachOf(conn.plugin, instance.path)
-    if (!this.live(conn) || !this.readsWith(reach, instance)) return
+    if (!this.live(conn)) return
+    if (!this.readsWith(reach, instance)) {
+      this.untell(conn, instance.id)
+      if (this.reaches !== asked && this.find(instance.id) === instance) void this.tell(conn, instance, { topic: 'editor.opened', instance: instance.id })
+      return
+    }
     if (body.topic === 'editor.opened') {
       if (conn.told.has(instance.id)) return
       conn.told.add(instance.id)
