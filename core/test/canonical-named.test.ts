@@ -1,8 +1,26 @@
 import { mkdir, mkdtemp, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { canonical, named, type Canonical } from '../lib/canonical.ts'
+
+// What another program does right before a realpath of the path given, once
+const disk = { at: '', before: null as null | (() => Promise<void>) }
+
+vi.mock('node:fs/promises', async original => {
+  const real = await original<typeof import('node:fs/promises')>()
+  return {
+    ...real,
+    realpath: (async (...args: Parameters<typeof real.realpath>) => {
+      if (disk.before !== null && String(args[0]) === disk.at) {
+        const act = disk.before
+        disk.before = null
+        await act()
+      }
+      return real.realpath(...args)
+    }) as typeof real.realpath,
+  }
+})
 
 let base: string
 let notes: string
@@ -14,6 +32,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  Object.assign(disk, { at: '', before: null })
   await rm(base, { recursive: true, force: true })
 })
 
@@ -72,6 +91,35 @@ describe('a file looked at again by name once it is open', () => {
       const refused = await named(target, opened, () => canonical(notes, 'box/n.md'), now => !asked.push(now.relative))
       expect(refused).toEqual({ state: 'moved' })
       expect(asked).toEqual(['box/N.md', 'box/N.md'])
+    })
+  })
+
+  describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a name another file or none held while the spelling was resolved', () => {
+    // Another program swaps two files at one name: the caller's own note under box/n.md, or no file, while the spelling
+    // resolves, the file opened, another note under box/N.md, back by the lstat. The resolve gives the path judged and
+    // the lstat, which looks the name up without case, finds the file opened
+    it('is replaced when the path resolved is not the one the file opened is stored under, with no judge asked', async () => {
+      // The caller's spelling at prepare, before the other note was made
+      const target = await resolved('box/n.md')
+      await writeFile(path.join(notes, 'box', 'N.md'), 'other')
+      const opened = await identity(target.absolute)
+      const asked: string[] = []
+      const found = await named(target, opened, async () => target, now => !!asked.push(now.relative))
+      expect(found).toEqual({ state: 'replaced' })
+      expect(asked).toEqual([])
+    })
+
+    it('is replaced when another file is stored under the path resolved by the time it resolves to itself', async () => {
+      const target = await resolved('box/n.md')
+      await writeFile(path.join(notes, 'box', 'N.md'), 'other')
+      const opened = await identity(target.absolute)
+      // The file opened leaves the name and the caller's own note takes it under the spelling resolved
+      disk.at = target.absolute
+      disk.before = async () => {
+        await rename(path.join(notes, 'box', 'N.md'), path.join(base, 'away.md'))
+        await writeFile(target.absolute, 'own')
+      }
+      expect(await named(target, opened, async () => target, () => true)).toEqual({ state: 'replaced' })
     })
   })
 })

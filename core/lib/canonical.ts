@@ -152,17 +152,28 @@ export type Opened = { readonly ino: bigint, readonly dev: bigint }
 // opened, at the path judged or at one judged says the gate allows, which is the path to act on and record. replaced
 // when the path holds another file or none, a note written, moved or removed since the open, which can be opened
 // again. moved otherwise, which a provider refuses as it refuses a folder that moved. The file is compared before the
-// judge is asked, so the judge only hears of the path of the file opened. What is left is a file that leaves the name
-// and comes back to it between this look and the lstat after it
+// judge is asked, so the judge only hears of the path of the file opened. The lstat looks the name up without case, and
+// a resolve that meets no file keeps the caller's spelling of the last name, so a file that left the name and came back
+// to it between the resolve and the lstat would answer to a path resolved while another file or none was there. So the
+// path is resolved once more by itself after the lstat and has to come back as it is, a file stored under that very
+// name, then the lstat once more has to find the file opened. What is left is a name that holds the file opened at both
+// lstats and another file, stored under the path resolved, at the second resolve between them
 export async function named(
   target: Canonical, opened: Opened, again: () => Promise<Canonical | NotCanonical>, judged: (now: Canonical) => boolean,
 ): Promise<{ state: 'held', target: Canonical } | { state: 'replaced' | 'moved' }> {
   const now = await again()
   if (!now.ok || now.key !== target.key) return { state: 'moved' }
-  const there = await lstat(now.absolute, { bigint: true }).catch(() => null)
-  if (there === null || there.ino !== opened.ino || there.dev !== opened.dev) return { state: 'replaced' }
+  if (!(await holdsFile(now.absolute, opened))) return { state: 'replaced' }
+  if ((await realpath(now.absolute).catch(() => null)) !== now.absolute) return { state: 'replaced' }
+  if (!(await holdsFile(now.absolute, opened))) return { state: 'replaced' }
   if (now.relative !== target.relative && !judged(now)) return { state: 'moved' }
   return { state: 'held', target: now }
+}
+
+// Whether the name holds the file given, by file id, never through a link at the name
+async function holdsFile(absolute: string, file: Opened): Promise<boolean> {
+  const there = await lstat(absolute, { bigint: true }).catch(() => null)
+  return there !== null && there.ino === file.ino && there.dev === file.dev
 }
 
 async function stateOf(folder: string): Promise<FolderState> {
