@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { askedCapability, change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
-import { agentLabel, token, type Caller } from './envelope.ts'
+import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
+import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
+import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
@@ -173,6 +173,20 @@ const coreTable = {
     from: 'http',
     args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
   },
+  // http's door asks the human to connect a client as the agent the client id and the number make. The core raises the
+  // request and answers at once with a handle it made, which http collects the answer with. Never a label or a handle
+  // from http
+  'core.agentConnect': {
+    from: 'http',
+    args: z.strictObject({
+      client: z.string().max(MAX_CLIENT_ID_LENGTH, { abort: true }),
+      name: clientName.nullable(),
+      redirect: screenText(MAX_REDIRECT_LENGTH),
+      number: z.int().min(1).max(MAX_AGENT_NUMBER),
+    }),
+  },
+  // The human's answer to the connect a handle names: waiting, yes or no, each of yes and no once, then gone
+  'core.agentConnected': { from: 'http', args: z.strictObject({ handle: token }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -365,6 +379,8 @@ export type ActionResults = {
   'core.bindFailed': null
   'core.agentAsk': { asked: 'waiting' | 'granted' }
   'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
+  'core.agentConnect': { handle: string }
+  'core.agentConnected': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
   'log.history': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

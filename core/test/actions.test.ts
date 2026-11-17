@@ -40,6 +40,8 @@ describe('the core actions', () => {
       'core.bindFailed': 'http',
       'core.agentAsk': 'agent',
       'core.agents': 'http',
+      'core.agentConnect': 'http',
+      'core.agentConnected': 'http',
     })
   })
 

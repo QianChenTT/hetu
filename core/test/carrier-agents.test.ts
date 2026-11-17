@@ -684,6 +684,56 @@ describe('core.agents, what http asks about its agents', () => {
   })
 })
 
+describe('core.agentConnect and core.agentConnected, the connect http asks the core', () => {
+  const connect = { client: 'https://claude.ai/oauth/claude-code-client-metadata', name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 }
+  const collect = { handle: 'A'.repeat(32) }
+
+  it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
+    const seen: Call[] = []
+    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
+    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
+    for (const [action, args] of [['core.agentConnect', connect], ['core.agentConnected', collect]] as const) {
+      expect((await door.ask(action, args)).ok).toBe(true)
+      for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
+      for (const role of ['trusted', 'editor']) expect(code(await way.ask(role, action, args))).toBe('not-granted')
+    }
+    expect(seen.map(call => [call.action, call.caller])).toEqual([['core.agentConnect', host('http')], ['core.agentConnected', host('http')]])
+  })
+
+  it.each([
+    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('http')],
+    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('http')],
+  ])('refuses both from http\'s host half with http placed %s', async (_place, place) => {
+    const seen: Call[] = []
+    const parts = agents({ core: async call => { seen.push(call); return null } })
+    place(parts.loader)
+    expect(code(await parts.door.ask('core.agentConnect', connect))).toBe('not-granted')
+    expect(code(await parts.door.ask('core.agentConnected', collect))).toBe('not-granted')
+    expect(seen).toEqual([])
+  })
+
+  it('takes no handle from http and no label, a handle only in a token\'s form', async () => {
+    const seen: Call[] = []
+    const { door } = agents({ core: async call => { seen.push(call); return null } })
+    expect(code(await door.ask('core.agentConnect', { ...connect, handle: collect.handle }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnect', { ...connect, agent: 'client#3' }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnected', { handle: 'not a token' }))).toBe('invalid')
+    expect(code(await door.ask('core.agentConnected', {}))).toBe('invalid')
+    expect(seen).toEqual([])
+  })
+
+  it('serves both while the gate is not on, since a connect gives the agent nothing', async () => {
+    const seen: Call[] = []
+    const { door, loader } = agents({ core: async call => { seen.push(call); return null } })
+    for (const state of ['off', 'failed', 'starting'] as const) {
+      loader.slots.gate = state
+      expect((await door.ask('core.agentConnect', connect)).ok).toBe(true)
+      expect((await door.ask('core.agentConnected', collect)).ok).toBe(true)
+    }
+    expect(seen).toHaveLength(6)
+  })
+})
+
 describe('the second ask for an agent\'s call', () => {
   // A luoshu whose perform asks the call's judge again about each list of paths in turn, as the real one does when a
   // look at the disk reads a path otherwise than prepare did. before runs first, each time
