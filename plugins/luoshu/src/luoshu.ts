@@ -218,13 +218,14 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   // The version of the note a write or a remove acts on, checked under the lock: the note opened as a read opens it,
-  // null for none, with the path to act on. A folder at the name throws as reading one does
-  async function versionAt(prepared: Canonical, target: Canonical, judged: Judged): Promise<{ version: string | null, target: Canonical }> {
+  // null for none, with the path to act on and the file opened, which the name has to hold still right before the act.
+  // A folder at the name throws as reading one does
+  async function versionAt(prepared: Canonical, target: Canonical, judged: Judged): Promise<{ version: string | null, target: Canonical, file: Opened | null }> {
     const note = await openedNote(prepared, target, judged)
-    if (note === null) return { version: null, target }
+    if (note === null) return { version: null, target, file: null }
     try {
       if (!note.info.isFile()) throw Object.assign(new Error('not a file'), { code: 'EISDIR' })
-      return { version: await hashOpen(note.handle), target: note.target }
+      return { version: await hashOpen(note.handle), target: note.target, file: note.info }
     } finally {
       await note.handle.close()
     }
@@ -284,8 +285,13 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       // Once more with the temp file written, so a folder swapped since the look before the temp file was made carries
       // no note where it leads. The note lands on the path this look gives. The temp file is removed by the same path
       target = await unmoved(target, judged)
-      if (checked.version === null) await landNew(temp, target.absolute)
-      else await retried(() => rename(temp, target.absolute), target.absolute)
+      if (checked.file === null) await landNew(temp, target.absolute)
+      else {
+        // The note the version was checked on, still at the name by file id, so a note another program swapped in since
+        // is never replaced. What is left is the time between this look and the rename
+        if (!(await holds(target.absolute, checked.file))) throw refused('stale')
+        await retried(() => rename(temp, target.absolute), target.absolute)
+      }
     } catch (err) {
       await rm(temp, { force: true }).catch(() => {})
       throw err
@@ -443,9 +449,11 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     const looked = await unmoved(prepared, judged)
     if (!(await isNote(looked.absolute))) throw refused('not-found')
     // Through the note opened, so a note made under another case of the last name since prepare is judged before its
-    // version is compared. The bin still takes the note by name after it
-    const { version: found, target } = await versionAt(prepared, looked, judged)
-    if (found !== baseVersion) throw refused('stale')
+    // version is compared. The bin still takes the note by name after it, once the name holds the file checked still,
+    // so what is left is the time between that look and the bin's own move
+    const { version: found, target, file } = await versionAt(prepared, looked, judged)
+    if (found !== baseVersion || file === null) throw refused('stale')
+    if (!(await holds(target.absolute, file))) throw refused('stale')
     await trash(target.absolute)
     await syncDir(path.dirname(target.absolute))
     own.delete(target.key)
@@ -482,7 +490,11 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       // The from end as it was looked at, with the last name as the caller wrote it
       to = respelled(from, spelling.get(destination) ?? destination.relative)
       if (to.relative !== ends[1] && !end(1)(to)) throw refused('not-granted')
-      if (to.absolute !== from.absolute) await retried(() => rename(from.absolute, to.absolute), from.absolute)
+      if (to.absolute !== from.absolute) {
+        // The file looked at, at the name still, as before a write's rename
+        if (!(await holds(from.absolute, there))) throw refused('stale')
+        await retried(() => rename(from.absolute, to.absolute), from.absolute)
+      }
     } else {
       to = await madeUnder(to, end(1))
       to = await unmoved(to, end(1))
