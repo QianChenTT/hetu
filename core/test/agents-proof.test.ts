@@ -338,6 +338,14 @@ describe('step 5a part B, the tools, in the joined core', () => {
     expect(outcome(await call(mcp, one, 'write_note', { path: 'private/c.md', text: 'x' }))).toBe('not-granted')
     expect(outcome(await call(mcp, two, 'write_note', { path: 'inbox/other.md', text: 'x' }))).toBe('not-granted')
 
+    // A move and a remove in inbox, where #1 and mcp both write and read, are actions no tool marks and are refused at
+    // the floor under #1's call. The note stays where it was with its text
+    const version = (written.result as { version: string }).version
+    expect(outcome(await ask(mcp, 'luoshu.move', { from: 'inbox/new.md', to: 'inbox/moved.md' }, one))).toBe('not-granted')
+    expect(outcome(await ask(mcp, 'luoshu.remove', { path: 'inbox/new.md', baseVersion: version }, one))).toBe('not-granted')
+    expect(outcome(await call(mcp, one, 'read_note', { path: 'inbox/new.md' }))).toBe('new text')
+    expect(outcome(await call(mcp, one, 'read_note', { path: 'inbox/moved.md' }))).toBe('not-found')
+
     // note_history: inbox for #1, answered by history with no commit yet. Not private, whose history mcp reads and #1
     // doesn't
     expect((await call(mcp, one, 'note_history', { path: 'inbox/a.md' })).result).toEqual({ commits: [] })
