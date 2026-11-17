@@ -2060,7 +2060,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
   // directly
   apply(input: Change): Promise<void> {
-    return this.serial(() => this.applyNow(changeSchema.parse(input), true))
+    return this.serial(async () => {
+      await this.applyNow(changeSchema.parse(input), true)
+    })
   }
 
   // One change or update at a time, so no two read the state and write it back over each other
@@ -2071,7 +2073,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // confirm is whether the human clicked the change's Confirm, false for one Confirm-off or its narrowing applied at once
-  private async applyNow(change: Change, confirm: boolean): Promise<void> {
+  private async applyNow(change: Change, confirm: boolean): Promise<void | 'unchanged'> {
     // The human chose in the stopped mode, so the next failure restarts hetu again
     if (this.phase === 'stopped') await clearFailedOnce(this.dataDir).catch(() => {})
     switch (change.kind) {
@@ -2148,16 +2150,16 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
   // tokens. Only that label: a label another one begins with keeps its own. A label with no item and no ask waiting
-  // changes nothing, so a revoke names only an agent the human can see
-  private async agentRevoke(agent: string): Promise<void> {
+  // changes nothing and answers unchanged, so a revoke names only an agent the human can see
+  private async agentRevoke(agent: string): Promise<void | 'unchanged'> {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
     const waiting = (change: Change) => change.kind === 'agent.ask' && change.agent === agent
     const asked = this.requests.changes().some(({ change }) => waiting(change))
     this.requests.withdraw(waiting)
-    if (entry === null) return
+    if (entry === null) return asked ? undefined : 'unchanged'
     const holds = (entry.agents ?? []).some(item => item.agent === agent)
-    if (!holds && !asked) return
+    if (!holds && !asked) return 'unchanged'
     const agents = (entry.agents ?? []).filter(item => item.agent !== agent)
     const revoked = [...(entry.revoked ?? []).filter(label => label !== agent), agent]
     const next: Plugin = { ...entry, revoked }

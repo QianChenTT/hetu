@@ -1,9 +1,12 @@
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/slots.ts'
 import { StateStore } from '../backend/boot/state.ts'
+import { EventLog } from '../lib/event-log.ts'
 import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, until, workerManifest, type FakeLink } from './loader-fakes.ts'
 
 afterEach(cleanup)
@@ -58,7 +61,7 @@ describe('an agent\'s ask', () => {
     ])
     expect(shown.type).toBeNull()
     expect((await stored()).agents).toBeUndefined()
-    expect(link.events('security.request')).toMatchObject([{ kind: 'agent.ask', target: 'mcp', window: 'core' }])
+    expect(link.events('security.request')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', window: 'core' }])
   })
 
   it('answers a second ask for the same items as the first and refuses a different ask while one waits', async () => {
@@ -190,7 +193,7 @@ describe('the Confirm of an agent\'s ask', () => {
     expect(view.agents).toEqual({ 'client#1': [item(inbox), item(write)], 'client#10': [item(inbox)] })
     expect(view.plugins.mcp).toEqual([item(read)])
     expect(loader.pending()).toEqual([])
-    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.ask', target: 'mcp', by: 'confirm' }])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', by: 'confirm' }])
   })
 
   it('writes and shows an item of a type the tool table never maps, as the entry takes any type', async () => {
@@ -210,7 +213,7 @@ describe('the Confirm of an agent\'s ask', () => {
     await loader.confirm(one.id, {})
     expect(await code(loader.confirm(two.id, {}))).toBe('stale')
     expect(loader.pending()).toEqual([])
-    expect(link.events('security.stale')).toMatchObject([{ kind: 'agent.ask', target: 'mcp' }])
+    expect(link.events('security.stale')).toMatchObject([{ kind: 'agent.ask', target: 'client#2' }])
     expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }])
     expect(await ask('client#2', [write])).toEqual({ asked: 'waiting' })
     await loader.confirm(loader.pending()[0].id, {})
@@ -351,6 +354,47 @@ describe('revoke of an agent', () => {
   })
 })
 
+describe('the records of an agent\'s ask, its Confirm and its revoke', () => {
+  // Every character the label's form takes but letters and digits, a user part, a port and a number among them
+  const label = "https://u@a.example:8443/p;q=1?x=[1]&y=(2)*+,$!'~-._%41#12"
+
+  it('name the agent as their target', async () => {
+    const { loader, ask, link } = await started()
+    await ask(label, [inbox])
+    await loader.confirm(loader.pending()[0].id, {})
+    expect(await loader.request({ kind: 'agent.revoke', agent: label }, trusted)).toEqual({ applied: true })
+    expect(link.records.filter(record => record.event.startsWith('security.')).map(record => [record.event, record.fields.kind, record.fields.target])).toEqual([
+      ['security.request', 'agent.ask', label], ['security.confirm', 'agent.ask', label], ['security.applied', 'agent.ask', label],
+      ['security.applied', 'agent.revoke', label],
+    ])
+  })
+
+  it('write each as one line of the event log that reads back with the label whole', async () => {
+    const { loader, ask, link, base } = await started()
+    await ask(label, [inbox])
+    await loader.confirm(loader.pending()[0].id, {})
+    await loader.request({ kind: 'agent.revoke', agent: label }, trusted)
+    const written = link.records.filter(record => record.event.startsWith('security.'))
+    const log = new EventLog(path.join(base, 'records'))
+    await log.open()
+    for (const record of written) await log.append(record.event, record.fields)
+    const lines = (await readFile(path.join(base, 'records', 'events', 'events-1.jsonl'), 'utf8')).split('\n').filter(line => line !== '')
+    expect(lines).toHaveLength(written.length)
+    expect(lines.map(line => JSON.parse(line).target)).toEqual(written.map(() => label))
+    expect(await log.verify()).toMatchObject({ ok: true })
+  })
+
+  it('leave out a revoke that changed nothing, of a label nobody holds or of one revoked already', async () => {
+    const { loader, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'never#1' }, trusted)).toEqual({ applied: true })
+    expect(link.events('security.applied')).toEqual([])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', target: 'client#1' }])
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    expect(link.events('security.applied')).toHaveLength(1)
+  })
+})
+
 describe('an agent\'s ask that lapses or is withdrawn', () => {
   it('lapses five minutes after it was raised, an ask of the same items meanwhile moving nothing, then can\'t be confirmed', async () => {
     const { loader, ask, clock, link, list } = await started()
@@ -364,7 +408,7 @@ describe('an agent\'s ask that lapses or is withdrawn', () => {
     clock.now += 1
     expect(loader.pending()).toEqual([])
     expect((await list()).requests).toEqual([])
-    expect(link.events('security.lapsed')).toMatchObject([{ kind: 'agent.ask', target: 'mcp', window: 'core' }])
+    expect(link.events('security.lapsed')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', window: 'core' }])
     expect(await code(loader.confirm(id, {}))).toBe('not-found')
     // The agent may ask again, as a new request
     expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })

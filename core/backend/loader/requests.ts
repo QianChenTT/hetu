@@ -21,8 +21,9 @@ export type RequestHost = {
   fingerprint(change: Change): Promise<string>
   // Runs work with no other change applying meanwhile
   exclusive<T>(work: () => Promise<T>): Promise<T>
-  // Applies a change, only from inside exclusive. confirmed is whether the human clicked its Confirm
-  applyNow(change: Change, confirmed: boolean): Promise<void>
+  // Applies a change, only from inside exclusive. confirmed is whether the human clicked its Confirm. unchanged says the
+  // change found nothing to change, which a narrowing records nothing for
+  applyNow(change: Change, confirmed: boolean): Promise<void | 'unchanged'>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
@@ -62,9 +63,10 @@ function canonical(value: unknown): string {
 }
 
 // What the records say of a change: its kind, its target and the hash of the change as stored. Never a folder or a
-// scope, which the hash stands for
+// scope, which the hash stands for. An agent's ask and its revoke name the agent, whose label's form holds ASCII alone
 function fieldsOf(change: Change, key: string): Record<string, Field> {
-  const target = 'plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null
+  const agent = change.kind === 'agent.ask' || change.kind === 'agent.revoke' ? change.agent : null
+  const target = agent ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
   return {
     kind: change.kind,
     target: change.kind === 'limit.set' ? `${change.constant}:${change.plugin ?? 'all'}` : target,
@@ -104,8 +106,8 @@ export class Requests {
     const fields = { ...fieldsOf(change, key), window: windowOf(from) }
     const effect = this.host.effect(change)
     if (effect === 'narrows') {
-      await this.host.exclusive(() => this.host.applyNow(change, false))
-      void this.host.record('security.applied', { ...fields, by: 'narrows' })
+      const applied = await this.host.exclusive(() => this.host.applyNow(change, false))
+      if (applied !== 'unchanged') void this.host.record('security.applied', { ...fields, by: 'narrows' })
       return { applied: true }
     }
     // The human's second deliberate step: changes the trusted window itself asks for skip the Confirm.
