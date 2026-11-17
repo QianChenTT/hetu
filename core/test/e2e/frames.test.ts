@@ -55,6 +55,31 @@ window.addEventListener('message', function (event) {
   port.postMessage(JSON.stringify({ hello: location.pathname }))
 })
 `
+// A frame's script that reports what it can see of the editor page: where it is and came from, its name, whether the
+// parent's document is open to it and whether a style element carrying the nonce it is sent applies in its own page
+const peek = `
+window.addEventListener('message', function (event) {
+  if (event.source !== parent || !event.ports[0]) return
+  var port = event.ports[0]
+  port.onmessage = function (message) {
+    var data = JSON.parse(message.data)
+    if (!data || typeof data.nonce !== 'string') return
+    var parentDocument = 'open'
+    try {
+      parentDocument = String(parent.document.documentElement.outerHTML.length)
+    } catch (err) {
+      parentDocument = err.name
+    }
+    var style = document.createElement('style')
+    style.setAttribute('nonce', data.nonce)
+    style.textContent = 'p { color: rgb(1, 2, 3) }'
+    document.head.appendChild(style)
+    var applied = getComputedStyle(document.querySelector('p')).color === 'rgb(1, 2, 3)'
+    port.postMessage(JSON.stringify({ seen: [location.href, document.referrer, window.name].join(' '), parentDocument: parentDocument, applied: applied }))
+  }
+  port.postMessage(JSON.stringify({ hello: location.pathname }))
+})
+`
 const page = (script: string, type = '') => `<!doctype html><html><head><meta charset="utf-8"><script ${type}src="${script}"></script></head><body><p>frame</p></body></html>`
 
 type Frame = { html: string, files: Record<string, string> }
@@ -136,6 +161,19 @@ describe('view frames', () => {
     await found('navigated before load', result)
     // Whichever load came first, the page that got the port is the error page for elsewhere.html, where no code runs
     expect(result.hellos).toBe(0)
+  })
+
+  it('never shows a frame the editor page\'s style nonce, which styles nothing in a frame\'s own page either', async () => {
+    const { editor, worker } = await started({ html: page('peek.js'), files: { 'peek.js': peek } })
+    await until(async () => (await messages(worker)).length === 1)
+    const nonce = await editor.evaluate(() => (document.querySelector('script[src="page.js"]') as HTMLScriptElement).nonce)
+    expect(nonce).toMatch(/^[A-Za-z0-9+/]{22}==$/)
+    await post(worker, { nonce })
+    await until(async () => (await messages(worker)).length === 2)
+    const report = (await messages(worker))[1] as { seen: string, parentDocument: string, applied: boolean }
+    expect(report.seen).not.toContain(nonce)
+    expect(report.parentDocument).toBe('SecurityError')
+    expect(report.applied).toBe(false)
   })
 
   it('probes module scripts in a view', async () => {

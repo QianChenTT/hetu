@@ -24,6 +24,8 @@ import { OWN_LAYOUT, SKELETON } from './ui-port.ts'
 // The preload's bridge, there only in the window's top frame
 const bridge = (window as unknown as { hetu?: Bridge }).hetu
 const mac = /Mac/.test(navigator.userAgent)
+// The nonce main put on this script and named in the page's policy, read while the script runs
+const styleNonce = (document.currentScript as HTMLScriptElement | null)?.nonce ?? ''
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id)
@@ -111,7 +113,7 @@ function start(bridge: Bridge): void {
       drawNoteBar()
       layers?.schedule()
     },
-  })
+  }, styleNonce)
   const theNotes = new Notes(link, views, notice => {
     noteNotices.set(notice.instance, notice)
     drawNoteBar()

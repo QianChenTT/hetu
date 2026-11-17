@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Session } from 'electron'
@@ -36,11 +37,19 @@ const CSP = [
   "form-action 'none'", "frame-ancestors 'none'",
 ].join('; ')
 
-// The editor page frames plugins' views and shows their icons, both from the views host
-const EDITOR_CSP = [
-  "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' hetu://views", "font-src 'self'",
-  'frame-src hetu://views', "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+// The editor page frames plugins' views and shows their icons, both from the views host. Its page gets a nonce for the
+// style element CodeMirror makes, a fresh one each load, named only in that page's policy and on its script
+const editorCsp = (nonce: string | null) => [
+  "default-src 'none'", "script-src 'self'", nonce === null ? "style-src 'self'" : `style-src 'self' 'nonce-${nonce}'`,
+  "img-src 'self' hetu://views", "font-src 'self'", 'frame-src hetu://views', "base-uri 'none'", "form-action 'none'",
+  "frame-ancestors 'none'",
 ].join('; ')
+
+// Where the editor page's markup takes its nonce: the page's script carries it and the page hands it to CodeMirror.
+// Chromium hides a nonce from attribute reads and selectors once its element is in the page
+export const NONCE_MARK = '{{style-nonce}}'
+// 128 random bits, as CSP3 asks of a nonce
+const freshNonce = () => randomBytes(16).toString('base64')
 
 // What main serves the views host from, faked in the tests
 export type ViewsHost = { serve(url: string): { bytes: Uint8Array, type: string, csp: string } | null }
@@ -92,9 +101,18 @@ export async function serve(role: Role, request: { url: string, method: string }
     const code = (err as NodeJS.ErrnoException).code
     return answer(code === 'ENOENT' || code === 'EISDIR' || code === 'ENOTDIR' ? 404 : 500)
   }
+  const type = match[1] ?? 'html'
+  let nonce: string | null = null
+  if (at.hostname === 'editor' && type === 'html') {
+    const parts = bytes.toString('utf8').split(NONCE_MARK)
+    // A page with no place for the nonce would load with no editor styles, one with two would hand it out twice
+    if (parts.length !== 2) return answer(500)
+    nonce = freshNonce()
+    bytes = Buffer.from(parts.join(nonce), 'utf8')
+  }
   const headers = {
-    'content-type': TYPES[match[1] ?? 'html'],
-    'content-security-policy': at.hostname === 'workers' ? WORKERS_CSP : at.hostname === 'editor' ? EDITOR_CSP : CSP,
+    'content-type': TYPES[type],
+    'content-security-policy': at.hostname === 'workers' ? WORKERS_CSP : at.hostname === 'editor' ? editorCsp(nonce) : CSP,
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   }

@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { allowed, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
+import { allowed, NONCE_MARK, partition, ROLES, serve } from '../backend/runtime/sessions.ts'
 
 let root = ''
 
@@ -10,7 +10,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'hetu-pages-'))
   await mkdir(path.join(root, 'mount', 'parts'), { recursive: true })
   await mkdir(path.join(root, 'trusted'), { recursive: true })
-  await writeFile(path.join(root, 'mount', 'index.html'), '<!doctype html><title>hetu</title>')
+  await writeFile(path.join(root, 'mount', 'index.html'), `<!doctype html><title>hetu</title><script src="page.js" nonce="${NONCE_MARK}" defer></script>`)
   await writeFile(path.join(root, 'mount', 'parts', 'shell.css'), 'body {}')
   await writeFile(path.join(root, 'mount', 'README.md'), 'notes')
   await writeFile(path.join(root, 'trusted', 'index.html'), '<!doctype html><title>trusted</title>')
@@ -105,6 +105,59 @@ describe('the sessions', () => {
     expect(page.headers.get('x-content-type-options')).toBe('nosniff')
     expect((await serve('editor', get('hetu://views/t/b.html'), root, views)).status).toBe(404)
     expect((await serve('editor', get('hetu://views/t/a.html', 'HEAD'), root, views)).status).toBe(200)
+  })
+
+  it('names a nonce in the editor page\'s style-src and on its script, made fresh for each load with 128 random bits', async () => {
+    const seen = new Set<string>()
+    for (let i = 0; i < 200; i++) {
+      const page = await serve('editor', get(i === 0 ? 'hetu://editor/?nonce=chosen' : 'hetu://editor/'), root)
+      const csp = page.headers.get('content-security-policy') ?? ''
+      const nonce = /^style-src 'self' 'nonce-([A-Za-z0-9+/]+={0,2})'$/.exec(csp.split('; ').find(part => part.startsWith('style-src')) ?? '')?.[1]
+      expect(nonce, csp).toBeDefined()
+      expect(Buffer.from(nonce!, 'base64')).toHaveLength(16)
+      const body = await page.text()
+      expect(body).toContain(`<script src="page.js" nonce="${nonce}" defer>`)
+      expect(body).not.toContain(NONCE_MARK)
+      seen.add(nonce!)
+    }
+    expect(seen.size).toBe(200)
+    expect(seen.has('chosen')).toBe(false)
+  })
+
+  it('never allows inline style or script by keyword and gives no page but the editor\'s a nonce', async () => {
+    const policies = await Promise.all([
+      ['editor', 'hetu://editor/'], ['editor', 'hetu://editor/parts/shell.css'], ['trusted', 'hetu://trusted/'], ['workers', 'hetu://workers/'],
+    ].map(async ([role, url]) => (await serve(role as keyof typeof ROLES, get(url!), root)).headers.get('content-security-policy') ?? ''))
+    for (const policy of policies) {
+      expect(policy).not.toContain('unsafe-inline')
+      expect(policy).not.toContain('unsafe-hashes')
+      expect(policy).not.toContain('sha256-')
+    }
+    expect(policies[0]).toContain("'nonce-")
+    for (const policy of policies.slice(1)) expect(policy).not.toContain("'nonce-")
+    // A nonce names no script: scripts still come only from the page's own files
+    expect(policies[0].split('; ').find(part => part.startsWith('script-src'))).toBe("script-src 'self'")
+  })
+
+  it('refuses to serve an editor page that doesn\'t hold the nonce\'s mark exactly once', async () => {
+    await writeFile(path.join(root, 'mount', 'index.html'), '<!doctype html><title>hetu</title>')
+    expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
+    await writeFile(path.join(root, 'mount', 'index.html'), `<p nonce="${NONCE_MARK}"></p><p nonce="${NONCE_MARK}"></p>`)
+    expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
+  })
+
+  it('serves a page from the views host as main holds it, the nonce\'s mark left as text and no nonce in its policy', async () => {
+    const html = `<style nonce="${NONCE_MARK}">p {}</style>`
+    const views = { serve: () => ({ bytes: new Uint8Array(Buffer.from(html)), type: 'text/html; charset=utf-8', csp: "default-src 'none'; style-src hetu://views/t/" }) }
+    const page = await serve('editor', get('hetu://views/t/a.html'), root, views)
+    expect(await page.text()).toBe(html)
+    expect(page.headers.get('content-security-policy')).toBe("default-src 'none'; style-src hetu://views/t/")
+  })
+
+  it('has the editor page\'s own markup carry the nonce\'s mark on its script, where the page reads it', async () => {
+    const markup = await readFile(path.join(import.meta.dirname, '..', 'frontend', 'mount', 'index.html'), 'utf8')
+    expect(markup.split(NONCE_MARK)).toHaveLength(2)
+    expect(markup).toContain(`<script src="page.js" nonce="${NONCE_MARK}" defer></script>`)
   })
 
   it('answers only GET and HEAD', async () => {

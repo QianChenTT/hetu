@@ -120,10 +120,13 @@ export class EditorViews implements Editors {
   private readonly marksSwitch = new Compartment()
   private marksOn = false
   private shownId: string | null = null
+  private readonly nonce: string
 
-  constructor(host: HTMLElement, hooks: ViewHooks) {
+  // nonce is the one the page's policy names for its style elements, so CodeMirror's own style sheet applies
+  constructor(host: HTMLElement, hooks: ViewHooks, nonce: string) {
     this.host = host
     this.hooks = hooks
+    this.nonce = nonce
   }
 
   create(id: string, text: string, path = ''): void {
@@ -140,6 +143,7 @@ export class EditorViews implements Editors {
         doc: text,
         extensions: [
           separator,
+          EditorView.cspNonce.of(this.nonce),
           history(),
           markdownSupport(),
           EditorView.lineWrapping,
