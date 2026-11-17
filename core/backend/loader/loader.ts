@@ -2153,8 +2153,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
   // tokens, on the entry or in the switches while the agent host has none. Only that label: a label another one begins
-  // with keeps its own. A label that holds nothing is marked too, so the human can turn away an agent that only asks.
-  // One marked already with no item and no ask waiting changes nothing and answers unchanged
+  // with keeps its own. A label that holds nothing is marked only when the core saw it ask in this run, its ask waiting
+  // or the pause after a Cancel still running, so the human can turn away an agent that only asks and no window can
+  // fill the list with labels that never asked. Any other label that holds nothing changes nothing and answers unchanged
   private async agentRevoke(agent: string): Promise<void | 'unchanged'> {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
@@ -2162,7 +2163,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const asked = this.requests.changes().some(({ change }) => waiting(change))
     this.requests.withdraw(waiting)
     const holds = (entry?.agents ?? []).some(item => item.agent === agent)
-    if (!holds && !asked && marksOf(entry, this.state.switches).includes(agent)) return 'unchanged'
+    const paused = this.askPaused.get(agent)
+    const seen = asked || (paused !== undefined && this.clock() < paused)
+    if (!holds && (!seen || marksOf(entry, this.state.switches).includes(agent))) return 'unchanged'
     if (entry === null) {
       const aside = revokedAside(this.state.switches, agent)
       await this.writeSwitches(aside.switches)
