@@ -21,6 +21,11 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   ...over,
 })
 
+// The body of the first rule in a stylesheet whose selector starts a line as written, empty for none
+function ruleIn(css: string, selector: string): string {
+  return css.match(new RegExp(`(?:^|\\n)${selector.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}[^{]*\\{([^}]*)\\}`))?.[1] ?? ''
+}
+
 describe('what the trusted window draws', () => {
   it('shows the oldest request first and counts the ones behind it', () => {
     const drawn = screen(calm({
@@ -181,10 +186,18 @@ describe('what the trusted window draws', () => {
     expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.revoke).toBeNull()
   })
 
+  it('finds a stylesheet rule by its selector as written, a backslash and every other metacharacter in it taken as text', () => {
+    expect(ruleIn('.a:b { x: 1; }\n', '.a\\:b')).toBe('')
+    expect(ruleIn('.a\\:b { x: 1; }\n', '.a\\:b')).toBe(' x: 1; ')
+    expect(ruleIn('.aab { x: 1; }\n', '.a+b')).toBe('')
+    expect(ruleIn('.a+b { x: 1; }\n', '.a+b')).toBe(' x: 1; ')
+    expect(ruleIn('xlabel { x: 1; }\n', '.label')).toBe('')
+  })
+
   // The page's own stylesheet, which the trusted window's policy lets load from its own origin and nothing else
   it('draws a label in a fixed-width face the system has and wraps it and the lines holding it anywhere', async () => {
     const css = await readFile(new URL('../frontend/trusted/trusted.css', import.meta.url), 'utf8')
-    const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*]/g, '\\$&')}[^{]*\\{([^}]*)\\}`))?.[1] ?? ''
+    const rule = (selector: string) => ruleIn(css, selector)
     expect(rule('.label')).toMatch(/font-family:[^;]*\bmonospace;/)
     expect(rule('.label')).toMatch(/overflow-wrap: anywhere;/)
     expect(css).toMatch(/\.request h1,\s*\.agent \{\s*overflow-wrap: anywhere;/)
