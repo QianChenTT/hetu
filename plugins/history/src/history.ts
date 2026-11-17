@@ -7,7 +7,7 @@ import type { Caller } from 'hetu-core/api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from 'hetu-core/api/exec.ts'
 import { isDotName, MAX_SCOPE_LENGTH } from 'hetu-core/api/scope.ts'
 import type { Call, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
-import { canonical, folderState, looked, named, type Canonical } from 'hetu-core/lib/canonical.ts'
+import { canonical, folderState, lastNamed, looked, named, type Canonical } from 'hetu-core/lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from 'hetu-core/lib/clean-env.ts'
 
 export type HistoryOptions = {
@@ -188,7 +188,12 @@ export function createHistory(options: HistoryOptions = {}): History {
         const info = await handle.stat({ bigint: true })
         // A path that stands for a name leading to a dot name has no spelling kept and no file at it
         if (now !== null && spelled !== undefined) {
-          const found = await named(target, info, () => canonical(now.folder, spelled, { dataDir: now.dataDir, installDir: now.installDir }), judged)
+          const options = { dataDir: now.dataDir, installDir: now.installDir }
+          // The folder's look held, so only the last name is resolved again, the whole spelling when that gives anything
+          // but a name in that folder
+          const at = target
+          const again = async () => (await lastNamed(at, spelled, options)) ?? canonical(now.folder, spelled, options)
+          const found = await named(target, info, again, judged)
           if (found.state === 'moved') throw refused('not-granted')
           if (found.state === 'held') target = found.target
           else if (tries < OPENS) continue
@@ -229,6 +234,9 @@ export function createHistory(options: HistoryOptions = {}): History {
     // down or starting
     let denied: ProviderRefusal | null = null
     for (const [at, prepared] of targets.entries()) {
+      // Each note's look runs in the one queue every history call waits in, so a call whose time ran out on the notes
+      // before stops here, before git hears of any
+      if (Date.now() > call.deadline) throw refused('timeout')
       const judged = (now: Canonical) => {
         const next = paths.with(at, now.relative)
         if (call.judge === undefined) return false

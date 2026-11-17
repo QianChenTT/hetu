@@ -152,17 +152,50 @@ export type Opened = { readonly ino: bigint, readonly dev: bigint }
 // opened, at the path judged or at one judged says the gate allows, which is the path to act on and record. replaced
 // when the path holds another file or none, a note written, moved or removed since the open, which can be opened
 // again. moved otherwise, which a provider refuses as it refuses a folder that moved. The file is compared before the
-// judge is asked, so the judge only hears of the path of the file opened. What is left is a file that leaves the name
-// and comes back to it between this look and the lstat after it
+// judge is asked, so the judge only hears of the path of the file opened. The lstat looks the name up without case, and
+// a resolve that meets no file keeps the caller's spelling of the last name, so a file that left the name and came back
+// to it between the resolve and the lstat would answer to a path resolved while another file or none was there. So the
+// path is resolved once more by itself after the lstat and has to come back as it is, a file stored under that very
+// name, then the lstat once more has to find the file opened. What is left is a name that holds the file opened at both
+// lstats and another file, stored under the path resolved, at the second resolve between them
 export async function named(
   target: Canonical, opened: Opened, again: () => Promise<Canonical | NotCanonical>, judged: (now: Canonical) => boolean,
 ): Promise<{ state: 'held', target: Canonical } | { state: 'replaced' | 'moved' }> {
   const now = await again()
   if (!now.ok || now.key !== target.key) return { state: 'moved' }
-  const there = await lstat(now.absolute, { bigint: true }).catch(() => null)
-  if (there === null || there.ino !== opened.ino || there.dev !== opened.dev) return { state: 'replaced' }
+  if (!(await holdsFile(now.absolute, opened))) return { state: 'replaced' }
+  if ((await realpath(now.absolute).catch(() => null)) !== now.absolute) return { state: 'replaced' }
+  if (!(await holdsFile(now.absolute, opened))) return { state: 'replaced' }
   if (now.relative !== target.relative && !judged(now)) return { state: 'moved' }
   return { state: 'held', target: now }
+}
+
+// The caller's spelling resolved again for a note whose folder's look held, as canonical would give it, by one realpath
+// of the folder looked at joined to the last name as the caller wrote it, in place of one a part from the luoshu down:
+// what a look inside a queue every caller shares can afford for a deep path. The realpath resolves every part on the
+// way, so it gives a name in that same folder only while the folder still resolves to itself. null when it gives
+// anything else, a dot name or a path in hetu's own folders, so the caller resolves the whole spelling with canonical,
+// which answers as for a folder that moved
+export async function lastNamed(target: Canonical, input: string, options: CanonicalOptions = {}): Promise<Canonical | null> {
+  const last = input.slice(input.lastIndexOf('/') + 1)
+  const folder = path.dirname(target.absolute)
+  const real = await realpath(path.join(folder, last)).catch(() => null)
+  if (real === null || path.dirname(real) !== folder) return null
+  const name = path.basename(real)
+  if (isDotName(name) || isDotName(last)) return null
+  for (const own of [options.dataDir, options.installDir]) {
+    if (own === undefined) continue
+    const resolved = await realpath(own).catch(() => null)
+    if (resolved === null || within(resolved, real)) return null
+  }
+  const relative = target.relative.slice(0, target.relative.lastIndexOf('/') + 1) + name
+  return { ok: true, absolute: real, relative, key: keyOf(relative) }
+}
+
+// Whether the name holds the file given, by file id, never through a link at the name
+async function holdsFile(absolute: string, file: Opened): Promise<boolean> {
+  const there = await lstat(absolute, { bigint: true }).catch(() => null)
+  return there !== null && there.ino === file.ino && there.dev === file.dev
 }
 
 async function stateOf(folder: string): Promise<FolderState> {
@@ -184,7 +217,7 @@ async function stateOf(folder: string): Promise<FolderState> {
 // the provider holds the per-path lock on key from prepare to perform. The spellings of one name give one key, so no
 // other hetu write to that name runs in between. On Windows a name not there yet that reads like an 8.3 short name,
 // such as NEWFOL~1, is the exception: a write under another key that creates New folder name can give that folder
-// the same short name
+// the same short name, as another program can a note. The luoshu lands a new note by a link, which fails on such a name
 export async function canonical(root: string, input: string, options: CanonicalOptions = {}): Promise<Canonical | NotCanonical> {
   const broken = stringRule(input)
   if (broken !== null) return { ok: false, code: 'invalid', rule: broken }
