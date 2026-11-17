@@ -507,6 +507,21 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
+  it('answers stopped for the door\'s mcp.handle with the gate still on once shutdown began, as with the gate off', async () => {
+    const { carrier, door, mcp } = gated()
+    carrier.stopping()
+    expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  it('answers stopped for an agent\'s call with the gate still on once shutdown began and judges a plugin\'s own call as before', async () => {
+    const { carrier, door, mcp, search } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    carrier.stopping()
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
+    expect((await search.ask('luoshu.read', { path: 'inbox/a.md' })).ok).toBe(true)
+  })
+
   it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
     const { carrier, door, mcp, loader } = gated()
     const { parent } = await handled(door, mcp, 'client#1')

@@ -884,8 +884,10 @@ export class Carrier {
   // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
   // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
   // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
-  // that is down
+  // that is down. Once shutdown began a call for an agent answers stopped whatever the gate's state, so the door's call
+  // during a shutdown answers the same with the gate on as with it off
   private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
+    if (agent !== undefined && this.shutting) return 'stopped'
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
