@@ -545,6 +545,16 @@ describe("the fake drawer's ranges and commands", () => {
     expect(heard).toEqual([opened(first), range(first, 0, 0, 11), range(first, 1, 2, 12), opened(second), range(second, 0, 0, 3)])
   })
 
+  it("sends the range the editor still draws in the note's version when sent, after an edit past it", async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello world', { from: 0, to: 5 })
+    await ctx.editor.edit(instance, 0, [11, [0, '!']])
+    await ctx.editor.viewports(true)
+    await until(() => ranges(heard).length === 1)
+    expect(ranges(heard)).toEqual([range(instance, 1, 0, 5)])
+  })
+
   it("sends no range of a note the plugin can't read", async () => {
     const drawer = new FakeDrawer()
     const { heard, ctx } = await listening(drawer)

@@ -17,8 +17,9 @@ import { holds } from './gate.ts'
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
 type Selection = { anchor: number, head: number }[]
-// The range the note's editor draws, in the version it was drawn at, stamped in the order the test moved it
-type Drawn = { version: number, from: number, to: number, stamp: number }
+// The range the note's editor draws, stamped in the order the test moved it. It goes in the note's version when sent,
+// as hetu's drawer sends the range the editor still draws
+type Drawn = { from: number, to: number, stamp: number }
 type Note = { path: string, text: Text, version: number, drawn: Drawn }
 
 class Refusal {
@@ -99,7 +100,7 @@ export class FakeDrawer {
   openNote(path: string, text: string, drawn?: { from: number, to: number }): string {
     const instance = `n${++this.n}`
     const doc = Text.of(text.split('\n'))
-    const note: Note = { path, text: doc, version: 0, drawn: { version: 0, from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
+    const note: Note = { path, text: doc, version: 0, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
     this.notes.set(instance, note)
     if (!this.reads(path)) return instance
     this.tell({ topic: 'editor.opened', instance })
@@ -107,11 +108,11 @@ export class FakeDrawer {
     return instance
   }
 
-  // The note's editor draws another range of its text, counted in the note's version now
+  // The note's editor draws another range of its text
   viewport(instance: string, from: number, to: number): void {
     const note = this.notes.get(instance)
     if (note === undefined) throw new Error(`no note ${instance} is open`)
-    note.drawn = { version: note.version, from, to, stamp: ++this.stamped }
+    note.drawn = { from, to, stamp: ++this.stamped }
     this.sendRange(instance, note)
   }
 
@@ -145,8 +146,8 @@ export class FakeDrawer {
   private sendRange(instance: string, note: Note): void {
     if (!this.asked || !this.reads(note.path) || note.drawn.stamp <= (this.sent.get(instance) ?? 0)) return
     this.sent.set(instance, note.drawn.stamp)
-    const { version, from, to } = note.drawn
-    this.tell({ topic: 'editor.viewport', instance, version, from, to })
+    const { from, to } = note.drawn
+    this.tell({ topic: 'editor.viewport', instance, version: note.version, from, to })
   }
 
   // Every note the test opens is the human's, so ui.read reaches it as hetu's drawer would

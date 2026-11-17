@@ -372,12 +372,15 @@ export class Drawer {
   }
 
   // A range the instance's editor drew, to a plugin that asked for ranges, was told the note opened and reads it with
-  // this reach. A range no newer than the last it was sent doesn't go, so none goes twice or out of order
+  // this reach. A range no newer than the last it was sent doesn't go, so none goes twice or out of order. The range
+  // the editor still draws goes with the note's version now: the page tells each change of its ends, a change that
+  // shifts them included, so changes since left it where it was. An older one goes with the version it was drawn at
   private sendRange(conn: Connection, instance: Instance, reach: Reach, range: Drawn | undefined): void {
     if (range === undefined || !this.live(conn) || !conn.viewports || !conn.told.has(instance.id)) return
     if (!this.readsWith(reach, instance) || range.stamp <= (conn.ranges.get(instance.id) ?? 0)) return
     conn.ranges.set(instance.id, range.stamp)
-    const { version, from, to } = range
+    const { from, to } = range
+    const version = this.viewports.get(instance.id) === range ? instance.versions.version : range.version
     conn.port.postMessage(JSON.stringify(event({ topic: 'editor.viewport', instance: instance.id, version, from, to })))
   }
 

@@ -295,13 +295,13 @@ describe('the selection and the viewport', () => {
     const { alpha } = await connected(drawer, ['alpha'])
     reach.alpha = { read: [] }
     core.event('core.security')
-    drawer.changed(notes[0].instance, notes[0].type(0, 'x'))
+    drawer.changed(notes[0].instance, notes[0].type(12, 'x'))
     reach.alpha = { read: ['a.md'] }
     core.event('core.security')
     await settle()
     await settle()
     const opened = { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }
-    expect(alpha.events()).toEqual([opened, range('n1', 0, 0, 9), opened, range('n1', 0, 0, 9)])
+    expect(alpha.events()).toEqual([opened, range('n1', 0, 0, 9), opened, range('n1', 1, 0, 9)])
   })
 
   // The core's answers to editor.reach held while hold says so, each given as the gate stood when asked
@@ -326,7 +326,7 @@ describe('the selection and the viewport', () => {
     const gate = holding(core, () => true)
     reach.alpha = { read: [] }
     core.event('core.security')
-    drawer.changed(notes[0].instance, notes[0].type(0, 'x'))
+    drawer.changed(notes[0].instance, notes[0].type(12, 'x'))
     gate.stop()
     reach.alpha = { read: ['a.md'] }
     core.event('core.security')
@@ -336,7 +336,7 @@ describe('the selection and the viewport', () => {
     await settle()
     await settle()
     const opened = { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }
-    expect(alpha.events()).toEqual([opened, range('n1', 0, 0, 9), opened, range('n1', 0, 0, 9)])
+    expect(alpha.events()).toEqual([opened, range('n1', 0, 0, 9), opened, range('n1', 1, 0, 9)])
   })
 
   it('keeps sending ranges to a plugin whose read went and came back while the drawer still checked the note against the first', async () => {
@@ -373,6 +373,42 @@ describe('the selection and the viewport', () => {
     await settle()
     await settle()
     expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n2' }, range('n2', 0, 0, 11)])
+  })
+
+  it('sends a range the editor still draws with the version of the note then, at a late ask, at an open on ui.read and when a read comes back', async () => {
+    const notes = twoNotes()
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'] }, shown: { uiRead: ['a.md'] } }
+    const { drawer, core } = started(reach, notes)
+    drawer.viewport(notes[0].instance, 0, 5)
+    // Changes past the drawn range leave it where it is, so the editor tells no new one
+    for (const at of [9, 10, 11]) drawer.changed(notes[0].instance, notes[0].type(at, 'x'))
+    const { alpha, shown } = await connected(drawer, ['alpha', 'shown'])
+    expect(viewports(alpha)).toEqual([range('n1', 3, 0, 5)])
+    drawer.changed(notes[0].instance, notes[0].type(12, 'x'))
+    await drawer.humanOpened(notes[0].instance)
+    await settle()
+    expect(viewports(shown)).toEqual([range('n1', 4, 0, 5)])
+    reach.alpha = { read: [] }
+    core.event('core.security')
+    await settle()
+    drawer.changed(notes[0].instance, notes[0].type(13, 'x'))
+    reach.alpha = { read: ['a.md'] }
+    core.event('core.security')
+    await settle()
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 3, 0, 5), range('n1', 5, 0, 5)])
+  })
+
+  it('sends a range the editor drew before a newer one with the version it was drawn at', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    const { alpha } = await connected(drawer, ['alpha'])
+    drawer.viewport(notes[0].instance, 0, 9)
+    notes[0].type(0, 'x')
+    drawer.viewport(notes[0].instance, 1, 10)
+    notes[0].type(12, 'x')
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 2, 1, 10)])
   })
 
   it('sends a restarted plugin no range until its new run asks and its stopped run none', async () => {
