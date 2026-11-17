@@ -6,10 +6,11 @@ import { hashFiles, readFiles } from '../lib/hash-files.ts'
 // package.json names and installs it in node_modules under its package name
 export const COMMUNITY_PACKAGE = 'hetu-plugins'
 
-// The commit the build takes the package at and, for each plugin built from it, the hash of the files the build may
-// read there at that commit: the package's package.json and the plugin's folder. npm checks no integrity for a git
-// dependency, so this hash is what holds the files to the commit. A new commit moves both here, in package.json and in
-// the lock in one change
+// The commit the build takes the package at and, for each plugin built from it, the hash of what the build takes from
+// the package at that commit: the plugin's folder and the package's package.json, which esbuild reads for fields that
+// move an import. The plugin's folder is all of the package its bundle may take in and the build refuses a bundle that
+// took in any other file of it. npm checks no integrity for a git dependency, so this hash is what holds the files to
+// the commit. A new commit moves both here, in package.json and in the lock in one change
 export type Pin = { commit: string, files: Readonly<Record<string, string>> }
 export const PIN: Pin = Object.freeze({
   commit: '1169fd132a3e4870933f80fa21bdb5bc241905c3',

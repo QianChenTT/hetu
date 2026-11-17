@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
@@ -50,6 +50,48 @@ export type Built = {
 // source has neither
 export type BuildKind = { packaged?: boolean, locked?: boolean }
 
+// What a plugin from the community package may take into its bundle besides its own folder: hetu's SDK and API, which
+// its imports of @hetu/sdk reach
+const COMMUNITY_READS = [path.join(core, 'sdk'), path.join(core, 'api')]
+// How esbuild names the module the SDK's build wraps a worker in: the namespace, then the path of the plugin's entry,
+// absolute or relative to the plugin's folder
+const WORKER_INPUT = 'hetu-worker:'
+
+// The files a community plugin's bundle took in outside its own folder and hetu's SDK and API, each by its real path,
+// and any input with no file behind it as esbuild names it. The pinned hash covers the plugin's folder and the
+// package's package.json only, so a module esbuild resolves from anywhere else, a node_modules folder inside the
+// package or hetu's own among them, is no file the pin holds
+async function outsideReads(source: string, inputs: readonly string[]): Promise<string[]> {
+  const allowed = await Promise.all([source, ...COMMUNITY_READS].map(folder => realpath(folder)))
+  const outside: string[] = []
+  for (const input of new Set(inputs)) {
+    const file = path.resolve(source, input.startsWith(WORKER_INPUT) ? input.slice(WORKER_INPUT.length) : input)
+    const real = await realpath(file).catch(() => undefined)
+    if (real === undefined) outside.push(input)
+    else if (!allowed.some(folder => real.startsWith(folder + path.sep))) outside.push(real)
+  }
+  return outside.sort()
+}
+
+// One first-party plugin written into root: its manifest copied and src/worker.ts bundled into dist/worker.js. A plugin
+// from the community package is refused before anything of it is written when its bundle took in a file outside its
+// own folder and hetu's SDK and API
+export async function writeFirstParty(source: string, root: string, from: 'hetu' | 'community'): Promise<{ version: string }> {
+  await rm(root, { recursive: true, force: true })
+  const outputs = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
+  if (from === 'community') {
+    const outside = await outsideReads(source, outputs.flatMap(output => output.inputs))
+    if (outside.length > 0) {
+      throw new Error(`${path.basename(source)}'s bundle takes in files outside its folder and hetu's SDK and API:\n${outside.join('\n')}`)
+    }
+  }
+  await mkdir(path.join(root, 'dist'), { recursive: true })
+  const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
+  await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
+  for (const output of outputs) await writeFile(path.join(root, ...output.path.split('/')), output.text)
+  return JSON.parse(manifest.toString('utf8')) as { version: string }
+}
+
 export async function buildMain(outDir: string = path.join(core, 'dist'), kind: BuildKind = {}): Promise<Built> {
   await mkdir(outDir, { recursive: true })
   const main = await build({
@@ -93,13 +135,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   for (const [id, from] of Object.entries(FIRST_PARTY)) {
     const source = from === 'hetu' ? path.join(repo, 'plugins', id) : await communitySource(repo, id)
     const root = path.join(outDir, 'plugins', id)
-    await rm(root, { recursive: true, force: true })
-    await mkdir(path.join(root, 'dist'), { recursive: true })
-    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
-    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
-    const outputs = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
-    for (const output of outputs) await writeFile(path.join(root, ...output.path.split('/')), output.text)
-    const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
+    const { version } = await writeFirstParty(source, root, from)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
   }
   for (const [id, module] of Object.entries(PAGE)) {
