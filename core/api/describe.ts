@@ -91,7 +91,7 @@ export function describeChange(change: Change): Described {
         text: `Give the agent ${quoted(change.agent)} what it asks for through ${change.plugin}`,
         notes: [
           ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
-          `The agent reaches only what ${change.plugin} holds as well`, 'Revoke it from the agent list at any time',
+          `The agent reaches only what ${change.plugin} holds as well`, 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item',
         ],
       }
   }

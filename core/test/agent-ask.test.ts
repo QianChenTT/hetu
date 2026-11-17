@@ -58,7 +58,7 @@ describe('an agent\'s ask', () => {
     expect(shown.agent).toBe('client#1')
     expect(shown.notes).toEqual([
       'It asks for: luoshu.read on "inbox/**"', 'It asks for: luoshu.write on "inbox/**"',
-      'The agent reaches only what mcp holds as well', 'Revoke it from the agent list at any time',
+      'The agent reaches only what mcp holds as well', 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item',
     ])
     expect(shown.type).toBeNull()
     expect((await stored()).agents).toBeUndefined()
@@ -300,14 +300,36 @@ describe('revoke of an agent', () => {
     expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
   })
 
-  it('withdraws a waiting ask of a label that holds nothing yet and marks it, changing nothing for a label it doesn\'t know', async () => {
+  it('withdraws a waiting ask of a label that holds nothing yet and marks it, then marks a label with no item and no ask', async () => {
     const { loader, ask, stored } = await started({ agents: seeded })
     await ask('client#2', [read])
     await loader.request({ kind: 'agent.revoke', agent: 'client#2' }, trusted)
     expect(loader.pending()).toEqual([])
     expect((await stored()).revoked).toEqual(['client#2'])
     await loader.request({ kind: 'agent.revoke', agent: 'client#9' }, trusted)
-    expect((await stored()).revoked).toEqual(['client#2'])
+    expect((await stored()).revoked).toEqual(['client#2', 'client#9'])
+    expect((await stored()).agents).toEqual(seeded)
+  })
+
+  it('turns away a label whose ask the human cancelled, so it never asks again and http hears it is revoked', async () => {
+    const { loader, ask, list, clock } = await started()
+    await ask('nag#1', [read])
+    await loader.cancel(loader.pending()[0].id)
+    expect(await loader.request({ kind: 'agent.revoke', agent: 'nag#1' }, trusted)).toEqual({ applied: true })
+    expect((await list()).agents).toEqual([{ agent: 'nag#1', items: [], revoked: true }])
+    const agents = await loader.serve({ callId: 'c', caller: door, action: 'core.agents', args: { agents: ['nag#1'] }, deadline: Date.now() + 30_000 } as Call)
+    expect(agents).toEqual([{ agent: 'nag#1', holds: 'revoked' }])
+    clock.now += 60_000
+    expect(await code(ask('nag#1', [read]))).toBe('not-granted')
+  })
+
+  it('marks a label while mcp has no entry, held in the switches', async () => {
+    const { loader, dataDir } = await started()
+    const held = await loader.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)
+    if ('held' in held) await loader.confirm(held.held, {})
+    await loader.settled()
+    await loader.request({ kind: 'agent.revoke', agent: 'client#4' }, trusted)
+    expect((await new StateStore(dataDir).load()).state.switches.revokedAgents).toEqual(['client#4'])
   })
 
   it('lists for the trusted window each label with items and each revoked one, from mcp\'s entry alone', async () => {
@@ -467,14 +489,15 @@ describe('the records of an agent\'s ask, its Confirm and its revoke', () => {
     expect(await log.verify()).toMatchObject({ ok: true })
   })
 
-  it('leave out a revoke that changed nothing, of a label nobody holds or of one revoked already', async () => {
+  it('leave out a revoke of a label revoked already and keep one of a label nobody holds, which it marks', async () => {
     const { loader, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
     expect(await loader.request({ kind: 'agent.revoke', agent: 'never#1' }, trusted)).toEqual({ applied: true })
-    expect(link.events('security.applied')).toEqual([])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', target: 'never#1' }])
     await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
-    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', target: 'client#1' }])
+    expect(link.events('security.applied')).toMatchObject([{ target: 'never#1' }, { kind: 'agent.revoke', target: 'client#1' }])
     await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
-    expect(link.events('security.applied')).toHaveLength(1)
+    await loader.request({ kind: 'agent.revoke', agent: 'never#1' }, trusted)
+    expect(link.events('security.applied')).toHaveLength(2)
   })
 })
 

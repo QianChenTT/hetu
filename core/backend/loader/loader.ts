@@ -2153,8 +2153,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
   // tokens, on the entry or in the switches while the agent host has none. Only that label: a label another one begins
-  // with keeps its own. A label with no item and no ask waiting changes nothing and answers unchanged, so a revoke names
-  // only an agent the human can see
+  // with keeps its own. A label that holds nothing is marked too, so the human can turn away an agent that only asks.
+  // One marked already with no item and no ask waiting changes nothing and answers unchanged
   private async agentRevoke(agent: string): Promise<void | 'unchanged'> {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
@@ -2162,7 +2162,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const asked = this.requests.changes().some(({ change }) => waiting(change))
     this.requests.withdraw(waiting)
     const holds = (entry?.agents ?? []).some(item => item.agent === agent)
-    if (!holds && !asked) return 'unchanged'
+    if (!holds && !asked && marksOf(entry, this.state.switches).includes(agent)) return 'unchanged'
     if (entry === null) {
       const aside = revokedAside(this.state.switches, agent)
       await this.writeSwitches(aside.switches)

@@ -101,6 +101,9 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     confirms.add(confirm)
     if (typed !== null) typedOk.set(confirm, () => typed.value === request.type)
     section.append(confirm, button('Cancel', () => page.cancel(request.id)))
+    // A revoke narrows, so it applies at once with no delay: the ask goes and the label never asks again
+    const { revoke } = request
+    if (revoke !== null) section.append(button('Cancel and revoke', () => page.ask(revoke)))
     if (shown.behind > 0) section.append(element('p', `${shown.behind} more waiting`))
     parts.push(section)
   }

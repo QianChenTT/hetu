@@ -171,6 +171,16 @@ describe('what the trusted window draws', () => {
       .toEqual([{ text: 'Give the agent "a#1" what it asks for through mcp', label: false }])
   })
 
+  it('gives an agent\'s ask a third button that revokes the label its heading shows and gives any other request none', () => {
+    const asked: HeldRequest = {
+      id: 'r1', kind: 'agent.ask', plugin: 'mcp', notes: [], type: null, text: 'Give the agent "client#2" what it asks for through mcp', agent: 'client#2',
+    }
+    const drawn = screen(calm({ requests: [asked], agents: [{ agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['**'] }], revoked: false }] }))
+    expect(drawn.request!.heading.find(part => part.label)!.text).toBe('"client#2"')
+    expect(drawn.request!.revoke).toEqual({ kind: 'agent.revoke', agent: 'client#2' })
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.revoke).toBeNull()
+  })
+
   // The page's own stylesheet, which the trusted window's policy lets load from its own origin and nothing else
   it('draws a label in a fixed-width face the system has and wraps it and the lines holding it anywhere', async () => {
     const css = await readFile(new URL('../frontend/trusted/trusted.css', import.meta.url), 'utf8')

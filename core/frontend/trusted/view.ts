@@ -28,8 +28,9 @@ export type Limit = { constant: FloorConstant, floor: number, all: number | null
 
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
-  // The oldest request waiting with its heading in parts, then how many wait behind it
-  request: (HeldRequest & { heading: Part[] }) | null
+  // The oldest request waiting with its heading in parts and for an agent's ask the revoke of the label its heading
+  // shows, then how many wait behind it
+  request: (HeldRequest & { heading: Part[], revoke: Change | null }) | null
   behind: number
   plugins: {
     id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[], switches: Switch[]
@@ -64,6 +65,13 @@ export function headingOf(request: HeldRequest): Part[] {
     { text: request.text.slice(0, at), label: false }, { text: label, label: true }, { text: request.text.slice(at + label.length), label: false },
   ]
   return parts.filter(part => part.text !== '')
+}
+
+// The request drawn first. An agent's ask gets Cancel and revoke beside Confirm and Cancel, the revoke naming the label
+// the request holds, which is the one its heading draws
+function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
+  const revoke: Change | null = request.kind === 'agent.ask' && request.agent !== null ? { kind: 'agent.revoke', agent: request.agent } : null
+  return { ...request, heading: headingOf(request), revoke }
 }
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
@@ -181,7 +189,7 @@ export function limitChange(constant: FloorConstant, typed: string, plugin: stri
 export function screen(list: SecurityList): Screen {
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
-    request: list.requests[0] === undefined ? null : { ...list.requests[0], heading: headingOf(list.requests[0]) },
+    request: list.requests[0] === undefined ? null : requestOf(list.requests[0]),
     behind: Math.max(0, list.requests.length - 1),
     plugins: list.plugins.map(plugin => ({
       id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
