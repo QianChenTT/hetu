@@ -149,10 +149,158 @@ describe('ui.read', () => {
 })
 
 // Where the human is in a note: the selection on a command and the range the editor draws, each only to a plugin that
-// reads the note, as every other event about it
+// reads the note, as every other event about it. The range goes only to a plugin that asked for it
 describe('the selection and the viewport', () => {
   const twoNotes = () => [note('n1', 'a.md', 'one two three', [{ anchor: 3, head: 7 }]), note('n2', 'b.md', 'secret text', [{ anchor: 0, head: 6 }])]
   const viewports = (made: ReturnType<typeof port>) => made.events().filter(event => event.topic === 'editor.viewport')
+  const range = (instance: string, version: number, from: number, to: number) => ({ v: 1, kind: 'event', topic: 'editor.viewport', instance, version, from, to })
+  // Connected plugins, each asking for the range when asks says so
+  const connected = async (drawer: Drawer, ids: string[], asks: string[] = ids) => {
+    const made = Object.fromEntries(ids.map(id => [id, port()]))
+    for (const id of ids) drawer.connect(id, 1, made[id].port)
+    for (const id of asks) expect(await made[id].call('editor.viewports', { on: true })).toMatchObject({ ok: true, result: null })
+    await settle()
+    return made
+  }
+
+  it('sends no range to a plugin that reads the note and never asked, as the editor opens, moves and changes', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md', 'b.md'], verbs: ['ui.decoration'] } }, notes)
+    const { alpha } = await connected(drawer, ['alpha'], [])
+    drawer.viewport(notes[0].instance, 0, 9)
+    notes[0].type(0, 'x')
+    drawer.viewport(notes[0].instance, 1, 12)
+    drawer.viewport(notes[1].instance, 0, 11)
+    await settle()
+    expect(viewports(alpha)).toEqual([])
+    expect(alpha.events().map(event => event.topic)).toEqual(['editor.opened', 'editor.opened'])
+  })
+
+  it('sends a plugin that asked the range drawn at its ask, then each one after with its version', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const { alpha } = await connected(drawer, ['alpha'])
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9)])
+    notes[0].type(0, 'x')
+    drawer.viewport(notes[0].instance, 1, 12)
+    drawer.viewport(notes[0].instance, 4, 14)
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 1, 1, 12), range('n1', 1, 4, 14)])
+  })
+
+  it('sends a plugin that asked no range of a note it can\'t read, on ui.read none until the human opened it', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['b.md'] }, shown: { uiRead: ['a.md'] }, other: { verbs: ['ui.decoration'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const plugins = await connected(drawer, ['alpha', 'shown', 'other'])
+    drawer.viewport(notes[0].instance, 2, 9)
+    await settle()
+    expect(viewports(plugins.alpha)).toEqual([])
+    expect(viewports(plugins.shown)).toEqual([])
+    expect(plugins.other.events()).toEqual([])
+    await drawer.humanOpened(notes[0].instance)
+    drawer.viewport(notes[0].instance, 3, 9)
+    await settle()
+    expect(viewports(plugins.shown)).toEqual([range('n1', 0, 2, 9), range('n1', 0, 3, 9)])
+    expect(viewports(plugins.alpha)).toEqual([])
+  })
+
+  it('sends each range once to a plugin that asked twice', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const { alpha } = await connected(drawer, ['alpha'])
+    expect(await alpha.call('editor.viewports', { on: true })).toMatchObject({ ok: true })
+    drawer.viewport(notes[0].instance, 2, 9)
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 2, 9)])
+  })
+
+  it('sends no range after the plugin stopped them, and the range drawn then once it asks again', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const { alpha } = await connected(drawer, ['alpha'])
+    expect(await alpha.call('editor.viewports', { on: false })).toMatchObject({ ok: true, result: null })
+    // Asked again with nothing moved, it hears where the editor is again
+    await alpha.call('editor.viewports', { on: true })
+    await alpha.call('editor.viewports', { on: false })
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 0, 9)])
+    drawer.viewport(notes[0].instance, 2, 9)
+    drawer.viewport(notes[0].instance, 3, 9)
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 0, 9)])
+    await alpha.call('editor.viewports', { on: true })
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 0, 9), range('n1', 0, 3, 9)])
+  })
+
+  it('sends no range of a note that closed while its read was being checked', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    const { alpha } = await connected(drawer, ['alpha'])
+    drawer.viewport(notes[0].instance, 0, 9)
+    drawer.closed('n1')
+    await settle()
+    expect(viewports(alpha)).toEqual([])
+  })
+
+  it('tells a plugin that asked before the note opened that it opened, then its range once', async () => {
+    const notes: ReturnType<typeof note>[] = []
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    const { alpha } = await connected(drawer, ['alpha'])
+    expect(alpha.events()).toEqual([])
+    // As the page tells it: the note opened, then the range its editor drew
+    notes.push(note('n1', 'a.md', 'one two three'))
+    drawer.opened(notes[0].instance)
+    drawer.viewport(notes[0].instance, 0, 13)
+    await settle()
+    expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }, range('n1', 0, 0, 13)])
+  })
+
+  it('sends no range while a plugin that asked has lost its read of the note, and the next one once it reads again', async () => {
+    const notes = twoNotes()
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'] } }
+    const { drawer, core } = started(reach, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const { alpha } = await connected(drawer, ['alpha'])
+    reach.alpha = { read: [] }
+    core.event('core.security')
+    await settle()
+    drawer.viewport(notes[0].instance, 2, 9)
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9)])
+    reach.alpha = { read: ['a.md'] }
+    core.event('core.security')
+    await settle()
+    drawer.viewport(notes[0].instance, 3, 9)
+    await settle()
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9), range('n1', 0, 3, 9)])
+  })
+
+  it('sends a restarted plugin no range until its new run asks, and its stopped run none', async () => {
+    const notes = twoNotes()
+    const { drawer } = started({ alpha: { read: ['a.md'] } }, notes)
+    drawer.viewport(notes[0].instance, 0, 9)
+    const { alpha } = await connected(drawer, ['alpha'])
+    drawer.end('alpha', 1)
+    const again = port()
+    drawer.connect('alpha', 2, again.port)
+    drawer.viewport(notes[0].instance, 2, 9)
+    await settle()
+    expect(viewports(again)).toEqual([])
+    expect(viewports(alpha)).toEqual([range('n1', 0, 0, 9)])
+    // A newer run that replaces a live one starts with no ask either
+    await again.call('editor.viewports', { on: true })
+    const third = port()
+    drawer.connect('alpha', 3, third.port)
+    drawer.viewport(notes[0].instance, 3, 9)
+    await settle()
+    expect(viewports(third)).toEqual([])
+    expect(viewports(again)).toEqual([range('n1', 0, 2, 9)])
+  })
 
   it("sends a command the selection and the version at the key, of that key's note and only to a plugin that reads it", async () => {
     const notes = twoNotes()
@@ -194,9 +342,7 @@ describe('the selection and the viewport', () => {
     const { drawer } = started({
       alpha: { read: ['a.md'] }, beta: { read: ['b.md'], verbs: ['ui.decoration'] }, shown: { uiRead: ['a.md'] }, other: { verbs: ['ui.decoration'] },
     }, notes)
-    const plugins = { alpha: port(), beta: port(), shown: port(), other: port() }
-    for (const [id, made] of Object.entries(plugins)) drawer.connect(id, 1, made.port)
-    await settle()
+    const plugins = await connected(drawer, ['alpha', 'beta', 'shown', 'other'])
     drawer.viewport(notes[0].instance, 0, 9)
     drawer.viewport(notes[1].instance, 2, 11)
     notes[0].type(0, 'x')
@@ -215,11 +361,7 @@ describe('the selection and the viewport', () => {
     const notes = twoNotes()
     const { drawer } = started({ alpha: { read: ['a.md'] }, shown: { uiRead: ['a.md'] } }, notes)
     drawer.viewport(notes[0].instance, 0, 9)
-    const alpha = port()
-    const shown = port()
-    drawer.connect('alpha', 1, alpha.port)
-    drawer.connect('shown', 1, shown.port)
-    await settle()
+    const { alpha, shown } = await connected(drawer, ['alpha', 'shown'])
     expect(alpha.events()).toEqual([
       { v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' },
       { v: 1, kind: 'event', topic: 'editor.viewport', instance: 'n1', version: 0, from: 0, to: 9 },
@@ -237,8 +379,7 @@ describe('the selection and the viewport', () => {
     const notes = twoNotes()
     const reach: Record<string, Reach> = { alpha: { read: ['a.md'], verbs: ['ui.command'] } }
     const { drawer, core } = started(reach, notes)
-    const alpha = port()
-    drawer.connect('alpha', 1, alpha.port)
+    const { alpha } = await connected(drawer, ['alpha'])
     await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
     drawer.viewport(notes[0].instance, 0, 9)
     await settle()
@@ -261,9 +402,7 @@ describe('the selection and the viewport', () => {
     drawer.viewport(notes[0].instance, 0, 9)
     drawer.closed('n1')
     notes[0] = note('n1', 'a.md', 'again')
-    const alpha = port()
-    drawer.connect('alpha', 1, alpha.port)
-    await settle()
+    const { alpha } = await connected(drawer, ['alpha'])
     expect(alpha.events()).toEqual([{ v: 1, kind: 'event', topic: 'editor.opened', instance: 'n1' }])
   })
 })

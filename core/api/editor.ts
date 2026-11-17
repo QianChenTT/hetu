@@ -12,13 +12,14 @@ import { VERSION } from './version.ts'
 // the ui item named here. Instances and versions are the drawer's: an instance is one open note and its version counts the changes made
 // to it since it opened
 
-export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys'] as const)
+export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys', 'editor.viewports'] as const)
 export type EditorVerb = typeof editorVerbs[number]
 
 export type VerbNeeds = { readonly read: boolean, readonly edit: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keys' | null }
 
 // instances lists only notes the plugin reads, so it needs no read of its own. bind and keys name no note: a command
-// says which instance it came from and a key event goes only to a plugin that reads the focused note
+// says which instance it came from and a key event goes only to a plugin that reads the focused note. viewports names
+// no note either and needs no ui item: each range goes only to a plugin that reads its note, checked at each send
 export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
   'editor.instances': { read: false, edit: false, ui: null },
   'editor.read': { read: true, edit: false, ui: null },
@@ -26,6 +27,7 @@ export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
   'editor.edit': { read: true, edit: true, ui: null },
   'editor.bind': { read: false, edit: false, ui: 'ui.command' },
   'editor.keys': { read: false, edit: false, ui: 'ui.keys' },
+  'editor.viewports': { read: false, edit: false, ui: null },
 })
 
 // The looks a mark may ask for, drawn with the drawer's own classes. A plugin sends no class and no CSS
@@ -91,6 +93,8 @@ export const bridgeCall = z.discriminatedUnion('verb', [
     args: z.strictObject({ bindings: z.array(z.strictObject({ key, command: localName })).max(MAX_BINDINGS) }),
   }),
   z.strictObject({ ...head, verb: z.literal('editor.keys'), args: z.strictObject({ on: z.boolean() }) }),
+  // Asks for the range each open note's editor draws, or stops them
+  z.strictObject({ ...head, verb: z.literal('editor.viewports'), args: z.strictObject({ on: z.boolean() }) }),
 ])
 export type BridgeCall = z.infer<typeof bridgeCall>
 
@@ -123,8 +127,9 @@ export function refused(id: number, code: RefusalCode): BridgeReply {
 
 // What the drawer tells a plugin unasked. Each event about an instance goes only to plugins that read its note. A
 // command names its note, the selection at the key and the version it was taken at only to a plugin that reads the
-// note. The viewport is the range of the text the editor draws, told again each time it moves and after editor.opened.
-// The selection and the viewport came within API version 3 as additions, which an SDK without them drops or reads past
+// note. The viewport is the range of the text the editor draws, told only to a plugin that asked with editor.viewports,
+// once a note is told opened and again each time it moves. The selection, the viewport and its verb came within API
+// version 3 as additions, which an SDK without them drops or reads past and never asks for
 export type BridgeEvent = { v: typeof VERSION, kind: 'event' } & (
   | { topic: 'editor.opened' | 'editor.closed', instance: string }
   | { topic: 'editor.changed', instance: string, version: number, changes: ChangeJson }
@@ -142,4 +147,5 @@ export type BridgeResults = {
   'editor.edit': { version: number }
   'editor.bind': null
   'editor.keys': null
+  'editor.viewports': null
 }

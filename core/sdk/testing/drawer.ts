@@ -196,6 +196,8 @@ export class FakeDrawer {
       case 'editor.keys':
         need('ui.keys')
         return null
+      case 'editor.viewports':
+        return null
     }
   }
 

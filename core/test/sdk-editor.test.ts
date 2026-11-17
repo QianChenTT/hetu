@@ -88,7 +88,21 @@ describe("the SDK's editor side", () => {
     ])
   })
 
-  it('on a new port sends its bindings and key stream again and fails what was in flight on the old one', async () => {
+  it('asks for the range the editor draws and stops it on the port', async () => {
+    const editor = new Editor()
+    const port = drawerPort()
+    editor.connect(port.transport)
+    const asking = editor.viewports(true)
+    expect(port.sent).toEqual([{ v: 1, kind: 'call', id: 1, verb: 'editor.viewports', args: { on: true } }])
+    port.replies(1, null)
+    await asking
+    const stopping = editor.viewports(false)
+    expect(port.sent[1]).toMatchObject({ verb: 'editor.viewports', args: { on: false } })
+    port.replies(2, null)
+    await stopping
+  })
+
+  it('on a new port sends its bindings, key stream and ask for the range again and fails what was in flight on the old one', async () => {
     const editor = new Editor()
     const first = drawerPort()
     editor.connect(first.transport)
@@ -98,6 +112,9 @@ describe("the SDK's editor side", () => {
     const streaming = editor.keys(true)
     first.replies(2, null)
     await streaming
+    const asking = editor.viewports(true)
+    first.replies(3, null)
+    await asking
     const reading = editor.read('n1')
     const next = drawerPort()
     editor.connect(next.transport)
@@ -105,8 +122,22 @@ describe("the SDK's editor side", () => {
     expect(next.sent.map(call => [call.verb, call.args])).toEqual([
       ['editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] }],
       ['editor.keys', { on: true }],
+      ['editor.viewports', { on: true }],
     ])
     // A late reply on the old port settles nothing
-    first.replies(3, { text: 'late' })
+    first.replies(4, { text: 'late' })
+  })
+
+  it('on a new port asks for no range once the plugin stopped them', async () => {
+    const editor = new Editor()
+    const first = drawerPort()
+    editor.connect(first.transport)
+    void editor.viewports(true)
+    first.replies(1, null)
+    void editor.viewports(false)
+    first.replies(2, null)
+    const next = drawerPort()
+    editor.connect(next.transport)
+    expect(next.sent).toEqual([])
   })
 })

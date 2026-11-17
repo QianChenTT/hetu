@@ -52,6 +52,9 @@ export const RESERVED_KEYS: readonly string[] = Object.freeze([
 type Reach = { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: readonly string[] }
 const none: Reach = Object.freeze({ read: false, edit: false, uiRead: false, list: false, verbs: Object.freeze([]) })
 
+// A range of a note's text its editor draws, in the version it was drawn at, stamped in the order the page told them
+type Drawn = { version: number, from: number, to: number, stamp: number }
+
 // The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
 export const NODES_PER_SECOND = 200_000
 
@@ -64,6 +67,9 @@ type Connection = {
   readonly port: PortLike
   bindings: Map<string, string>
   keys: boolean
+  // Whether it asked for the range each editor draws, and the stamp of the last range it was sent by instance
+  viewports: boolean
+  readonly ranges: Map<string, number>
   // The instances it holds marks on
   readonly marked: Set<string>
   // How many marks each of its sets holds, by instance
@@ -90,8 +96,10 @@ export class Drawer {
   private reaches = new Map<string, Promise<Reach>>()
   // The instances the human opened, the only ones ui.read reaches
   private readonly human = new Set<string>()
-  // The range each open instance's editor draws as the page last told it, with the version it was measured at
-  private readonly viewports = new Map<string, { version: number, from: number, to: number }>()
+  // The range each open instance's editor draws as the page last told it, with the version it was measured at and a
+  // stamp, so a plugin is sent each range once
+  private readonly viewports = new Map<string, Drawn>()
+  private stamped = 0
   private readonly mac: boolean
   private readonly clock: () => number
   private readonly settings: () => SettingsValue
@@ -135,7 +143,7 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), keys: false, marked: new Set(), sets: new Map(), told: new Set(),
+      plugin, incarnation, port, bindings: new Map(), keys: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
       spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
@@ -177,7 +185,10 @@ export class Drawer {
   closed(instance: string): void {
     this.human.delete(instance)
     this.viewports.delete(instance)
-    for (const conn of this.connections.values()) conn.told.delete(instance)
+    for (const conn of this.connections.values()) {
+      conn.told.delete(instance)
+      conn.ranges.delete(instance)
+    }
     for (const conn of this.connections.values()) {
       if (!conn.marked.delete(instance)) continue
       conn.port.postMessage(JSON.stringify(event({ topic: 'editor.closed', instance })))
@@ -193,12 +204,14 @@ export class Drawer {
     }
   }
 
-  // The editor of the instance draws another range of its text. Each plugin that reads the note hears it. One told of
-  // the note later hears the last range with editor.opened
+  // The editor of the instance draws another range of its text. Each plugin that asked for ranges and reads the note
+  // hears it. One told of the note later hears the last range with editor.opened, one that asks later at its ask
   viewport(instance: Instance, from: number, to: number): void {
-    const range = { version: instance.versions.version, from, to }
+    const range = { version: instance.versions.version, from, to, stamp: ++this.stamped }
     this.viewports.set(instance.id, range)
-    for (const conn of this.connections.values()) void this.tell(conn, instance, { topic: 'editor.viewport', instance: instance.id, ...range })
+    for (const conn of this.connections.values()) {
+      if (conn.viewports) void this.tellRange(conn, instance, range)
+    }
   }
 
   // A key in the editor, named as keys.ts names it, after the core keys. The plugin bound to it hears its command,
@@ -284,6 +297,8 @@ export class Drawer {
     conn.sets.clear()
     conn.bindings = new Map()
     conn.keys = false
+    conn.viewports = false
+    conn.ranges.clear()
   }
 
   private live(conn: Connection): boolean {
@@ -318,7 +333,7 @@ export class Drawer {
   }
 
   // An event about an instance, to the plugin only when it reads the note. editor.opened goes once and brings the last
-  // range the editor drew
+  // range the editor drew to a plugin that asked for ranges
   private async tell(conn: Connection, instance: Instance, body: EventBody): Promise<void> {
     const reach = await this.reachOf(conn.plugin, instance.path)
     if (!this.live(conn) || !this.readsWith(reach, instance)) return
@@ -327,8 +342,21 @@ export class Drawer {
       conn.told.add(instance.id)
     }
     conn.port.postMessage(JSON.stringify(event(body)))
-    const range = body.topic === 'editor.opened' ? this.viewports.get(instance.id) : undefined
-    if (range !== undefined) conn.port.postMessage(JSON.stringify(event({ topic: 'editor.viewport', instance: instance.id, ...range })))
+    if (body.topic === 'editor.opened') this.sendRange(conn, instance, reach, this.viewports.get(instance.id))
+  }
+
+  private async tellRange(conn: Connection, instance: Instance, range: Drawn | undefined): Promise<void> {
+    this.sendRange(conn, instance, await this.reachOf(conn.plugin, instance.path), range)
+  }
+
+  // A range the instance's editor drew, to a plugin that asked for ranges, was told the note opened and reads it with
+  // this reach. A range no newer than the last it was sent doesn't go, so none goes twice or out of order
+  private sendRange(conn: Connection, instance: Instance, reach: Reach, range: Drawn | undefined): void {
+    if (range === undefined || !this.live(conn) || !conn.viewports || !conn.told.has(instance.id)) return
+    if (!this.readsWith(reach, instance) || range.stamp <= (conn.ranges.get(instance.id) ?? 0)) return
+    conn.ranges.set(instance.id, range.stamp)
+    const { version, from, to } = range
+    conn.port.postMessage(JSON.stringify(event({ topic: 'editor.viewport', instance: instance.id, version, from, to })))
   }
 
   // A ui event to an owner's live port
@@ -438,6 +466,13 @@ export class Drawer {
       }
       case 'editor.keys':
         conn.keys = call.args.on
+        return null
+      // An ask sends the range each note it reads is drawn at now, one it was sent already excepted. A stop forgets what
+      // was sent, so the next ask sends the ranges of then
+      case 'editor.viewports':
+        conn.viewports = call.args.on
+        if (!call.args.on) conn.ranges.clear()
+        if (call.args.on) for (const instance of this.instances()) void this.tellRange(conn, instance, this.viewports.get(instance.id))
         return null
     }
   }

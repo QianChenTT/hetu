@@ -463,10 +463,11 @@ describe('the drawer', () => {
     expect(await commands(outsider)).toEqual([{ v: 1, kind: 'event', topic: 'editor.command', command: 'there', instance: null }])
   })
 
-  it('sends the range the editor draws to a plugin that reads the note and to no other, again as it moves', async () => {
+  it('sends the range the editor draws to a plugin that asked for it and reads the note and to no other, again as it moves', async () => {
     const plugins: Record<string, Capability[]> = {
       reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
       outsider: [{ type: 'luoshu.read', paths: ['other/**'] }, { type: 'ui.command' }],
+      unasked: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
     }
     const lines = Array.from({ length: 3000 }, (_, i) => `line ${i}`)
     const text = lines.join('\n')
@@ -474,6 +475,8 @@ describe('the drawer', () => {
     const { app, editor } = await started({ notes: { 'a.md': text, 'b.md': short }, plugins })
     const reader = await pluginWorker(app, 'reader')
     const outsider = await pluginWorker(app, 'outsider')
+    const unasked = await pluginWorker(app, 'unasked')
+    for (const worker of [reader, outsider]) await drive(worker, async scope => scope.editor.viewports(true))
     await open(editor, 'a.md')
     type Range = { topic: string, instance: string, version: number, from: number, to: number }
     const ranges = async (worker: Worker) => (await drive(worker, async scope => scope.heard) as Range[]).filter(event => event.topic === 'editor.viewport')
@@ -507,6 +510,8 @@ describe('the drawer', () => {
     expect((await ranges(reader)).filter(range => range.instance === 'n2')).toContainEqual(expect.objectContaining({ from: 0, to: short.length }))
     expect((await ranges(reader)).filter(range => range.instance === 'n1' && range.to === short.length)).toEqual([])
     expect(await ranges(outsider)).toEqual([])
+    expect(await ranges(unasked)).toEqual([])
+    expect((await drive(unasked, async scope => scope.heard) as { topic: string }[]).filter(event => event.topic === 'editor.opened')).toHaveLength(2)
   })
 
   // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
