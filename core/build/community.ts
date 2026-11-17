@@ -63,9 +63,9 @@ export function pinnedCommit(manifest: unknown, lock: unknown): string {
   return commit
 }
 
-// The hash of what the build may read of one plugin in the installed package: its package.json, which esbuild reads for
-// fields such as browser that move an import, and every file of the plugin's folder. A link anywhere in the folder
-// is refused by readFiles
+// The hash of what the build may read of one plugin in the installed package: every file of the plugin's folder and the
+// package's package.json, which esbuild reads for fields such as browser that move an import. A link anywhere in the
+// folder is refused by readFiles
 export async function communityHash(pkg: string, id: string): Promise<string> {
   const files = (await readFiles(path.join(pkg, id))).map(file => ({ path: `${id}/${file.path}`, bytes: file.bytes }))
   return hashFiles([{ path: 'package.json', bytes: await readFile(path.join(pkg, 'package.json')) }, ...files])

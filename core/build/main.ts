@@ -6,7 +6,7 @@ import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 import { communitySource } from './community.ts'
 
-// The first-party plugins built, each a worker from src/worker.ts, and where its source is: hetu's own plugins folder
+// The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
 // or the community package npm installed at the commit package.json pins
 const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names

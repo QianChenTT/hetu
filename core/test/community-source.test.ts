@@ -49,7 +49,7 @@ describe("the community plugins' source", () => {
     expect(await communitySource(repo, 'file-explorer')).toBe(path.join(repo, 'node_modules', COMMUNITY_PACKAGE, 'file-explorer'))
   })
 
-  it('records file-explorer at the commit package.json pins, and only file-explorer', () => {
+  it('records file-explorer at the commit package.json pins and only file-explorer', () => {
     expect(PIN.commit).toBe('1169fd132a3e4870933f80fa21bdb5bc241905c3')
     expect(Object.keys(PIN.files)).toEqual(['file-explorer'])
     expect(PIN.files['file-explorer']).toMatch(/^[0-9a-f]{64}$/)

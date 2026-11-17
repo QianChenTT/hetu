@@ -100,7 +100,7 @@ async function putBack(folder: string): Promise<void> {
 }
 
 describe('the file explorer, a first-party plugin from the community package', () => {
-  it('starts with its whole grant at class 4, lists, opens, and asks once in the trusted window before its first write', async () => {
+  it('starts with its whole grant at class 4, lists, opens and asks once in the trusted window before its first write', async () => {
     const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta', 'notes/deep/d.md': 'delta', 'other.txt': 'not a note' }
     const { app, editor, dataDir, folder } = await started({ notes })
     try {
@@ -171,9 +171,9 @@ describe('the file explorer, a first-party plugin from the community package', (
     }
   })
 
-  // The proof: its write narrowed to inbox/** by the human. It still lists every name and opens any note, and it moves
+  // The proof: its write narrowed to inbox/** by the human. It still lists every name and opens any note. It moves
   // and removes only inside inbox/
-  it('lists every name and opens any note with its write narrowed to inbox/**, and renames and deletes only inside inbox/', async () => {
+  it('lists every name and opens any note with its write narrowed to inbox/** and renames and deletes only inside inbox/', async () => {
     const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta', 'inbox/c.md': 'gamma', 'notes/d.md': 'delta' }
     const narrowed: Capability = { type: 'luoshu.write', paths: ['inbox/**'] }
     const { editor, dataDir, folder } = await started({ notes, granted: [listAll, readAll, narrowed, ...rest] })
