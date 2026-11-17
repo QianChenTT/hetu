@@ -40,6 +40,7 @@
     "@electron/fuses": "2.1.3",
     "electron": "45.3.0",
     "electron-builder": "26.18.0",
+    "hetu-plugins": "github:QianChenTT/hetu-plugins#1169fd132a3e4870933f80fa21bdb5bc241905c3",
     "playwright": "1.65.0"
   }
 }
