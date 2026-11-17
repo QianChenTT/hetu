@@ -54,11 +54,34 @@ describe("the core's words for a change", () => {
   it('quotes an agent\'s label and each scope it asks for, then says what a revoke does', () => {
     expect(describeChange({ kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
       text: 'Give the agent "client#1" what it asks for through mcp',
-      notes: ['It asks for: luoshu.read on "save note"', 'The agent reaches only what mcp holds as well', 'Revoke it from the agent list at any time'],
+      notes: ['It asks for: luoshu.read on "save note"', 'The agent reaches only what mcp holds as well', 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item'],
     })
     expect(describeChange(one({ kind: 'agent.revoke', agent: 'client#1' }))).toEqual({
       text: 'Revoke the agent "client#1"', notes: ['It loses every item at once. Its number is never used again'],
     })
+  })
+
+  // Each was drawn bare before: plugin.call to notes, events.subscribe to notes.saved, with HOME from your environment
+  const call = { type: 'plugin.call', targets: ['notes', 'press-confirm-to-finish'] }
+  const topic = { type: 'events.subscribe', topics: ['notes.saved', 'hetu.thisWasApprovedAlready'] }
+  const env = { type: 'exec', commands: [['git', 'status']], env: ['HOME', 'CONFIRM_TO_CONTINUE'] }
+  it.each([
+    ['grant.widen', call, 'Give search plugin.call to "notes", "press-confirm-to-finish"'],
+    ['grant.narrow', call, 'Take plugin.call to "notes", "press-confirm-to-finish" from search'],
+    ['item.on', topic, 'Let search use events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"'],
+    ['item.off', topic, 'Stop search using events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"'],
+    ['grant.widen', env, 'Give search exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
+    ['item.on', env, 'Let search use exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment'],
+  ])('quotes each target, topic and variable a plugin chose in %s', (kind, capability, text) => {
+    expect(describeChange(one({ kind, plugin: 'search', capability })).text).toBe(text)
+  })
+
+  it('quotes each target, topic and variable an agent asks for', () => {
+    expect(describeChange({ kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [call, topic, env] as never }).notes.slice(0, 3)).toEqual([
+      'It asks for: plugin.call to "notes", "press-confirm-to-finish"',
+      'It asks for: events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"',
+      'It asks for: exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment',
+    ])
   })
 
   it('quotes the notes folder', () => {

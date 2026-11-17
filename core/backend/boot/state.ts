@@ -79,12 +79,15 @@ const switches = z.strictObject({
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
   recordNothing: z.boolean(),
+  // The labels the human revoked whose tokens http has not yet said it ended, held here while the agent host has no
+  // entry and handed to the entry it gets next. Left out of a file with none
+  revokedAgents: list(agentLabel).optional(),
 })
 // Items for agents an entry holds in all, across every agent
 export const MAX_AGENT_ITEMS = 256
 // One item of an agent's grant: the label the agent door names the agent by in the agent label's form and an item in
 // the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
-const agentItems = z.array(z.strictObject({ agent: agentLabel, capability: folderCapability }))
+export const agentItems = z.array(z.strictObject({ agent: agentLabel, capability: folderCapability }))
   .max(MAX_AGENT_ITEMS, { abort: true })
   .superRefine((items, ctx) => {
     const byAgent = new Map<string, Capability[]>()

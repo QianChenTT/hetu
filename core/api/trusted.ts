@@ -9,7 +9,8 @@ export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
 
-// One capability as its type and each scope quoted, so a scope a plugin wrote reads as data and not as a sentence
+// One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or an
+// agent chose reads as a sentence of the screen
 export function capabilityText(granted: Capability): string {
   switch (granted.type) {
     case 'luoshu.read':
@@ -23,12 +24,12 @@ export function capabilityText(granted: Capability): string {
     case 'net.fetch':
       return `net.fetch to ${granted.hosts.map(quoted).join(', ')}`
     case 'events.subscribe':
-      return `events.subscribe to ${granted.topics.join(', ')}`
+      return `events.subscribe to ${granted.topics.map(quoted).join(', ')}`
     case 'exec':
       // Each command as its argument array, so two that run differently never read alike, then the variables it gets
-      return `exec of ${granted.commands.map(command => JSON.stringify(command)).join(', ')}${granted.env.length > 0 ? ` with ${granted.env.join(', ')} from your environment` : ''}`
+      return `exec of ${granted.commands.map(command => JSON.stringify(command)).join(', ')}${granted.env.length > 0 ? ` with ${granted.env.map(quoted).join(', ')} from your environment` : ''}`
     case 'plugin.call':
-      return `plugin.call to ${granted.targets.join(', ')}`
+      return `plugin.call to ${granted.targets.map(quoted).join(', ')}`
     default:
       return granted.type
   }

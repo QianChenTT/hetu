@@ -491,7 +491,7 @@ describe('the core actions the loader serves', () => {
       items: [{ capability: notes, off: false, firstUse: false }, { capability: panel, off: true, firstUse: false }],
     })
     expect(list.requests).toEqual([{
-      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate',
+      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', agent: null,
     }])
     expect(list.switches).toEqual({
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
@@ -648,6 +648,20 @@ describe('the request to approve a plugin', () => {
     const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'])
+  })
+
+  it('quotes each target, topic and variable its manifest names', async () => {
+    const asks: Capability[] = [
+      { type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] },
+      { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
+    ]
+    const made = await harness({ folder: { alpha: worker('alpha', { capabilities: asks }) } })
+    await made.loader.start()
+    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    expect(list.requests[0].notes.slice(0, 4)).toEqual([
+      'Version 1.0.0', 'It asks for: plugin.call to "notes"', 'It asks for: events.subscribe to "notes.saved"',
+      'It asks for: exec of ["git","status"] with "HOME" from your environment',
+    ])
   })
 
   it('says when it asks for nothing', async () => {

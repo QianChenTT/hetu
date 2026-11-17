@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { folderCapability, MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
+import { MAX_SCOPES_PER_TYPE, text, type Capability, type CapabilityType } from './capabilities.ts'
+import { askedCapability, change, MAX_ASK_ITEMS, type ChangeKind } from './changes.ts'
 import { agentLabel, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
@@ -166,7 +166,7 @@ const coreTable = {
   'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
   // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
   // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
-  'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(folderCapability).min(1).max(MAX_ASK_ITEMS) }) },
+  'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
   // What http asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
   // heard names the revoked labels whose tokens http ended, whose marks then go
   'core.agents': {
@@ -300,8 +300,9 @@ export type ListedPlugin = {
   class: number | null
 }
 
-// A request waiting for the human in the core's own words, with the word to type where the change asks for one
-export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null }
+// A request waiting for the human in the core's own words, with the word to type where the change asks for one. agent is
+// the label of an agent's ask, which its text holds in quotes, null for every other request
+export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
 // whether the human revoked it and http has yet to say it ended its tokens

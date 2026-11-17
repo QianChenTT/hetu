@@ -207,6 +207,17 @@ describe('agents through the joined core', () => {
     expect((await ask(door, 'core.agents', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
   })
 
+  it('refuses the door\'s next call for agent #1 once revoked before mcp sees it with no word from http and still delivers agent #3\'s', async () => {
+    const { loader, door, mcp } = await joined('on')
+    const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
+    await loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    const delivered = () => mcp.inbox.filter(message => message.kind === 'call' && message.action === 'mcp.handle').length
+    const before = delivered()
+    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    expect(delivered()).toBe(before)
+    await request(door, mcp, 'client#3')
+  })
+
   it('refuses the door\'s call for agent #1 policy-down with the gate off before mcp sees it', async () => {
     const { door, mcp } = await joined('off')
     expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('policy-down')

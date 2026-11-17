@@ -1998,3 +1998,15 @@ describe('a notice for a plugin never classed', () => {
     expect(await notices(made)).toEqual([])
   })
 })
+
+describe('the capabilities plugin\'s screen with what a manifest chose in quotes', () => {
+  it('quotes each target, topic and variable it names, on the class line and the line of what is connected', () => {
+    const lines = createCapabilities().screen({
+      granted: [{ type: 'exec', commands: [['git', 'status']], env: ['HOME'] }],
+      reachable: [{ type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }],
+      callers: [],
+    })
+    expect(lines).toContain('Class 4, Powerful: exec of ["git","status"] with "HOME" from your environment')
+    expect(lines).toContain('Through plugin.call it is connected to: plugin.call to "notes", events.subscribe to "notes.saved"')
+  })
+})

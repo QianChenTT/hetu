@@ -689,6 +689,8 @@ export class Carrier {
     const agent = parent?.lends
     const door = parent === null && action === agentDoor.action && this.isDoor(way)
     if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
+    // A label the human revoked is refused at the door with no word from http, so a revoke holds while http's token lives
+    if (door && this.revoked(onBehalf as string)) return refuse('not-granted')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
@@ -886,8 +888,10 @@ export class Carrier {
   // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
   // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
   // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
-  // that is down
+  // that is down. Once shutdown began a call for an agent answers stopped whatever the gate's state, so the door's call
+  // during a shutdown answers the same with the gate on as with it off
   private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
+    if (agent !== undefined && this.shutting) return 'stopped'
     const gate = this.slot('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
@@ -1645,6 +1649,15 @@ export class Carrier {
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
+    }
+  }
+
+  // Revoked unless the loader says plainly it is not, so a view that throws refuses
+  private revoked(label: string): boolean {
+    try {
+      return this.options.loader.revoked(label) !== false
+    } catch {
+      return true
     }
   }
 

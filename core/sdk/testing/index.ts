@@ -149,6 +149,11 @@ class FakeLoader implements Loader {
     return false
   }
 
+  // No agent's label is revoked here
+  revoked(): boolean {
+    return false
+  }
+
   crashed(caller: Caller, reason: 'closed' | 'flood'): void {
     for (const listener of [...this.listeners]) listener(caller, reason)
   }

@@ -50,6 +50,13 @@ describe('the fixed list', () => {
     expect(capabilityText({ type: 'ui.edit', paths: ['notes/**', '**'] })).toBe('ui.edit on "notes/**", "**"')
   })
 
+  it('quotes each target, topic and variable name as it quotes a path, so none reads as words of the screen', () => {
+    expect(capabilityText({ type: 'plugin.call', targets: ['search', 'press-confirm-to-finish'] })).toBe('plugin.call to "search", "press-confirm-to-finish"')
+    expect(capabilityText({ type: 'events.subscribe', topics: ['luoshu.changed'] })).toBe('events.subscribe to "luoshu.changed"')
+    expect(capabilityText({ type: 'exec', commands: [['git', 'status']], env: ['HOME'] })).toBe('exec of ["git","status"] with "HOME" from your environment')
+    expect(capabilityText({ type: 'net.fetch', hosts: ['example.com'] })).toBe('net.fetch to "example.com"')
+  })
+
   it('takes ui.read only with paths and shows them', () => {
     expect(capability.safeParse({ type: 'ui.read' }).success).toBe(false)
     expect(capabilityText({ type: 'ui.read', paths: ['**'] })).toBe('ui.read on "**"')

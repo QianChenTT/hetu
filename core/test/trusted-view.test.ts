@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { ListedPlugin, SecurityList } from '../api/actions.ts'
+import { readFile } from 'node:fs/promises'
+import type { HeldRequest, ListedPlugin, SecurityList } from '../api/actions.ts'
+import type { Capability } from '../api/capabilities.ts'
 import { floorConstantNames, floorConstants } from '../api/floor.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -19,12 +21,17 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   ...over,
 })
 
+// The body of the first rule in a stylesheet whose selector starts a line as written, empty for none
+function ruleIn(css: string, selector: string): string {
+  return css.match(new RegExp(`(?:^|\\n)${selector.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}[^{]*\\{([^}]*)\\}`))?.[1] ?? ''
+}
+
 describe('what the trusted window draws', () => {
   it('shows the oldest request first and counts the ones behind it', () => {
     const drawn = screen(calm({
       requests: [
-        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate' },
-        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null },
+        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate', agent: null },
+        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null, agent: null },
       ],
     }))
     expect(drawn.request).toMatchObject({ id: 'r1', text: 'Switch gate off', type: 'gate' })
@@ -156,6 +163,61 @@ describe('what the trusted window draws', () => {
     for (const typed of ['', '0', '-5', '1.5', '1e3', 'ten', '99999999999999999999']) expect(limitChange('readyMs', typed, null)).toBeNull()
   })
 
+  it('draws an agent\'s label in an ask\'s heading as a part of its own and every other heading whole', () => {
+    const asked: Omit<HeldRequest, 'text' | 'agent'> = { id: 'r1', kind: 'agent.ask', plugin: 'mcp', notes: [], type: null }
+    const label = `https://claude.ai/${'a'.repeat(200)}#12`
+    expect(screen(calm({ requests: [{ ...asked, text: `Give the agent "${label}" what it asks for through mcp`, agent: label }] })).request!.heading).toEqual([
+      { text: 'Give the agent ', label: false }, { text: `"${label}"`, label: true }, { text: ' what it asks for through mcp', label: false },
+    ])
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.heading)
+      .toEqual([{ text: 'Switch gate off', label: false }])
+    // A label the text doesn't hold leaves the text whole, so nothing is drawn twice or out of order
+    expect(screen(calm({ requests: [{ ...asked, text: 'Give the agent "a#1" what it asks for through mcp', agent: 'b#1' }] })).request!.heading)
+      .toEqual([{ text: 'Give the agent "a#1" what it asks for through mcp', label: false }])
+  })
+
+  it('gives an agent\'s ask a third button that revokes the label its heading shows and gives any other request none', () => {
+    const asked: HeldRequest = {
+      id: 'r1', kind: 'agent.ask', plugin: 'mcp', notes: [], type: null, text: 'Give the agent "client#2" what it asks for through mcp', agent: 'client#2',
+    }
+    const drawn = screen(calm({ requests: [asked], agents: [{ agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['**'] }], revoked: false }] }))
+    expect(drawn.request!.heading.find(part => part.label)!.text).toBe('"client#2"')
+    expect(drawn.request!.revoke).toEqual({ kind: 'agent.revoke', agent: 'client#2' })
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.revoke).toBeNull()
+  })
+
+  it('finds a stylesheet rule by its selector as written, a backslash and every other metacharacter in it taken as text', () => {
+    expect(ruleIn('.a:b { x: 1; }\n', '.a\\:b')).toBe('')
+    expect(ruleIn('.a\\:b { x: 1; }\n', '.a\\:b')).toBe(' x: 1; ')
+    expect(ruleIn('.aab { x: 1; }\n', '.a+b')).toBe('')
+    expect(ruleIn('.a+b { x: 1; }\n', '.a+b')).toBe(' x: 1; ')
+    expect(ruleIn('xlabel { x: 1; }\n', '.label')).toBe('')
+  })
+
+  // The page's own stylesheet, which the trusted window's policy lets load from its own origin and nothing else
+  it('draws a label in a fixed-width face the system has and wraps it and the lines holding it anywhere', async () => {
+    const css = await readFile(new URL('../frontend/trusted/trusted.css', import.meta.url), 'utf8')
+    const rule = (selector: string) => ruleIn(css, selector)
+    expect(rule('.label')).toMatch(/font-family:[^;]*\bmonospace;/)
+    expect(rule('.label')).toMatch(/overflow-wrap: anywhere;/)
+    expect(css).toMatch(/\.request h1,\s*\.agent \{\s*overflow-wrap: anywhere;/)
+    expect(css).not.toMatch(/@font-face|url\(/)
+  })
+
+  it('quotes each target, topic and variable in a plugin\'s items and an agent\'s', () => {
+    const items: Capability[] = [
+      { type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }, { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
+    ]
+    const drawn = screen(calm({
+      plugins: [plugin({ items: items.map(capability => ({ capability, off: false, firstUse: false })) })],
+      agents: [{ agent: 'client#1', items: [items[0]], revoked: false }],
+    }))
+    expect(drawn.plugins[0].items.map(item => item.line)).toEqual([
+      'plugin.call to "notes" · on', 'events.subscribe to "notes.saved" · on', 'exec of ["git","status"] with "HOME" from your environment · on',
+    ])
+    expect(drawn.agents.rows[0].line).toContain('plugin.call to "notes"')
+  })
+
   it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, then what it can\'t know', () => {
     const drawn = screen(calm({
       agents: [
@@ -165,8 +227,8 @@ describe('what the trusted window draws', () => {
     }))
     expect(drawn.agents).toEqual({
       rows: [
-        { line: '"client#1" · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
-        { line: '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears', change: null },
+        { label: '"client#1"', line: ' · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
+        { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' · revoked, its tokens end once http hears', change: null },
       ],
       about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s',
     })

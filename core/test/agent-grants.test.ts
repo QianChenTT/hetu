@@ -82,6 +82,20 @@ describe('agents\' items in the agent host\'s entry', () => {
     expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'git', result: 'invalid' })
   })
 
+  it('holds revoked labels in the switches while mcp has no entry, each in the label\'s form and once, at most 256', async () => {
+    const switches = (await store.load()).state.switches
+    await store.writeSwitches({ ...switches, revokedAgents: ['client#3', 'https://claude.ai/oauth/claude-code-client-metadata#4'] })
+    expect((await store.load()).state.switches.revokedAgents).toEqual(['client#3', 'https://claude.ai/oauth/claude-code-client-metadata#4'])
+    await expect(store.writeSwitches({ ...switches, revokedAgents: ['client'] })).rejects.toThrow()
+    await expect(store.writeSwitches({ ...switches, revokedAgents: ['client#3', 'client#3'] })).rejects.toThrow()
+    await expect(store.writeSwitches({ ...switches, revokedAgents: Array.from({ length: 257 }, (_, i) => `client#${i + 1}`) })).rejects.toThrow()
+    // A switches file written before the list came reads as holding none
+    await store.writeSwitches(switches)
+    const loaded = await store.load()
+    expect(loaded.checks).toContainEqual({ check: 'switches', result: 'ok' })
+    expect(loaded.state.switches.revokedAgents).toBeUndefined()
+  })
+
   it('keeps the agents\' items under the hash line, so a label changed by hand fails the check', async () => {
     await store.writePlugin('mcp', entry({ agents }))
     const text = await readFile(file('mcp'), 'utf8')
@@ -109,7 +123,8 @@ describe('agents\' items in the agent host\'s entry', () => {
     expect((await store.load()).checks).toContainEqual({ check: 'plugin-entry', id: 'mcp', result: 'invalid' })
   })
 
-  // Labels a screen draws as another one or as nothing, then labels out of the <client id>#<n> form
+  // Labels with a character outside ASCII, which could read as another label, as two or as nothing, then labels out of
+  // the <client id>#<n> form
   const cp = (...points: number[]) => String.fromCodePoint(...points)
   it.each([
     ['one space', ' '], ['a zero width space alone', cp(0x200b)], ['client#1 then a zero width space', `client#1${cp(0x200b)}`],

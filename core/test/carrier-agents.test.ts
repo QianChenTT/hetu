@@ -158,6 +158,47 @@ describe('an agent\'s label down a chain of calls', () => {
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
+  it('refuses the door\'s mcp.handle for a label the loader says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
+    const { door, mcp, loader, gate, carrier, log } = agents()
+    loader.revokedLabels.add('client#1')
+    for (const state of ['on', 'off', 'starting', 'failed'] as const) {
+      loader.slots.gate = state
+      expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    }
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+    expect(asked(gate, 'mcp.handle')).toEqual([])
+    const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
+    expect(records.map(record => record.code)).toEqual(['not-granted', 'not-granted', 'not-granted', 'not-granted'])
+    loader.slots.gate = 'on'
+    // A label the first begins with is another agent
+    const { got } = await handled(door, mcp, 'client#10')
+    expect(got.onBehalf).toBe('client#10')
+  })
+
+  it('refuses the door\'s mcp.handle with a label as not-granted while the loader\'s view of revoked labels throws or answers anything but false', async () => {
+    const { door, mcp, loader } = agents()
+    loader.revoked = () => { throw new Error('no view') }
+    expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    // An answer that is not plainly false refuses too
+    loader.revoked = () => undefined as unknown as boolean
+    expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  it('asks the loader about the door\'s mcp.handle alone, a revoked label on any other call kept as text', async () => {
+    const { door, httpWorker, search, loader } = agents()
+    const seen: string[] = []
+    loader.revoked = label => {
+      seen.push(label)
+      return true
+    }
+    door.call('search.query', {}, { onBehalf: 'client#1' })
+    expect((await search.delivered('search.query')).onBehalf).toBe('client#1')
+    httpWorker.call('mcp.handle', {}, { onBehalf: 'client#1' })
+    await tick(30)
+    expect(seen).toEqual([])
+  })
+
   it('marks an agent whose client id is a metadata document\'s address', async () => {
     const { door, mcp, gate } = agents()
     const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'
@@ -466,6 +507,21 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
+  it('answers stopped for the door\'s mcp.handle with the gate still on once shutdown began, as with the gate off', async () => {
+    const { carrier, door, mcp } = gated()
+    carrier.stopping()
+    expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  it('answers stopped for an agent\'s call with the gate still on once shutdown began and judges a plugin\'s own call as before', async () => {
+    const { carrier, door, mcp, search } = gated()
+    const { parent } = await handled(door, mcp, 'client#1')
+    carrier.stopping()
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
+    expect((await search.ask('luoshu.read', { path: 'inbox/a.md' })).ok).toBe(true)
+  })
+
   it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
     const { carrier, door, mcp, loader } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
@@ -583,7 +639,7 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
     expect(seen).toEqual([])
   })
 
-  it('refuses it under a door call that ended, with a label in its arguments, past eight items and with a scope a screen hides', async () => {
+  it('refuses it under a door call that ended, with a label in its arguments, past eight items, with a scope a screen hides and with an item with no scope', async () => {
     const { door, mcp, seen } = asking()
     const one = await handled(door, mcp, 'client#1')
     const two = await handled(door, mcp, 'client#2')
@@ -593,6 +649,8 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
     expect(code(await mcp.ask('core.agentAsk', { capabilities: nine }, two.parent))).toBe('invalid')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['in\nbox/**'] }] }, two.parent))).toBe('invalid')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: [`in${String.fromCharCode(0x202e)}box/**`] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox, { type: 'luoshu.read', paths: [] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.agentAsk', { capabilities: [{ type: 'plugin.call', targets: [] }] }, two.parent))).toBe('invalid')
     mcp.answer(one.got.callId, null)
     await door.reply(one.id)
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, one.parent))).toBe('invalid')

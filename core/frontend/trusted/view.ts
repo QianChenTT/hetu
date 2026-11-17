@@ -18,12 +18,19 @@ export type Choice = 'switch-off' | 'recover' | 'quit'
 // A line and the change its button asks for, none for a line with no button
 export type Switch = { line: string, change: Change | null }
 
+// A run of text, an agent's label in quotes being drawn apart from the words around it
+export type Part = { text: string, label: boolean }
+
+// An agent's row: its label in quotes, then the rest of its line
+export type AgentRow = { label: string, line: string, change: Change | null }
+
 export type Limit = { constant: FloorConstant, floor: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
-  // The oldest request waiting, and how many wait behind it
-  request: HeldRequest | null
+  // The oldest request waiting with its heading in parts and for an agent's ask the revoke of the label its heading
+  // shows, then how many wait behind it
+  request: (HeldRequest & { heading: Part[], revoke: Change | null }) | null
   behind: number
   plugins: {
     id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[], switches: Switch[]
@@ -33,7 +40,7 @@ export type Screen = {
   luoshu: string
   install: string
   // Each agent with its Revoke, a revoked one with none, then what the list can't know
-  agents: { rows: Switch[], about: string }
+  agents: { rows: AgentRow[], about: string }
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
@@ -42,10 +49,29 @@ const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s inst
 const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s'
 
 // An agent's label in quotes as data, then its items, or that it is revoked
-function agentRow(agent: ListedAgent): Switch {
+function agentRow(agent: ListedAgent): AgentRow {
   const label = JSON.stringify(agent.agent)
-  if (agent.revoked) return { line: `${label} · revoked, its tokens end once http hears`, change: null }
-  return { line: [label, ...agent.items.map(capabilityText)].join(' · '), change: { kind: 'agent.revoke', agent: agent.agent } }
+  if (agent.revoked) return { label, line: ' · revoked, its tokens end once http hears', change: null }
+  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'agent.revoke', agent: agent.agent } }
+}
+
+// A request's heading with the agent's label in quotes as a part of its own, the whole text as one part for any other
+// request or one whose text doesn't hold the label
+export function headingOf(request: HeldRequest): Part[] {
+  const label = request.agent === null ? '' : JSON.stringify(request.agent)
+  const at = label === '' ? -1 : request.text.indexOf(label)
+  if (at < 0) return [{ text: request.text, label: false }]
+  const parts = [
+    { text: request.text.slice(0, at), label: false }, { text: label, label: true }, { text: request.text.slice(at + label.length), label: false },
+  ]
+  return parts.filter(part => part.text !== '')
+}
+
+// The request drawn first. An agent's ask gets Cancel and revoke beside Confirm and Cancel, the revoke naming the label
+// the request holds, which is the one its heading draws
+function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
+  const revoke: Change | null = request.kind === 'agent.ask' && request.agent !== null ? { kind: 'agent.revoke', agent: request.agent } : null
+  return { ...request, heading: headingOf(request), revoke }
 }
 
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
@@ -163,7 +189,7 @@ export function limitChange(constant: FloorConstant, typed: string, plugin: stri
 export function screen(list: SecurityList): Screen {
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
-    request: list.requests[0] ?? null,
+    request: list.requests[0] === undefined ? null : requestOf(list.requests[0]),
     behind: Math.max(0, list.requests.length - 1),
     plugins: list.plugins.map(plugin => ({
       id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),

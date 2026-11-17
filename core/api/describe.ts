@@ -3,10 +3,10 @@ import { isSecurityControl } from './ids.ts'
 import { classNames } from './slots.ts'
 import { capabilityText } from './trusted.ts'
 
-// The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. Ids are
-// shown as they are inside a fixed sentence. An id with hyphens can still read as words, such as
-// hetu-needs-this-click-confirm, which the notices quote. Anything else a plugin wrote, a scope or a folder, goes in
-// quotes as data
+// The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. The id of
+// the plugin a change is for is shown as it is inside a fixed sentence. An id with hyphens can still read as words, such
+// as hetu-needs-this-click-confirm, which the notices quote. Anything else a plugin or an agent chose, a scope, a
+// plugin.call target, a topic, a variable name or a folder, goes in quotes as data
 export type Described = { text: string, notes: string[] }
 
 const quoted = (value: string) => JSON.stringify(value)
@@ -91,7 +91,7 @@ export function describeChange(change: Change): Described {
         text: `Give the agent ${quoted(change.agent)} what it asks for through ${change.plugin}`,
         notes: [
           ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
-          `The agent reaches only what ${change.plugin} holds as well`, 'Revoke it from the agent list at any time',
+          `The agent reaches only what ${change.plugin} holds as well`, 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item',
         ],
       }
   }

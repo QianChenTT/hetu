@@ -19,6 +19,14 @@ function button(text: string, act: () => void): HTMLButtonElement {
   return made
 }
 
+// An agent's label in quotes, drawn in a fixed-width face that wraps anywhere, so I and l read apart and the number
+// at its end stays in view however long the client id
+function labelOf(text: string): HTMLSpanElement {
+  const made = element('span', text)
+  made.className = 'label'
+  return made
+}
+
 // A switch's line with the button that asks for its change
 function switchLine(page: TrustedPage, row: Switch, className?: string): HTMLParagraphElement {
   const line = element('p', row.line)
@@ -73,7 +81,9 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     drawnRequest = request.id
     const section = element('section')
     section.className = 'request'
-    section.append(element('h1', request.text))
+    const heading = element('h1')
+    heading.append(...request.heading.map(part => (part.label ? labelOf(part.text) : document.createTextNode(part.text))))
+    section.append(heading)
     const notes = element('ul')
     for (const line of request.notes) notes.append(element('li', line))
     section.append(notes)
@@ -91,6 +101,9 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     confirms.add(confirm)
     if (typed !== null) typedOk.set(confirm, () => typed.value === request.type)
     section.append(confirm, button('Cancel', () => page.cancel(request.id)))
+    // A revoke narrows, so it applies at once with no delay: the ask goes and the label never asks again
+    const { revoke } = request
+    if (revoke !== null) section.append(button('Cancel and revoke', () => page.ask(revoke)))
     if (shown.behind > 0) section.append(element('p', `${shown.behind} more waiting`))
     parts.push(section)
   }
@@ -141,8 +154,9 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     agents.className = 'agents'
     agents.append(element('h2', 'Agents'), element('p', shown.agents.about))
     for (const row of shown.agents.rows) {
-      const line = element('p', row.line)
+      const line = element('p')
       line.className = 'agent'
+      line.append(labelOf(row.label), document.createTextNode(row.line))
       const { change } = row
       if (change !== null) line.append(button('Revoke', () => page.ask(change)))
       agents.append(line)

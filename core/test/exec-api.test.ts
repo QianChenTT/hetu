@@ -63,9 +63,9 @@ describe('an exec item on the approval screen', () => {
     expect(other).toBe('exec of ["git","commit","-m","x"]')
   })
 
-  it('names the variables it passes through', () => {
+  it('names the variables it passes through, each in quotes as the manifest wrote it', () => {
     expect(capabilityText({ type: 'exec', commands: [['git', 'status'], ['git', 'log']], env: ['HOME', 'PATH'] }))
-      .toBe('exec of ["git","status"], ["git","log"] with HOME, PATH from your environment')
+      .toBe('exec of ["git","status"], ["git","log"] with "HOME", "PATH" from your environment')
   })
 })
 
