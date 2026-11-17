@@ -184,7 +184,7 @@ async function stateOf(folder: string): Promise<FolderState> {
 // the provider holds the per-path lock on key from prepare to perform. The spellings of one name give one key, so no
 // other hetu write to that name runs in between. On Windows a name not there yet that reads like an 8.3 short name,
 // such as NEWFOL~1, is the exception: a write under another key that creates New folder name can give that folder
-// the same short name
+// the same short name, as another program can a note. The luoshu lands a new note by a link, which fails on such a name
 export async function canonical(root: string, input: string, options: CanonicalOptions = {}): Promise<Canonical | NotCanonical> {
   const broken = stringRule(input)
   if (broken !== null) return { ok: false, code: 'invalid', rule: broken }

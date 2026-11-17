@@ -36,6 +36,10 @@ export type LuoshuOptions = {
 // A write's temp file sits beside the note, a dot file so Obsidian, ** grants and the listing pass it by
 const TEMP = '.hetu-tmp'
 const isTemp = (name: string) => name.startsWith('.') && name.endsWith(TEMP)
+// A temp file as a write names it, which a crash can leave: the note's name, then six random bytes
+const LEFT = /^\..+\.[0-9a-f]{12}\.hetu-tmp$/
+// How old a temp file has to be before the walk at open takes it for one a crash left and removes it
+const LEFT_MS = 60_000
 // Opening a note to read it: no link at the last name and no wait on a FIFO, where the system has the flags
 const NOTE_READ = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
 // How many times a note is opened when its name holds another file each time it is looked at again
@@ -254,14 +258,14 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   // The version is checked under the lock. The bytes go to a temp file beside the note, synced, then a rename over it,
-  // so a crash leaves the old note or the new one
+  // so a crash leaves the old note or the new one. A new note lands by a link in place of the rename (landNew)
   async function write(prepared: Canonical, text: string, baseVersion: string | undefined, judged: Judged): Promise<unknown> {
     // The version check reads the note, so the folder is looked at before it as before a read, then again once the
     // folders the note needs exist
     const first = await lookAt(prepared, folderState, judged)
     if (first.state === 'moved') throw refused('not-granted')
     // Through the note opened, so a note made under another case of the last name since prepare is judged before its
-    // version is compared. The rename below still acts on the name, so a note made there after this check is replaced
+    // version is compared. The rename over a note there still acts on the name after this check
     const checked = await versionAt(prepared, first.target, judged)
     if (checked.version !== (baseVersion ?? null)) throw refused('stale')
     if (nowhere.has(prepared)) throw refused('not-granted')
@@ -280,7 +284,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       // Once more with the temp file written, so a folder swapped since the look before the temp file was made carries
       // no note where it leads. The note lands on the path this look gives. The temp file is removed by the same path
       target = await unmoved(target, judged)
-      await retried(() => rename(temp, target.absolute), target.absolute)
+      if (checked.version === null) await landNew(temp, target.absolute)
+      else await retried(() => rename(temp, target.absolute), target.absolute)
     } catch (err) {
       await rm(temp, { force: true }).catch(() => {})
       throw err
@@ -293,6 +298,56 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     void stamped(target.relative, await stampOf(target.absolute).catch(() => null))
     publish('changed', target.relative)
     return { version: made }
+  }
+
+  // A note the version check found missing lands by a hard link from the temp file, which fails when anything answers
+  // to the name by then: a note made since under another case or under a name whose 8.3 short name this is, as a write
+  // under another key or another program can make one, or a folder. A rename would replace it. Such a write answers
+  // stale, as one over a name taken at the version check does. A note landed by a link gets no 8.3 short name on NTFS
+  async function landNew(temp: string, target: string): Promise<void> {
+    try {
+      await link(temp, target)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw refused('stale')
+      if (absent(err)) throw err
+      // A volume with no hard links, or a link refused for another reason: the name is claimed by a create that fails
+      // the same way when anything answers to it, then the temp file is renamed over the claim
+      await claimed(target, () => retried(() => rename(temp, target), target))
+      return
+    }
+    // The note has landed. A temp file that can't be removed is a second name of it, which the walk at open removes
+    await retried(() => unlink(temp), temp).catch(() => {})
+  }
+
+  // The name claimed by an exclusive create, which fails when anything answers to it, then act run over the claim. A
+  // claim act leaves behind is taken back while the name still holds it. Between the claim and the act only another
+  // program can change the name, since hetu's writes to one key wait on each other and no other key reaches a claim
+  async function claimed(target: string, act: () => Promise<void>): Promise<void> {
+    let claim: FileHandle
+    try {
+      claim = await open(target, 'wx')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') throw refused('stale')
+      throw err
+    }
+    let mine: Opened
+    try {
+      mine = await claim.stat({ bigint: true })
+    } finally {
+      await claim.close()
+    }
+    try {
+      await act()
+    } catch (err) {
+      if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => {})
+      throw err
+    }
+  }
+
+  // Whether the name holds the file given, by file id
+  async function holds(absolute: string, file: Opened): Promise<boolean> {
+    const there = await lstat(absolute, { bigint: true }).catch(() => null)
+    return there !== null && there.ino === file.ino && there.dev === file.dev
   }
 
   // The folder a name sits in, looked at again just before a write, a remove or a move changes the disk. One that no
@@ -438,8 +493,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         const code = (err as NodeJS.ErrnoException).code ?? ''
         if (code === 'EEXIST') throw refused('stale')
         if (!NO_LINKS.has(code)) throw err
-        if ((await lstat(to.absolute).catch(() => null)) !== null) throw refused('stale')
-        await retried(() => rename(from.absolute, to.absolute), to.absolute)
+        // The to end claimed as a new note's name is, so the rename lands on nothing another write made there since
+        await claimed(to.absolute, () => retried(() => rename(from.absolute, to.absolute), to.absolute))
         linked = false
       }
       if (linked) {
@@ -471,8 +526,9 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // Every file under start, relative to root, past dot files and dot folders at any depth (.git and the temp files a
   // write makes among them), links, junctions and hetu's own folders. The dot check is the walk's own, since canList
   // lets every name through with the gate off by the human. readdir's entries name a link or junction as a link and
-  // never as a folder, so the walk can't follow one even without the check
-  async function filesUnder(root: string, start: string, opened: Opening): Promise<string[]> {
+  // never as a folder, so the walk can't follow one even without the check. The temp files a write names that the walk
+  // passes by go into left when it is given
+  async function filesUnder(root: string, start: string, opened: Opening, left?: string[]): Promise<string[]> {
     // Resolved as the walk is, so a link or another spelling of a folder still matches
     const skip = await Promise.all([opened.dataDir, opened.installDir].map(folder => realpath(folder).catch(() => folder)))
     const found: string[] = []
@@ -487,7 +543,11 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       }
       for (const entry of entries) {
         const full = path.join(dir, entry.name)
-        if (entry.isSymbolicLink() || isDotName(entry.name)) continue
+        if (entry.isSymbolicLink()) continue
+        if (isDotName(entry.name)) {
+          if (entry.isFile() && LEFT.test(entry.name)) left?.push(full)
+          continue
+        }
         if (entry.isDirectory()) {
           if (skip.some(folder => within(folder, full))) continue
           await walk(full)
@@ -689,15 +749,28 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       }
       // Taken once the watch began, so a change in between is heard. Events wait for it before they settle
       const now = opening
+      const left: string[] = []
       stamps = (async () => {
         const known = new Map<string, string>()
-        for (const relative of await filesUnder(folder, folder, now)) {
+        for (const relative of await filesUnder(folder, folder, now, left)) {
           const stamp = await stampOf(path.join(folder, relative)).catch(() => null)
           if (stamp !== null) known.set(fold(relative), stamp)
         }
         return known
       })().catch(() => new Map<string, string>())
+      void stamps.then(() => removeLeft(left, now))
     },
+  }
+
+  // The temp files a crash left: before the rename or the link of a write, or after its link as a second name of the
+  // note, which would keep the bytes of a note removed or written over since in the notes folder. Only one older than
+  // LEFT_MS, so the temp file of a write still running is kept, and only while the folder is still the one walked
+  async function removeLeft(left: readonly string[], walked: NonNullable<typeof opening>): Promise<void> {
+    for (const file of left) {
+      if (opening !== walked) return
+      const found = await lstat(file).catch(() => null)
+      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => {})
+    }
   }
 
   return { provider, role, close: stopWatching }
