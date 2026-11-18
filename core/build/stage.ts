@@ -15,7 +15,7 @@ export const STAGED_APP = Object.freeze({
 })
 
 // Builds what the package holds into a new empty folder: app/ becomes app.asar with main.js, the preloads, the pages
-// and the install list, plugins/ sits beside it with each install plugin. Nothing comes from the repo or core/dist
+// and the install list, plugins/ sits beside it with each core plugin. Nothing comes from the repo or core/dist
 // unbuilt, so no source, no node_modules and no plugin a build stopped writing can reach the install. locked is false
 // only for the build the end-to-end tests drive from inside app.asar, which is never made into an installer
 export async function stageInstall(stage: string, options: { locked: boolean }): Promise<void> {

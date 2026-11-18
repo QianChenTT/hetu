@@ -206,7 +206,7 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
   // A wipe takes the tombstones with the switches, a first run has none to lose
   const removedKnown = loaded.removedKnown || (missing.length > 0 && !ranBefore)
 
-  // Defaults loosen nothing, every install plugin on, so they go in without a confirmation. Written so the next boot can
+  // Defaults loosen nothing, every core plugin on, so they go in without a confirmation. Written so the next boot can
   // tell a wipe from a new install. Written before anything is logged, so a crash in between can't leave records that
   // make the next boot read a new install as a wipe. A write that fails still does, once, accepted
   const state = loaded.state

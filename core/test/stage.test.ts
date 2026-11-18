@@ -45,7 +45,7 @@ const INSTALL_PLUGINS =['exec', 'file-explorer', 'gate', 'grant-risk-classifier'
 const STAGE_MS = 20_000
 
 describe('the stage the package is built from', () => {
-  it('holds the app for app.asar and the install plugins beside it, and nothing else', async () => {
+  it('holds the app for app.asar and the core plugins beside it, and nothing else', async () => {
     const stage = path.join(await temp(), 'stage')
     await stageInstall(stage, { locked: true })
     expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])

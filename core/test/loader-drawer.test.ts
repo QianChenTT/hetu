@@ -13,7 +13,7 @@ const wrongHash = 'b'.repeat(64)
 const hiddenMarks = () => ({ files: filesFor(manifest('hidden-marks', { entries: { page: 'dist/page.js' } }), { 'dist/page.js': '// hidden marks' }) })
 
 describe('in-page plugins', () => {
-  it('names an in-page install plugin in core.status while it is ready', async () => {
+  it('names an in-page core plugin in core.status while it is ready', async () => {
     const { loader } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() } })
     await loader.start()
     expect(stateOf(loader, 'hidden-marks')).toBe('ready')

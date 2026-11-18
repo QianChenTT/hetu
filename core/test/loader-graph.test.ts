@@ -82,7 +82,7 @@ describe('the requires graph', () => {
 })
 
 describe('the boot order', () => {
-  it('names every install plugin once, the policy job holders first with the gate at their head', () => {
+  it('names every core plugin once, the policy job holders first with the gate at their head', () => {
     expect([...bootOrder].sort()).toEqual([...corePluginIds].sort())
     expect(new Set(bootOrder.slice(0, policyJobIds.length))).toEqual(new Set(policyJobIds))
     expect(bootOrder[0]).toBe('gate')

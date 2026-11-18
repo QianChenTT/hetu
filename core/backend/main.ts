@@ -21,7 +21,7 @@ import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/
 import { wireCore } from './wire.ts'
 
 // The bundle sits in core/dist with the install list, the built pages and the workers preload beside it. A packaged
-// build keeps its install plugins beside app.asar
+// build keeps its core plugins beside app.asar
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')

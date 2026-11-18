@@ -39,7 +39,7 @@ const installPath = z.string().superRefine((value, ctx) => {
 
 // One plugin the install holds: where its folder is, its version and the hash of its files as hashFiles gives it.
 // firstParty marks a bundled copy of a first-party folder plugin, which the reconcile copies into the plugin folder.
-// Every other entry is an install plugin, whose grants are its manifest
+// Every other entry is a core plugin, whose grants are its manifest
 const listed = z.strictObject({
   path: installPath,
   version: pluginVersion,

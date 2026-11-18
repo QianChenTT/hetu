@@ -1,4 +1,4 @@
-Storage, an install plugin whose host half serves `storage.*` and `cache.*` for every plugin and for the editor window. Each caller has a space of its own, named by `spaceOf` in `core/api/storage.ts` from the caller the carrier names: a plugin's id or `window.` and the role. A call has no way to name another space
+Storage, a core plugin whose host half serves `storage.*` and `cache.*` for every plugin and for the editor window. Each caller has a space of its own, named by `spaceOf` in `core/api/storage.ts` from the caller the carrier names: a plugin's id or `window.` and the role. A call has no way to name another space
 
 - `storage/<space>/key-<name>`: one JSON line naming the key and its value, then the hash of that line. A file that fails the hash, isn't one object of the key and a value or names another key answers `tampered`, and the carrier writes `storage.tampered`. The plugin may still set or delete the key
 - `cache/<space>/key-<name>`: the same line with no hash. A file that doesn't read answers null, since the plugin rebuilds it. The loader clears it when the plugin's version changes

@@ -33,7 +33,7 @@ export const changeKinds = frozen([
 export const change = z.discriminatedUnion('kind', [
   // plugin.off covers install and folder plugins alike
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
-  // Only folder plugins have grants to change, an install plugin's grants are its manifest
+  // Only folder plugins have grants to change, a core plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),
   z.strictObject({ kind: z.literal('luoshu.pick'), folder }),
   // Dev mode is a list of plugins that load unhashed, exec.anyCommand a list of plugins exec runs any command for

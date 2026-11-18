@@ -314,7 +314,7 @@ describe('the kinds the loader applies since the trusted window', () => {
     expect(limits.all).toEqual({ readyMs: 20000 })
   })
 
-  it('plugin.reset clears an install plugin\'s start marker, so it starts at the next start', async () => {
+  it('plugin.reset clears a core plugin\'s start marker, so it starts at the next start', async () => {
     const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } }, markers: ['luoshu'] })
     await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')

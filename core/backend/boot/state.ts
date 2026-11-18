@@ -70,7 +70,7 @@ const limits = z.strictObject({
 
 // What each file holds, in the shape callers see. The writers take exactly this shape and add the format number
 const switches = z.strictObject({
-  off: list(installId), // an install plugin not named here is on, so a lost entry can't read as off
+  off: list(installId), // a core plugin not named here is on, so a lost entry can't read as off
   devMode: list(anyPlugin), // load unhashed with live reload
   skipVerification: z.boolean(),
   allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
@@ -171,7 +171,7 @@ export type Check = {
 // newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
 export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean }
 
-// Loosens nothing: every install plugin on, empty lists, false switches and no raised limits
+// Loosens nothing: every core plugin on, empty lists, false switches and no raised limits
 export function defaultSwitches(): Switches {
   return {
     off: [],

@@ -42,7 +42,7 @@ describe('a manifest', () => {
     expect(schema.parse(minimal)).toEqual(minimal)
   })
 
-  it('takes an install plugin with a host half, guards and Node built-ins', () => {
+  it('takes a core plugin with a host half, guards and Node built-ins', () => {
     expect(installManifest.parse(leases)).toEqual(leases)
   })
 

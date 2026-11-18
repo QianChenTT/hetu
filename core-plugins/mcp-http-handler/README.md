@@ -1,4 +1,4 @@
-The door agents come in through: an install plugin whose host half runs in a utility process and listens on `127.0.0.1:4747` with Node's own HTTP/1.1 server. Every request meets the checks in a fixed order before anything else reads it
+The door agents come in through: a core plugin whose host half runs in a utility process and listens on `127.0.0.1:4747` with Node's own HTTP/1.1 server. Every request meets the checks in a fixed order before anything else reads it
 
 - **Host.** Exactly one Host header reading `127.0.0.1:4747`, compared as sent, and a target that is a path. No Host, another name or port, `localhost`, a trailing dot, userinfo, another spelling of the address, two Host headers and an absolute target all answer 403. This is the DNS rebinding check
 - **Origin.** Any Origin header answers 403, `null` and the door's own origin included. `Sec-Fetch-Site`, when sent, must be one header reading `none` or `same-origin`

@@ -64,7 +64,7 @@ type Manifest = {
 const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
 const TESTER = 'tester'
 
-// A manifest with a host or page entry is an install plugin's, checked as one. An api range this core leaves out
+// A manifest with a host or page entry is a core plugin's, checked as one. An api range this core leaves out
 // throws, as the loader refuses it with api
 function manifestOf(input: unknown): Manifest {
   let parsed: Manifest

@@ -54,7 +54,7 @@ export function beforeReady(
   return found
 }
 
-// Where the install plugins are and where the install list is. A packaged build keeps the plugins beside app.asar and
+// Where the core plugins are and where the install list is. A packaged build keeps the plugins beside app.asar and
 // the list inside it, so ASAR integrity covers the list. A run from the source uses the built main's folder for both.
 // Either one not locked takes HETU_INSTALL_DIR in their place, so the tests can hand it an install of their own. A
 // locked build never reads the environment

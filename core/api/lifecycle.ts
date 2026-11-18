@@ -65,7 +65,7 @@ const head = { v: z.literal(VERSION) }
 
 // The core's first message on a half's way. lastStop is why the plugin last stopped or waited in this run, null on its
 // first start. previousVersion is the version an update replaced, until the new version reaches ready once. dataDir
-// goes to an install plugin's host half only
+// goes to a core plugin's host half only
 export const init = z.strictObject({
   ...head,
   kind: z.literal('init'),

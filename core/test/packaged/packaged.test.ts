@@ -27,7 +27,7 @@ describe('the packed folder', () => {
   })
 
   // macOS keeps the app's icon there too, which Info.plist names
-  it('holds app.asar and the install plugins in resources and nothing else', async () => {
+  it('holds app.asar and the core plugins in resources and nothing else', async () => {
     const icon = process.platform === 'darwin' ? ['electron.icns'] : []
     expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', ...icon, 'plugins'].sort())
   })
@@ -252,7 +252,7 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   })
 })
 
-describe('a changed install plugin', () => {
+describe('a changed core plugin', () => {
   const list = async () => JSON.parse(await readFile(path.join(repo, 'dist-package', 'dir', 'stage', 'app', 'hetu-install.json'), 'utf8')) as { plugins: Record<string, { hash: string }> }
 
   async function tampered(id: string): Promise<string> {

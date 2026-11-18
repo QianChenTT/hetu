@@ -35,7 +35,7 @@ export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values
 
 // What the loader owns: lifecycle, the state and the grants snapshot it pushes to the gate
 export type Loader = {
-  // The state of the install plugin holding a policy job or a guard role
+  // The state of the core plugin holding a policy job or a guard role
   policyJob(id: string): PolicyJobState
   // The number of the newest grants snapshot pushed to the gate
   view(): number

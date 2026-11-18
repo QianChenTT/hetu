@@ -310,7 +310,7 @@ describe('shutdown through the joined core', () => {
     return { ...parts, storage }
   }
 
-  it('keeps host-level plugins serving while sandboxed plugins stop for shutdown', async () => {
+  it('keeps core plugins serving while sandboxed plugins stop for shutdown', async () => {
     const { loader, runtime, storage } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     const shutdown = loader.shutdown()
@@ -768,7 +768,7 @@ describe('a failing log', () => {
 })
 
 // #101: every switch keeps this design's fail-safe default and none has an
-// off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
+// off state of its own. What a call answers with each core plugin switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {
   // The time each core joined here may take. Starting one took up to about 5 s on a shared Windows runner against

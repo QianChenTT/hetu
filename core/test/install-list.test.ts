@@ -8,7 +8,7 @@ const hash = 'a'.repeat(64)
 const list = (plugins: object) => ({ format: 1, plugins })
 
 describe('the install list', () => {
-  it('takes install plugins and marked first-party copies', () => {
+  it('takes core plugins and marked first-party copies', () => {
     const parsed = installList.parse(list({
       gate: { path: 'plugins/gate', version: '1.0.0', hash },
       git: { path: 'plugins/git', version: '2.1.0', hash, firstParty: true },

@@ -143,7 +143,7 @@ afterEach(async () => {
 })
 
 describe('defaults', () => {
-  it('loosen nothing: every install plugin on, empty lists, false switches, no raised limits and no luoshu', () => {
+  it('loosen nothing: every core plugin on, empty lists, false switches, no raised limits and no luoshu', () => {
     expect(defaultSwitches()).toEqual(noSwitches)
     expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, luoshu: null })
   })
@@ -1115,7 +1115,7 @@ describe('a failed check and a switch-off', () => {
     ['missing', () => rm(switchesPath())],
   ]
 
-  it.each(switchesSpoiled)('reads a switches file that is %s as every install plugin on, never as one off', async (_name, spoil) => {
+  it.each(switchesSpoiled)('reads a switches file that is %s as every core plugin on, never as one off', async (_name, spoil) => {
     await store.writeSwitches({ ...noSwitches, off: [...corePluginIds] })
     await spoil()
     const { state } = await store.load()

@@ -87,14 +87,14 @@ describe('policy jobs, providers and guards', () => {
     expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
-  it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
+  it('lists the core plugins, host and in-page, with CodeMirror in the drawer and no editor-core', () => {
     expect(corePluginIds).toEqual([
       'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
     ])
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
-  it('runs http alone in a utility process, an install plugin that holds no policy job, guard or provider role', () => {
+  it('runs http alone in a utility process, a core plugin that holds no policy job, guard or provider role', () => {
     expect(utilityIds).toEqual(['mcp-http-handler'])
     for (const id of utilityIds) {
       expect(corePluginIds).toContain(id)

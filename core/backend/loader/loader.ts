@@ -199,7 +199,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
   return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
 }
 
-// Section 6's order for install plugins: the policy job holders, then the providers, then the guard and the rest. A
+// Section 6's order for core plugins: the policy job holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
   'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'mcp-http-handler', 'hidden-marks',
@@ -247,7 +247,7 @@ function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capabil
 const ok: Status = { kind: 'ok' }
 const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
-// Where the core runs a plugin, never what its manifest asks for: an install plugin core/api names runs its host entry
+// Where the core runs a plugin, never what its manifest asks for: a core plugin core/api names runs its host entry
 // in a utility process
 function placeOf(id: string, read: Read, from: 'install' | 'folder'): PluginInfo['place'] {
   const entries = read.manifest?.entries
@@ -428,7 +428,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the carrier's seam
 
-  // An install plugin's policy job or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
+  // A core plugin's policy job or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
   // is tampered and every other way of not being ready is failed, so nothing reads as off that the human didn't switch
   // off. Before the install list is read every policy job is starting, as every action with power answers starting while the
   // core starts
@@ -720,7 +720,7 @@ ${capabilityKey(change.capability)}`)
     return this.policyJob('grant-risk-classifier') === 'on' ? this.role('grant-risk-classifier', 'grantRiskClassifier') : null
   }
 
-  // What a plugin holds: a plugin-folder plugin's entry, an install plugin's manifest
+  // What a plugin holds: a plugin-folder plugin's entry, a core plugin's manifest
   private grantsOf(id: string): readonly Capability[] {
     const k = this.known.get(id)
     if (k?.from === 'install') return k.read.manifest?.capabilities ?? []
@@ -963,7 +963,7 @@ ${capabilityKey(change.capability)}`)
   }
 
   // Every plugin-folder entry classed again at start from the graph as it stands, before any plugin-folder plugin runs:
-  // an app update can change what an install plugin holds with no change to any entry and an entry can be out of date.
+  // an app update can change what a core plugin holds with no change to any entry and an entry can be out of date.
   // Only an entry that comes out different is written. One that rises and can't be written still asks in the run, one
   // that lowers keeps its entry. The same pass runs once the human switches the grant risk classifier on again in the run.
   // A move up there that alerts gets its notice
@@ -1262,7 +1262,7 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // The marker for the next run: every install plugin's version and hash, except one whose update hasn't applied yet,
+  // The marker for the next run: every core plugin's version and hash, except one whose update hasn't applied yet,
   // which keeps the version it had so the next start finds the change again
   private async saveInstalled(): Promise<void> {
     if (this.install === null) return
@@ -1438,7 +1438,7 @@ ${capabilityKey(change.capability)}`)
     return this.isPolicyJob(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
 
-  // Policy job holders require nothing and can't be required. Install plugins require only install plugins
+  // Policy job holders require nothing and can't be required. Core plugins require only core plugins
   private requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
     if (this.isPolicyJob(k.id) && requires.length > 0) return true
@@ -1451,7 +1451,7 @@ ${capabilityKey(change.capability)}`)
     return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k)
   }
 
-  // Dev mode on an install plugin loads its bytes unhashed, from the install and never from the plugin folder. A host
+  // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder. A host
   // half still starts once per run, so its live reload is Restart hetu
   private installStatus(k: Known): Status {
     const listed = k.listed!
@@ -1737,7 +1737,7 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // An app update to an install plugin: once plugin.updated has landed its cache is cleared and it hears the version
+  // An app update to a core plugin: once plugin.updated has landed its cache is cleared and it hears the version
   // it replaced. A record that never lands leaves the marker as it was, so the next start tries again
   private async applyInstalled(k: Known): Promise<void> {
     const from = k.updated!
@@ -2329,7 +2329,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
-  // again with the code it has. An install plugin waits for Restart hetu, since a host half starts once per run and
+  // again with the code it has. A core plugin waits for Restart hetu, since a host half starts once per run and
   // the reset may follow a start that froze main
   private async reset(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
@@ -2382,7 +2382,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.refresh()
   }
 
-  // One item a folder plugin was granted switched on or off. An install plugin's grants are its manifest, so it has
+  // One item a folder plugin was granted switched on or off. A core plugin's grants are its manifest, so it has
   // no entry to hold a switch
   private async switchItem(id: string, capability: Capability, on: boolean): Promise<void> {
     const k = this.known.get(id)
@@ -2405,9 +2405,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first grants snapshot and before the plugin
-  // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
+  // folder is scanned. A core plugin's come from its manifest, read before the host tier starts. An item the entry
   // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the
-  // grant risk classifier switched off, when nothing asks. An install plugin's items never ask
+  // grant risk classifier switched off, when nothing asks. A core plugin's items never ask
   private grantsSnapshot(): GrantsSnapshot {
     const asks = this.classing() !== 'off'
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)

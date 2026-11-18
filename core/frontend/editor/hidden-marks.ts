@@ -7,7 +7,7 @@ import type { LineStyle, Mark, MarkStyle } from '../../api/editor.ts'
 
 // Hidden marks: markdown's markers hidden and its text styled, as marks in the bridge's shape, so the drawer draws them
 // with the same code as a plugin's and #98 can move this behind the bridge. In the page from the install, switched by
-// the hidden-marks install plugin. The text itself never changes and the raw view always shows the markers
+// the hidden-marks core plugin. The text itself never changes and the raw view always shows the markers
 
 // ==highlight== as a parser extension, built as GFM's strikethrough is. A single = never opens or closes, so a = b stays
 // text

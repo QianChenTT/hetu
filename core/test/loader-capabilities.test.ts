@@ -897,10 +897,10 @@ describe('the classes at start', () => {
     expect((await entryFile(made, 'listener')).equals(before)).toBe(true)
   })
 
-  // An install plugin whose topics the listener hears, holding capabilities at version
+  // A core plugin whose topics the listener hears, holding capabilities at version
   const speaker = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { version, capabilities })) } })
 
-  it('asks for the items an app update to an install plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
+  it('asks for the items an app update to a core plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
     const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('mcp-http-handler.done')]) })
     const first = await harness({ install: speaker('1.0.0', []), folder: listener() })
     await first.loader.start()
@@ -923,9 +923,9 @@ describe('the classes at start', () => {
   it.each([
     ['a new version', async () => ({ install: speaker('1.1.0', []) })],
     ['new bytes under the same version', async () => ({ install: speaker('1.0.0', [{ type: 'storage' }]) })],
-    ['an install plugin gone', async () => ({ install: withCapabilities() })],
+    ['a core plugin gone', async () => ({ install: withCapabilities() })],
     ['bytes that differ from the list', tampered],
-    ['dev mode on an install plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['mcp-http-handler'] } })],
+    ['dev mode on a core plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['mcp-http-handler'] } })],
     ['skipVerification on', async () => ({ install: speaker('1.0.0', []), switches: { skipVerification: true } })],
   ] as [string, Next][])('keeps a confirmed item that asks only through its links confirmed whatever the install: %s', async (_name, next) => {
     const first = await harness({ install: speaker('1.0.0', []), folder: folder() })
@@ -1301,7 +1301,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     expect(await stored(made, 'tool')).toMatchObject({ class: 4, firstUse: [commit], confirmed: [exec] })
   })
 
-  it('asks once an install plugin ran in dev mode from bytes that read nothing and dev mode went off', async () => {
+  it('asks once a core plugin ran in dev mode from bytes that read nothing and dev mode went off', async () => {
     const base = await tempBase()
     const real = speaker('1.0.0', [read])
     const scratch = path.join(await tempBase(), 'mcp-http-handler')

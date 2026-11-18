@@ -1,4 +1,4 @@
-History, an install plugin whose host half serves `history.commit`, `history.log` and `history.read`: hetu's own record of notes, in a repo hetu owns. It needs `git` on the machine. With none its start throws, it reads as failed and calls answer `unavailable`
+History, a core plugin whose host half serves `history.commit`, `history.log` and `history.read`: hetu's own record of notes, in a repo hetu owns. It needs `git` on the machine. With none its start throws, it reads as failed and calls answer `unavailable`
 
 **Why a repo of its own.** git reads config, hooks, filters and nested repos from the folder it works in, and each can name a program to run. A notes folder can come from anywhere, so git is never pointed at it:
 

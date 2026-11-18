@@ -13,7 +13,7 @@ import { mapThrough, Versions } from './versions.ts'
 
 // The drawer's editor slots: a CodeMirror view per open note, each laid over the box of the editor slot the layout
 // placed for it, in the lifted layer, and hidden while no slot holds it. The current one is the note the human works in.
-// CodeMirror is core mechanism here and decides nothing. Hidden marks is applied only while its install plugin is ready. Plugins' marks come only through
+// CodeMirror is core mechanism here and decides nothing. Hidden marks is applied only while its core plugin is ready. Plugins' marks come only through
 // the bridge, drawn with the drawer's own classes. Nothing here reaches the core: the notes and the drawer do
 
 export type ViewHooks = {

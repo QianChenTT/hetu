@@ -128,7 +128,7 @@ const installedFile = z.strictObject({
 })
 export type Installed = Record<string, { version: string, hash: string }>
 
-// The version and hash each install plugin had in the last run, which tells an app update from a start. A file that is
+// The version and hash each core plugin had in the last run, which tells an app update from a start. A file that is
 // gone or fails its hash line reads as no run before, so no plugin hears of an update it can't be sure of
 export async function readInstalled(dataDir: string): Promise<Installed> {
   let bytes: Buffer

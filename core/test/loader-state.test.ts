@@ -52,7 +52,7 @@ describe('grants snapshot versions', () => {
 })
 
 describe('the human\'s switches, applied', () => {
-  it('off switches an install plugin off at once and it stays down for the run once switched on, since a host half starts once', async () => {
+  it('off switches a core plugin off at once and it stays down for the run once switched on, since a host half starts once', async () => {
     const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } } })
     await made.loader.start()
     await made.loader.apply({ kind: 'plugin.off', plugin: 'luoshu' })
@@ -289,7 +289,7 @@ describe("the grants snapshot's grants", () => {
     return { ...made, gate }
   }
 
-  it("carry each plugin's grants as items, a folder plugin's from its entry and an install plugin's from its manifest", async () => {
+  it("carry each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest", async () => {
     const { gate } = await started()
     const view = gate.seen[0]
     expect(view.n).toBe(1)
@@ -324,7 +324,7 @@ describe("the grants snapshot's grants", () => {
     expect((await made.store.load()).state.plugins.alpha.off ?? []).toEqual([])
   })
 
-  it("refuse a switch for an item the plugin wasn't granted, a plugin with no entry and an install plugin, applying nothing", async () => {
+  it("refuse a switch for an item the plugin wasn't granted, a plugin with no entry and a core plugin, applying nothing", async () => {
     const made = await started()
     await expect(made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: { type: 'luoshu.read', paths: ['other/**'] } })).rejects.toThrow()
     await expect(made.loader.apply({ kind: 'item.off', plugin: 'nobody', capability: read })).rejects.toThrow()
@@ -333,7 +333,7 @@ describe("the grants snapshot's grants", () => {
   })
 
   // Its stop grace runs after the switch, and a call it makes then must not pass on grants the human took away
-  it("leave out a plugin the human switched off from the next one, before its stop has ended, and an install plugin switched off", async () => {
+  it("leave out a plugin the human switched off from the next one, before its stop has ended, and a core plugin switched off", async () => {
     const gate = allowAll()
     const made = await harness({
       install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu', { capabilities: [{ type: 'log.read' }] })) } },

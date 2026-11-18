@@ -90,7 +90,7 @@ describe('the start order', () => {
     }])
   })
 
-  it('hands the data folder to an install plugin\'s host half and never to a worker', async () => {
+  it('hands the data folder to a core plugin\'s host half and never to a worker', async () => {
     const { loader, runtime, dataDir } = await harness({
       install: { ...coreInstall(), storage: { files: filesFor(manifest('storage', { entries: { host: 'host.js', worker: 'worker.js' } })) } },
       folder: { outline: filesFor(workerManifest('outline')) },
@@ -124,7 +124,7 @@ describe('the start order', () => {
   })
 })
 
-describe('install plugins', () => {
+describe('core plugins', () => {
   it('refuses one whose bytes fail the install list, which reads tampered, and starts the rest', async () => {
     const { loader, runtime, link } = await harness({ install: { ...twoHosts(), storage: { ...host('storage'), hash: wrongHash } } })
     await loader.start()
@@ -244,7 +244,7 @@ describe('install plugins', () => {
     expect(loader.stopped()).toMatchObject({ control: 'gate', why: 'failed', reason: 'requires' })
   })
 
-  it('refuses a plugin that requires a policy job holder and an install plugin that requires a folder plugin', async () => {
+  it('refuses a plugin that requires a policy job holder and a core plugin that requires a folder plugin', async () => {
     const { loader } = await harness({
       install: { ...coreInstall(), storage: host('storage'), luoshu: host('luoshu', { requires: ['outline'] }) },
       folder: { outline: filesFor(workerManifest('outline', { requires: ['gate'] })) },
@@ -428,7 +428,7 @@ describe('start markers', () => {
   })
 })
 
-describe('an app update to an install plugin', () => {
+describe('an app update to a core plugin', () => {
   it('writes plugin.updated, clears the plugin\'s cache and passes previousVersion, then marks the new version', async () => {
     const made = await harness({ install: twoHosts() })
     await writeInstalled(made.dataDir, { gate: { version: '0.9.0', hash: 'c'.repeat(64) }, storage: { version: '1.0.0', hash: (await readInstalledHash(made, 'storage')) } })

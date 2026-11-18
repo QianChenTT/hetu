@@ -21,7 +21,7 @@ afterEach(async () => {
 
 const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 
-// The joined core over a real boot with the real gate and luoshu. http is the install plugin whose utility half the test
+// The joined core over a real boot with the real gate and luoshu. http is the core plugin whose utility half the test
 // drives as the door, naming two agents. mcp is the install's own copy, a worker the test answers for, holding read on
 // everything, with its entry seeded with agent #1's labelled item for inbox. Agent #2 has no item
 async function joined(gate: 'on' | 'off') {

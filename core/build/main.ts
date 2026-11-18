@@ -9,9 +9,9 @@ import { communitySource } from './community.ts'
 // The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
 // or the community package npm installed at the commit package.json pins
 const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
-// The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
+// The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
 const INSTALL = ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'mcp-http-handler']
-// The in-page install plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
+// The in-page core plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
 // holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
 // loader path for in-page code
 const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
@@ -44,7 +44,7 @@ export type Built = {
 }
 
 // main.ts and everything it imports as one ES module, electron left to the runtime, with the install list, the
-// install plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
+// core plugins and the first-party plugins beside it. Each page's index.html and page.ts go to dist/frontend, the prelude put into the worker
 // host page's script as text, and the workers preload to dist
 // packaged and locked are fixed into main.js as the two constants of backend/runtime/packaged.ts. A run from the
 // source has neither
@@ -114,7 +114,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     format: 'esm',
     target: NODE,
   })
-  // The install plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
+  // The core plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the loader checks
   // before it starts the host half
   const plugins: Record<string, unknown> = {}
   for (const id of INSTALL) {

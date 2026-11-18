@@ -18,7 +18,7 @@ export type PluginContext = Client & {
   readonly lastStop: string | null
   // The version an update replaced, until the new one reaches ready once
   readonly previousVersion: string | null
-  // hetu's data folder, for an install plugin's host half only, null for every other half
+  // hetu's data folder, for a core plugin's host half only, null for every other half
   readonly dataDir: string | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean

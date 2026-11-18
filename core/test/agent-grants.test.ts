@@ -112,7 +112,7 @@ describe('agents\' items in the agent host\'s entry', () => {
     ['a label with a control character', [{ agent: 'client\n#1', capability: inbox }]],
     ['an item with no label', [{ capability: inbox }]],
     ['an item with a field more', [{ agent: 'client#1', capability: inbox, off: true }]],
-    ['an item of a type only install plugins hold', [{ agent: 'client#1', capability: { type: 'guard.hook' } }]],
+    ['an item of a type only core plugins hold', [{ agent: 'client#1', capability: { type: 'guard.hook' } }]],
     ['an item of no known type', [{ agent: 'client#1', capability: { type: 'host.replace' } }]],
     ['the same item twice for one agent', [{ agent: 'client#1', capability: inbox }, { agent: 'client#1', capability: { paths: ['inbox/**'], type: 'luoshu.read' } }]],
     ['more scopes of one type for one agent than a plugin may hold', [0, 1].map(n => ({ agent: 'client#1', capability: { type: 'luoshu.read', paths: Array.from({ length: 40 }, (_, i) => `n${n}-${i}/**`) } }))],

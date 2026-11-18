@@ -4,7 +4,7 @@
 declare const __HETU_PACKAGED__: boolean | undefined
 declare const __HETU_LOCKED__: boolean | undefined
 
-// The install list sits inside app.asar and the install plugins beside it
+// The install list sits inside app.asar and the core plugins beside it
 export const PACKAGED: boolean = typeof __HETU_PACKAGED__ === 'boolean' ? __HETU_PACKAGED__ : false
 
 // No debugging, no environment switches, no DevTools and no argument at all. The shipped build has both. A build the

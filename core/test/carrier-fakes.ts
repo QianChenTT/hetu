@@ -70,7 +70,7 @@ export class FakeLoader implements Loader {
     this.plugins[id] = { state, place: 'host', incarnation: 1, serves: 'host', actions: {}, topics: [] }
   }
 
-  // An install plugin whose host half runs in a utility process, on a port as a worker's
+  // A core plugin whose host half runs in a utility process, on a port as a worker's
   utility(id: string, state: PluginInfo['state'] = 'ready'): void {
     this.plugins[id] = { state, place: 'utility', incarnation: 1, serves: 'host', actions: {}, topics: [] }
   }

@@ -96,7 +96,7 @@ describe('what each kind holds', () => {
     expect(change.safeParse({ kind: 'item.off', plugin: 'search', capability: { type: 'history', access: 'read' } }).success).toBe(false)
   })
 
-  // Grants change only for folder plugins, an install plugin's grants are its manifest
+  // Grants change only for folder plugins, a core plugin's grants are its manifest
   it.each(['grant.widen', 'grant.narrow', 'item.on', 'item.off'])('refuses an install-only type in %s', kind => {
     expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'guard.hook' } }).success).toBe(false)
     expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'ui.view' } }).success).toBe(true)

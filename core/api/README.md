@@ -24,5 +24,5 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `rate.ts`: the per-way message counter, the text budget and `weigh`
 - `plain.ts`: the plain data check for values the core passes on unread
 - `frozen.ts`: the frozen tables with no prototype that the core looks keys up in, apart from zod so the limits load without it
-- `install.ts`: the install list the build writes, each install plugin with its path, version and hash and the bundled first-party copies marked, the version order and the signer first-party copies carry
+- `install.ts`: the install list the build writes, each core plugin with its path, version and hash and the bundled first-party copies marked, the version order and the signer first-party copies carry
 - `lifecycle.ts`: the lifecycle messages on a port, `init`, `deps`, `ready`, `stop` and `stopped`, with the fixed reasons a plugin hears as `lastStop`

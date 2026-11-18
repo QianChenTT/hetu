@@ -366,7 +366,7 @@ export type ListedPlugin = {
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
   // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for an
-  // install plugin
+  // core plugin
   class: number | null
 }
 
@@ -412,7 +412,7 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
-  // The in-page install plugins that are ready, which the editor window applies: hidden-marks
+  // The in-page core plugins that are ready, which the editor window applies: hidden-marks
   page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null

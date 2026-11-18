@@ -32,7 +32,7 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the carrier asks, each held by the install plugin of the same id. The log is the core's own
+// The policy jobs the carrier asks, each held by the core plugin of the same id. The log is the core's own
 export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
 
 // The plugin that serves each provider namespace
@@ -72,12 +72,12 @@ export function securityControls(listed: readonly string[]): string[] {
   return [...policyJobIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
 }
 
-// Host-level and in-page plugins, which load only from the install
+// Core plugins, host and in-page, which load only from the install
 export const corePluginIds = frozen([
   'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
 ] as const)
 
-// Install plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
+// Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
 export const utilityIds = frozen(['mcp-http-handler'] as const)
 
