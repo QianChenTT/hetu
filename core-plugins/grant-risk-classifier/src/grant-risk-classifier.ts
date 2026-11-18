@@ -1,5 +1,5 @@
 import { capabilityKey, type Capability } from 'hetu-core/api/capabilities.ts'
-import { classNames, type Capabilities, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
+import { classNames, type GrantRiskClassifier, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
 import { capabilityText } from 'hetu-core/api/trusted.ts'
 
 // A scope stays inside one place when its first part is a plain folder or note name. One with a wildcard there, **
@@ -88,7 +88,7 @@ function runsOthers(all: readonly Capability[]): string[] {
   return [...new Set(names.filter(name => name !== null))]
 }
 
-export function createCapabilities(): Capabilities {
+export function createGrantRiskClassifier(): GrantRiskClassifier {
   // The highest of its grants and what plugin.call reaches, or 4 for a pair. What it hears gives it none of the
   // speaker's grants, so the flow counts for the pair alone
   const classify = (granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number =>

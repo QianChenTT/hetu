@@ -10,7 +10,7 @@ import { communitySource } from './community.ts'
 // or the community package npm installed at the commit package.json pins
 const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
-const INSTALL = ['gate', 'capabilities', 'storage', 'luoshu', 'history', 'exec', 'http']
+const INSTALL = ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'http']
 // The in-page install plugins, each a module the editor page compiles in from core/frontend/mount. The install's copy
 // holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
 // loader path for in-page code

@@ -102,7 +102,7 @@ describe("the core's words for a change", () => {
 
   it('recommends keeping a security plugin on whenever one is switched off, and only then', () => {
     const recommends = (input: unknown) => describeChange(one(input)).notes.some(note => note.includes('recommends'))
-    for (const plugin of ['gate', 'capabilities', 'watchdog']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
+    for (const plugin of ['gate', 'grant-risk-classifier', 'watchdog']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
     expect(recommends({ kind: 'plugin.off', plugin: 'search' })).toBe(false)
     expect(recommends({ kind: 'plugin.on', plugin: 'gate' })).toBe(false)
   })
@@ -152,7 +152,7 @@ describe("the core's words for a class moved up with no Confirm", () => {
     ['update', 'the update of "reader" without a Confirm'],
     ['widen', 'a grant given to "reader" without a Confirm'],
     ['restore', 'the restore of "reader" without a Confirm'],
-    ['slot-on', 'the capabilities plugin switched on again'],
+    ['slot-on', 'the grant risk classifier switched on again'],
   ] as [ClassRaised['cause'], string][])('says why for %s', (cause, why) => {
     expect(describeChange(raised(cause, cause === 'slot-on' ? null : 'reader')).notes[0]).toBe(`Why: ${why}`)
   })

@@ -365,7 +365,7 @@ export type ListedPlugin = {
   firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
-  // The class the capabilities slot gave a plugin-folder plugin, null for none known, which counts as 4, and for an
+  // The class the grant risk classifier slot gave a plugin-folder plugin, null for none known, which counts as 4, and for an
   // install plugin
   class: number | null
 }

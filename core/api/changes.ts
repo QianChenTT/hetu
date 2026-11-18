@@ -53,12 +53,12 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
-// and for the capabilities plugin switched on again
+// and for the grant risk classifier switched on again
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
 const classNumber = z.int().min(0).max(4)
 
 // A notice the core raises alone, never one security.request carries: a plugin's class moved up past where the
-// capabilities plugin alerts with no Confirm on screen. The class and its asks are stored already, so the human answers
+// grant risk classifier alerts with no Confirm on screen. The class and its asks are stored already, so the human answers
 // it and approves nothing. from is null for a class not known
 export const classRaised = z.strictObject({
   kind: z.literal('class.raised'),

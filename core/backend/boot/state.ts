@@ -115,7 +115,7 @@ const plugin = z.strictObject({
   // is another item. An item asks unless named here. Left out of an entry with none confirmed and of one written before
   // the record came, which has confirmed nothing
   confirmed: folderCapabilities.optional(),
-  // A change applied while the human had the capabilities plugin switched off: class is the last one classed and
+  // A change applied while the human had the grant risk classifier switched off: class is the last one classed and
   // nothing since was classed. Left out of every other entry
   unclassed: z.literal(true).optional(),
   // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human

@@ -14,7 +14,7 @@ const quoted = (value: string) => JSON.stringify(value)
 // What each security control stops doing while off
 const whileOff: Readonly<Record<string, string>> = Object.freeze({
   gate: 'Calls with power then pass unchecked. The per-item switches lapse too, since allowing all means all. Exec still refuses a command whose item is off',
-  capabilities: 'Plugins then go unclassified and nothing asks at its first use until it is on again',
+  'grant-risk-classifier': 'Plugins then go unclassified and nothing asks at its first use until it is on again',
   watchdog: 'Nothing then stops or slows a plugin that misbehaves',
 })
 
@@ -135,6 +135,6 @@ function why(change: ClassRaised): string {
     case 'start':
       return 'the classing at start, which found what changed while hetu was not running'
     case 'slot-on':
-      return 'the capabilities plugin switched on again'
+      return 'the grant risk classifier switched on again'
   }
 }

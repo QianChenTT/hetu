@@ -1,4 +1,4 @@
-The capabilities slot's install plugin. Its host half classifies a plugin-folder plugin from 0 to 4, picks the items that ask at their first use and writes the lines the trusted window shows under the core's words. It answers from what the loader hands it and makes no calls
+The grant risk classifier slot's install plugin. Its host half classifies a plugin-folder plugin from 0 to 4, picks the items that ask at their first use and writes the lines the trusted window shows under the core's words. It answers from what the loader hands it and makes no calls
 
 - **a grant's class:** `ui.*` but `ui.keys`, `ui.edit` and `ui.read`, `storage`, `events.subscribe` and `plugin.call` itself 0. `ui.keys`, `ui.read`, `luoshu.read` and `luoshu.list` 1. `luoshu.write` 2, or 4 when its first path part holds a wildcard. `history` 2. `ui.edit` 2 on any scope, since each edit waits in the editor for the human's save. `net.fetch` 3, or 4 with `*`. `exec`, `guard.hook` and `log.read` 4
 - **a plugin's class:** the highest of its grants and the grants it reaches through `plugin.call`, either way round, which the loader follows. A subscription gives the plugin that hears none of the speaker's grants, so it never raises the listener's class
@@ -8,4 +8,4 @@ The capabilities slot's install plugin. Its host half classifies a plugin-folder
 - **the classes a change moves:** a change to one plugin can move its own class and the class of every plugin linked to it. A move up is shown on the Confirm of the request that causes it, by the plugin with the class it held and the one it moves to. A move down is stored without a line. A class not known counts as 4
 - **the moves that alert:** a move up made with no Confirm on screen gets a notice of its own only where the class changes what hetu does, leaving 0, whose updates apply on their own, or entering 4, whose items ask at first use. A move inside 1 to 3 raises nothing
 
-`src/capabilities.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin and the `capabilities` role
+`src/grant-risk-classifier.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin and the `capabilities` role

@@ -27,7 +27,7 @@ const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 describe('the start order', () => {
   it('starts the slot holders, then the providers, then the guard, then sandboxed plugins in graph order', async () => {
     const { loader, runtime } = await harness({
-      install: Object.fromEntries(['gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
+      install: Object.fromEntries(['gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
       folder: {
         outline: filesFor(workerManifest('outline', { requires: ['luoshu'] })),
         indexer: filesFor(workerManifest('indexer', { requires: ['outline'] })),
@@ -38,7 +38,7 @@ describe('the start order', () => {
     })
     await loader.start()
     expect(runtime.order()).toEqual([
-      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
+      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases', 'notes-tool', 'outline', 'indexer',
     ])
     for (const id of ['gate', 'leases', 'outline', 'indexer']) expect(stateOf(loader, id)).toBe('ready')
   })
@@ -149,7 +149,7 @@ describe('install plugins', () => {
     const { loader } = await harness()
     await loader.start()
     expect(loader.slot('watchdog')).toBe('absent')
-    expect(loader.slot('capabilities')).toBe('absent')
+    expect(loader.slot('grant-risk-classifier')).toBe('absent')
     expect(loader.slot('gate')).toBe('on')
   })
 

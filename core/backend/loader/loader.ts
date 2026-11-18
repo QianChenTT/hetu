@@ -23,7 +23,7 @@ import { bindFailures, type BindFailure, type DepState, type Init, type StopReas
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { Capabilities, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
+import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
 import { agentDoor, agentHost } from '../../api/slots.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -79,10 +79,10 @@ export type Failure =
   | { action: 'relaunch', control: string, reason: string }
   | { action: 'stopped', mode: StoppedMode }
 
-// The role export each security control's module must give. Capabilities gets its own at step 17 and the guards theirs
+// The role export each security control's module must give. The grant risk classifier gets its own at step 17 and the guards theirs
 // with #77
 const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({
-  gate: 'gate', capabilities: 'capabilities', watchdog: 'watchdog', luoshu: 'luoshu', history: 'history', exec: 'exec',
+  gate: 'gate', 'grant-risk-classifier': 'grantRiskClassifier', watchdog: 'watchdog', luoshu: 'luoshu', history: 'history', exec: 'exec',
 })
 
 // What an update staged beside the old version came to
@@ -152,11 +152,11 @@ type Staged = { dir: string, read: Read }
 type Pending = { readonly id: string, readonly granted: readonly Capability[] | null }
 
 // What moves a class, in three groups. Install: a first approval, a first-party copy at start, an update. Running: a
-// widen, a narrow, a restore, a remove, a reset, another plugin's change that moves this one, the capabilities plugin
+// widen, a narrow, a restore, a remove, a reset, another plugin's change that moves this one, the grant risk classifier
 // switched on again. Stationary: the pass at start, which finds what changed while hetu was not running
 type Cause = ClassRaised['cause'] | 'moved'
 
-// The capabilities slot as classing reads it: on with its role ready, off once the human switched it off, down any
+// The grant risk classifier slot as classing reads it: on with its role ready, off once the human switched it off, down any
 // other way
 type Classing = 'on' | 'off' | 'down'
 
@@ -202,7 +202,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http', 'hidden-marks',
+  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http', 'hidden-marks',
 ] as const)
 
 const FOLDER_RANK = 1000
@@ -358,7 +358,7 @@ export class Loader implements Seam {
   // The connects http asks for: the one waiting, the answers not yet collected and the client ids paused
   private readonly connects: Connects
   private readonly clock: () => number
-  // The pass at start has classed every entry, so the capabilities plugin coming up from here on is the human's switch-on
+  // The pass at start has classed every entry, so the grant risk classifier coming up from here on is the human's switch-on
   private classedAtStart = false
 
   constructor(options: LoaderOptions) {
@@ -715,9 +715,9 @@ ${capabilityKey(change.capability)}`)
 
   // ---- classes
 
-  // The capabilities slot's role while the slot is on and its plugin ready, null otherwise
-  private capabilities(): Capabilities | null {
-    return this.slot('capabilities') === 'on' ? this.role('capabilities', 'capabilities') : null
+  // The grant risk classifier slot's role while the slot is on and its plugin ready, null otherwise
+  private grantRiskClassifier(): GrantRiskClassifier | null {
+    return this.slot('grant-risk-classifier') === 'on' ? this.role('grant-risk-classifier', 'grantRiskClassifier') : null
   }
 
   // What a plugin holds: a plugin-folder plugin's entry, an install plugin's manifest
@@ -799,12 +799,12 @@ ${capabilityKey(change.capability)}`)
     return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
   }
 
-  // The capabilities slot as classing reads it: on while its plugin is ready with its role, off only once the human
+  // The grant risk classifier slot as classing reads it: on while its plugin is ready with its role, off only once the human
   // switched it off and down for anything else, a failed, absent or tampered plugin included
   private classing(): Classing {
-    const state = this.slot('capabilities')
+    const state = this.slot('grant-risk-classifier')
     if (state === 'off') return 'off'
-    return this.capabilities() !== null ? 'on' : 'down'
+    return this.grantRiskClassifier() !== null ? 'on' : 'down'
   }
 
   // The one function every class change goes through, whatever causes it. With the slot on the policy classes the
@@ -826,7 +826,7 @@ ${capabilityKey(change.capability)}`)
     const known = new Set(confirmed.map(capabilityKey))
     const classed = slot === 'on' ? this.classed(id, after.granted, pending) : null
     if (classed === null && slot === 'on') slot = 'down'
-    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.slot('capabilities'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
+    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.slot('grant-risk-classifier'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
     const n = classed !== null ? classed.class : slot === 'off' ? before?.class ?? null : null
     const asking = classed !== null
       ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))
@@ -871,7 +871,7 @@ ${capabilityKey(change.capability)}`)
   // Whether a move made with no Confirm on screen alerts, as the policy says, or for a slot that doesn't say, whether it
   // would show the move on a Confirm. A slot that fails alerts
   private alerts(move: ClassMove): boolean {
-    const slot = this.capabilities()
+    const slot = this.grantRiskClassifier()
     if (slot === null) return false
     try {
       if (typeof slot.alerts === 'function') {
@@ -882,7 +882,7 @@ ${capabilityKey(change.capability)}`)
         if (Array.isArray(lines)) return lines.length > 0
       }
     } catch {}
-    this.note('fault', { plugin: 'capabilities', step: 'alerts' })
+    this.note('fault', { plugin: 'grant-risk-classifier', step: 'alerts' })
     return true
   }
 
@@ -965,7 +965,7 @@ ${capabilityKey(change.capability)}`)
   // Every plugin-folder entry classed again at start from the graph as it stands, before any plugin-folder plugin runs:
   // an app update can change what an install plugin holds with no change to any entry and an entry can be out of date.
   // Only an entry that comes out different is written. One that rises and can't be written still asks in the run, one
-  // that lowers keeps its entry. The same pass runs once the human switches the capabilities plugin on again in the run.
+  // that lowers keeps its entry. The same pass runs once the human switches the grant risk classifier on again in the run.
   // A move up there that alerts gets its notice
   private async classAll(cause: 'start' | 'slot-on'): Promise<void> {
     let changed = false
@@ -1007,19 +1007,19 @@ ${capabilityKey(change.capability)}`)
   // slot words it. A slot without moves shows none
   private shown(change: { own: Decided, others: readonly Decided[] }): string[] {
     const moves = [change.own, ...change.others].flatMap(decided => (decided.move === null ? [] : [decided.move]))
-    const slot = this.capabilities()
+    const slot = this.grantRiskClassifier()
     if (moves.length === 0 || slot === null || typeof slot.moves !== 'function') return []
     try {
       const lines = slot.moves(moves)
       if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
     } catch {}
-    this.note('fault', { plugin: 'capabilities', step: 'moves' })
+    this.note('fault', { plugin: 'grant-risk-classifier', step: 'moves' })
     return []
   }
 
   // A plugin's class and the items that ask at first use, from the slot. Null with the slot down or a role that fails
   private classed(id: string, granted: readonly Capability[], pending?: Pending): { class: number, firstUse: Capability[] } | null {
-    const slot = this.capabilities()
+    const slot = this.grantRiskClassifier()
     if (slot === null) return null
     try {
       const reachable = this.reachable(id, granted, pending)
@@ -1028,7 +1028,7 @@ ${capabilityKey(change.capability)}`)
       const asking = slot.firstUse(granted, reachable, flow)
       if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
     } catch {}
-    this.note('fault', { plugin: 'capabilities', step: 'classify' })
+    this.note('fault', { plugin: 'grant-risk-classifier', step: 'classify' })
     return null
   }
 
@@ -1036,16 +1036,16 @@ ${capabilityKey(change.capability)}`)
   // by the human, who chose to see nothing about classes
   private screen(id: string, granted: readonly Capability[]): string[] {
     if (this.classing() === 'off') return []
-    const slot = this.capabilities()
+    const slot = this.grantRiskClassifier()
     if (slot !== null) {
       try {
         const connected = this.connected(id, granted)
         const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
         if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
       } catch {}
-      this.note('fault', { plugin: 'capabilities', step: 'screen' })
+      this.note('fault', { plugin: 'grant-risk-classifier', step: 'screen' })
     }
-    return ['The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use']
+    return ['The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use']
   }
 
   // What a window's banner shows, from the loader's own states and the state it runs with
@@ -1839,9 +1839,9 @@ ${capabilityKey(change.capability)}`)
     this.beat(k, live)
     void this.unmark(k, live)
     this.replan()
-    // The capabilities plugin up again in the run, which only the human's switch-on brings: every entry is classed at once
-    if (k.id === 'capabilities' && k.from === 'install' && this.classedAtStart) {
-      void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'capabilities', step: 'reclass' }))
+    // The grant risk classifier up again in the run, which only the human's switch-on brings: every entry is classed at once
+    if (k.id === 'grant-risk-classifier' && k.from === 'install' && this.classedAtStart) {
+      void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
     }
   }
 
@@ -2407,7 +2407,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
   // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
   // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the
-  // capabilities plugin switched off, when nothing asks. An install plugin's items never ask
+  // grant risk classifier switched off, when nothing asks. An install plugin's items never ask
   private stateView(): StateView {
     const asks = this.classing() !== 'off'
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
@@ -2630,7 +2630,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
   // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
   // stops, itself and its dependents included: only a class 0 update may load on its own and nothing reads a plugin's
-  // class before the capabilities plugin does. The signer is checked against the pin once provenance exists. A
+  // class before the grant risk classifier does. The signer is checked against the pin once provenance exists. A
   // first-party copy changes only with the install
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into

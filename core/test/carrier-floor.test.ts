@@ -237,12 +237,12 @@ describe('the floor', () => {
     loader.sandboxed('search')
     loader.sandboxed('guarding')
     // A slot id never names a sandboxed plugin, but the floor doesn't rely on that
-    loader.sandboxed('capabilities')
+    loader.sandboxed('grant-risk-classifier')
     loader.installed('watchdog')
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.stop', { plugin: 'search' })).ok).toBe(true)
     expect((await watchdog.ask('watchdog.restart', { plugin: 'search' })).ok).toBe(true)
-    for (const plugin of ['luoshu', 'gate', 'log', 'capabilities', 'guarding', 'ghost']) {
+    for (const plugin of ['luoshu', 'gate', 'log', 'grant-risk-classifier', 'guarding', 'ghost']) {
       expect(code(await watchdog.ask('watchdog.stop', { plugin }))).toBe('not-granted')
     }
     // The watchdog's id on a port, or on a worker half, is not the slot's holder

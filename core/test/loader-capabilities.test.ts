@@ -6,12 +6,12 @@ import type { Change } from '../api/changes.ts'
 import type { Caller } from '../api/envelope.ts'
 import path from 'node:path'
 import type { Plugin, Switches } from '../backend/boot/state.ts'
-import type { Capabilities } from '../api/slots.ts'
+import type { GrantRiskClassifier } from '../api/slots.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
   workerManifest, writeFolder, type Files, type Listing, type Message,
 } from './loader-fakes.ts'
-import { createCapabilities } from '../../core-plugins/capabilities/src/capabilities.ts'
+import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
 import { createGate } from '../../core-plugins/gate/src/gate.ts'
 
 afterEach(cleanup)
@@ -23,28 +23,28 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 
 const worker = (id: string, capabilities: Capability[] = []): Files => filesFor(workerManifest(id, { capabilities }))
-const withCapabilities = () => ({ ...coreInstall(), capabilities: { files: filesFor(hostManifest('capabilities')) } })
+const withCapabilities = () => ({ ...coreInstall(), 'grant-risk-classifier': { files: filesFor(hostManifest('grant-risk-classifier')) } })
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: `c${Math.random()}`, caller, action, args, deadline: Date.now() + 30_000 })
 
 async function listed(made: Awaited<ReturnType<typeof harness>>): Promise<SecurityList> {
   return await made.loader.serve(call(trusted, 'security.list')) as SecurityList
 }
 
-const DOWN = 'The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use'
+const DOWN = 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'
 
-// A capabilities role that throws once broken, so its plugin stays ready while every classing fails
-function breakable(): Capabilities & { broken: boolean } {
-  const real = createCapabilities()
+// A grantRiskClassifier role that throws once broken, so its plugin stays ready while every classing fails
+function breakable(): GrantRiskClassifier & { broken: boolean } {
+  const real = createGrantRiskClassifier()
   const fail = (): never => {
     throw new Error('broken')
   }
   const role = {
     broken: false,
-    classify: (...args: Parameters<Capabilities['classify']>) => (role.broken ? fail() : real.classify(...args)),
-    firstUse: (...args: Parameters<Capabilities['firstUse']>) => (role.broken ? fail() : real.firstUse(...args)),
-    screen: (...args: Parameters<Capabilities['screen']>) => (role.broken ? fail() : real.screen(...args)),
-    moves: (...args: Parameters<NonNullable<Capabilities['moves']>>) => (role.broken ? fail() : real.moves!(...args)),
-    alerts: (...args: Parameters<NonNullable<Capabilities['alerts']>>) => (role.broken ? fail() : real.alerts!(...args)),
+    classify: (...args: Parameters<GrantRiskClassifier['classify']>) => (role.broken ? fail() : real.classify(...args)),
+    firstUse: (...args: Parameters<GrantRiskClassifier['firstUse']>) => (role.broken ? fail() : real.firstUse(...args)),
+    screen: (...args: Parameters<GrantRiskClassifier['screen']>) => (role.broken ? fail() : real.screen(...args)),
+    moves: (...args: Parameters<NonNullable<GrantRiskClassifier['moves']>>) => (role.broken ? fail() : real.moves!(...args)),
+    alerts: (...args: Parameters<NonNullable<GrantRiskClassifier['alerts']>>) => (role.broken ? fail() : real.alerts!(...args)),
   }
   return role
 }
@@ -57,7 +57,7 @@ async function approved(made: Awaited<ReturnType<typeof harness>>, id: string): 
 }
 
 describe('an approval', () => {
-  it('writes the class and the items that ask at first use from the capabilities slot, and its screen under the core\'s words', async () => {
+  it('writes the class and the items that ask at first use from the grant risk classifier slot, and its screen under the core\'s words', async () => {
     const made = await harness({ install: withCapabilities(), folder: { reader: worker('reader', [read, fetchOne, exec]) } })
     await made.loader.start()
     const request = await approved(made, 'reader')
@@ -86,9 +86,9 @@ describe('an approval', () => {
   it('writes a null class and every item at first use with the slot down, and says so', async () => {
     const made = await harness({ folder: { reader: worker('reader', [read, { type: 'storage' }]) } })
     await made.loader.start()
-    expect(made.loader.slot('capabilities')).toBe('absent')
+    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
     const request = await approved(made, 'reader')
-    expect(request.notes).toContain('The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use')
+    expect(request.notes).toContain('The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use')
     const entry = (await made.store.load()).state.plugins.reader
     expect(entry.class).toBeNull()
     expect(entry.firstUse).toEqual([read, { type: 'storage' }])
@@ -371,7 +371,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
   it('makes every item ask with the slot down, as an approval and a copy do then', async () => {
     const made = await seeded({ tool: [[read], null, []] }, allowAll(), true)
-    expect(made.loader.slot('capabilities')).toBe('absent')
+    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
     await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: null, firstUse: [read, { type: 'storage' }] })
   })
@@ -451,7 +451,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       const made = await seeded({ sync: [[fetchOne], null] }, allowAll(), true)
       const notes = await widening(made, 'sync', read)
       expect(raises(notes)).toEqual([])
-      expect(notes).toContain('The capabilities plugin is down, so the class is unknown and counted as 4: every item asks at its first use')
+      expect(notes).toContain('The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use')
     })
 
     it('applies a narrow with no Confirm, so its move down is named nowhere', async () => {
@@ -549,12 +549,12 @@ describe('the plugin list', () => {
   })
 })
 
-describe('the capabilities slot', () => {
-  it('stops hetu when its module gives no capabilities role', async () => {
-    const made = await harness({ install: withCapabilities(), behave: { capabilities: { exports: {} } } })
+describe('the grant risk classifier slot', () => {
+  it('stops hetu when its module gives no grantRiskClassifier role', async () => {
+    const made = await harness({ install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: {} } } })
     await made.loader.start()
-    await until(() => stateOf(made.loader, 'capabilities') === 'failed')
-    expect(reasonOf(made.loader, 'capabilities')).toBe('no-role')
+    await until(() => stateOf(made.loader, 'grant-risk-classifier') === 'failed')
+    expect(reasonOf(made.loader, 'grant-risk-classifier')).toBe('no-role')
   })
 })
 
@@ -601,7 +601,7 @@ describe('what the class rests on', () => {
   ])('takes the slot as down for %s: a null class and every item at first use', async (_name, capabilities) => {
     const made = await harness({
       install: withCapabilities(),
-      behave: { capabilities: { exports: { capabilities: capabilities as never } } },
+      behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: capabilities as never } } },
       folder: { reader: worker('reader', [read]) },
     })
     await made.loader.start()
@@ -948,7 +948,7 @@ describe('the classes at start', () => {
     const files = { listener: await entryFile(made, 'listener'), other: await entryFile(made, 'other') }
     const seen = writes(made)
     await made.loader.start()
-    expect(made.loader.slot('capabilities')).toBe('absent')
+    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
     expect(seen).toEqual([])
     expect((await entryFile(made, 'listener')).equals(files.listener)).toBe(true)
     expect((await entryFile(made, 'other')).equals(files.other)).toBe(true)
@@ -1119,12 +1119,12 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     if (slot === 'down' && scenario.atStart === true) role.broken = true
     const made = await harness({
       install, folder, entries,
-      behave: { gate: { exports: { gate } }, capabilities: { exports: { capabilities: role } } },
-      switches: slot === 'off' && scenario.atStart === true ? { off: ['capabilities'] } : {},
+      behave: { gate: { exports: { gate } }, 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
+      switches: slot === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
     })
     await made.loader.start()
     for (const [id, item] of scenario.confirm ?? []) await made.loader.apply({ kind: 'item.on', plugin: id, capability: item })
-    if (scenario.atStart !== true && slot === 'off') await made.loader.apply({ kind: 'plugin.off', plugin: 'capabilities' })
+    if (scenario.atStart !== true && slot === 'off') await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
     if (scenario.atStart !== true && slot === 'down') role.broken = true
     let notes: string[] | null = null
     const { change } = scenario
@@ -1271,7 +1271,7 @@ describe('what the human confirmed, recorded in the entry', () => {
   it('asks once the first start after an app update ran with the slot off', async () => {
     const base = await tempBase()
     await confirmedExec(base)
-    const off = await harness({ base, install: updated(), switches: { off: ['capabilities'] } })
+    const off = await harness({ base, install: updated(), switches: { off: ['grant-risk-classifier'] } })
     await off.loader.start()
     await closed(off)
     const made = await harness({ base, install: updated() })
@@ -1288,14 +1288,14 @@ describe('what the human confirmed, recorded in the entry', () => {
     await first.loader.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
     expect(shape(await stored(first, 'tool'))).toEqual({ class: 4, firstUse: [] })
     await closed(first)
-    const real = createCapabilities()
-    const stricter: Capabilities = {
+    const real = createGrantRiskClassifier()
+    const stricter: GrantRiskClassifier = {
       ...real,
       firstUse: (held, reachable, flow) => [...real.firstUse(held, reachable, flow), ...held.filter(item => item.type === 'history')],
     }
     const made = await harness({
-      base, install: { ...coreInstall(), capabilities: { files: filesFor(hostManifest('capabilities', { version: '1.1.0' })) } },
-      behave: { capabilities: { exports: { capabilities: stricter } } },
+      base, install: { ...coreInstall(), 'grant-risk-classifier': { files: filesFor(hostManifest('grant-risk-classifier', { version: '1.1.0' })) } },
+      behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: stricter } } },
     })
     await made.loader.start()
     expect(await stored(made, 'tool')).toMatchObject({ class: 4, firstUse: [commit], confirmed: [exec] })
@@ -1316,7 +1316,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     const base = await tempBase()
     const granted = [fetchOne, hears('reader.done')]
     const off = await harness({
-      base, install: withCapabilities(), switches: { off: ['capabilities'] },
+      base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]) },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
@@ -1333,7 +1333,7 @@ describe('what the human confirmed, recorded in the entry', () => {
 
   it('classes an entry written while off from nothing at the next start with the slot on and drops its mark', async () => {
     const base = await tempBase()
-    const off = await harness({ base, install: withCapabilities(), switches: { off: ['capabilities'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
+    const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.loader.start()
     await approved(off, 'sync')
     expect(await stored(off, 'sync')).toMatchObject({ class: null, unclassed: true })
@@ -1346,9 +1346,9 @@ describe('what the human confirmed, recorded in the entry', () => {
   })
 })
 
-// With the capabilities plugin switched off by the human, changes pass: nothing is shown about classes, nothing asks
+// With the grant risk classifier switched off by the human, changes pass: nothing is shown about classes, nothing asks
 // and the gate is handed no first-use flags. Down any other way stays strict
-describe('the capabilities plugin switched off by the human', () => {
+describe('the grant risk classifier switched off by the human', () => {
   type Made = Awaited<ReturnType<typeof harness>>
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const flags = (gate: ReturnType<typeof allowAll>, id: string) => (gate.seen.at(-1)!.plugins[id] ?? []).filter(item => item.firstUse).map(item => item.capability)
@@ -1366,21 +1366,21 @@ describe('the capabilities plugin switched off by the human', () => {
 
   it('hands the gate no first-use flags while it is off and the stored ones again once it is switched on', async () => {
     const { made, gate } = await asking()
-    await made.loader.apply({ kind: 'plugin.off', plugin: 'capabilities' })
+    await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([])
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([fetchOne])
   })
 
   it('makes every item an entry written while off doesn\'t name as confirmed ask once it is switched on, until the pass that follows classes it', async () => {
     const gate = allowAll()
     const made = await harness({
-      install: withCapabilities(), behave: { gate: { exports: { gate } } }, switches: { off: ['capabilities'] }, folder: { sync: worker('sync', [read, fetchOne]) },
+      install: withCapabilities(), behave: { gate: { exports: { gate } } }, switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) },
     })
     await made.loader.start()
     await approved(made, 'sync')
     expect(flags(gate, 'sync')).toEqual([])
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([read, fetchOne])
     await until(() => flags(gate, 'sync').length === 1)
     expect(flags(gate, 'sync')).toEqual([fetchOne])
@@ -1395,7 +1395,7 @@ describe('the capabilities plugin switched off by the human', () => {
   it('classes every entry once it is switched on again in the run and raises a notice for each move up that alerts', async () => {
     const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
     const made = await harness({
-      install: withCapabilities(), switches: { off: ['capabilities'] },
+      install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener'), reader: worker('reader'), tool: worker('tool'), sender: worker('sender') },
       entries: {
         listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
@@ -1405,28 +1405,28 @@ describe('the capabilities plugin switched off by the human', () => {
       },
     })
     await made.loader.start()
-    expect(made.loader.slot('capabilities')).toBe('off')
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    expect(made.loader.slot('grant-risk-classifier')).toBe('off')
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
     expect((await stored(made, 'tool')).class).toBe(3)
     const notices = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
-    const why = ['Why: the capabilities plugin switched on again', 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it']
+    const why = ['Why: the grant risk classifier switched on again', 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it']
     expect(notices.map(request => [request.plugin, request.text, request.notes])).toEqual([
       ['listener', '"listener" moved from class 3, Network to class 4, Powerful with no Confirm on screen', why],
       ['reader', '"reader" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', why],
     ])
   })
 
-  it('keeps a capabilities plugin that crashed strict, its class not known and every item asking, before hetu quits', async () => {
+  it('keeps a grant risk classifier that crashed strict, its class not known and every item asking, before hetu quits', async () => {
     const gate = allowAll()
     const made = await harness({
       install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: { sync: worker('sync', [read, fetchOne]) },
       loader: { onFailure: () => {} },
     })
     await made.loader.start()
-    made.loader.crashed({ kind: 'plugin', id: 'capabilities', half: 'host', incarnation: 1 }, 'closed')
-    expect(made.loader.slot('capabilities')).toBe('failed')
+    made.loader.crashed({ kind: 'plugin', id: 'grant-risk-classifier', half: 'host', incarnation: 1 }, 'closed')
+    expect(made.loader.slot('grant-risk-classifier')).toBe('failed')
     const request = await approved(made, 'sync')
     expect(request.notes).toContain(DOWN)
     expect(await stored(made, 'sync')).toMatchObject({ class: null, firstUse: [read, fetchOne] })
@@ -1447,7 +1447,7 @@ describe('the capabilities plugin switched off by the human', () => {
 
   it('says on its own switch-off that nothing asks while it is off', async () => {
     const { made } = await asking()
-    await made.loader.request({ kind: 'plugin.off', plugin: 'capabilities' }, trusted)
+    await made.loader.request({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }, trusted)
     const request = (await listed(made)).requests.find(held => held.kind === 'plugin.off')!
     expect(request.notes).toContain('Plugins then go unclassified and nothing asks at its first use until it is on again')
   })
@@ -1498,10 +1498,10 @@ describe('a move up with no Confirm on screen', () => {
   })
 
   it('raises a notice for every move up a slot with no rule on alerts would show, inside 1 to 3 too', async () => {
-    const role: Capabilities = { ...createCapabilities() }
+    const role: GrantRiskClassifier = { ...createGrantRiskClassifier() }
     delete role.alerts
     const made = await harness({
-      install: withCapabilities(), switches: { confirmOff: true }, behave: { capabilities: { exports: { capabilities: role } } },
+      install: withCapabilities(), switches: { confirmOff: true }, behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
       folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) },
     })
     await made.loader.start()
@@ -1540,15 +1540,15 @@ describe('a move up with no Confirm on screen', () => {
   })
 })
 
-// A pass over every entry leaves an entry as stored only with the capabilities plugin switched off by the human. A role
+// A pass over every entry leaves an entry as stored only with the grant risk classifier switched off by the human. A role
 // that fails for an entry while the slot reads on stores that entry strict: the class not known and every item asking
 describe('a pass whose role fails for one entry', () => {
   type Made = Awaited<ReturnType<typeof harness>>
   const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   // The real policy, throwing for any plugin that holds a subscription
-  function failingFor(): Capabilities {
-    const real = createCapabilities()
+  function failingFor(): GrantRiskClassifier {
+    const real = createGrantRiskClassifier()
     const hearing = (granted: readonly Capability[]) => granted.some(item => item.type === 'events.subscribe')
     return {
       ...real,
@@ -1559,7 +1559,7 @@ describe('a pass whose role fails for one entry', () => {
     }
   }
   const setup = (switches: Partial<Switches> = {}) => harness({
-    install: withCapabilities(), switches, behave: { capabilities: { exports: { capabilities: failingFor() } } },
+    install: withCapabilities(), switches, behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: failingFor() } } },
     folder: { listener: worker('listener'), reader: worker('reader') },
     entries: {
       listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
@@ -1570,20 +1570,20 @@ describe('a pass whose role fails for one entry', () => {
   it('stores that entry strict at start and classes the others', async () => {
     const made = await setup()
     await made.loader.start()
-    expect(made.loader.slot('capabilities')).toBe('on')
+    expect(made.loader.slot('grant-risk-classifier')).toBe('on')
     const listener = await stored(made, 'listener')
     expect({ class: listener.class, firstUse: listener.firstUse }).toEqual({ class: null, firstUse: [fetchOne, hears] })
     expect(listener.unclassed).toBeUndefined()
     expect((await stored(made, 'reader')).class).toBe(4)
-    expect(made.link.events('fault')).toContainEqual({ plugin: 'capabilities', step: 'classify' })
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'grant-risk-classifier', step: 'classify' })
   })
 
   it('stores that entry strict in the pass when the slot is switched on again', async () => {
-    const made = await setup({ off: ['capabilities'] })
+    const made = await setup({ off: ['grant-risk-classifier'] })
     await made.loader.start()
     expect((await stored(made, 'listener')).class).toBe(3)
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
-    await until(() => made.loader.slot('capabilities') === 'on')
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => made.loader.slot('grant-risk-classifier') === 'on')
     await made.loader.settled()
     await tick(30)
     expect(await stored(made, 'listener')).toMatchObject({ class: null, firstUse: [fetchOne, hears] })
@@ -1765,12 +1765,12 @@ describe('a notice owed until the human answers it', () => {
     const granted = [fetchOne, hears('reader.done')]
     const extra = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`new${i}`, worker(`new${i}`)]))
     const made = await harness({
-      install: withCapabilities(), switches: { off: ['capabilities'] },
+      install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]), ...extra },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
     await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
+    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
     expect(await notices(made)).toContain(notice('listener', 'class 3, Network', 'class 4, Powerful'))
   })
@@ -1792,8 +1792,8 @@ describe('a notice owed across an entry stored strict', () => {
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
   // The real policy, throwing for any plugin that holds an item of this type
-  function failingFor(type: Capability['type']): Capabilities {
-    const real = createCapabilities()
+  function failingFor(type: Capability['type']): GrantRiskClassifier {
+    const real = createGrantRiskClassifier()
     return {
       ...real,
       classify: (granted, reachable, flow) => {
@@ -1802,7 +1802,7 @@ describe('a notice owed across an entry stored strict', () => {
       },
     }
   }
-  const failing = (type: Capability['type']) => ({ capabilities: { exports: { capabilities: failingFor(type) } } })
+  const failing = (type: Capability['type']) => ({ 'grant-risk-classifier': { exports: { grantRiskClassifier: failingFor(type) } } })
   async function closed(made: Made): Promise<void> {
     await made.loader.shutdown().catch(() => {})
     made.carrier.close()
@@ -1848,13 +1848,13 @@ describe('a notice owed across an entry stored strict', () => {
     const base = await tempBase()
     const granted = [calls('http')]
     const off = await harness({
-      base, install: fetches(), switches: { off: ['capabilities'] }, behave: failing('plugin.call'),
+      base, install: fetches(), switches: { off: ['grant-risk-classifier'] }, behave: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) },
     })
     await off.loader.start()
     expect((await stored(off, 'p')).class).toBe(0)
-    await off.loader.apply({ kind: 'plugin.on', plugin: 'capabilities' })
-    await until(() => off.loader.slot('capabilities') === 'on')
+    await off.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => off.loader.slot('grant-risk-classifier') === 'on')
     await off.loader.settled()
     await tick(30)
     expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } })
@@ -1892,7 +1892,7 @@ describe('a notice owed across an entry stored strict', () => {
     const role = breakable()
     const base = await tempBase()
     const made = await harness({
-      base, install: withCapabilities(), behave: { capabilities: { exports: { capabilities: role } } },
+      base, install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
       folder: { sync: worker('sync', [fetchOne]) }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
     })
     await made.loader.start()
@@ -1916,7 +1916,7 @@ describe('a notice owed across an entry stored strict', () => {
     const strict = await started(base, v1, 'events.subscribe')
     expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 3, cause: 'start', by: null } })
     await closed(strict)
-    const off = await harness({ base, install: v1(), switches: { off: ['capabilities'] } })
+    const off = await harness({ base, install: v1(), switches: { off: ['grant-risk-classifier'] } })
     await off.loader.start()
     await off.loader.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('http.done') })
     expect(await stored(off, 'p')).toMatchObject({ class: null, unclassed: true, owed: { from: 3, cause: 'start', by: null } })
@@ -1950,7 +1950,7 @@ describe('a notice owed across an entry stored strict', () => {
 })
 
 // A plugin never classed that reaches a known class with no Confirm on screen having shown that class gets a notice, its
-// class not known counting as 0 there: approved while the capabilities plugin was off, or approved Confirm-off.
+// class not known counting as 0 there: approved while the grant risk classifier was off, or approved Confirm-off.
 // Everywhere else a class not known counts as 4
 describe('a notice for a plugin never classed', () => {
   type Made = Awaited<ReturnType<typeof harness>>
@@ -1964,7 +1964,7 @@ describe('a notice for a plugin never classed', () => {
 
   it('raises one at the next start with the slot on for a plugin approved while off', async () => {
     const base = await tempBase()
-    const off = await harness({ base, install: withCapabilities(), switches: { off: ['capabilities'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
+    const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.loader.start()
     await approved(off, 'sync')
     await closed(off)
@@ -1999,9 +1999,9 @@ describe('a notice for a plugin never classed', () => {
   })
 })
 
-describe('the capabilities plugin\'s screen with what a manifest chose in quotes', () => {
+describe('the grant risk classifier\'s screen with what a manifest chose in quotes', () => {
   it('quotes each target, topic and variable it names, on the class line and the line of what is connected', () => {
-    const lines = createCapabilities().screen({
+    const lines = createGrantRiskClassifier().screen({
       granted: [{ type: 'exec', commands: [['git', 'status']], env: ['HOME'] }],
       reachable: [{ type: 'plugin.call', targets: ['notes'] }, { type: 'events.subscribe', topics: ['notes.saved'] }],
       callers: [],

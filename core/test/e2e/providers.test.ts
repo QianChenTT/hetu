@@ -282,7 +282,7 @@ self.onmessage = event => {
     await store.writeLuoshu({ folder: await temp() })
     const app = await launch(dataDir)
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'grant-risk-classifier' }))
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await pageAt(app, 'hetu://trusted/')

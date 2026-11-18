@@ -444,10 +444,10 @@ describe('a plugin’s class', () => {
       },
     })
     const installDir = await temp()
-    await writeInstall(installDir, { gate: { files: await shipped('gate') }, capabilities: { files: await shipped('capabilities') } })
+    await writeInstall(installDir, { gate: { files: await shipped('gate') }, 'grant-risk-classifier': { files: await shipped('grant-risk-classifier') } })
     const app = await start(dataDir, installDir)
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'grant-risk-classifier' }))
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)

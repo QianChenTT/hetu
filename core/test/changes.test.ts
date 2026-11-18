@@ -191,7 +191,7 @@ describe('whether a change widens', () => {
     ['a plugin switched on', { kind: 'plugin.on', plugin: 'search' }],
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],
-    ['capabilities switched off', { kind: 'plugin.off', plugin: 'capabilities' }],
+    ['capabilities switched off', { kind: 'plugin.off', plugin: 'grant-risk-classifier' }],
     ['the watchdog switched off', { kind: 'plugin.off', plugin: 'watchdog' }],
     ['a grant added', { kind: 'grant.widen', plugin: 'search', capability: cap }],
     ['an item switched back on', { kind: 'item.on', plugin: 'search', capability: cap }],
@@ -242,7 +242,7 @@ describe('whether a change widens', () => {
 
 describe('the security controls', () => {
   it('are the slot holders and the guards core/api expects, which the log is not', () => {
-    for (const id of ['gate', 'capabilities', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
+    for (const id of ['gate', 'grant-risk-classifier', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
     for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
   })
 

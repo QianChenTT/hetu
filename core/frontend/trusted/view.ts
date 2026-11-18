@@ -99,7 +99,7 @@ export function choiceChange(control: string, choice: Choice): Change | null {
   return { kind: choice === 'recover' ? 'plugin.reset' : 'plugin.off', plugin: control }
 }
 
-// A plugin-folder plugin's class, from the capabilities slot. One it couldn't give counts as 4
+// A plugin-folder plugin's class, from the grant risk classifier slot. One it couldn't give counts as 4
 function pluginLine(plugin: ListedPlugin): string {
   const from = plugin.from === 'install' ? 'ships with hetu' : 'plugin folder'
   const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state

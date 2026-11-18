@@ -69,7 +69,7 @@ describe('names', () => {
 
 describe('slots, providers and guards', () => {
   it('has the three policy slots, the log being the core\'s own', () => {
-    expect(slotIds).toEqual(['gate', 'capabilities', 'watchdog'])
+    expect(slotIds).toEqual(['gate', 'grant-risk-classifier', 'watchdog'])
   })
 
   it("names the provider of every namespace", () => {
@@ -89,7 +89,7 @@ describe('slots, providers and guards', () => {
 
   it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
     expect(installIds).toEqual([
-      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
     ])
   })
 
@@ -113,7 +113,7 @@ describe('reserved ids', () => {
   // Section 3: every namespace the carrier serves, every slot, provider and install id and the ids first party keeps
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
-    'gate', 'capabilities', 'log',
+    'gate', 'grant-risk-classifier', 'log',
     'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]

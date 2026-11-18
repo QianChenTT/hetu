@@ -161,7 +161,7 @@ describe('the human\'s switches, applied', () => {
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
     await made.loader.apply({ kind: 'plugin.approve', plugin: 'alpha' })
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
-    // No capabilities slot here, so the class is unknown and every item asks at its first use
+    // No grant risk classifier slot here, so the class is unknown and every item asks at its first use
     expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.view' }], class: null, enabled: true, firstUse: [{ type: 'ui.view' }] })
     // No provenance yet, so the approved build still needs allowUnsigned to run
     expect(reasonOf(made.loader, 'alpha')).toBe('unsigned')

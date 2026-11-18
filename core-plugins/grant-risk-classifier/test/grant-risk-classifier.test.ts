@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from 'hetu-core/api/capabilities.ts'
 import type { Flow } from 'hetu-core/api/slots.ts'
-import { createCapabilities } from '../src/capabilities.ts'
+import { createGrantRiskClassifier } from '../src/grant-risk-classifier.ts'
 
-const caps = createCapabilities()
+const caps = createGrantRiskClassifier()
 const read: Capability = { type: 'luoshu.read', paths: ['notes/**'] }
 const list: Capability = { type: 'luoshu.list', paths: ['**'] }
 const write: Capability = { type: 'luoshu.write', paths: ['04 - Daily/**'] }

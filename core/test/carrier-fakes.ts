@@ -18,7 +18,7 @@ export type Message = Record<string, unknown>
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
 export class FakeLoader implements Loader {
-  slots: Record<string, SlotState> = { gate: 'on', watchdog: 'on', capabilities: 'on' }
+  slots: Record<string, SlotState> = { gate: 'on', watchdog: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
   // Writable here, so a test can set the human's limits

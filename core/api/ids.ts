@@ -33,7 +33,7 @@ export const qualifiedName = z.string()
   }, 'a part over its cap')
 
 // The policy slots the carrier asks, each held by the install plugin of the same id. The log is the core's own
-export const slotIds = frozen(['gate', 'capabilities', 'watchdog'] as const)
+export const slotIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
 
 // The plugin that serves each provider namespace
 export const providers = table({
@@ -74,7 +74,7 @@ export function securityControls(listed: readonly string[]): string[] {
 
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
 ] as const)
 
 // Install plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of

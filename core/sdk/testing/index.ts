@@ -127,10 +127,10 @@ class FakeLoader implements Loader {
     this.all = all
   }
 
-  // The capabilities and watchdog slots read off, as with the human's switch
+  // The grant risk classifier and watchdog slots read off, as with the human's switch
   slot(id: string): SlotState {
     if (id === 'gate') return this.gateSlot
-    return id === 'capabilities' || id === 'watchdog' ? 'off' : 'absent'
+    return id === 'grant-risk-classifier' || id === 'watchdog' ? 'off' : 'absent'
   }
 
   view(): number {

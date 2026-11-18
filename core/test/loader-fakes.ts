@@ -1,5 +1,5 @@
 import { API_VERSION } from '../api/manifest.ts'
-import { createCapabilities } from '../../core-plugins/capabilities/src/capabilities.ts'
+import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -193,7 +193,7 @@ export class FakeRuntime implements Runtime {
   // A security control's module and the luoshu's give their role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
     const roles: Record<string, HostExports> = {
-      gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, capabilities: { capabilities: createCapabilities() },
+      gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, 'grant-risk-classifier': { grantRiskClassifier: createGrantRiskClassifier() },
       history: { history: { open() {} } }, exec: { exec: { stateChanged() {} } },
     }
     const exports: HostExports = roles[id] ?? {}

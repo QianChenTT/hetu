@@ -173,7 +173,7 @@ describe('step 5a part A in the joined core', () => {
     mcp = run.runtime.half('mcp')
     expect((await proof.stored()).version).toBe('1.1.0')
     expect((await proof.stored()).agents).toEqual([{ agent: 'client#2', capability: privateNotes }])
-    // The copy left mcp's class unknown with no capabilities plugin here, so mcp's own item asks at its first use as
+    // The copy left mcp's class unknown with no grant risk classifier here, so mcp's own item asks at its first use as
     // any updated plugin's does. Its Confirm is the human's, then #2 reads with the grant it kept
     const kept = await request(run.door, mcp, 'client#2')
     expect(await read(mcp, kept, 'private/b.md')).toBe('needs-confirm')

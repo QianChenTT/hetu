@@ -1,6 +1,6 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { FloorConstant } from '../../api/floor.ts'
-import type { Capabilities, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/slots.ts'
+import type { GrantRiskClassifier, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/slots.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Landing, Port } from '../carrier/seams.ts'
@@ -52,7 +52,7 @@ export type HostExports = {
   provider?: Provider
   watchdog?: Watchdog
   luoshu?: LuoshuRole
-  capabilities?: Capabilities
+  grantRiskClassifier?: GrantRiskClassifier
   storage?: StorageRole
   history?: HistoryRole
   exec?: ExecRole
