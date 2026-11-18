@@ -339,11 +339,11 @@ describe('the agent list', () => {
     await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · luoshu.read on "inbox/**"')
     const agents = page.locator('section.agents')
     expect(await agents.innerText()).toContain('Its name and whether its token is live are mcp-http-handler’s to know, not this list’s')
-    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once http hears')
+    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once mcp-http-handler hears')
     expect(await agents.locator('p.agent', { hasText: '"client#2"' }).getByRole('button').count()).toBe(0)
     await tick(PAST_DELAY)
     await agents.locator('p.agent', { hasText: 'claude-code-client-metadata#3' }).getByRole('button', { name: 'Revoke' }).click()
-    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears')
+    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once mcp-http-handler hears')
     // Applied at once, nothing waits for a Confirm
     expect(await page.locator('section.request').count()).toBe(0)
     const entry = (await new StateStore(dataDir).load()).state.plugins.mcp

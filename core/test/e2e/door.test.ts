@@ -164,8 +164,8 @@ describe('the door', () => {
     await until(() => logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler', reason: 'port-taken' }))
     expect((await ask(editor, 'security.open')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
-    const row = trusted.locator('div.plugin', { hasText: 'http · ships with hetu' })
-    await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · failed (port-taken)')
+    const row = trusted.locator('div.plugin', { hasText: 'mcp-http-handler · ships with hetu' })
+    await until(async () => (await row.locator('p').first().textContent()) === 'mcp-http-handler · ships with hetu · utility · failed (port-taken)')
     await new Promise<void>(resolve => holder.close(() => resolve()))
     holders.splice(holders.indexOf(holder), 1)
     expect(await canConnect()).toBe(false)
@@ -174,7 +174,7 @@ describe('the door', () => {
     await row.getByRole('button', { name: 'Restart', exact: true }).click()
     await until(() => canConnect())
     expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
-    await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · ready')
+    await until(async () => (await row.locator('p').first().textContent()) === 'mcp-http-handler · ships with hetu · utility · ready')
   })
 
   it('leaves no utility working folder and the port free after a clean quit', async () => {
