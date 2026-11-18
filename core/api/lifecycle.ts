@@ -10,7 +10,7 @@ import { frozen } from './plain.ts'
 export const stopReasons = frozen([
   // its check: files gone, a manifest outside the schema or naming another id, an api range outside this core, bytes
   // that don't match, a null signer allowUnsigned doesn't name, the first-party signer on another id, a reserved id, a
-  // requires list it may not have, a slot, provider or guard id with no host half, a requires cycle, a state entry that
+  // requires list it may not have, a policy job, provider or guard id with no host half, a requires cycle, a state entry that
   // failed its check or is in a newer format
   'missing', 'invalid', 'install-only', 'id', 'api', 'tampered', 'unsigned', 'signer', 'reserved-id', 'requires',
   'place', 'cycle', 'entry', 'newer',
@@ -19,7 +19,7 @@ export const stopReasons = frozen([
   // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
   // the gate's stateChanged or the luoshu's open, a security control or the luoshu whose module gave no role, a worker
   // the relay cut off for a message that wasn't text within the cap, a utility process that exited by itself, was
-  // killed or missed its beats and http's bind on its port, taken by another program or failing otherwise
+  // killed or missed its beats and mcp-http-handler's bind on its port, taken by another program or failing otherwise
   'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role', 'malformed', 'exited', 'killed',
   'unresponsive', 'port-taken', 'bind-failed',
   // held back because a security control failed and hetu stopped
@@ -65,7 +65,7 @@ const head = { v: z.literal(VERSION) }
 
 // The core's first message on a half's way. lastStop is why the plugin last stopped or waited in this run, null on its
 // first start. previousVersion is the version an update replaced, until the new version reaches ready once. dataDir
-// goes to an install plugin's host half only
+// goes to a core plugin's host half only
 export const init = z.strictObject({
   ...head,
   kind: z.literal('init'),

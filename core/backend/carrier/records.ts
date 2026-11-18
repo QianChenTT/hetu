@@ -1,29 +1,29 @@
 import type { Caller } from '../../api/envelope.ts'
-import type { AuditRecord } from '../../api/slots.ts'
+import type { AuditRecord } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { FloorLog, Landing } from './seams.ts'
+import type { CoreRecordLog, Landing } from './seams.ts'
 
-// landed settles the promise its write gave back. floor.dropped, which the lane writes itself, has none. writing is
+// landed settles the promise its write gave back. core-records.dropped, which the lane writes itself, has none. writing is
 // set while its append is under way, when it can no longer be taken out. withdrawn is a waiter that gave up meanwhile,
 // so the record comes out if that append fails. done drops the listener on the waiter's signal
-type FloorRecord = {
+type CoreRecord = {
   event: string, fields: Record<string, Field>, landed?: (landing: Landing) => void, writing?: boolean, withdrawn?: boolean,
   done?: () => void,
 }
 
-// Floor records go straight through the one EventLog in the order they were made, one append each, apart from the
+// Core records go straight through the one EventLog in the order they were made, one append each, apart from the
 // audit queue's batches. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
-// counted and the count lands as floor.dropped once the backlog has. A write never blocks and never throws. Nothing is
+// counted and the count lands as core-records.dropped once the backlog has. A write never blocks and never throws. Nothing is
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
-// the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
+// the record's fate is known, for the plugins manager, which applies some changes only once their record is on disk. A waiter
 // that gives up aborts its signal: a record still waiting then comes out and settles lost, so the log never shows a
 // change that didn't apply. One whose append is under way can't be called back: it lands if that append works and comes out if it fails
-export class FloorLane {
-  private readonly log: FloorLog | null
+export class CoreRecordLane {
+  private readonly log: CoreRecordLog | null
   private readonly bound: () => number
   private readonly muted: () => boolean
   private readonly retryMs: number
-  private readonly backlog: FloorRecord[] = []
+  private readonly backlog: CoreRecord[] = []
   private overflowed = 0
   private pumping = false
   private current: Promise<void> = Promise.resolve()
@@ -34,7 +34,7 @@ export class FloorLane {
   private readonly noticed: () => void
 
   // noticed runs once when the log stops taking appends and once when one lands again, so the banner can say so
-  constructor(log: FloorLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number, noticed?: () => void }) {
+  constructor(log: CoreRecordLog | null, options: { bound: () => number, muted: () => boolean, retryMs: number, noticed?: () => void }) {
     this.log = log
     this.bound = options.bound
     this.muted = options.muted
@@ -73,7 +73,7 @@ export class FloorLane {
       return Promise.resolve('lost')
     }
     return new Promise(settle => {
-      const record: FloorRecord = { event, fields: { ...fields } }
+      const record: CoreRecord = { event, fields: { ...fields } }
       const withdraw = () => {
         const at = this.backlog.indexOf(record)
         if (at === -1) return
@@ -105,7 +105,7 @@ export class FloorLane {
   }
 
   // A close stops new records and retries, never the drain under way, so the records made before it still land
-  private async drain(log: FloorLog): Promise<void> {
+  private async drain(log: CoreRecordLog): Promise<void> {
     try {
       while (this.backlog.length > 0) {
         const [first] = this.backlog
@@ -128,13 +128,13 @@ export class FloorLane {
           }
           landing = 'lost'
           // Not for the count's own record, which would count itself forever
-          if (first.event !== 'floor.dropped') this.overflowed++
+          if (first.event !== 'core-records.dropped') this.overflowed++
         }
         if (landing === 'landed') this.failed(false)
         this.backlog.shift()
         first.landed?.(landing)
         if (this.backlog.length === 0 && this.overflowed > 0) {
-          this.backlog.push({ event: 'floor.dropped', fields: { count: this.overflowed } })
+          this.backlog.push({ event: 'core-records.dropped', fields: { count: this.overflowed } })
           this.overflowed = 0
         }
       }
@@ -173,19 +173,19 @@ export class FloorLane {
 // Joins a later hit's fields into the fields the record at the end of the second carries, null before the first later hit
 export type Join = (held: Record<string, Field> | null, next: Record<string, Field>) => Record<string, Field>
 
-// Floor records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
+// Core records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
 // when its second is over. The key is the whole fields unless the caller names one. A plugin that picks part of the
 // fields, such as the topics of a subscribe, would otherwise make a key per message, so those name a key without it
 // and join what the later hits carried. weight is how many one hit counts for, such as a count a plugin reported.
 // Nothing counts while the human turned recording off, so no count from the gap lands after it
 export class Coalesced {
-  private readonly lane: FloorLane
+  private readonly lane: CoreRecordLane
   private readonly open = new Map<string, {
     event: string, fields: Record<string, Field>, later: Record<string, Field> | null, join: Join | null, count: number,
     timer: ReturnType<typeof setTimeout>,
   }>()
 
-  constructor(lane: FloorLane) {
+  constructor(lane: CoreRecordLane) {
     this.lane = lane
   }
 
@@ -233,7 +233,7 @@ export class AuditQueue {
   private second = Number.NEGATIVE_INFINITY
   private taken = 0
   private seq = 0
-  // Records dropped since the queue was made, for the floor record
+  // Records dropped since the queue was made, for the core record
   dropped = 0
 
   // clock is the carrier's, which no change of the wall clock moves

@@ -8,11 +8,11 @@ let root = ''
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'hetu-pages-'))
-  await mkdir(path.join(root, 'mount', 'parts'), { recursive: true })
+  await mkdir(path.join(root, 'editor', 'parts'), { recursive: true })
   await mkdir(path.join(root, 'trusted'), { recursive: true })
-  await writeFile(path.join(root, 'mount', 'index.html'), `<!doctype html><title>hetu</title><script src="page.js" nonce="${NONCE_MARK}" defer></script>`)
-  await writeFile(path.join(root, 'mount', 'parts', 'shell.css'), 'body {}')
-  await writeFile(path.join(root, 'mount', 'README.md'), 'notes')
+  await writeFile(path.join(root, 'editor', 'index.html'), `<!doctype html><title>hetu</title><script src="page.js" nonce="${NONCE_MARK}" defer></script>`)
+  await writeFile(path.join(root, 'editor', 'parts', 'shell.css'), 'body {}')
+  await writeFile(path.join(root, 'editor', 'README.md'), 'notes')
   await writeFile(path.join(root, 'trusted', 'index.html'), '<!doctype html><title>trusted</title>')
   await mkdir(path.join(root, 'workers'), { recursive: true })
   await writeFile(path.join(root, 'workers', 'index.html'), '<!doctype html><title>workers</title>')
@@ -140,9 +140,9 @@ describe('the sessions', () => {
   })
 
   it('refuses to serve an editor page that doesn\'t hold the nonce\'s mark exactly once', async () => {
-    await writeFile(path.join(root, 'mount', 'index.html'), '<!doctype html><title>hetu</title>')
+    await writeFile(path.join(root, 'editor', 'index.html'), '<!doctype html><title>hetu</title>')
     expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
-    await writeFile(path.join(root, 'mount', 'index.html'), `<p nonce="${NONCE_MARK}"></p><p nonce="${NONCE_MARK}"></p>`)
+    await writeFile(path.join(root, 'editor', 'index.html'), `<p nonce="${NONCE_MARK}"></p><p nonce="${NONCE_MARK}"></p>`)
     expect((await serve('editor', get('hetu://editor/'), root)).status).toBe(500)
   })
 
@@ -155,7 +155,7 @@ describe('the sessions', () => {
   })
 
   it('has the editor page\'s own markup carry the nonce\'s mark on its script, where the page reads it', async () => {
-    const markup = await readFile(path.join(import.meta.dirname, '..', 'frontend', 'mount', 'index.html'), 'utf8')
+    const markup = await readFile(path.join(import.meta.dirname, '..', 'frontend', 'editor', 'index.html'), 'utf8')
     expect(markup.split(NONCE_MARK)).toHaveLength(2)
     expect(markup).toContain(`<script src="page.js" nonce="${NONCE_MARK}" defer></script>`)
   })

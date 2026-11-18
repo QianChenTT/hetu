@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { agentAsk, change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
 import { isSecurityControl, securityControls } from '../api/ids.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../api/limits.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const HASH = 'a'.repeat(64)
@@ -20,7 +20,7 @@ const everyKind = [
   { kind: 'grant.narrow', plugin: 'search', capability: { type: 'luoshu.read', paths: ['notes/**'] } },
   { kind: 'item.on', plugin: 'search', capability: { type: 'ui.view' } },
   { kind: 'item.off', plugin: 'git', capability: { type: 'exec', commands: [['git', 'status']], env: [] } },
-  { kind: 'luoshu.set', folder: '/Users/han/notes' },
+  { kind: 'luoshu.pick', folder: '/Users/han/notes' },
   { kind: 'devMode', plugin: 'search', on: true },
   { kind: 'skipVerification', on: false },
   { kind: 'allowUnsigned', hash: HASH, on: true },
@@ -36,7 +36,7 @@ describe('the change kinds', () => {
     expect(changeKinds).toEqual([
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'plugin.reset',
-      'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.set', 'devMode', 'exec.anyCommand', 'skipVerification',
+      'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.pick', 'devMode', 'exec.anyCommand', 'skipVerification',
       'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set', 'agent.revoke',
     ])
   })
@@ -96,24 +96,24 @@ describe('what each kind holds', () => {
     expect(change.safeParse({ kind: 'item.off', plugin: 'search', capability: { type: 'history', access: 'read' } }).success).toBe(false)
   })
 
-  // Grants change only for folder plugins, an install plugin's grants are its manifest
+  // Grants change only for folder plugins, a core plugin's grants are its manifest
   it.each(['grant.widen', 'grant.narrow', 'item.on', 'item.off'])('refuses an install-only type in %s', kind => {
     expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'guard.hook' } }).success).toBe(false)
     expect(change.safeParse({ kind, plugin: 'search', capability: { type: 'ui.view' } }).success).toBe(true)
   })
 
   it('takes a luoshu folder as text with no control characters', () => {
-    expect(change.safeParse({ kind: 'luoshu.set', folder: 'C:\\Users\\han\\notes' }).success).toBe(true)
-    expect(change.safeParse({ kind: 'luoshu.set', folder: 'x'.repeat(MAX_FOLDER_LENGTH) }).success).toBe(true)
+    expect(change.safeParse({ kind: 'luoshu.pick', folder: 'C:\\Users\\han\\notes' }).success).toBe(true)
+    expect(change.safeParse({ kind: 'luoshu.pick', folder: 'x'.repeat(MAX_FOLDER_LENGTH) }).success).toBe(true)
     for (const folder of ['', '/notes\n/etc', '/notes\u0000/etc', '/notes\u001b[2K/etc', 'x'.repeat(MAX_FOLDER_LENGTH + 1)]) {
-      expect(change.safeParse({ kind: 'luoshu.set', folder }).success).toBe(false)
+      expect(change.safeParse({ kind: 'luoshu.pick', folder }).success).toBe(false)
     }
   })
 
   // The trusted window shows the folder before Confirm, where an override would show the path in another order
   it('refuses a luoshu folder with a bidi control', () => {
     for (const folder of ['/Users/me/\u202esseteton', '/Users/\u2066me\u2069/notes', '/notes\u202d/x']) {
-      expect(change.safeParse({ kind: 'luoshu.set', folder }).success).toBe(false)
+      expect(change.safeParse({ kind: 'luoshu.pick', folder }).success).toBe(false)
     }
   })
 
@@ -135,7 +135,7 @@ describe('what each kind holds', () => {
   })
 
   describe('limit.set', () => {
-    it.each(floorConstantNames)('takes the floor constant %s', constant => {
+    it.each(limitNames)('takes the limit %s', constant => {
       expect(change.safeParse({ kind: 'limit.set', constant, value: 1, plugin: null }).success).toBe(true)
     })
 
@@ -158,10 +158,10 @@ describe('what each kind holds', () => {
     })
 
     it('takes a time up to the longest timer and any other constant past it', () => {
-      for (const constant of timeConstants) {
+      for (const constant of timeLimitNames) {
         expect(change.safeParse({ kind: 'limit.set', constant, value: MAX_TIMER_MS, plugin: 'search' }).success).toBe(true)
       }
-      expect(timeConstants).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'logFailMs', 'floodMs'])
+      expect(timeLimitNames).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'logFailMs', 'floodMs'])
       expect(change.safeParse({ kind: 'limit.set', constant: 'bytesInFlight', value: 2 ** 40, plugin: null }).success).toBe(true)
     })
   })
@@ -173,7 +173,7 @@ describe('keys that reach Object', () => {
     ['__proto__ in the capability', '{"kind":"grant.widen","plugin":"search","capability":{"type":"storage","__proto__":{}}}'],
     ['constructor beside the fields', '{"kind":"confirmOff","on":true,"constructor":1}'],
     ['constructor in the capability', '{"kind":"item.on","plugin":"search","capability":{"type":"ui.view","constructor":1}}'],
-    ['prototype beside the fields', '{"kind":"luoshu.set","folder":"/x","prototype":1}'],
+    ['prototype beside the fields', '{"kind":"luoshu.pick","folder":"/x","prototype":1}'],
     ['prototype in the capability', '{"kind":"item.off","plugin":"s","capability":{"type":"log.read","prototype":{}}}'],
   ])('refuses %s', (_name, text) => {
     expect(change.safeParse(raw(text)).success).toBe(false)
@@ -191,11 +191,11 @@ describe('whether a change widens', () => {
     ['a plugin switched on', { kind: 'plugin.on', plugin: 'search' }],
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],
-    ['capabilities switched off', { kind: 'plugin.off', plugin: 'capabilities' }],
+    ['capabilities switched off', { kind: 'plugin.off', plugin: 'grant-risk-classifier' }],
     ['the watchdog switched off', { kind: 'plugin.off', plugin: 'watchdog' }],
     ['a grant added', { kind: 'grant.widen', plugin: 'search', capability: cap }],
     ['an item switched back on', { kind: 'item.on', plugin: 'search', capability: cap }],
-    ['a new notes folder', { kind: 'luoshu.set', folder: '/Users/han/notes' }],
+    ['a new notes folder', { kind: 'luoshu.pick', folder: '/Users/han/notes' }],
     ['dev mode on', { kind: 'devMode', plugin: 'search', on: true }],
     ['any command on', { kind: 'exec.anyCommand', plugin: 'git', on: true }],
     ['the hash checks skipped', { kind: 'skipVerification', on: true }],
@@ -241,8 +241,8 @@ describe('whether a change widens', () => {
 })
 
 describe('the security controls', () => {
-  it('are the slot holders and the guards core/api expects, which the log is not', () => {
-    for (const id of ['gate', 'capabilities', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
+  it('are the policy job holders and the guards core/api expects, which the log is not', () => {
+    for (const id of ['gate', 'grant-risk-classifier', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
     for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
   })
 

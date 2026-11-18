@@ -32,8 +32,8 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy slots the carrier asks, each held by the install plugin of the same id. The log is the core's own
-export const slotIds = frozen(['gate', 'capabilities', 'watchdog'] as const)
+// The policy jobs the carrier asks, each held by the core plugin of the same id. The log is the core's own
+export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
 
 // The plugin that serves each provider namespace
 export const providers = table({
@@ -46,7 +46,7 @@ export const providers = table({
   net: 'net',
 } as const)
 
-// Served by the carrier, the loader and the runtime, never by a plugin. log.* reads the event log the core writes
+// Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
 export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
 // The actions a guard may hook: each one that changes a note
@@ -59,39 +59,39 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The security controls: the slot holders and every guard core/api expects. One that is on and fails stops hetu. The
+// The security controls: the policy job holders and every guard core/api expects. One that is on and fails stops hetu. The
 // log is the core's own and the providers serve powers without limiting anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
-  return (slotIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+  return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
 }
 
 // The security controls an install holds, in the order they start. A control the install list doesn't name isn't
 // part of the build
 export function securityControls(listed: readonly string[]): string[] {
   const named = new Set(listed)
-  return [...slotIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
+  return [...policyJobIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
 }
 
-// Host-level and in-page plugins, which load only from the install
-export const installIds = frozen([
-  'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+// Core plugins, host and in-page, which load only from the install
+export const corePluginIds = frozen([
+  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
 ] as const)
 
-// Install plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
+// Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
-export const utilityIds = frozen(['http'] as const)
+export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
-// the reserved first-party signer and bytes equal to the install's copy, which the loader checks
+// the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
 export const firstPartyIds = frozen(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,
   ...Object.keys(providers),
   ...Object.values(providers),
-  ...slotIds,
+  ...policyJobIds,
   ...Object.values(guards).flat(),
-  ...installIds,
+  ...corePluginIds,
   ...firstPartyIds,
 ])
 

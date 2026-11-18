@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
 import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './envelope.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
 import { isSecurityControl, pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
-import { agentDoor, agentHost } from './slots.ts'
+import { agentDoor, agentHost } from './policy-jobs.ts'
 
 export const MAX_FOLDER_LENGTH = 4096
 
@@ -27,15 +27,15 @@ const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
+  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
   // plugin.off covers install and folder plugins alike
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
-  // Only folder plugins have grants to change, an install plugin's grants are its manifest
+  // Only folder plugins have grants to change, a core plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),
-  z.strictObject({ kind: z.literal('luoshu.set'), folder }),
+  z.strictObject({ kind: z.literal('luoshu.pick'), folder }),
   // Dev mode is a list of plugins that load unhashed, exec.anyCommand a list of plugins exec runs any command for
   z.strictObject({ kind: z.literal(perPluginSwitches), plugin: pluginId, on }),
   z.strictObject({ kind: z.literal(switches), on }),
@@ -45,20 +45,20 @@ export const change = z.discriminatedUnion('kind', [
   // is refused here rather than cut short where the timer runs
   z.strictObject({
     kind: z.literal('limit.set'),
-    constant: z.enum(floorConstantNames),
+    constant: z.enum(limitNames),
     value: z.int().positive(),
     plugin: pluginId.nullable(),
-  }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
-  // Every item of one agent's grant goes at once and the label is kept as revoked until http says it ended its tokens
+  }).refine(set => !timeLimitNames.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
+  // Every item of one agent's grant goes at once and the label is kept as revoked until mcp-http-handler says it ended its tokens
   z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
-// and for the capabilities plugin switched on again
+// and for the grant risk classifier switched on again
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
 const classNumber = z.int().min(0).max(4)
 
 // A notice the core raises alone, never one security.request carries: a plugin's class moved up past where the
-// capabilities plugin alerts with no Confirm on screen. The class and its asks are stored already, so the human answers
+// grant risk classifier alerts with no Confirm on screen. The class and its asks are stored already, so the human answers
 // it and approves nothing. from is null for a class not known
 export const classRaised = z.strictObject({
   kind: z.literal('class.raised'),
@@ -111,7 +111,7 @@ export function connectLabel(connect: { client: string, number: number }): strin
   return `${connect.client}#${connect.number}`
 }
 
-// A client's connect through http's door the core raises alone from core.agentConnect, never one security.request
+// A client's connect through mcp-http-handler's door the core raises alone from core.agentConnect, never one security.request
 // carries. client is the client id, clientHost its host when it is a URL with one and null otherwise, name the one its
 // document gives or null, redirect where the client gets its answer and redirectHost that address's host. The core
 // took both hosts. number is the authorization's, which with the client id makes the label. A Confirm changes no state
@@ -146,7 +146,7 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'plugin.restore':
     case 'grant.widen':
     case 'item.on':
-    case 'luoshu.set':
+    case 'luoshu.pick':
       return 'widens'
     case 'grant.narrow':
     case 'item.off':
@@ -185,10 +185,10 @@ export function lapseOf(change: Change): number | null {
 }
 
 // The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
-// is for an agent of the agent host that http's door named, a connect is http's to collect
+// is for an agent of the agent host that mcp-http-handler's door named, a connect is mcp-http-handler's to collect
 export function withdrawnWith(change: Change): readonly string[] {
   if (change.kind === 'agent.connect') return [agentDoor.plugin]
-  return change.kind === 'agent.ask' ? [change.plugin, 'http'] : []
+  return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
 }
 
 // What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to

@@ -8,7 +8,7 @@ import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
 // The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the test install
@@ -58,11 +58,11 @@ async function install(withMcp: boolean): Promise<string> {
   const dist = path.join(repo, 'core', 'dist')
   await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
   const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { format: number, plugins: Record<string, unknown> }
-  expect(Object.keys(list.plugins)).toContain('http')
+  expect(Object.keys(list.plugins)).toContain('mcp-http-handler')
   expect(Object.keys(list.plugins)).not.toContain('mcp')
   if (withMcp) {
     const root = path.join(dir, 'plugins', 'mcp')
-    await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['http'] } } } }), { 'worker.js': await builtWorker(mcp) }))
+    await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': await builtWorker(mcp) }))
     list.plugins.mcp = { path: 'plugins/mcp', version: '1.0.0', hash: hashFiles(await readFiles(root)), firstParty: true }
   }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
@@ -123,10 +123,10 @@ describe('the door', () => {
   it('stays closed with no mcp in the install, http reading ready', async () => {
     expect(await canConnect()).toBe(false)
     const { dataDir } = await started(false)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'http' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp-http-handler' }))
     await tick(500)
     expect(await canConnect()).toBe(false)
-    expect(await logged(dataDir, 'plugin.failed', { plugin: 'http' })).toBe(false)
+    expect(await logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler' })).toBe(false)
   })
 
   it('refuses another Host and an Origin with 403, reaching nothing, each reason in one http.refused with its count', async () => {
@@ -161,11 +161,11 @@ describe('the door', () => {
     holders.push(holder)
     await new Promise<void>(resolve => holder.listen({ host: '127.0.0.1', port: PORT, exclusive: true }, resolve))
     const { app, editor, dataDir } = await started(true)
-    await until(() => logged(dataDir, 'plugin.failed', { plugin: 'http', reason: 'port-taken' }))
+    await until(() => logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler', reason: 'port-taken' }))
     expect((await ask(editor, 'security.open')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
-    const row = trusted.locator('div.plugin', { hasText: 'http · ships with hetu' })
-    await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · failed (port-taken)')
+    const row = trusted.locator('div.plugin', { hasText: 'mcp-http-handler · ships with hetu' })
+    await until(async () => (await row.locator('p').first().textContent()) === 'mcp-http-handler · ships with hetu · utility · failed (port-taken)')
     await new Promise<void>(resolve => holder.close(() => resolve()))
     holders.splice(holders.indexOf(holder), 1)
     expect(await canConnect()).toBe(false)
@@ -174,7 +174,7 @@ describe('the door', () => {
     await row.getByRole('button', { name: 'Restart', exact: true }).click()
     await until(() => canConnect())
     expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
-    await until(async () => (await row.locator('p').first().textContent()) === 'http · ships with hetu · utility · ready')
+    await until(async () => (await row.locator('p').first().textContent()) === 'mcp-http-handler · ships with hetu · utility · ready')
   })
 
   it('leaves no utility working folder and the port free after a clean quit', async () => {

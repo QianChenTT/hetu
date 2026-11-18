@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hashOf, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, hashOf, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -282,7 +282,7 @@ self.onmessage = event => {
     await store.writeLuoshu({ folder: await temp() })
     const app = await launch(dataDir)
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'grant-risk-classifier' }))
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await pageAt(app, 'hetu://trusted/')

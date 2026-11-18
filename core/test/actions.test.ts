@@ -3,10 +3,10 @@ import {
   agentRefusals, coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
   providerActions,
 } from '../api/actions.ts'
-import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
+import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
-import { pluginStates, slotStates } from '../api/slots.ts'
+import { pluginStates, policyJobStates } from '../api/policy-jobs.ts'
 
 const MiB = 1024 * 1024
 const namespace = (action: string) => action.slice(0, action.indexOf('.'))
@@ -17,7 +17,7 @@ describe('the core actions', () => {
       'core.self': 'any',
       'core.filterReadable': 'any',
       'core.status': 'windows',
-      'log.history': 'windows',
+      'log.segments': 'windows',
       'log.verify': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
@@ -317,17 +317,17 @@ describe('the envelope beside a request', () => {
   it('leaves args to the carrier, which measures them against the caller\'s own cap', () => {
     const big = { ...call, args: 'x'.repeat(MiB + 1) }
     expect(request.safeParse(big).success).toBe(false)
-    expect(requestEnvelope.safeParse(big).success).toBe(true)
+    expect(callEnvelope.safeParse(big).success).toBe(true)
   })
 
   it('refuses in the envelope what the request refuses outside args', () => {
     for (const bad of [{ ...call, v: 2 }, { ...call, caller: { kind: 'window', role: 'trusted', n: 0 } }, { ...call, id: -1 }, { ...call, action: 'read' }]) {
-      expect(requestEnvelope.safeParse(bad).success).toBe(false)
+      expect(callEnvelope.safeParse(bad).success).toBe(false)
     }
   })
 
   it('shapes a delivery with the caller and no parent', () => {
-    const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }, action: 'mcp.handle', args: {}, deadline: 1 }
+    const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }, action: 'mcp.handle', args: {}, deadline: 1 }
     expect(delivery.safeParse(delivered).success).toBe(true)
     expect(delivery.safeParse({ ...delivered, onBehalf: 'agent-a' }).success).toBe(true)
     expect(delivery.safeParse({ ...delivered, parent: 'p1' }).success).toBe(false)
@@ -365,16 +365,16 @@ describe('measuring plain data', () => {
     expect(measurePlain({ a: new Date(0) }, 100)).toEqual({ ok: false, problem: 'not plain data', tooLarge: false })
     expect(plainProblem({ a: 'xy' }, 18)).toBe('larger than 18 bytes')
     expect(plainProblem({ a: 'xy' }, 19)).toBeNull()
-    // Past the cap on an array's slots and on a key, before any value is walked
+    // Past the cap on an array's policy jobs and on a key, before any value is walked
     expect(measurePlain(new Array(10), 50)).toMatchObject({ ok: false, tooLarge: true })
     expect(measurePlain({ ['k'.repeat(60)]: 1 }, 50)).toMatchObject({ ok: false, tooLarge: true })
   })
 })
 
 describe('the state lists', () => {
-  it('has the six slot states and the plugin lifecycle states', () => {
-    expect(slotStates).toEqual(['on', 'off', 'starting', 'failed', 'absent', 'tampered'])
+  it('has the six policy job states and the plugin lifecycle states', () => {
+    expect(policyJobStates).toEqual(['on', 'off', 'starting', 'failed', 'absent', 'tampered'])
     expect(pluginStates).toEqual(['found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed'])
-    expect(Object.isFrozen(slotStates) && Object.isFrozen(pluginStates)).toBe(true)
+    expect(Object.isFrozen(policyJobStates) && Object.isFrozen(pluginStates)).toBe(true)
   })
 })

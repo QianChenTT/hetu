@@ -11,7 +11,7 @@ function sha256(bytes: Buffer | string): string {
 
 type Node = ReturnType<typeof parse>['body']
 
-// JSON.parse keeps the last duplicate silently, so the approval screen and the loader could read different values
+// JSON.parse keeps the last duplicate silently, so the approval screen and the plugins manager could read different values
 function rejectBadKeys(node: Node): void {
   if (node.type === 'Array') {
     for (const element of node.elements) rejectBadKeys(element.value)

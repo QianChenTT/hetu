@@ -23,12 +23,12 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 // search running the spec on an in-process handle, as a host half runs on its link
 function running(spec: PluginSpec, first: object | null = init()) {
   const parts = harness()
-  parts.loader.sandboxed('search')
+  parts.pluginsManager.sandboxed('search')
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
   const transport = sdkTransport(parts.carrier, worker('search'))
   run(definePlugin(spec), transport)
   if (first !== null) parts.carrier.send(worker('search'), first)
-  const heard = () => parts.loader.lifecycle.map(entry => entry.kind)
+  const heard = () => parts.pluginsManager.lifecycle.map(entry => entry.kind)
   return { ...parts, transport, heard, send: (message: object) => parts.carrier.send(worker('search'), message) }
 }
 

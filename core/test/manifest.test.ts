@@ -42,16 +42,16 @@ describe('a manifest', () => {
     expect(schema.parse(minimal)).toEqual(minimal)
   })
 
-  it('takes an install plugin with a host half, guards and Node built-ins', () => {
+  it('takes a core plugin with a host half, guards and Node built-ins', () => {
     expect(installManifest.parse(leases)).toEqual(leases)
   })
 
-  it('leaves reserved ids to the loader, which takes the first-party copies', () => {
+  it('leaves reserved ids to the plugins manager, which takes the first-party copies', () => {
     expect(folderManifest.safeParse({ ...minimal, id: 'git' }).success).toBe(true)
     expect(installManifest.safeParse({ ...minimal, id: 'gate' }).success).toBe(true)
   })
 
-  it('parses an api range outside this core, which the loader refuses with api', () => {
+  it('parses an api range outside this core, which the plugins manager refuses with api', () => {
     expect(API_VERSION).toBe(3)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
@@ -300,9 +300,9 @@ describe('size caps', () => {
   })
 })
 
-// The loader looks names up in these maps, so an action or frame the author never declared must find nothing
+// The plugins manager looks names up in these maps, so an action or frame the author never declared must find nothing
 describe('the parsed maps', () => {
-  const declared = { ...minimal, entries: { frames: { panel: 'p.html' } }, provides: { actions: { query: { from: ['http'] } } } }
+  const declared = { ...minimal, entries: { frames: { panel: 'p.html' } }, provides: { actions: { query: { from: ['mcp-http-handler'] } } } }
 
   it.each(both)('come out of the %s with no prototype', (_from, schema) => {
     const parsed = schema.parse(declared)
@@ -312,15 +312,15 @@ describe('the parsed maps', () => {
       expect(map.constructor).toBeUndefined()
       expect('hasOwnProperty' in map).toBe(false)
     }
-    expect(parsed.provides!.actions!.query).toEqual({ from: ['http'] })
+    expect(parsed.provides!.actions!.query).toEqual({ from: ['mcp-http-handler'] })
     expect(parsed.entries.frames!.panel).toBe('p.html')
   })
 
   it.each(both)('keep an action from the %s named like a member of Object as only that action', (_from, schema) => {
-    const parsed = schema.parse({ ...minimal, provides: { actions: { hasOwnProperty: { from: ['http'] }, toString: {} } } })
+    const parsed = schema.parse({ ...minimal, provides: { actions: { hasOwnProperty: { from: ['mcp-http-handler'] }, toString: {} } } })
     const actions = parsed.provides!.actions! as Record<string, unknown>
     expect(Object.keys(actions)).toEqual(['hasOwnProperty', 'toString'])
-    expect(actions.hasOwnProperty).toEqual({ from: ['http'] })
+    expect(actions.hasOwnProperty).toEqual({ from: ['mcp-http-handler'] })
     expect(actions.valueOf).toBeUndefined()
   })
 })

@@ -11,7 +11,7 @@ function parts(over: { shutdown?: () => Promise<void>, flush?: () => Promise<voi
   return {
     calls,
     parts: {
-      loader: {
+      pluginsManager: {
         shutdown: async () => {
           calls.push('shutdown')
           await (over.shutdown ?? (async () => {}))()

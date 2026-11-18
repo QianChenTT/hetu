@@ -11,7 +11,7 @@ import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildPlugin } from '../sdk/build/esbuild.ts'
-import { writeFolder } from './loader-fakes.ts'
+import { writeFolder } from './plugins-manager-fakes.ts'
 
 // The SDK's build as it is. Two tests change the inputs it reports, for a bundle esbuild doesn't make today
 vi.mock('../sdk/build/esbuild.ts', async importOriginal => {
@@ -48,7 +48,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['capabilities', 'exec', 'file-explorer', 'gate', 'hidden-marks', 'history', 'http', 'layout', 'luoshu', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['exec', 'file-explorer', 'gate', 'grant-risk-classifier', 'hidden-marks', 'history', 'layout', 'luoshu', 'mcp-http-handler', 'search', 'storage'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -128,11 +128,11 @@ describe('the main bundle', () => {
     expect([kindNamesNoSource, takesTwo]).toEqual([true, true])
   })
 
-  it('writes the gate and the capabilities plugin into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
+  it('writes the gate and the grant risk classifier into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    for (const [id, role] of [['gate', 'gate'], ['capabilities', 'capabilities']]) {
+    for (const [id, role] of [['gate', 'gate'], ['grant-risk-classifier', 'grantRiskClassifier']]) {
       const root = path.join(out, 'plugins', id)
       expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
       expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
@@ -194,8 +194,8 @@ describe('the main bundle', () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'http')
-    expect(list.plugins.http).toEqual({ path: 'plugins/http', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
+    const root = path.join(out, 'plugins', 'mcp-http-handler')
+    expect(list.plugins['mcp-http-handler']).toEqual({ path: 'plugins/mcp-http-handler', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
     expect(await checkManifest(root, { install: true, built: true })).toEqual([])
     const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
@@ -222,7 +222,7 @@ describe('the main bundle', () => {
   it('copies each page and bundles its script into dist/frontend, importing nothing', async () => {
     const out = await outDir()
     const built = await buildMain(out)
-    for (const file of ['mount/index.html', 'mount/page.js', 'mount/shell.css', 'workers/index.html', 'workers/page.js']) {
+    for (const file of ['editor/index.html', 'editor/page.js', 'editor/shell.css', 'workers/index.html', 'workers/page.js']) {
       expect((await stat(path.join(out, 'frontend', file))).isFile(), file).toBe(true)
     }
     expect(built.pageImports).toEqual([])
@@ -239,7 +239,7 @@ describe('the main bundle', () => {
   it('bundles the workers and window preloads as scripts whose only import is electron', async () => {
     const out = await outDir()
     const built = await buildMain(out)
-    for (const file of ['workers-preload.js', 'mount-preload.js']) expect((await stat(path.join(out, file))).isFile(), file).toBe(true)
+    for (const file of ['workers-preload.js', 'editor-preload.js']) expect((await stat(path.join(out, file))).isFile(), file).toBe(true)
     expect(built.preloadImports).toEqual(['electron'])
   })
 

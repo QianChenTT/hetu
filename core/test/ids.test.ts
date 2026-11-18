@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreNamespaces, firstPartyIds, guardableActions, guards, installIds, isReservedId, localName, MAX_ID_LENGTH,
-  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, slotIds, utilityIds,
+  coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
+  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, policyJobIds, utilityIds,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -67,9 +67,9 @@ describe('names', () => {
   })
 })
 
-describe('slots, providers and guards', () => {
-  it('has the three policy slots, the log being the core\'s own', () => {
-    expect(slotIds).toEqual(['gate', 'capabilities', 'watchdog'])
+describe('policy jobs, providers and guards', () => {
+  it('has the three policy jobs, the log being the core\'s own', () => {
+    expect(policyJobIds).toEqual(['gate', 'grant-risk-classifier', 'watchdog'])
   })
 
   it("names the provider of every namespace", () => {
@@ -87,34 +87,34 @@ describe('slots, providers and guards', () => {
     expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
-  it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(installIds).toEqual([
-      'gate', 'capabilities', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+  it('lists the core plugins, host and in-page, with CodeMirror in the drawer and no editor-core', () => {
+    expect(corePluginIds).toEqual([
+      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
     ])
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
-  it('runs http alone in a utility process, an install plugin that holds no slot, guard or provider role', () => {
-    expect(utilityIds).toEqual(['http'])
+  it('runs http alone in a utility process, a core plugin that holds no policy job, guard or provider role', () => {
+    expect(utilityIds).toEqual(['mcp-http-handler'])
     for (const id of utilityIds) {
-      expect(installIds).toContain(id)
-      expect(slotIds).not.toContain(id)
+      expect(corePluginIds).toContain(id)
+      expect(policyJobIds).not.toContain(id)
       expect(Object.values(providers)).not.toContain(id)
       expect(Object.values(guards).flat()).not.toContain(id)
     }
   })
 
-  it('serves every provider and fills every slot from the install', () => {
-    for (const id of [...slotIds, ...Object.values(providers)]) expect(installIds).toContain(id)
+  it('serves every provider and fills every policy job from the install', () => {
+    for (const id of [...policyJobIds, ...Object.values(providers)]) expect(corePluginIds).toContain(id)
   })
 })
 
 describe('reserved ids', () => {
-  // Section 3: every namespace the carrier serves, every slot, provider and install id and the ids first party keeps
+  // Section 3: every namespace the carrier serves, every policy job, provider and install id and the ids first party keeps
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
-    'gate', 'capabilities', 'log',
-    'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
+    'gate', 'grant-risk-classifier', 'log',
+    'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]
 
@@ -154,9 +154,9 @@ describe('reserved ids', () => {
 describe('the tables', () => {
   it('are frozen, so code sharing the process can not change one', () => {
     expect(() => (reservedIds as unknown as string[]).push('mine')).toThrow()
-    expect(() => (slotIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (policyJobIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
-    expect(() => (installIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (corePluginIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (utilityIds as unknown as string[]).push('mine')).toThrow()
     expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()

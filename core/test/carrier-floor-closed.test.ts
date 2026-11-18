@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, host, hostHalf, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 // The core table with one more action whose from names no rule the floor has, as one added to the table without its
@@ -16,15 +16,15 @@ afterEach(cleanup)
 describe('the floor\'s core branch', () => {
   it.each(['on', 'off', 'failed'] as const)('refuses a core action whose from it has no rule for to every caller, with the gate %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
-    loader.utility('http')
-    loader.sandboxed('search')
-    loader.installed('watchdog')
+    const { carrier, connect, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.policyJobs.gate = state
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.sandboxed('search')
+    pluginsManager.installed('watchdog')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const replies = [
       await connect(worker('search')).ask('core.ghost'),
-      await connect(host('http')).ask('core.ghost'),
+      await connect(host('mcp-http-handler')).ask('core.ghost'),
       await hostHalf(carrier, host('watchdog')).ask('core.ghost'),
       await way.ask('editor-1', 'core.ghost'),
       await way.ask('trusted', 'core.ghost'),

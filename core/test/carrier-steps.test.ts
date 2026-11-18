@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access, GuardCall } from '../api/slots.ts'
+import type { Access, GuardCall } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -123,8 +123,8 @@ describe('prepare before decide', () => {
   })
 
   it('passes onBehalf to the provider, the gate and the guards, and the decision never changes with it', async () => {
-    const { connect, gate, guards, loader, luoshu } = harness({ guardsFor: () => ['leases'] })
-    loader.slots.leases = 'on'
+    const { connect, gate, guards, pluginsManager, luoshu } = harness({ guardsFor: () => ['leases'] })
+    pluginsManager.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
@@ -140,9 +140,9 @@ describe('prepare before decide', () => {
 describe('guards', () => {
   const setup = (order = ['leases', 'second']) => {
     const parts = harness({ guardsFor: () => order })
-    const { loader, guards, gate } = parts
+    const { pluginsManager, guards, gate } = parts
     for (const id of order) {
-      loader.slots[id] = 'on'
+      pluginsManager.policyJobs[id] = 'on'
       guards[id] = new FakeGuard()
     }
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
@@ -165,23 +165,23 @@ describe('guards', () => {
   })
 
   it('skips a guard the human switched off and asks the rest', async () => {
-    const { connect, guards, loader } = setup()
-    loader.slots.leases = 'off'
+    const { connect, guards, pluginsManager } = setup()
+    pluginsManager.policyJobs.leases = 'off'
     expect((await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
     expect(guards.leases.calls).toEqual([])
     expect(guards.second.calls).toHaveLength(1)
   })
 
   it('answers starting while a guard starts', async () => {
-    const { connect, loader, luoshu } = setup()
-    loader.slots.second = 'starting'
+    const { connect, pluginsManager, luoshu } = setup()
+    pluginsManager.policyJobs.second = 'starting'
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('starting')
     expect(luoshu.performed).toEqual([])
   })
 
   it.each(['failed', 'absent', 'tampered'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
-    const { carrier, connect, loader, luoshu, guards } = setup()
-    loader.slots.leases = state
+    const { carrier, connect, pluginsManager, luoshu, guards } = setup()
+    pluginsManager.policyJobs.leases = state
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     const way = windowWay(carrier, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
@@ -237,8 +237,8 @@ describe('guards', () => {
   it('times the answer once it returns and counts one past the limit as guard-down, a late allow included', async () => {
     let clock = 1_000_000
     const parts = harness({ guardsFor: () => ['leases'], clock: () => clock })
-    const { connect, guards, loader, gate, luoshu } = parts
-    loader.slots.leases = 'on'
+    const { connect, guards, pluginsManager, gate, luoshu } = parts
+    pluginsManager.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
@@ -250,15 +250,15 @@ describe('guards', () => {
     await tick()
     expect(parts.log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'leases', step: 'guard-late', count: 1 }])
     // Only the human raises a guard's limit
-    loader.human.plugins.leases = { guardAnswerMs: 5000 }
+    pluginsManager.human.plugins.leases = { guardAnswerMs: 5000 }
     guards.leases.answer = () => { clock += 4000; return 'allow' }
     expect((await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
   })
 
   it('times the answer on a clock the wall clock does not move', async () => {
     let wall = Date.now()
-    const { connect, guards, loader, gate } = harness({ guardsFor: () => ['leases'], now: () => wall })
-    loader.slots.leases = 'on'
+    const { connect, guards, pluginsManager, gate } = harness({ guardsFor: () => ['leases'], now: () => wall })
+    pluginsManager.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     guards.leases.answer = () => { wall += 60000; return 'allow' }
@@ -266,8 +266,8 @@ describe('guards', () => {
   })
 
   it('still holds every guard with the gate off', async () => {
-    const { connect, loader, guards } = setup()
-    loader.slots.gate = 'off'
+    const { connect, pluginsManager, guards } = setup()
+    pluginsManager.policyJobs.gate = 'off'
     guards.second.answer = () => 'deny'
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'secret/a.md', text: 'x' }))).toBe('guard-refused')
   })
@@ -325,9 +325,9 @@ describe('perform', () => {
   })
 
   it('fails a result past the producer\'s cap with too-large and a result that is not plain data', async () => {
-    const { connect, gate, luoshu, loader } = harness()
+    const { connect, gate, luoshu, pluginsManager } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    loader.human.plugins.luoshu = { resultBytes: 100 }
+    pluginsManager.human.plugins.luoshu = { resultBytes: 100 }
     luoshu.perform_ = () => ({ text: 'x'.repeat(200) })
     const search = connect(worker('search'))
     expect((await search.ask('luoshu.read', { path: 'a.md' })).refusal).toEqual({ code: 'failed', action: 'luoshu.read', reason: 'too-large' })
@@ -338,16 +338,16 @@ describe('perform', () => {
   })
 
   it('answers unavailable for a provider that is off, failed or gone and starting for one that starts', async () => {
-    const { connect, loader, gate } = harness()
+    const { connect, pluginsManager, gate } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     const search = connect(worker('search'))
     for (const state of ['off', 'failed', 'stopped'] as const) {
-      loader.installed('luoshu', state)
+      pluginsManager.installed('luoshu', state)
       expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('unavailable')
     }
-    loader.installed('luoshu', 'starting')
+    pluginsManager.installed('luoshu', 'starting')
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
-    delete loader.plugins.luoshu
+    delete pluginsManager.plugins.luoshu
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('unavailable')
   })
 })

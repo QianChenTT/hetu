@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { screenText } from './capabilities.ts'
-import { floorConstants } from './floor.ts'
+import { defaultLimits } from './limits.ts'
 import { localName, MAX_QUALIFIED_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { frozen, plainData } from './plain.ts'
 import { pathProblem } from './scope.ts'
@@ -53,12 +53,12 @@ const requestFields = {
 
 // A call as the caller sends one, exactly these fields. The sender comes from the way in, never from the message. id
 // is the caller's own number for matching the reply and parent names a live call delivered on the same port
-export const request = z.strictObject({ ...requestFields, args: plainData(floorConstants.argumentBytes) })
+export const request = z.strictObject({ ...requestFields, args: plainData(defaultLimits.argumentBytes) })
 export type Request = z.infer<typeof request>
 
 // The same envelope with args left unread. The carrier measures args against the caller's own cap, which the human may
 // raise and the watchdog may lower
-export const requestEnvelope = z.strictObject({ ...requestFields, args: z.unknown() })
+export const callEnvelope = z.strictObject({ ...requestFields, args: z.unknown() })
 
 // A caller giving up on a call of its own, named by the id it sent
 export const cancel = z.strictObject({ v: z.literal(VERSION), kind: z.literal('cancel'), id: z.int().nonnegative() })
@@ -92,7 +92,7 @@ export type Refusal = z.infer<typeof refusal>
 // The caller's id back with the core's call id, then the result or the refusal
 const replyHead = { v: z.literal(VERSION), kind: z.literal('reply'), id: z.int().nonnegative(), callId: token }
 export const reply = z.discriminatedUnion('ok', [
-  z.strictObject({ ...replyHead, ok: z.literal(true), result: plainData(floorConstants.resultBytes) }),
+  z.strictObject({ ...replyHead, ok: z.literal(true), result: plainData(defaultLimits.resultBytes) }),
   z.strictObject({ ...replyHead, ok: z.literal(false), refusal }),
 ])
 export type Reply = z.infer<typeof reply>

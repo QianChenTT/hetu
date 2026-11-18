@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
-import { type FloorConstant, floorConstants } from '../../api/floor.ts'
+import { type LimitName, defaultLimits } from '../../api/limits.ts'
 import { utilityIds } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
-import type { Call, PluginState, SlotState } from '../../api/slots.ts'
+import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
-import type { HumanLimits, Loader, PluginInfo } from '../../backend/carrier/seams.ts'
+import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/seams.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
@@ -47,7 +47,7 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
-  limits?: Partial<Record<FloorConstant, number>>, drawer?: FakeDrawer,
+  limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer,
 }
 
 type Manifest = {
@@ -64,8 +64,8 @@ type Manifest = {
 const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
 const TESTER = 'tester'
 
-// A manifest with a host or page entry is an install plugin's, checked as one. An api range this core leaves out
-// throws, as the loader refuses it with api
+// A manifest with a host or page entry is a core plugin's, checked as one. An api range this core leaves out
+// throws, as the plugins manager refuses it with api
 function manifestOf(input: unknown): Manifest {
   let parsed: Manifest
   if (typeof input === 'string') {
@@ -115,22 +115,22 @@ class Way {
   }
 }
 
-// What the carrier asks of the loader, for one plugin under test and the plugins the fake core plays
-class FakeLoader implements Loader {
+// What the carrier asks of the plugins manager, for one plugin under test and the plugins the fake core plays
+class FakePluginsManager implements PluginsManager {
   readonly infos = new Map<string, PluginInfo>()
-  private readonly gateSlot: SlotState
-  private readonly all: Partial<Record<FloorConstant, number>>
+  private readonly gateState: PolicyJobState
+  private readonly all: Partial<Record<LimitName, number>>
   private readonly listeners = new Set<(caller: Caller, kind: string) => void>()
 
-  constructor(gateSlot: SlotState, all: Partial<Record<FloorConstant, number>>) {
-    this.gateSlot = gateSlot
+  constructor(gateState: PolicyJobState, all: Partial<Record<LimitName, number>>) {
+    this.gateState = gateState
     this.all = all
   }
 
-  // The capabilities and watchdog slots read off, as with the human's switch
-  slot(id: string): SlotState {
-    if (id === 'gate') return this.gateSlot
-    return id === 'capabilities' || id === 'watchdog' ? 'off' : 'absent'
+  // The grant risk classifier and watchdog policy jobs read off, as with the human's switch
+  policyJob(id: string): PolicyJobState {
+    if (id === 'gate') return this.gateState
+    return id === 'grant-risk-classifier' || id === 'watchdog' ? 'off' : 'absent'
   }
 
   view(): number {
@@ -183,7 +183,7 @@ function sameCaller(one: Caller, two: Caller): boolean {
   return one.kind === 'plugin' && two.kind === 'plugin' && one.id === two.id && one.half === two.half && one.incarnation === two.incarnation
 }
 
-// A utility half's way: a port registered with the carrier, as the loader registers the port of a utility process
+// A utility half's way: a port registered with the carrier, as the plugins manager registers the port of a utility process
 function portTransportOf(carrier: Carrier, caller: Caller, ports: MessagePort[]): Transport {
   const { port1, port2 } = new MessageChannel()
   ports.push(port1, port2)
@@ -213,10 +213,10 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
 
 // A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the luoshu, storage and
 // cache in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin runs on it
-// at a time, placed as the loader would place it: http's host entry in a utility process on a port
+// at a time, placed as the plugins manager would place it: mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
   readonly mode: FakeMode
-  readonly floor: { event: string, fields: Record<string, Field> }[] = []
+  readonly coreRecords: { event: string, fields: Record<string, Field> }[] = []
   // Each core action that reached the part the core serves, oldest first. core.bindFailed ends the plugin under test
   // as failed with its reason and every other answers unavailable
   readonly coreCalls: CoreCall[] = []
@@ -230,11 +230,11 @@ export class FakeCore {
     busiest(): number
   }
   // The human's limits for all, which the carrier reads on each use
-  readonly limits: Partial<Record<FloorConstant, number>>
+  readonly limits: Partial<Record<LimitName, number>>
 
   private readonly manifest: Manifest
   private readonly half: 'worker' | 'host'
-  private readonly loader: FakeLoader
+  private readonly pluginsManager: FakePluginsManager
   private readonly gate: ModeGate
   private readonly carrier: Carrier
   private readonly memory: MemoryLuoshu
@@ -255,11 +255,11 @@ export class FakeCore {
   constructor(options: FakeCoreOptions) {
     this.manifest = manifestOf(options.manifest)
     this.mode = options.mode ?? 'manifest'
-    this.readyMs = options.readyMs ?? floorConstants.readyMs
+    this.readyMs = options.readyMs ?? defaultLimits.readyMs
     this.drawer = options.drawer ?? null
     this.half = 'host' in this.manifest.entries ? 'host' : 'worker'
     this.limits = { ...options.limits }
-    this.loader = new FakeLoader(this.mode === 'gate-failed' ? 'failed' : 'on', this.limits)
+    this.pluginsManager = new FakePluginsManager(this.mode === 'gate-failed' ? 'failed' : 'on', this.limits)
     this.gate = new ModeGate(this.manifest.id, this.mode, this.manifest.capabilities ?? [])
     // A requirement the fake core doesn't run is missing in every mode. dependency-missing takes the rest away too
     const requires = this.manifest.requires ?? []
@@ -271,15 +271,15 @@ export class FakeCore {
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     this.carrier = new Carrier({
-      loader: this.loader,
+      pluginsManager: this.pluginsManager,
       gate: () => this.gate,
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       watchdog: () => null,
       core: call => this.served(call),
-      // Floor records are kept and the call records are taken and dropped, so calls pass unlogged
+      // Core records are kept and the call records are taken and dropped, so calls pass unlogged
       log: {
-        append: async (event, fields = {}) => { this.floor.push({ event, fields }) },
+        append: async (event, fields = {}) => { this.coreRecords.push({ event, fields }) },
         appendMany: async () => {},
         history: async () => [],
         verify: async () => ({ ok: true }),
@@ -302,8 +302,8 @@ export class FakeCore {
     }
   }
 
-  // Runs the plugin as the loader would: init with its deps and lastStop, then ready within readyMs. A missing
-  // requirement holds it waiting with its reason, as the loader does. Its start then never runs
+  // Runs the plugin as the plugins manager would: init with its deps and lastStop, then ready within readyMs. A missing
+  // requirement holds it waiting with its reason, as the plugins manager does. Its start then never runs
   async start(plugin: Plugin): Promise<FakeState> {
     if (this.live !== null || this.waiting !== null) throw new Error('a plugin is already running on this core')
     const absent = (this.manifest.requires ?? []).find(id => this.missing.has(id))
@@ -327,13 +327,13 @@ export class FakeCore {
     return this.launch(plugin)
   }
 
-  // Stops the plugin with the floor's grace, as the human's switch would
+  // Stops the plugin with the fixed grace, as the human's switch would
   async stop(): Promise<void> {
     const caller = this.live
     if (caller === null) return
     this.markState('stopping')
-    const stopped = this.loader.waitFor(caller, 'stopped', floorConstants.stopGraceMs)
-    this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: floorConstants.stopGraceMs })
+    const stopped = this.pluginsManager.waitFor(caller, 'stopped', defaultLimits.stopGraceMs)
+    this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: defaultLimits.stopGraceMs })
     await stopped
     this.carrier.end(caller, 'stopped')
     this.markState('stopped')
@@ -358,7 +358,7 @@ export class FakeCore {
         { type: 'luoshu.read', paths: ['**'] },
       ])
     }
-    return way.ask(action, args, floorConstants.callDeadlineMs + 1000)
+    return way.ask(action, args, defaultLimits.callDeadlineMs + 1000)
   }
 
   // Plays another plugin on its worker half: the plugin under test calls it through the real carrier, which checks
@@ -390,7 +390,7 @@ export class FakeCore {
     return { id, delivered }
   }
 
-  // Sets a stand-in's state and tells the plugin under test with deps, as the loader does on every change
+  // Sets a stand-in's state and tells the plugin under test with deps, as the plugins manager does on every change
   setState(id: string, state: StandInState): void {
     const standIn = this.standIns.get(id)
     if (standIn === undefined) throw new Error(`${id} is no stand-in`)
@@ -401,7 +401,7 @@ export class FakeCore {
 
   // The plugin under test as the plugin list would show it: its state and why, null while it runs
   status(): { state: PluginState | null, reason: string | null } {
-    return { state: this.loader.infos.get(this.manifest.id)?.state ?? null, reason: this.reason }
+    return { state: this.pluginsManager.infos.get(this.manifest.id)?.state ?? null, reason: this.reason }
   }
 
   // What the plugin under test stored under key in its storage or cache, undefined for nothing
@@ -428,7 +428,7 @@ export class FakeCore {
       actions: this.manifest.provides?.actions ?? {},
       topics: this.manifest.provides?.topics ?? [],
     })
-    const ready = this.loader.waitFor(caller, 'ready', this.readyMs)
+    const ready = this.pluginsManager.waitFor(caller, 'ready', this.readyMs)
     const transport = utility ? portTransportOf(this.carrier, caller, this.ports) : transportOf(this.carrier, caller)
     run(plugin, transport, this.drawer === null ? {} : { editor: this.drawer.fresh() })
     this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
@@ -452,7 +452,7 @@ export class FakeCore {
     const targets = (this.manifest.capabilities ?? []).flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
     const deps: Record<string, DepState> = {}
     for (const id of [...(this.manifest.requires ?? []), ...targets]) {
-      const state = this.loader.infos.get(id)?.state
+      const state = this.pluginsManager.infos.get(id)?.state
       deps[id] = state === 'ready' ? 'ready' : state === 'starting' ? 'starting' : 'unavailable'
     }
     return deps
@@ -464,7 +464,7 @@ export class FakeCore {
     this.infos(id, { state: state === 'unavailable' ? 'stopped' : state, place: 'sandboxed', incarnation: 1, serves: 'worker', actions, topics: [] })
   }
 
-  // core.bindFailed from the half that runs ends it as failed with the reason before any answer, as the loader does
+  // core.bindFailed from the half that runs ends it as failed with the reason before any answer, as the plugins manager does
   private async served(call: Call): Promise<unknown> {
     this.coreCalls.push({ action: call.action, args: call.args, caller: call.caller })
     const live = this.live
@@ -480,16 +480,16 @@ export class FakeCore {
   }
 
   private infos(id: string, info: PluginInfo): void {
-    this.loader.infos.set(id, info)
+    this.pluginsManager.infos.set(id, info)
   }
 
   private markState(state: PluginState): void {
-    const info = this.loader.infos.get(this.manifest.id)
-    if (info !== undefined) this.loader.infos.set(this.manifest.id, { ...info, state })
+    const info = this.pluginsManager.infos.get(this.manifest.id)
+    if (info !== undefined) this.pluginsManager.infos.set(this.manifest.id, { ...info, state })
   }
 
   private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string): Promise<void> {
-    await this.luoshuWay.ask('events.publish', { topic, path }, floorConstants.callDeadlineMs)
+    await this.luoshuWay.ask('events.publish', { topic, path }, defaultLimits.callDeadlineMs)
   }
 }
 

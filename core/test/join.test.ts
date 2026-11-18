@@ -6,20 +6,20 @@ import type { MessagePort } from 'node:worker_threads'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access } from '../api/slots.ts'
+import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
-import type { CarrierLink } from '../backend/loader/seams.ts'
+import type { CarrierLink } from '../backend/plugins-manager/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
-import { httpPlugin } from '../../plugins/http/src/keeper.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
 import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -67,9 +67,9 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
-    await loader.shutdown().catch(() => {})
+    await pluginsManager.shutdown().catch(() => {})
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
     // also won't remove a folder a write is still filling
     carrier.close()
@@ -78,65 +78,65 @@ async function joined(options: {
     await booted.release()
     await rm(base, { recursive: true, force: true })
   })
-  return { loader, carrier, runtime, booted, dataDir, installDir }
+  return { pluginsManager, carrier, runtime, booted, dataDir, installDir }
 }
 
-// The records the floor lane wrote to the boot's event log, in order, each with its fields
-async function floorRecords(dataDir: string): Promise<Record<string, unknown>[]> {
+// The records the core record lane wrote to the boot's event log, in order, each with its fields
+async function coreRecords(dataDir: string): Promise<Record<string, unknown>[]> {
   const text = await readFile(path.join(dataDir, 'events', 'events-1.jsonl'), 'utf8')
   return text.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
 }
 
-async function floorEvents(dataDir: string): Promise<string[]> {
-  return (await floorRecords(dataDir)).map(record => record.event as string)
+async function coreRecordEvents(dataDir: string): Promise<string[]> {
+  return (await coreRecords(dataDir)).map(record => record.event as string)
 }
 
-// A gate built on the fixtures' allow-all one, deciding with decide while it keeps the StateView it was given
+// A gate built on the fixtures' allow-all one, deciding with decide while it keeps the grants snapshot it was given
 function gateDeciding(decide: (access: Access, view: number) => unknown) {
   const gate = allowAll()
   return Object.assign(gate, { decide: (access: Access) => decide(access, gate.views.at(-1) ?? 0) })
 }
 
 describe('wiring the core', () => {
-  it('builds link, loader and carrier so the loader reaches the real carrier', async () => {
-    const { carrier, loader, dataDir } = await joined()
-    await loader.start()
+  it('builds link, plugins manager and carrier so the plugins manager reaches the real carrier', async () => {
+    const { carrier, pluginsManager, dataDir } = await joined()
+    await pluginsManager.start()
     await carrier.flush()
-    const events = await floorEvents(dataDir)
+    const events = await coreRecordEvents(dataDir)
     expect(events).toContain('install.checked')
     expect(events).toContain('plugin.started')
     expect(carrier.limit('gate', 'readyMs')).toBe(10000)
-    // The carrier keeps no import of the loader, so the typecheck proves here that it gives the loader all it needs
+    // The carrier keeps no import of the plugins manager, so the typecheck proves here that it gives the plugins manager all it needs
     const asLink: CarrierLink = carrier
     expect(asLink).toBe(carrier)
   })
 
-  it('ends its start with core.ready, which holds every slot\'s state', async () => {
-    const { carrier, loader, dataDir } = await joined()
-    await loader.start()
+  it('ends its start with core.ready, which holds every policy job\'s state', async () => {
+    const { carrier, pluginsManager, dataDir } = await joined()
+    await pluginsManager.start()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
-    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', capabilities: 'absent', watchdog: 'absent' })
+    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' })
     expect(records.at(-1)).not.toHaveProperty('log')
   })
 
   it('writes no core.ready when shutdown began during the start', async () => {
-    const { carrier, loader, dataDir } = await joined()
-    const started = loader.start()
-    await loader.shutdown()
+    const { carrier, pluginsManager, dataDir } = await joined()
+    const started = pluginsManager.start()
+    await pluginsManager.shutdown()
     await started
     await carrier.flush()
-    expect(await floorEvents(dataDir)).not.toContain('core.ready')
+    expect(await coreRecordEvents(dataDir)).not.toContain('core.ready')
   })
 
   it('hands the runtime a limit the human set once it is written, so each running half gets it', async () => {
     const heard: [string, number][] = []
     const parts: { carrier: { limit(plugin: string, name: 'messagesPerSecond'): number } | null } = { carrier: null }
-    const { loader, carrier } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.carrier!.limit(plugin, 'messagesPerSecond')]) } })
+    const { pluginsManager, carrier } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.carrier!.limit(plugin, 'messagesPerSecond')]) } })
     parts.carrier = carrier
-    await loader.start()
-    await loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
+    await pluginsManager.start()
+    await pluginsManager.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
     expect(heard).toEqual([['gate', 20]])
   })
 
@@ -159,8 +159,8 @@ describe('a plugin\'s life through the joined core', () => {
       },
       behave: { gate: { exports: { gate } } },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, gate }
   }
 
@@ -168,14 +168,14 @@ describe('a plugin\'s life through the joined core', () => {
     messages.filter(message => message.kind === 'event' && message.topic === topic)
 
   it('starts a verified plugin through the real carrier: init, deps, then ready', async () => {
-    const { loader, runtime } = await lives()
+    const { pluginsManager, runtime } = await lives()
     const alpha = runtime.half('alpha')
     expect(alpha.got('init')).toHaveLength(1)
     expect(alpha.got('init')[0]).toMatchObject({ v: 1, kind: 'init', id: 'alpha', incarnation: 1, deps: {} })
     // A dependent learns its requirements' states in its init
     expect(runtime.half('beta').got('init')[0]).toMatchObject({ kind: 'init', id: 'beta', deps: { alpha: 'ready' } })
-    expect(loader.plugin('alpha')?.state).toBe('ready')
-    expect(loader.plugin('beta')?.state).toBe('ready')
+    expect(pluginsManager.plugin('alpha')?.state).toBe('ready')
+    expect(pluginsManager.plugin('beta')?.state).toBe('ready')
   })
 
   it('takes its call through the eleven steps and records it', async () => {
@@ -188,7 +188,7 @@ describe('a plugin\'s life through the joined core', () => {
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: 'hello beta' })
     expect((await asked)?.result).toBe('hello beta')
     await carrier.flush()
-    const records = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'alpha.hello')
+    const records = (await coreRecords(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'alpha.hello')
     expect(records.map(record => [record.caller, record.code])).toEqual([['beta/worker#1', null]])
   })
 
@@ -202,15 +202,15 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('drops its subscriptions and credits when it stops', async () => {
-    const { loader, runtime } = await lives()
+    const { pluginsManager, runtime } = await lives()
     const alpha = runtime.half('alpha')
     const first = runtime.half('beta')
     await first.ask('events.subscribe', { topics: ['alpha.changed'] })
     await alpha.ask('events.publish', { topic: 'alpha.changed' })
     await until(() => events(first.inbox, 'alpha.changed').length === 1)
-    await loader.stop('beta', 'human')
-    await loader.restart('beta', 'human')
-    await until(() => loader.plugin('beta')?.state === 'ready')
+    await pluginsManager.stop('beta', 'human')
+    await pluginsManager.restart('beta', 'human')
+    await until(() => pluginsManager.plugin('beta')?.state === 'ready')
     const second = runtime.half('beta', 2)
     await alpha.ask('events.publish', { topic: 'alpha.changed' })
     await tick(30)
@@ -225,17 +225,17 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('drops them when it crashes, moves its dependents to waiting and refuses its old incarnation', async () => {
-    const { carrier, loader, runtime } = await lives()
+    const { carrier, pluginsManager, runtime } = await lives()
     const alpha = runtime.half('alpha')
     await alpha.ask('events.subscribe', { topics: ['gamma.changed'] })
     alpha.crash()
-    await until(() => loader.plugin('alpha')?.state === 'crashed')
-    expect(loader.plugin('beta')?.state).toBe('waiting')
+    await until(() => pluginsManager.plugin('alpha')?.state === 'crashed')
+    expect(pluginsManager.plugin('beta')?.state).toBe('waiting')
     await runtime.half('gamma').ask('events.publish', { topic: 'gamma.changed' })
     await tick(30)
     expect(events(alpha.inbox, 'gamma.changed')).toEqual([])
-    await loader.restart('alpha', 'human')
-    await until(() => loader.plugin('alpha')?.state === 'ready')
+    await pluginsManager.restart('alpha', 'human')
+    await until(() => pluginsManager.plugin('alpha')?.state === 'ready')
     const second = runtime.half('alpha', 2)
     // A message for the dead incarnation reaches nothing, the new one included
     carrier.send(worker('alpha', 1), { v: 1, kind: 'stop', graceMs: 3000 })
@@ -245,12 +245,12 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('restarts it as a new incarnation that starts with no subscriptions or credits', async () => {
-    const { loader, runtime } = await lives()
+    const { pluginsManager, runtime } = await lives()
     await runtime.half('alpha').ask('events.subscribe', { topics: ['gamma.changed'] })
     runtime.half('alpha').crash()
-    await until(() => loader.plugin('alpha')?.state === 'crashed')
-    await loader.restart('alpha', 'human')
-    await until(() => loader.plugin('alpha')?.state === 'ready' && loader.plugin('beta')?.state === 'ready')
+    await until(() => pluginsManager.plugin('alpha')?.state === 'crashed')
+    await pluginsManager.restart('alpha', 'human')
+    await until(() => pluginsManager.plugin('alpha')?.state === 'ready' && pluginsManager.plugin('beta')?.state === 'ready')
     const second = runtime.half('alpha', 2)
     const gamma = runtime.half('gamma')
     await gamma.ask('events.publish', { topic: 'gamma.changed' })
@@ -264,10 +264,10 @@ describe('a plugin\'s life through the joined core', () => {
     expect(runtime.half('beta', 2).got('init')).toHaveLength(1)
   })
 
-  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real floor lane
+  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real core record lane
   it('holds a first-party copy back until its record landed', async () => {
     let failing = true
-    const { carrier, loader, dataDir } = await joined({
+    const { carrier, pluginsManager, dataDir } = await joined({
       install: { ...coreInstall(), git: { files: filesFor(workerManifest('git')), firstParty: true } },
       before: booted => {
         const append = booted.log.append.bind(booted.log)
@@ -278,16 +278,16 @@ describe('a plugin\'s life through the joined core', () => {
         Object.defineProperty(booted.log, 'healthy', { get: () => !failing, configurable: true })
       },
     })
-    const started = loader.start()
+    const started = pluginsManager.start()
     await tick(100)
     expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(false)
-    expect(loader.plugin('git')).toBe(null)
+    expect(pluginsManager.plugin('git')).toBe(null)
     failing = false
     await carrier.flush()
     await started
-    await loader.settled()
+    await pluginsManager.settled()
     expect(await exists(path.join(dataDir, 'plugins', 'git'))).toBe(true)
-    expect(loader.plugin('git')?.state).toBe('ready')
+    expect(pluginsManager.plugin('git')?.state).toBe('ready')
   })
 })
 
@@ -305,86 +305,86 @@ describe('shutdown through the joined core', () => {
         alpha: { stopped: options.alphaHolds !== true },
       },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, storage }
   }
 
-  it('keeps host-level plugins serving while sandboxed plugins stop for shutdown', async () => {
-    const { loader, runtime, storage } = await quitting({ alphaHolds: true })
+  it('keeps core plugins serving while sandboxed plugins stop for shutdown', async () => {
+    const { pluginsManager, runtime, storage } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
-    const shutdown = loader.shutdown()
+    const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
-    expect(loader.slot('gate')).toBe('on')
+    expect(pluginsManager.policyJob('gate')).toBe('on')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'last words' }))?.ok).toBe(true)
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     expect([...storage.values.values()]).toContain('last words')
   })
 
-  it('records no slot as failed when shutdown stops it', async () => {
-    const { carrier, dataDir, loader } = await quitting()
-    await loader.shutdown()
+  it('records no policy job as failed when shutdown stops it', async () => {
+    const { carrier, dataDir, pluginsManager } = await quitting()
+    await pluginsManager.shutdown()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
-    const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'stopped']])
+    const policyJobs = after.filter(record => record.event === 'policy-job.state')
+    expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'stopped']])
   })
 
-  it('records a host slot that fails during shutdown, before its own stop, as failed', async () => {
-    const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+  it('records a host policy job that fails during shutdown, before its own stop, as failed', async () => {
+    const { carrier, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
-    const shutdown = loader.shutdown()
+    const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
-    // What the carrier tells the loader when a host half floods its way
-    loader.crashed({ kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 }, 'flood')
-    await until(() => loader.slot('gate') === 'failed')
+    // What the carrier tells the plugins manager when a host half floods its way
+    pluginsManager.crashed({ kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 }, 'flood')
+    await until(() => pluginsManager.policyJob('gate') === 'failed')
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
-    const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'failed']])
+    const policyJobs = after.filter(record => record.event === 'policy-job.state')
+    expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'failed']])
   })
 
   it('keeps the audit queue through shutdown and writes it on the flush after close', async () => {
-    const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+    const { carrier, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'one' }))?.ok).toBe(true)
-    const shutdown = loader.shutdown()
+    const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'two' }))?.ok).toBe(true)
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     carrier.close()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'storage.set')).toHaveLength(2)
     expect(records.filter(record => record.event === 'audit.dropped')).toEqual([])
   })
 
   // The Confirm behind it already landed, so a narrowing confirmed just before Quit must outlast the run
   it('keeps a security change applied while shutdown runs', async () => {
-    const { dataDir, loader, runtime } = await quitting({ alphaHolds: true })
+    const { dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
-    const shutdown = loader.shutdown()
+    const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
-    await loader.apply({ kind: 'plugin.off', plugin: 'alpha' })
+    await pluginsManager.apply({ kind: 'plugin.off', plugin: 'alpha' })
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     expect((await new StateStore(dataDir).load()).state.plugins.alpha.enabled).toBe(false)
   })
 
   it('refuses an update once shutdown began', async () => {
-    const { installDir, loader } = await quitting()
-    await loader.shutdown()
-    await expect(loader.update('alpha', installDir)).rejects.toMatchObject({ code: 'stopped' })
+    const { installDir, pluginsManager } = await quitting()
+    await pluginsManager.shutdown()
+    await expect(pluginsManager.update('alpha', installDir)).rejects.toMatchObject({ code: 'stopped' })
   })
 })
 
-// The carrier must ask the same guards the loader expects and report where the loader's options say
+// The carrier must ask the same guards the plugins manager expects and report where the plugins manager's options say
 describe('what wireCore hands the carrier', () => {
   async function writing(wire: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>, gate = allowAll()) {
     const luoshu = new FakeLuoshu()
@@ -394,12 +394,12 @@ describe('what wireCore hands the carrier', () => {
       behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
       wire,
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, luoshu }
   }
 
-  it('makes the carrier ask the guards the loader expects, so a missing one refuses the write', async () => {
+  it('makes the carrier ask the guards the plugins manager expects, so a missing one refuses the write', async () => {
     const { runtime, luoshu } = await writing({ guardsFor: () => ['leases'] })
     const reply = await runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
@@ -427,14 +427,14 @@ describe('what wireCore hands the carrier', () => {
 describe('core.status, for a window\'s banner', () => {
   const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
 
-  it('answers a window with the slots, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
-    const { carrier, loader, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
-    await loader.start()
+  it('answers a window with the policy jobs, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
+    const { carrier, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor })
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
-      slots: { gate: 'on', capabilities: 'absent', watchdog: 'absent' },
+      policyJobs: { gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' },
       crashed: [],
       devMode: [],
       allowUnsigned: 0,
@@ -448,12 +448,12 @@ describe('core.status, for a window\'s banner', () => {
       suspect: [],
     })
     runtime.half('alpha').crash()
-    await until(() => loader.plugin('alpha')?.state === 'crashed')
+    await until(() => pluginsManager.plugin('alpha')?.state === 'crashed')
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ crashed: ['alpha'] })
   })
 
   it('names the switches when they are gone from a data folder hetu ran in before', async () => {
-    const { carrier, loader } = await joined({
+    const { carrier, pluginsManager } = await joined({
       // A first start leaves its records, then the switches go
       prepare: async dataDir => {
         const first = await boot({ packaged: false, installDir: dataDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
@@ -461,29 +461,29 @@ describe('core.status, for a window\'s banner', () => {
         await rm(path.join(dataDir, 'state', 'switches.json'))
       },
     })
-    await loader.start()
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ suspect: ['switches'] })
   })
 
   it('names the requests waiting for the human, a plugin found in the folder among them', async () => {
-    const { carrier, loader, dataDir } = await joined()
+    const { carrier, pluginsManager, dataDir } = await joined()
     await writeFolder(path.join(dataDir, 'plugins', 'beta'), filesFor(workerManifest('beta')))
-    await loader.start()
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ pending: [{ kind: 'plugin.approve', plugin: 'beta' }] })
   })
 
   it('says the log can\'t write while boot\'s event log is failing', async () => {
-    const { carrier, loader } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
-    await loader.start()
+    const { carrier, pluginsManager } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ logWrites: false })
   })
 
   it('answers the trusted window too and refuses a plugin, since the banner is the windows\' own', async () => {
-    const { carrier, loader, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
-    await loader.start()
+    const { carrier, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    await pluginsManager.start()
     const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
     expect(code((await runtime.half('alpha').ask('core.status', {}))!)).toBe('not-granted')
@@ -491,7 +491,7 @@ describe('core.status, for a window\'s banner', () => {
 })
 
 describe('the core\'s log through the joined core', () => {
-  it('writes each call as audit.call through boot\'s event log and serves log.history and log.verify to windows', async () => {
+  it('writes each call as audit.call through boot\'s event log and serves log.segments and log.verify to windows', async () => {
     const parts = await joined({
       folder: {
         alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} } } })),
@@ -499,8 +499,8 @@ describe('the core\'s log through the joined core', () => {
       },
       behave: { gate: { exports: { gate: allowAll() } } },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     const alpha = parts.runtime.half('alpha')
     const asked = parts.runtime.half('beta').ask('alpha.hello', {})
     await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
@@ -508,18 +508,18 @@ describe('the core\'s log through the joined core', () => {
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: null })
     await asked
     await parts.carrier.flush()
-    const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
+    const written = (await coreRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
     const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
-    const history = await way.ask('editor', 'log.history')
+    const history = await way.ask('editor', 'log.segments')
     expect(history).toMatchObject({ ok: true })
     expect((history.result as { segment: number, breaks: number[] }[]).at(-1)).toMatchObject({ breaks: [] })
     expect(await way.ask('editor', 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })
   })
 })
 
-// The guard's slot states end to end wait for #77, since core/api expects no guard on any action yet. Through the
-// shipping wiring here, with the guards the loader and the carrier both expect
+// The guard's policy job states end to end wait for #77, since core/api expects no guard on any action yet. Through the
+// shipping wiring here, with the guards the plugins manager and the carrier both expect
 describe('a guard down through the joined core', () => {
   const leases: Listing = { files: filesFor(hostManifest('leases')) }
 
@@ -538,16 +538,16 @@ describe('a guard down through the joined core', () => {
         booted.state.switches = { ...booted.state.switches, limits: { all: { readyMs: 300 }, plugins: {} } }
       },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
-    expect(reasonOf(parts.loader, 'leases')).toBe(reason)
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
+    expect(reasonOf(parts.pluginsManager, 'leases')).toBe(reason)
     const reply = await parts.runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
     expect(luoshu.performed).toEqual([])
   })
 })
 
-// The loader's StateView into the gate plugin as it ships, for a folder plugin's calls
+// The plugins manager's grants snapshot into the gate plugin as it ships, for a folder plugin's calls
 describe('the gate plugin on the joined core', () => {
   const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
   const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
@@ -561,27 +561,27 @@ describe('the gate plugin on the joined core', () => {
       entries: { alpha: { granted: [read, write], ...entry } },
       behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, luoshu }
   }
 
   it('decides a plugin\'s calls on the grants in its entry, and an item the human switches off answers switched-off', async () => {
-    const { loader, runtime } = await gated()
+    const { pluginsManager, runtime } = await gated()
     const alpha = runtime.half('alpha')
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     expect(code((await alpha.ask('luoshu.read', { path: 'journal/a.md' }))!)).toBe('not-granted')
-    await loader.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
+    await pluginsManager.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
     expect(code((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('switched-off')
     expect((await alpha.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))?.ok).toBe(true)
   })
 
-  it('keeps an item switched off in the entry off from the first StateView', async () => {
+  it('keeps an item switched off in the entry off from the first grants snapshot', async () => {
     const { runtime } = await gated({ off: [read] })
     expect(code((await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('switched-off')
   })
 
-  it('fails the gate when it throws on a later StateView, refusing calls with power from then on', async () => {
+  it('fails the gate when it throws on a later grants snapshot, refusing calls with power from then on', async () => {
     const gate = createGate()
     const thrown = { on: false }
     const real = gate.stateChanged.bind(gate)
@@ -597,13 +597,13 @@ describe('the gate plugin on the joined core', () => {
       entries: { alpha: { granted: [read] } },
       behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     expect((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     thrown.on = true
-    await parts.loader.apply({ kind: 'confirmOff', on: true })
-    expect(parts.loader.slot('gate')).toBe('failed')
-    expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
+    await parts.pluginsManager.apply({ kind: 'confirmOff', on: true })
+    expect(parts.pluginsManager.policyJob('gate')).toBe('failed')
+    expect(reasonOf(parts.pluginsManager, 'gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
   })
 })
@@ -632,8 +632,8 @@ describe('dot folders through the joined core', () => {
       prepare: dataDir => new StateStore(dataDir).writeLuoshu({ folder }),
       before: booted => { if (gate === 'off') booted.state.switches.off = ['gate'] },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, folder, alpha: parts.runtime.half('alpha'), zero: parts.runtime.half('zero') }
   }
 
@@ -686,7 +686,7 @@ describe('dot folders through the joined core', () => {
     expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
     await carrier.flush()
     // A record of either kind may stand for several calls through its count
-    const kept = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && String(record.action).startsWith('luoshu.'))
+    const kept = (await coreRecords(dataDir)).filter(record => record.event === 'audit.call' && String(record.action).startsWith('luoshu.'))
     const shapes = (action: string, code: string | null) => {
       const found = kept.filter(record => record.action === action && record.code === code)
       const shape = (record: Record<string, unknown>) => JSON.stringify([record.caller, record.gate, Object.keys(record.scope ?? {})])
@@ -710,12 +710,12 @@ describe('the windows\' own actions', () => {
   const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
   const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
 
-  it('go to the runtime for opening the trusted window, Quit and Restart hetu, and the rest to the loader', async () => {
+  it('go to the runtime for opening the trusted window, Quit and Restart hetu, and the rest to the plugins manager', async () => {
     const served: string[] = []
-    const { carrier, loader } = await joined({
+    const { carrier, pluginsManager } = await joined({
       wire: { windows: { serve: async call => { served.push(call.action); return null }, armed: () => true } },
     })
-    await loader.start()
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor, trusted })
     for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
     expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
@@ -728,8 +728,8 @@ describe('the windows\' own actions', () => {
 
   it('count a Confirm only once the runtime says the trusted window armed', async () => {
     let armed = false
-    const { carrier, loader } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
-    await loader.start()
+    const { carrier, pluginsManager } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor, trusted })
     const reply = await way.ask('editor', 'security.request', { change: { kind: 'skipVerification', on: true } })
     const id = (reply.result as { held: string }).held
@@ -739,8 +739,8 @@ describe('the windows\' own actions', () => {
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {
-    const { carrier, loader } = await joined()
-    await loader.start()
+    const { carrier, pluginsManager } = await joined()
+    await pluginsManager.start()
     const way = windowWay(carrier, { editor })
     expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
   })
@@ -749,7 +749,7 @@ describe('the windows\' own actions', () => {
 describe('a failing log', () => {
   it('quits hetu to start it again once its oldest record waited logFailMs unwritten', async () => {
     const failures: unknown[] = []
-    const { loader, runtime } = await joined({
+    const { pluginsManager, runtime } = await joined({
       folder: { alpha: filesFor(workerManifest('alpha')) },
       before: booted => {
         booted.state.switches.limits.all.logFailMs = 100
@@ -758,7 +758,7 @@ describe('a failing log', () => {
       },
       wire: { onFailure: failure => { failures.push(failure) } },
     })
-    await loader.start()
+    await pluginsManager.start()
     await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' })
     await new Promise(resolve => setTimeout(resolve, 150))
     await runtime.half('alpha').ask('luoshu.read', { path: 'notes/b.md' })
@@ -768,7 +768,7 @@ describe('a failing log', () => {
 })
 
 // #101: every switch keeps this design's fail-safe default and none has an
-// off state of its own. What a call answers with each install plugin switched off, through the joined core, mostly
+// off state of its own. What a call answers with each core plugin switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {
   // The time each core joined here may take. Starting one took up to about 5 s on a shared Windows runner against
@@ -786,8 +786,8 @@ describe('the off states', () => {
       behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
       before: booted => { booted.state.switches.off = off as typeof booted.state.switches.off },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return parts
   }
   const read = async (parts: Awaited<ReturnType<typeof switchedOff>>) => {
@@ -818,7 +818,7 @@ describe('the off states', () => {
     const parts = await switchedOff(['gate'])
     await read(parts)
     await parts.carrier.flush()
-    const records = await floorRecords(parts.dataDir)
+    const records = await coreRecords(parts.dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read')).toMatchObject([{ gate: 'off', code: null }])
   }, JOIN_MS)
 })
@@ -867,14 +867,14 @@ describe('the door through the joined core', () => {
     const parts = await joined({
       install: {
         ...coreInstall(),
-        http: { files: filesFor(hostManifest('http', { capabilities: [callMcp] })) },
-        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['http'] } } } })), firstParty: true },
+        'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [callMcp] })) },
+        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })), firstParty: true },
       },
       folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
       entries: { beta: { granted: [callMcp] } },
       behave: {
         gate: { exports: { gate } },
-        http: {
+        'mcp-http-handler': {
           utility: start => {
             const port_ = start.port as MessagePort
             run(httpPlugin({ port, token: seam }), { post: message => port_.postMessage(message), listen: next => { port_.on('message', next) } })
@@ -882,20 +882,20 @@ describe('the door through the joined core', () => {
         },
       },
     })
-    await parts.loader.start()
-    await parts.loader.settled()
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
     return { ...parts, port, decisions }
   }
 
   it('hands a request that passed to the first-party mcp as http\'s host half on behalf of the seam\'s client', async () => {
-    const { loader, runtime, port } = await door()
-    expect(loader.plugin('http')).toMatchObject({ state: 'ready', place: 'utility' })
-    expect(loader.plugin('mcp')).toMatchObject({ state: 'ready' })
+    const { pluginsManager, runtime, port } = await door()
+    expect(pluginsManager.plugin('mcp-http-handler')).toMatchObject({ state: 'ready', place: 'utility' })
+    expect(pluginsManager.plugin('mcp')).toMatchObject({ state: 'ready' })
     const mcp = runtime.half('mcp')
     const asked = post(port, 'not json {')
     await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'mcp.handle'), 5000)
     const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle')!
-    expect(delivered.caller).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
+    expect(delivered.caller).toEqual({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 })
     expect(delivered.onBehalf).toBe('https://client.example/metadata#1')
     expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
     mcp.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: { status: 200, body: '{"jsonrpc":"2.0"}' } })

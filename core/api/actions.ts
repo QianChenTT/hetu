@@ -3,17 +3,17 @@ import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type Capability
 import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
-import { floorConstantNames, type FloorConstant } from './floor.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { limitNames, type LimitName } from './limits.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
-import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
+import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
 import type { ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
-// actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
+// actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
 // action here yet. Each provider's own step settles its list: net has none yet
 
 // A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
@@ -51,13 +51,13 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder, http's host
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog policy job's holder, mcp-http-handler's host
 // half in its utility process or the agent host under a live call from that door, which names the agent. The floor
 // decides these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses
 // every caller
 export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http' | 'agent'
 
-// Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
+// Why mcp-http-handler refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
 // too slow
 export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
@@ -126,7 +126,7 @@ const coreTable = {
   'core.status': { from: 'windows', args: nothing },
   // The event log the core writes: each file's chain as history reads it and whether the open file checks out. A
   // window only, until the first-party shipper, which log.read is kept for
-  'log.history': { from: 'windows', args: nothing },
+  'log.segments': { from: 'windows', args: nothing },
   'log.verify': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
@@ -143,7 +143,7 @@ const coreTable = {
   'core.restart': { from: 'windows', args: target },
   'core.quit': { from: 'windows', args: nothing },
   'core.relaunch': { from: 'trusted', args: nothing },
-  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.set,
+  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
   // which waits for the Confirm
   'core.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
@@ -154,37 +154,37 @@ const coreTable = {
   'core.views': { from: 'windows', args: nothing },
   // A single-use URL main serves one of a running plugin's frames from, out of the bytes it started with
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
-  // The frame at that URL is gone. navigated says it loaded again, which the floor records
+  // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
-  // Only on sandboxed plugins that hold no guard or slot role
+  // Only on sandboxed plugins that hold no guard or policy job role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
-  // Lowers one constant for one plugin. A value above the human's or the floor's own has no effect
+  // Lowers one constant for one plugin. A value above the human's or the fixed value has no effect
   'watchdog.limit': {
     from: 'watchdog',
-    args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
+    args: z.strictObject({ plugin: pluginId, constant: z.enum(limitNames), value: z.int().positive() }),
   },
-  // The refusals at the door since http's last report for one reason, which the core writes as http.refused coalesced
+  // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as http.refused coalesced
   // by reason
   'core.agentRefused': {
     from: 'http',
     args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
-  // http's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
+  // mcp-http-handler's bind on its port failed. The plugins manager ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
   'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
   // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
   // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
   'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
-  // What http asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
-  // heard names the revoked labels whose tokens http ended, whose marks then go
+  // What mcp-http-handler asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
+  // heard names the revoked labels whose tokens mcp-http-handler ended, whose marks then go
   'core.agents': {
     from: 'http',
     args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
   },
-  // http's door asks the human to connect a client as the agent the client id and the number make. The core raises the
-  // request and answers at once with a handle it made, which http collects the answer with. Never a label or a handle
-  // from http
+  // mcp-http-handler's door asks the human to connect a client as the agent the client id and the number make. The core raises the
+  // request and answers at once with a handle it made, which mcp-http-handler collects the answer with. Never a label or a handle
+  // from mcp-http-handler
   'core.agentConnect': {
     from: 'http',
     args: z.strictObject({
@@ -365,8 +365,8 @@ export type ListedPlugin = {
   firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
-  // The class the capabilities slot gave a plugin-folder plugin, null for none known, which counts as 4, and for an
-  // install plugin
+  // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for an
+  // core plugin
   class: number | null
 }
 
@@ -375,7 +375,7 @@ export type ListedPlugin = {
 export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
-// whether the human revoked it and http has yet to say it ended its tokens
+// whether the human revoked it and mcp-http-handler has yet to say it ended its tokens
 export type ListedAgent = { agent: string, items: Capability[], revoked: boolean }
 
 // What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest
@@ -390,8 +390,8 @@ export type SecurityList = {
     confirmOff: boolean
     recordNothing: boolean
   }
-  // The values the human set, for all plugins and for each one. A constant not named runs at the floor's value
-  limits: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> }
+  // The values the human set, for all plugins and for each one. A constant not named runs at the fixed value
+  limits: { all: Partial<Record<LimitName, number>>, plugins: Record<string, Partial<Record<LimitName, number>>> }
   // The notes folder, null for none picked
   luoshu: string | null
   requests: HeldRequest[]
@@ -399,12 +399,12 @@ export type SecurityList = {
   stopped: StoppedMode | null
 }
 
-// What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
+// What a window's banner shows: each policy job's state, the plugins crashed, failed or unresponsive that nobody restarted, the
 // switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the in-page
 // plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
-  slots: Record<typeof slotIds[number], SlotState>
+  policyJobs: Record<typeof policyJobIds[number], PolicyJobState>
   crashed: string[]
   devMode: string[]
   allowUnsigned: number
@@ -412,7 +412,7 @@ export type CoreStatus = {
   recordNothing: boolean
   logWrites: boolean
   luoshuPicked: boolean
-  // The in-page install plugins that are ready, which the editor window applies: hidden-marks
+  // The in-page core plugins that are ready, which the editor window applies: hidden-marks
   page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null
@@ -437,7 +437,7 @@ export type ActionResults = {
   'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
   'core.agentConnect': { handle: string }
   'core.agentConnected': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
-  'log.history': LogSegment[]
+  'log.segments': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null

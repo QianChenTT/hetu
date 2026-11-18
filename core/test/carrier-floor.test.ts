@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -73,8 +73,8 @@ describe('shape', () => {
   })
 
   it('refuses a second call under an id still in flight', async () => {
-    const { connect, loader, gate } = harness()
-    loader.sandboxed('git', { log: {} })
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.sandboxed('git', { log: {} })
     gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }]
     const search = connect(worker('search'))
     const git = connect(worker('git'))
@@ -103,14 +103,14 @@ describe('shape', () => {
   })
 
   it('measures args against the caller\'s own cap, raised by the human and lowered by the watchdog', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.sandboxed('search')
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
     const big = 'x'.repeat(MiB + 10)
     expect((await search.ask('storage.set', { key: 'index', value: big })).refusal).toEqual({ code: 'invalid', action: 'storage.set', reason: 'too-large' })
-    loader.human.plugins.search = { argumentBytes: 2 * MiB }
+    pluginsManager.human.plugins.search = { argumentBytes: 2 * MiB }
     expect((await search.ask('storage.set', { key: 'index', value: big })).ok).toBe(true)
-    // Another plugin keeps the floor's cap
+    // Another plugin keeps the fixed cap
     expect(code(await connect(worker('git')).ask('storage.set', { key: 'index', value: big }))).toBe('invalid')
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'argumentBytes', value: 100 })).ok).toBe(true)
@@ -134,13 +134,13 @@ describe('the floor', () => {
 
   it.each(securityActions)('refuses %s for every plugin, MCP and host halves included, in every gate state, without asking the gate', async (action, args) => {
     const seen: Call[] = []
-    const { carrier, connect, gate, loader } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
+    const { carrier, connect, gate, pluginsManager } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
     const plugins = [
       ...['mcp', 'search', 'gate'].map(id => connect(worker(id))),
       ...['luoshu', 'gate', 'watchdog'].map(id => hostHalf(carrier, host(id))),
     ]
     for (const state of ['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const) {
-      loader.slots.gate = state
+      pluginsManager.policyJobs.gate = state
       for (const plugin of plugins) expect(code(await plugin.ask(action, args))).toBe('not-granted')
     }
     expect(seen).toEqual([])
@@ -201,8 +201,8 @@ describe('the floor', () => {
 
   it('takes security.request from any window and security.confirm only from the trusted one, with the gate failed', async () => {
     const seen: Call[] = []
-    const { carrier, loader, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
-    loader.slots.gate = 'failed'
+    const { carrier, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
+    pluginsManager.policyJobs.gate = 'failed'
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const change = { kind: 'plugin.on', plugin: 'search' }
     expect((await way.ask('editor-1', 'security.request', { change })).result).toEqual({ held: true })
@@ -230,22 +230,22 @@ describe('the floor', () => {
 
   it('takes watchdog.* only from the watchdog\'s own handle, only on sandboxed plugins with no role', async () => {
     const seen: Call[] = []
-    const { carrier, connect, loader, gate } = harness({
+    const { carrier, connect, pluginsManager, gate } = harness({
       core: async call => { seen.push(call); return null },
       guardsFor: () => ['guarding'],
     })
-    loader.sandboxed('search')
-    loader.sandboxed('guarding')
-    // A slot id never names a sandboxed plugin, but the floor doesn't rely on that
-    loader.sandboxed('capabilities')
-    loader.installed('watchdog')
+    pluginsManager.sandboxed('search')
+    pluginsManager.sandboxed('guarding')
+    // A policy job id never names a sandboxed plugin, but the floor doesn't rely on that
+    pluginsManager.sandboxed('grant-risk-classifier')
+    pluginsManager.installed('watchdog')
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.stop', { plugin: 'search' })).ok).toBe(true)
     expect((await watchdog.ask('watchdog.restart', { plugin: 'search' })).ok).toBe(true)
-    for (const plugin of ['luoshu', 'gate', 'log', 'capabilities', 'guarding', 'ghost']) {
+    for (const plugin of ['luoshu', 'gate', 'log', 'grant-risk-classifier', 'guarding', 'ghost']) {
       expect(code(await watchdog.ask('watchdog.stop', { plugin }))).toBe('not-granted')
     }
-    // The watchdog's id on a port, or on a worker half, is not the slot's holder
+    // The watchdog's id on a port, or on a worker half, is not the policy job's holder
     expect(code(await connect(host('watchdog', 2)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(code(await hostHalf(carrier, worker('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(code(await connect(worker('search')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
@@ -257,23 +257,23 @@ describe('the floor', () => {
 
   it('takes watchdog.* from no other plugin\'s host handle', async () => {
     const seen: Call[] = []
-    const { carrier, loader } = harness({ core: async call => { seen.push(call); return null } })
-    loader.sandboxed('search')
+    const { carrier, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.sandboxed('search')
     for (const id of ['luoshu', 'history', 'exec']) {
       expect(code(await hostHalf(carrier, host(id)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     }
     expect(seen).toEqual([])
   })
 
-  // Starting, failed, absent and tampered act as off and off makes no restarts. The handle can outlive the slot,
+  // Starting, failed, absent and tampered act as off and off makes no restarts. The handle can outlive the policy job,
   // minted before start and kept through a stop grace
-  it.each(['off', 'starting', 'failed', 'absent', 'tampered'] as const)('takes no watchdog.* from the watchdog\'s handle while its slot is %s', async state => {
+  it.each(['off', 'starting', 'failed', 'absent', 'tampered'] as const)('takes no watchdog.* from the watchdog\'s handle while its policy job is %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, loader } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = 'off'
-    loader.slots.watchdog = state
-    loader.sandboxed('search')
-    loader.sandboxed('git', { log: {} })
+    const { carrier, connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.policyJobs.watchdog = state
+    pluginsManager.sandboxed('search')
+    pluginsManager.sandboxed('git', { log: {} })
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect(code(await watchdog.ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(code(await watchdog.ask('watchdog.restart', { plugin: 'search' }))).toBe('not-granted')
@@ -289,17 +289,17 @@ describe('the floor', () => {
 
   it('treats a plugin whose state is outside the list as absent', async () => {
     const seen: Call[] = []
-    const { carrier, loader } = harness({ core: async call => { seen.push(call); return null } })
-    loader.plugins.search = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {}, topics: [] }
+    const { carrier, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.plugins.search = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {}, topics: [] }
     expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(seen).toEqual([])
   })
 
   it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
-    const { carrier, connect, loader, gate, log } = harness()
-    loader.slots.gate = state
-    loader.utility('http')
-    const http = connect(host('http'))
+    const { carrier, connect, pluginsManager, gate, log } = harness()
+    pluginsManager.policyJobs.gate = state
+    pluginsManager.utility('mcp-http-handler')
+    const http = connect(host('mcp-http-handler'))
     expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
     expect(gate.asked).toEqual([])
     carrier.close()
@@ -307,13 +307,13 @@ describe('the floor', () => {
     expect(log.events('http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
   })
 
-  it.each(['on', 'off', 'failed'] as const)('hands core.bindFailed from http\'s host half on its utility port to the loader with the gate %s, asking no gate', async state => {
+  it.each(['on', 'off', 'failed'] as const)('hands core.bindFailed from http\'s host half on its utility port to the plugins manager with the gate %s, asking no gate', async state => {
     const seen: Call[] = []
-    const { connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
-    loader.utility('http')
-    expect(await connect(host('http')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
-    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('http'), args: { reason: 'port-taken' } }])
+    const { connect, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.policyJobs.gate = state
+    pluginsManager.utility('mcp-http-handler')
+    expect(await connect(host('mcp-http-handler')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
+    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('mcp-http-handler'), args: { reason: 'port-taken' } }])
     expect(gate.asked).toEqual([])
   })
 
@@ -322,21 +322,21 @@ describe('the floor', () => {
 
   it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, loader, gate, log } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
-    loader.utility('http')
-    loader.sandboxed('search')
-    loader.installed('exec')
+    const { carrier, connect, pluginsManager, gate, log } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.policyJobs.gate = state
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.sandboxed('search')
+    pluginsManager.installed('exec')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const callers = [
       // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
       connect(worker('search')),
-      connect(worker('http')),
+      connect(worker('mcp-http-handler')),
       // Another plugin's host half, on a port and on an in-process handle
       connect(host('exec')),
       hostHalf(carrier, host('exec', 2)),
       // http's host half on a handle, which no utility half is ever given
-      hostHalf(carrier, host('http')),
+      hostHalf(carrier, host('mcp-http-handler')),
     ]
     for (const [action, args] of doorActions) {
       const refused = [
@@ -355,12 +355,12 @@ describe('the floor', () => {
 
   it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
     const seen: Call[] = []
-    const { carrier, connect, loader, log } = harness({ core: async call => { seen.push(call); return null } })
-    loader.installed('http')
-    const placedHost = connect(host('http'))
+    const { carrier, connect, pluginsManager, log } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.installed('mcp-http-handler')
+    const placedHost = connect(host('mcp-http-handler'))
     for (const [action, args] of doorActions) expect(code(await placedHost.ask(action, args))).toBe('not-granted')
-    delete loader.plugins.http
-    const unknown = connect(host('http', 2))
+    delete pluginsManager.plugins['mcp-http-handler']
+    const unknown = connect(host('mcp-http-handler', 2))
     for (const [action, args] of doorActions) expect(code(await unknown.ask(action, args))).toBe('not-granted')
     expect(seen).toEqual([])
     carrier.close()
@@ -369,11 +369,11 @@ describe('the floor', () => {
   })
 
   it('holds the trusted window to core actions, with the gate on or off', async () => {
-    const { carrier, loader, luoshu } = harness()
+    const { carrier, pluginsManager, luoshu } = harness()
     luoshu.files.set('notes/a.md', 'x')
     const way = windowWay(carrier, { trusted })
     for (const gate of ['on', 'off'] as const) {
-      loader.slots.gate = gate
+      pluginsManager.policyJobs.gate = gate
       expect(code(await way.ask('trusted', 'luoshu.read', { path: 'notes/a.md' }))).toBe('not-granted')
       expect(code(await way.ask('trusted', 'storage.get', { key: 'drafts' }))).toBe('not-granted')
     }
@@ -381,9 +381,9 @@ describe('the floor', () => {
   })
 
   it('lets the free actions skip the gate, with the gate failed', async () => {
-    const { connect, loader, gate } = harness()
-    loader.slots.gate = 'failed'
-    loader.sandboxed('search', { query: {} })
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.policyJobs.gate = 'failed'
+    pluginsManager.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     expect((await search.ask('storage.set', { key: 'index', value: 1 })).ok).toBe(true)
@@ -397,8 +397,8 @@ describe('the floor', () => {
   })
 
   it('lets a lease holder\'s own lease actions skip the gate while acquire asks it', async () => {
-    const { connect, loader, gate, providers } = harness()
-    loader.installed('leases')
+    const { connect, pluginsManager, gate, providers } = harness()
+    pluginsManager.installed('leases')
     providers.leases = { prepare: async () => ({ scope: {} }), perform: async call => call.action }
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
@@ -412,8 +412,8 @@ describe('the floor', () => {
 
   // Acquire takes the luoshu's per-path lock, so a path the grant doesn't cover must not reach prepare
   it('prechecks every path a lease names before prepare', async () => {
-    const { connect, loader, gate, providers } = harness()
-    loader.installed('leases')
+    const { connect, pluginsManager, gate, providers } = harness()
+    pluginsManager.installed('leases')
     const prepared: Call[] = []
     providers.leases = {
       prepare: async call => {
@@ -431,7 +431,7 @@ describe('the floor', () => {
 
 // events.* is the bus's, which bus.test.ts covers
 describe('ui.*', () => {
-  it('answers unavailable until the mount serves it', async () => {
+  it('answers unavailable until the drawer serves it', async () => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
     expect(code(await search.ask('ui.view', {}))).toBe('unavailable')
@@ -441,26 +441,26 @@ describe('ui.*', () => {
   it('hands it to the part that serves it after the floor and the ceiling, which asks the gate itself', async () => {
     const seen: Call[] = []
     const ui = async (call: Call) => { seen.push(call); return 'mounted' }
-    const { carrier, connect, loader, gate } = harness({ served: { ui } })
-    loader.slots.gate = 'failed'
+    const { carrier, connect, pluginsManager, gate } = harness({ served: { ui } })
+    pluginsManager.policyJobs.gate = 'failed'
     const search = connect(worker('search'))
     expect((await search.ask('ui.view', { title: 'x' })).result).toBe('mounted')
     expect(seen.map(call => [call.caller, call.action, call.args])).toEqual([[worker('search'), 'ui.view', { title: 'x' }]])
     expect(gate.asked).toEqual([])
     const way = windowWay(carrier, { trusted })
     expect(code(await way.ask('trusted', 'ui.view', {}))).toBe('not-granted')
-    loader.human.plugins.search = { argumentBytes: 64 }
+    pluginsManager.human.plugins.search = { argumentBytes: 64 }
     expect(code(await search.ask('ui.view', { title: 'x'.repeat(100) }))).toBe('invalid')
     expect(seen).toHaveLength(1)
   })
 })
 
-describe('the gate slot', () => {
+describe('the gate policy job', () => {
   it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
-    const { carrier, connect, loader, gate, luoshu } = harness()
-    loader.slots.gate = state
+    const { carrier, connect, pluginsManager, gate, luoshu } = harness()
+    pluginsManager.policyJobs.gate = state
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    loader.sandboxed('git', { log: {} })
+    pluginsManager.sandboxed('git', { log: {} })
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(code(await search.ask('git.log'))).toBe('policy-down')
@@ -472,8 +472,8 @@ describe('the gate slot', () => {
   })
 
   it('answers starting while the gate starts, so the SDK retries', async () => {
-    const { connect, loader, gate } = harness()
-    loader.slots.gate = 'starting'
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.policyJobs.gate = 'starting'
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
     expect(gate.asked).toEqual([])
   })
@@ -484,10 +484,10 @@ describe('the gate slot', () => {
   })
 
   // Read as off, the gate and every guard would pass everything
-  it('refuses policy-down when the loader can not give the slot states', async () => {
-    const { connect, loader, luoshu } = harness()
+  it('refuses policy-down when the plugins manager can not give the policy job states', async () => {
+    const { connect, pluginsManager, luoshu } = harness()
     luoshu.files.set('a.md', 'x')
-    loader.slot = () => { throw new Error('no state') }
+    pluginsManager.policyJob = () => { throw new Error('no state') }
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(code(await search.ask('luoshu.write', { path: 'a.md', text: 'y' }))).toBe('policy-down')
@@ -495,10 +495,10 @@ describe('the gate slot', () => {
   })
 
   it.each([['on', false], ['off', true]] as const)('passes calls with power while the gate is off and recording is %s', async (_name, nothing) => {
-    const { connect, loader, gate, luoshu } = harness()
-    loader.slots.gate = 'off'
-    loader.nothing = nothing
-    loader.sandboxed('git', { log: {} })
+    const { connect, pluginsManager, gate, luoshu } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.nothing = nothing
+    pluginsManager.sandboxed('git', { log: {} })
     luoshu.files.set('secret/a.md', 'x')
     const search = connect(worker('search'))
     const git = connect(worker('git'))
@@ -513,8 +513,8 @@ describe('the gate slot', () => {
   // The log fails once a record waited logFailMs unwritten, timed on the carrier's clock
   it('refuses calls with power policy-down while the gate is off and the log has failed', async () => {
     let now = 0
-    const { connect, loader, log, luoshu } = harness({ clock: () => now })
-    loader.slots.gate = 'off'
+    const { connect, pluginsManager, log, luoshu } = harness({ clock: () => now })
+    pluginsManager.policyJobs.gate = 'off'
     log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
@@ -528,26 +528,26 @@ describe('the gate slot', () => {
 
   it('passes calls with power while the gate is off and recording is off, the log failed', async () => {
     let now = 0
-    const { connect, loader, log, luoshu } = harness({ clock: () => now })
-    loader.slots.gate = 'off'
+    const { connect, pluginsManager, log, luoshu } = harness({ clock: () => now })
+    pluginsManager.policyJobs.gate = 'off'
     log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'index' })
     now = 30_000
-    loader.nothing = true
+    pluginsManager.nothing = true
     expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
   it('never lets recording off pass a call while the gate is failed', async () => {
-    const { connect, loader } = harness()
-    loader.slots.gate = 'failed'
-    loader.nothing = true
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'failed'
+    pluginsManager.nothing = true
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
-  it('reads the gate slot again after prepare, so a gate that failed meanwhile refuses', async () => {
-    const { connect, loader, gate, luoshu } = harness()
+  it('reads the gate policy job again after prepare, so a gate that failed meanwhile refuses', async () => {
+    const { connect, pluginsManager, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
     let open!: () => void
@@ -555,7 +555,7 @@ describe('the gate slot', () => {
     const search = connect(worker('search'))
     const id = search.call('luoshu.read', { path: 'a.md' })
     for (let i = 0; i < 100 && luoshu.prepared.length === 0; i++) await tick(2)
-    loader.slots.gate = 'failed'
+    pluginsManager.policyJobs.gate = 'failed'
     open()
     expect(code(await search.reply(id))).toBe('policy-down')
     expect(luoshu.performed).toEqual([])
@@ -611,11 +611,11 @@ describe('precheck', () => {
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'decide', count: 1 }])
   })
 
-  it('refuses policy-down when the StateView number can not be read, an allow included', async () => {
-    const { connect, loader, gate, luoshu } = harness()
+  it('refuses policy-down when the grants snapshot number can not be read, an allow included', async () => {
+    const { connect, pluginsManager, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
-    loader.view = () => { throw new Error('no view') }
+    pluginsManager.view = () => { throw new Error('no view') }
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     gate.decision = () => ({ allow: false, view: 1 })
@@ -623,18 +623,18 @@ describe('precheck', () => {
     expect(luoshu.performed).toEqual([])
   })
 
-  it('refuses policy-down when the StateView number is not a whole number', async () => {
-    const { connect, loader, gate } = harness()
+  it('refuses policy-down when the grants snapshot number is not a whole number', async () => {
+    const { connect, pluginsManager, gate } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    loader.view = () => '1' as never
+    pluginsManager.view = () => '1' as never
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
-  it('refuses an answer made on an older StateView as stale', async () => {
-    const { connect, loader, gate, luoshu } = harness()
+  it('refuses an answer made on an older grants snapshot as stale', async () => {
+    const { connect, pluginsManager, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
-    loader.current = 5
+    pluginsManager.current = 5
     gate.decision = () => ({ allow: true, view: 4 })
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('stale')
@@ -667,8 +667,8 @@ describe('precheck', () => {
   })
 
   it('gives a caller with no grant the same answer for a declared action, an undeclared one and an absent plugin', async () => {
-    const { connect, loader, gate } = harness()
-    loader.sandboxed('git', { log: {} })
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.sandboxed('git', { log: {} })
     const search = connect(worker('search'))
     connect(worker('git'))
     const answers = [

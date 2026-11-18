@@ -4,7 +4,7 @@
 import type { HeldRequest, ListedAgent, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
-import { floorConstantNames, floorConstants, type FloorConstant } from '../../api/floor.ts'
+import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
 
 export type Bridge = {
@@ -24,7 +24,7 @@ export type Part = { text: string, label: boolean }
 // An agent's row: its label in quotes, then the rest of its line
 export type AgentRow = { label: string, line: string, change: Change | null }
 
-export type Limit = { constant: FloorConstant, floor: number, all: number | null, plugins: { plugin: string, value: number }[] }
+export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
@@ -45,13 +45,13 @@ export type Screen = {
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
 const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s install'
-// What the agent list holds and what it can't: the core keeps the label and the items, http the client's name and the tokens
-const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s'
+// What the agent list holds and what it can't: the core keeps the label and the items, mcp-http-handler the client's name and the tokens
+const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s'
 
 // An agent's label in quotes as data, then its items, or that it is revoked
 function agentRow(agent: ListedAgent): AgentRow {
   const label = JSON.stringify(agent.agent)
-  if (agent.revoked) return { label, line: ' · revoked, its tokens end once http hears', change: null }
+  if (agent.revoked) return { label, line: ' · revoked, its tokens end once mcp-http-handler hears', change: null }
   return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'agent.revoke', agent: agent.agent } }
 }
 
@@ -99,7 +99,7 @@ export function choiceChange(control: string, choice: Choice): Change | null {
   return { kind: choice === 'recover' ? 'plugin.reset' : 'plugin.off', plugin: control }
 }
 
-// A plugin-folder plugin's class, from the capabilities slot. One it couldn't give counts as 4
+// A plugin-folder plugin's class, from the grant risk classifier policy job. One it couldn't give counts as 4
 function pluginLine(plugin: ListedPlugin): string {
   const from = plugin.from === 'install' ? 'ships with hetu' : 'plugin folder'
   const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
@@ -167,9 +167,9 @@ function pluginSwitches(plugin: ListedPlugin, list: SecurityList): Switch[] {
 }
 
 function limitsOf(list: SecurityList): Limit[] {
-  return floorConstantNames.map(constant => ({
+  return limitNames.map(constant => ({
     constant,
-    floor: floorConstants[constant],
+    fixed: defaultLimits[constant],
     all: list.limits.all[constant] ?? null,
     plugins: Object.entries(list.limits.plugins)
       .filter(([, set]) => set[constant] !== undefined)
@@ -180,7 +180,7 @@ function limitsOf(list: SecurityList): Limit[] {
 
 // What the human typed for a limit as its change, or null for anything but a whole number from 1 up. The core checks it
 // again, a time past the longest timer included
-export function limitChange(constant: FloorConstant, typed: string, plugin: string | null): Change | null {
+export function limitChange(constant: LimitName, typed: string, plugin: string | null): Change | null {
   const text = typed.trim()
   if (!/^[1-9][0-9]{0,15}$/.test(text)) return null
   const value = Number(text)
@@ -271,11 +271,11 @@ export class TrustedPage {
     this.call('core.relaunch')
   }
 
-  // The OS folder dialog in main, then the folder picked asked for as luoshu.set, which waits for the Confirm. A
+  // The OS folder dialog in main, then the folder picked asked for as luoshu.pick, which waits for the Confirm. A
   // cancelled dialog asks for nothing
   pickFolder(): void {
     this.call('core.pickFolder', undefined, reply => {
-      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.set', folder: reply.result })
+      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.pick', folder: reply.result })
       else if (reply.ok !== true) this.settle(reply)
     })
   }

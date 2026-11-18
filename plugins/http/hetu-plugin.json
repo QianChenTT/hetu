@@ -1,9 +1,0 @@
-{
-  "id": "http",
-  "name": "HTTP",
-  "version": "0.1.0",
-  "api": "^3",
-  "entries": { "host": "dist/host.js" },
-  "node": ["http"],
-  "capabilities": [{ "type": "plugin.call", "targets": ["mcp"] }]
-}

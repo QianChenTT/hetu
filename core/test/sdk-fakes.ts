@@ -1,5 +1,5 @@
 import type { Caller } from '../api/envelope.ts'
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import { Calls } from '../sdk/calls.ts'
 import { makeClient } from '../sdk/client.ts'
@@ -9,7 +9,7 @@ import { Sender, type Transport } from '../sdk/transport.ts'
 // message the way a port does, which throws on what can't cross
 export type TransportOptions = { drop?: (message: Record<string, unknown>) => boolean, clone?: boolean }
 
-// An SDK half's way on an in-process handle, as the loader gives a host half its link. What the carrier sends before
+// An SDK half's way on an in-process handle, as the plugins manager gives a host half its link. What the carrier sends before
 // listen waits for it. sent keeps every message the half posted, oldest first, the lost ones too
 export function sdkTransport(carrier: Carrier, caller: Caller, options: TransportOptions = {}): Transport & { sent: unknown[] } {
   const held: unknown[] = []
@@ -37,8 +37,8 @@ export function sdkTransport(carrier: Carrier, caller: Caller, options: Transpor
 // A client with no plugin around it, for the calls alone
 export function clientOn(carrier: Carrier, caller: Caller) {
   const transport = sdkTransport(carrier, caller)
-  const sender = new Sender(message => transport.post(message), floorConstants.messagesPerSecond)
-  const calls = new Calls(sender, { callsInFlight: floorConstants.callsInFlight, callDeadlineMs: floorConstants.callDeadlineMs })
+  const sender = new Sender(message => transport.post(message), defaultLimits.messagesPerSecond)
+  const calls = new Calls(sender, { callsInFlight: defaultLimits.callsInFlight, callDeadlineMs: defaultLimits.callDeadlineMs })
   transport.listen(message => calls.reply(message))
   return { client: makeClient((action, args, options) => calls.request(action, args, options)), transport, calls }
 }

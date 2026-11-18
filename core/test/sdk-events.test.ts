@@ -21,16 +21,16 @@ type Sent = { kind: string, action?: string, args?: { topics?: string[] }, seq?:
 // search subscribes to the luoshu's topics and publishes its own indexed. The luoshu publishes from its host handle
 async function listening(way: TransportOptions = {}) {
   const parts = harness()
-  parts.loader.sandboxed('search')
-  parts.loader.plugins.search.topics = ['indexed']
-  parts.loader.sandboxed('git')
+  parts.pluginsManager.sandboxed('search')
+  parts.pluginsManager.plugins.search.topics = ['indexed']
+  parts.pluginsManager.sandboxed('git')
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }]
   parts.gate.grants.git = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['search.indexed'] }]
   let ctx: PluginContext | null = null
   const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport)
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
-  await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
+  await until(() => ctx !== null && parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
   const luoshu = hostHalf(parts.carrier, host('luoshu'))
   const publish = (path?: string, topic = 'luoshu.changed') => luoshu.ask('events.publish', path === undefined ? { topic } : { topic, path })
   const sent = () => transport.sent as Sent[]
@@ -76,8 +76,8 @@ describe('events through the SDK', () => {
   })
 
   it('reports the topics the bus keeps standing', async () => {
-    const { ctx, loader } = await listening()
-    loader.slots.gate = 'starting'
+    const { ctx, pluginsManager } = await listening()
+    pluginsManager.policyJobs.gate = 'starting'
     const subscription = await ctx.events.on('luoshu.changed', () => {})
     expect(subscription.standing).toEqual(['luoshu.changed'])
   })
@@ -93,8 +93,8 @@ describe('events through the SDK', () => {
   })
 
   it('acks only what it handled, so credits hold the bus back and a resync follows', async () => {
-    const { ctx, loader, publish } = await listening()
-    loader.human.plugins.search = { eventCredits: 4 }
+    const { ctx, pluginsManager, publish } = await listening()
+    pluginsManager.human.plugins.search = { eventCredits: 4 }
     let release: () => void = () => {}
     const held = new Promise<void>(resolve => { release = resolve })
     const seen: string[] = []
@@ -113,11 +113,11 @@ describe('events through the SDK', () => {
   })
 
   it('subscribes again once when the bus ends a subscription and reports the refusal', async () => {
-    const { carrier, ctx, gate, loader, subscribes } = await listening()
+    const { carrier, ctx, gate, pluginsManager, subscribes } = await listening()
     const ended: { refused: Refused, topics: string[] }[] = []
     await ctx.events.on('luoshu.changed', () => {}, { onEnded: (refused, topics) => { ended.push({ refused, topics }) } })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    loader.current = 2
+    pluginsManager.current = 2
     carrier.changed()
     await until(() => ended.length === 1)
     expect(ended[0].refused.code).toBe('not-granted')
@@ -153,14 +153,14 @@ describe('an ack the carrier lost', () => {
   // back for the rest of the run
   it('goes again, so the bus catches up and sends a resync', async () => {
     let lost = false
-    const { ctx, loader, publish } = await listening({
+    const { ctx, pluginsManager, publish } = await listening({
       drop: message => {
         if (lost || message.kind !== 'ack' || message.seq !== 4) return false
         lost = true
         return true
       },
     })
-    loader.human.plugins.search = { eventCredits: 4 }
+    pluginsManager.human.plugins.search = { eventCredits: 4 }
     const seen: string[] = []
     const resyncs: string[][] = []
     await ctx.events.on('luoshu.changed', event => { seen.push(event.path!) }, { onResync: topics => { resyncs.push(topics) } })

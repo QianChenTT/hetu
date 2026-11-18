@@ -17,7 +17,7 @@ export const partition = (role: Role): string => `hetu-${role}`
 
 // The pages folder each host serves from. views is served from what main holds of each running plugin, content has
 // none until its pages exist
-const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'mount', trusted: 'trusted', workers: 'workers' })
+const PAGES: Readonly<Record<string, string>> = Object.freeze({ editor: 'editor', trusted: 'trusted', workers: 'workers' })
 
 const TYPES: Readonly<Record<string, string>> = Object.freeze({
   html: 'text/html; charset=utf-8',

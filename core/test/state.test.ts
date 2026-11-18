@@ -5,8 +5,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CAPABILITIES } from '../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
-import { MAX_TIMER_MS } from '../api/floor.ts'
-import { installIds } from '../api/ids.ts'
+import { MAX_TIMER_MS } from '../api/limits.ts'
+import { corePluginIds } from '../api/ids.ts'
 import {
   defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,
 } from '../backend/boot/state.ts'
@@ -143,7 +143,7 @@ afterEach(async () => {
 })
 
 describe('defaults', () => {
-  it('loosen nothing: every install plugin on, empty lists, false switches, no raised limits and no luoshu', () => {
+  it('loosen nothing: every core plugin on, empty lists, false switches, no raised limits and no luoshu', () => {
     expect(defaultSwitches()).toEqual(noSwitches)
     expect(defaultState()).toEqual({ plugins: {}, switches: noSwitches, luoshu: null })
   })
@@ -317,7 +317,7 @@ describe('writing', () => {
     const ids = ['watchdog', 'editor-core', 'search', 'my-plugin-x_2']
     const switches = {
       ...switchesIn,
-      off: [...installIds],
+      off: [...corePluginIds],
       devMode: ids,
       execAnyCommand: ids,
       removed: ['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'],
@@ -1110,17 +1110,17 @@ describe('a failed check and a switch-off', () => {
 
   const switchesSpoiled: [string, () => Promise<unknown>][] = [
     ['edited', async () => writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"confirmOff": false', '"confirmOff": true'))],
-    ['invalid', () => plant(switchesPath(), switchesText({ off: [...installIds, 'search'] }))],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: [...installIds] }))],
+    ['invalid', () => plant(switchesPath(), switchesText({ off: [...corePluginIds, 'search'] }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: [...corePluginIds] }))],
     ['missing', () => rm(switchesPath())],
   ]
 
-  it.each(switchesSpoiled)('reads a switches file that is %s as every install plugin on, never as one off', async (_name, spoil) => {
-    await store.writeSwitches({ ...noSwitches, off: [...installIds] })
+  it.each(switchesSpoiled)('reads a switches file that is %s as every core plugin on, never as one off', async (_name, spoil) => {
+    await store.writeSwitches({ ...noSwitches, off: [...corePluginIds] })
     await spoil()
     const { state } = await store.load()
     expect(state.switches).toEqual(noSwitches)
-    for (const id of installIds) expect(state.switches.off).not.toContain(id)
+    for (const id of corePluginIds) expect(state.switches.off).not.toContain(id)
   })
 
   it('leaves out a plugin whose entry is bad and touches no switch', async () => {
@@ -1283,7 +1283,7 @@ describe('removing a plugin', () => {
     await expect(store.removePlugin('search')).resolves.toBeUndefined()
   })
 
-  // Reads like an uninstalled plugin, the same as a wiped file. The loader's scan for a code folder with no entry asks
+  // Reads like an uninstalled plugin, the same as a wiped file. The plugins manager's scan for a code folder with no entry asks
   // about such a folder
   it('reads a deleted entry as no plugin at all, with no check of its own', async () => {
     await addPlugin('search')

@@ -5,9 +5,9 @@ import { z } from 'zod'
 import { capabilityKey, folderCapabilities, folderCapability, screenText, type Capability } from '../../api/capabilities.ts'
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
-import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
-import { agentHost } from '../../api/slots.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
+import { firstPartyIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
@@ -21,7 +21,7 @@ export const MAX_LISTED = 256
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 
-const installId = z.enum(installIds)
+const installId = z.enum(corePluginIds)
 const firstPartyId = z.enum(firstPartyIds)
 // An id some plugin can hold: an install or first-party id, or one the reserved list leaves to community plugins. The
 // namespaces the core serves, cache included, name no plugin
@@ -53,11 +53,11 @@ function map<T extends z.ZodType<object>>(record: T) {
   return noProtoKey.pipe(record).transform(entries => table(entries))
 }
 
-// The human's value per floor constant, above the fixed value or below. A time stops at the longest delay a timer
+// The human's value per limit, above the fixed value or below. A time stops at the longest delay a timer
 // takes, as limit.set has it
-const values = map(z.partialRecord(z.enum(floorConstantNames), z.int().positive()).refine(
+const values = map(z.partialRecord(z.enum(limitNames), z.int().positive()).refine(
   entries => Object.entries(entries).every(([name, value]) =>
-    !(timeConstants as readonly string[]).includes(name) || value <= MAX_TIMER_MS),
+    !(timeLimitNames as readonly string[]).includes(name) || value <= MAX_TIMER_MS),
   `a time past ${MAX_TIMER_MS} ms`,
 ))
 const limits = z.strictObject({
@@ -70,7 +70,7 @@ const limits = z.strictObject({
 
 // What each file holds, in the shape callers see. The writers take exactly this shape and add the format number
 const switches = z.strictObject({
-  off: list(installId), // an install plugin not named here is on, so a lost entry can't read as off
+  off: list(installId), // a core plugin not named here is on, so a lost entry can't read as off
   devMode: list(anyPlugin), // load unhashed with live reload
   skipVerification: z.boolean(),
   allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
@@ -79,7 +79,7 @@ const switches = z.strictObject({
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
   recordNothing: z.boolean(),
-  // The labels the human revoked whose tokens http has not yet said it ended, held here while the agent host has no
+  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, held here while the agent host has no
   // entry and handed to the entry it gets next. Left out of a file with none
   revokedAgents: list(agentLabel).optional(),
 })
@@ -115,7 +115,7 @@ const plugin = z.strictObject({
   // is another item. An item asks unless named here. Left out of an entry with none confirmed and of one written before
   // the record came, which has confirmed nothing
   confirmed: folderCapabilities.optional(),
-  // A change applied while the human had the capabilities plugin switched off: class is the last one classed and
+  // A change applied while the human had the grant risk classifier switched off: class is the last one classed and
   // nothing since was classed. Left out of every other entry
   unclassed: z.literal(true).optional(),
   // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human
@@ -124,7 +124,7 @@ const plugin = z.strictObject({
   // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
   // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
   agents: agentItems.optional(),
-  // The labels the human revoked whose tokens http has not yet said it ended, each once. Only the agent host's entry
+  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, each once. Only the agent host's entry
   // holds the list. Left out of an entry with none
   revoked: z.array(agentLabel).max(MAX_AGENT_ITEMS, { abort: true }).refine(labels => new Set(labels).size === labels.length, 'a label twice').optional(),
 })
@@ -171,7 +171,7 @@ export type Check = {
 // newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
 export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean }
 
-// Loosens nothing: every install plugin on, empty lists, false switches and no raised limits
+// Loosens nothing: every core plugin on, empty lists, false switches and no raised limits
 export function defaultSwitches(): Switches {
   return {
     off: [],
@@ -396,7 +396,7 @@ export class StateStore {
     return { state, suspect, checks, removedKnown: switchesRead.result === 'ok' }
   }
 
-  // Entries only. The plugin files check is the loader's, which reads the bytes that run, so nothing here changes
+  // Entries only. The plugin files check is the plugins manager's, which reads the bytes that run, so nothing here changes
   // enabled
   private async readPlugins(state: SecurityState, checks: Check[]): Promise<void> {
     let names: string[] = []

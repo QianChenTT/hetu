@@ -1,5 +1,5 @@
 import type { BrowserWindow, Session, WebContents, WebPreferences } from 'electron'
-import { type CoreKey, coreKeyOf } from '../../frontend/mount/keys.ts'
+import { type CoreKey, coreKeyOf } from '../../frontend/editor/keys.ts'
 import { SCHEME } from './before-ready.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`

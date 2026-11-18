@@ -1,4 +1,4 @@
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import type { BindFailure, DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
@@ -18,7 +18,7 @@ export type PluginContext = Client & {
   readonly lastStop: string | null
   // The version an update replaced, until the new one reaches ready once
   readonly previousVersion: string | null
-  // hetu's data folder, for an install plugin's host half only, null for every other half
+  // hetu's data folder, for a core plugin's host half only, null for every other half
   readonly dataDir: string | null
   // Whether one of its own requires or plugin.call targets is there: ready, or starting, which calls retry
   has(id: string): boolean
@@ -28,7 +28,7 @@ export type PluginContext = Client & {
   // starting to ready included. It is handed nothing and reads has again. Never for init's own map nor once stopping
   onDeps(fn: () => void | Promise<void>): void
   // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
-  // reason. Only http's host half in its utility process may, every other caller is refused not-granted
+  // reason. Only mcp-http-handler's host half in its utility process may, every other caller is refused not-granted
   bindFailed(reason: BindFailure): Promise<void>
   // Serves <id>.<name>, an action the manifest declares under provides.actions
   provide(name: string, handler: Handler): void
@@ -55,11 +55,11 @@ export type Plugin = { readonly kind: 'hetu-plugin', readonly spec: PluginSpec }
 
 type Limit = 'messagesPerSecond' | 'callsInFlight' | 'callDeadlineMs'
 
-// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the floor constants.
+// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the limits.
 // editor is the bridge the runtime connects to each port to the drawer
 export type RunOptions = { limits?: Partial<Record<Limit, number>>, editor?: Editor }
 
-// What the stopped answer keeps back from the grace, so it lands before the loader ends the way
+// What the stopped answer keeps back from the grace, so it lands before the plugins manager ends the way
 const STOP_MARGIN_MS = 250
 
 export function definePlugin(spec: PluginSpec): Plugin {
@@ -108,7 +108,7 @@ class Half {
     this.editor = options.editor ?? new Editor()
     this.editor.hold()
     this.ui = new Ui(this.editor)
-    const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
+    const limit = (name: Limit) => options.limits?.[name] ?? defaultLimits[name]
     // Every message the half sends goes through one pacing, lifecycle answers included: the Sender's, or the
     // transport's own for a worker, whose relay counts bytes as well as messages. Two in a row would let a backlog out
     // in a burst
@@ -181,7 +181,7 @@ class Half {
     try {
       await this.spec.start(ctx)
     } catch (err) {
-      // No ready goes out, so the loader's start-timeout ends the half
+      // No ready goes out, so the plugins manager's start-timeout ends the half
       this.phase = 'failed'
       console.error('hetu: start threw', err)
       return

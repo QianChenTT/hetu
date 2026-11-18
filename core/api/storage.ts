@@ -10,7 +10,7 @@ export const quotas = table({
   cache: { bytes: 64 * MiB, keys: 1024 },
 } as const)
 
-// The folder a caller's space has under storage/ and under cache/: a plugin's id, the folder the loader clears for it,
+// The folder a caller's space has under storage/ and under cache/: a plugin's id, the folder the plugins manager clears for it,
 // or window. and the role for a window. A plugin id holds no dot, so a window's can't be a plugin's. Content callers
 // have none until #97 designs them
 export function spaceOf(caller: Caller): string | null {

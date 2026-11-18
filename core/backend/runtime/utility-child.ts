@@ -2,10 +2,10 @@ import { type RelayLimits, relayLimitsOf } from '../../api/rate.ts'
 import { runInUtility, type UtilityPort } from '../../sdk/utility.ts'
 import { isPlugin } from './hosts.ts'
 
-// The bootstrap a utility process runs, built beside main.js. Its first message from main holds the bytes the loader
+// The bootstrap a utility process runs, built beside main.js. Its first message from main holds the bytes the plugins manager
 // hashed, the plugin's limits and its one port. It imports the bytes as one data: module, as main does for a host half,
 // and runs the module's plugin on that port. Anything else in the first message, a module that throws as it loads or one
-// with no plugin ends the process, which the loader reads as crashed. Main's later messages on the same parent port carry
+// with no plugin ends the process, which the plugins manager reads as crashed. Main's later messages on the same parent port carry
 // the plugin's limits as they are each time one changes
 
 export type StartEvent = { data: unknown, ports: readonly unknown[] }

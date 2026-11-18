@@ -7,7 +7,7 @@ import { MAX_LABEL_LENGTH } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import {
   allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
 
@@ -112,7 +112,7 @@ describe('agents\' items in the agent host\'s entry', () => {
     ['a label with a control character', [{ agent: 'client\n#1', capability: inbox }]],
     ['an item with no label', [{ capability: inbox }]],
     ['an item with a field more', [{ agent: 'client#1', capability: inbox, off: true }]],
-    ['an item of a type only install plugins hold', [{ agent: 'client#1', capability: { type: 'guard.hook' } }]],
+    ['an item of a type only core plugins hold', [{ agent: 'client#1', capability: { type: 'guard.hook' } }]],
     ['an item of no known type', [{ agent: 'client#1', capability: { type: 'host.replace' } }]],
     ['the same item twice for one agent', [{ agent: 'client#1', capability: inbox }, { agent: 'client#1', capability: { paths: ['inbox/**'], type: 'luoshu.read' } }]],
     ['more scopes of one type for one agent than a plugin may hold', [0, 1].map(n => ({ agent: 'client#1', capability: { type: 'luoshu.read', paths: Array.from({ length: 40 }, (_, i) => `n${n}-${i}/**`) } }))],
@@ -158,7 +158,7 @@ describe('agents\' items in the agent host\'s entry', () => {
   })
 })
 
-describe('agents\' items in the StateView', () => {
+describe('agents\' items in the grants snapshot', () => {
   afterEach(cleanup)
 
   // mcp as the install's own copy with its entry seeded as a test does and alpha a plugin of the folder
@@ -174,7 +174,7 @@ describe('agents\' items in the StateView', () => {
       },
       behave: { gate: { exports: { gate } } },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return { ...made, gate }
   }
 

@@ -1,5 +1,5 @@
 // The worker host page's logic, kept apart from the DOM so it runs in tests. The page hands it real workers and ports
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 import {
   type Budget, countMessage, messageCap, newBudget, newRate, type Rate, type RelayLimits, relayLimitsOf, spend, weigh,
 } from '../../api/rate.ts'
@@ -101,7 +101,7 @@ export class WorkerHost {
     script.set(start.code, this.prelude.length)
     const { port1: own, port2: theirs } = this.options.channel()
     const worker = this.options.spawn(`data:text/javascript;base64,${base64(script)}`, start.id)
-    const limit = (name: FloorConstant) => start.limits[name as keyof Limits]
+    const limit = (name: LimitName) => start.limits[name as keyof Limits]
     const run: Running = {
       id: start.id, incarnation: start.incarnation, worker, own, main, limits: start.limits, cap: messageCap(limit),
       rate: newRate(), budget: newBudget(), errors: 0, dropped: 0, drawer: null,

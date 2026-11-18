@@ -4,18 +4,18 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { toolFor, toolList } from '../api/tools.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
-import { createHistory } from '../../plugins/history/src/history.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createHistory } from '../../core-plugins/history/src/history.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import {
   coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -26,9 +26,9 @@ const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const privateNotes: Capability = { type: 'luoshu.read', paths: ['private/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
-const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['http'] } } } }), version })
+const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), version })
 
-// One folder of notes and one install, booted as often as the proof needs: the real boot, loader, carrier, gate and
+// One folder of notes and one install, booted as often as the proof needs: the real boot, plugins manager, carrier, gate and
 // luoshu, http the install's utility plugin the test drives as the door and mcp the install's own copy, a worker the
 // test answers for, holding read on every note unless items names its own and the agents' items and marks seed gives
 // it, none unless named. history adds hetu's history as it ships
@@ -48,7 +48,7 @@ async function world(
   const install = (mcpVersion: string) => writeInstall(installDir, {
     ...coreInstall(),
     luoshu: { files: filesFor(hostManifest('luoshu')) },
-    http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+    'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcpOf(mcpVersion, items), firstParty: true },
     ...(options.history === true ? { history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) } } : {}),
   })
@@ -75,11 +75,11 @@ async function world(
       luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } },
       ...(history === null ? {} : { history: { exports: { provider: history.provider, history: history.role } } }),
     }
-    const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+    const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
     const stop = async () => {
       luoshu.close()
       history?.close()
-      await loader.shutdown().catch(() => {})
+      await pluginsManager.shutdown().catch(() => {})
       carrier.close()
       await carrier.flush()
       for (const port of runtime.ports) port.close()
@@ -90,10 +90,10 @@ async function world(
       await stop()
     }
     open.unshift(async () => end?.())
-    await loader.start()
-    await loader.settled()
-    const list = async () => await loader.serve({ callId: 'list', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
-    return { loader, runtime, list, door: runtime.half('http', 1, 'utility') }
+    await pluginsManager.start()
+    await pluginsManager.settled()
+    const list = async () => await pluginsManager.serve({ callId: 'list', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
+    return { pluginsManager, runtime, list, door: runtime.half('mcp-http-handler', 1, 'utility') }
   }
   return { start, install, stored: async () => (await new StateStore(dataDir).load()).state.plugins.mcp }
 }
@@ -147,18 +147,18 @@ describe('step 5a part A in the joined core', () => {
     expect(shown[0].notes[0]).toBe('It asks for: luoshu.read on "inbox/**"')
     // Before the Confirm #1 reads nothing, after it inbox and not private
     expect(await read(mcp, one, 'inbox/a.md')).toBe('not-granted')
-    await run.loader.confirm(shown[0].id, {})
+    await run.pluginsManager.confirm(shown[0].id, {})
     expect(await read(mcp, one, 'inbox/a.md')).toBe('inbox text')
     expect(await read(mcp, one, 'private/b.md')).toBe('not-granted')
 
     // #2's ask read mcp's entry before #1's Confirm wrote it, so it went stale and #2 asks again
-    await expect(run.loader.confirm(shown[1].id, {})).rejects.toMatchObject({ code: 'stale' })
+    await expect(run.pluginsManager.confirm(shown[1].id, {})).rejects.toMatchObject({ code: 'stale' })
     expect((await ask(mcp, 'core.agentAsk', { capabilities: [privateNotes] }, two)).result).toEqual({ asked: 'waiting' })
-    await run.loader.confirm(run.loader.pending()[0].id, {})
+    await run.pluginsManager.confirm(run.pluginsManager.pending()[0].id, {})
     expect(await read(mcp, two, 'private/b.md')).toBe('private text')
 
     // Revoke of #1 refuses its next call at once and the core tells http it is revoked
-    expect(await run.loader.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(await run.pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
     expect(await read(mcp, one, 'inbox/a.md')).toBe('not-granted')
     expect((await ask(run.door, 'core.agents', { agents: ['client#1', 'client#2'] })).result).toEqual([
       { agent: 'client#1', holds: 'revoked' }, { agent: 'client#2', holds: 'items' },
@@ -173,20 +173,20 @@ describe('step 5a part A in the joined core', () => {
     mcp = run.runtime.half('mcp')
     expect((await proof.stored()).version).toBe('1.1.0')
     expect((await proof.stored()).agents).toEqual([{ agent: 'client#2', capability: privateNotes }])
-    // The copy left mcp's class unknown with no capabilities plugin here, so mcp's own item asks at its first use as
+    // The copy left mcp's class unknown with no grant risk classifier here, so mcp's own item asks at its first use as
     // any updated plugin's does. Its Confirm is the human's, then #2 reads with the grant it kept
     const kept = await request(run.door, mcp, 'client#2')
     expect(await read(mcp, kept, 'private/b.md')).toBe('needs-confirm')
-    expect(run.loader.pending().map(held => held.kind)).toEqual(['item.on'])
-    await run.loader.confirm(run.loader.pending()[0].id, {})
+    expect(run.pluginsManager.pending().map(held => held.kind)).toEqual(['item.on'])
+    await run.pluginsManager.confirm(run.pluginsManager.pending()[0].id, {})
     expect(await read(mcp, kept, 'private/b.md')).toBe('private text')
     expect((await ask(run.door, 'core.agents', { agents: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'revoked' }])
 
     // A Recover drops it
-    const restore = await run.loader.request({ kind: 'plugin.restore', plugin: 'mcp' }, trusted)
+    const restore = await run.pluginsManager.request({ kind: 'plugin.restore', plugin: 'mcp' }, trusted)
     if (!('held' in restore)) throw new Error('a restore applied at once')
-    await run.loader.confirm(restore.held, {})
-    await run.loader.settled()
+    await run.pluginsManager.confirm(restore.held, {})
+    await run.pluginsManager.settled()
     mcp = run.runtime.half('mcp', 2)
     const after = await request(run.door, mcp, 'client#2')
     expect(await read(mcp, after, 'private/b.md')).toBe('not-granted')
@@ -194,19 +194,19 @@ describe('step 5a part A in the joined core', () => {
 
     // A Confirm after mcp stopped is refused
     expect((await ask(mcp, 'core.agentAsk', { capabilities: [privateNotes] }, after)).result).toEqual({ asked: 'waiting' })
-    const waiting = run.loader.pending()[0].id
-    expect(await run.loader.request({ kind: 'plugin.off', plugin: 'mcp' }, trusted)).toEqual({ applied: true })
-    await run.loader.settled()
-    await expect(run.loader.confirm(waiting, {})).rejects.toMatchObject({ code: 'not-found' })
+    const waiting = run.pluginsManager.pending()[0].id
+    expect(await run.pluginsManager.request({ kind: 'plugin.off', plugin: 'mcp' }, trusted)).toEqual({ applied: true })
+    await run.pluginsManager.settled()
+    await expect(run.pluginsManager.confirm(waiting, {})).rejects.toMatchObject({ code: 'not-found' })
     expect((await proof.stored()).agents).toBeUndefined()
 
     // With the gate switched off the door's call is refused before mcp sees it
-    expect(await run.loader.request({ kind: 'plugin.on', plugin: 'mcp' }, trusted)).toMatchObject({ held: expect.any(String) })
-    await run.loader.confirm(run.loader.pending()[0].id, {})
-    await run.loader.settled()
-    const off = await run.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
+    expect(await run.pluginsManager.request({ kind: 'plugin.on', plugin: 'mcp' }, trusted)).toMatchObject({ held: expect.any(String) })
+    await run.pluginsManager.confirm(run.pluginsManager.pending()[0].id, {})
+    await run.pluginsManager.settled()
+    const off = await run.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
     if (!('held' in off)) throw new Error('the gate went off at once')
-    await run.loader.confirm(off.held, { typed: 'gate' })
+    await run.pluginsManager.confirm(off.held, { typed: 'gate' })
     mcp = run.runtime.half('mcp', 3)
     const before = mcp.inbox.length
     expect(outcome(await ask(run.door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#2' }))).toBe('policy-down')
@@ -245,7 +245,7 @@ describe('step 5a part B, the connect, in the joined core', () => {
     // Before the Confirm the collect answers waiting, a second connect while it waits is refused
     expect(await answerOf(run.door, handle)).toBe('waiting')
     expect(outcome(await ask(run.door, 'core.agentConnect', asked(1, 'other-client')))).toBe('throttled')
-    await run.loader.confirm(shown[0]!.id, {})
+    await run.pluginsManager.confirm(shown[0]!.id, {})
     expect(await answerOf(run.door, handle)).toBe('yes')
     expect(await answerOf(run.door, handle)).toBe('gone')
     // The new agent holds nothing, #1 still holds its grant
@@ -259,30 +259,30 @@ describe('step 5a part B, the connect, in the joined core', () => {
 
     // A connect waiting when http restarts is gone and can't be confirmed
     const waiting = handleOf(await ask(run.door, 'core.agentConnect', asked(4)))
-    const id = run.loader.pending()[0]!.id
-    await run.loader.serve({ callId: 'restart', caller: trusted, action: 'core.restart', args: { plugin: 'http' }, deadline: Date.now() + 30_000 } as Call)
-    await run.loader.settled()
-    const door = latest(run.runtime, 'http', 'utility')
-    expect(run.loader.pending()).toEqual([])
-    await expect(run.loader.confirm(id, {})).rejects.toMatchObject({ code: 'not-found' })
+    const id = run.pluginsManager.pending()[0]!.id
+    await run.pluginsManager.serve({ callId: 'restart', caller: trusted, action: 'core.restart', args: { plugin: 'mcp-http-handler' }, deadline: Date.now() + 30_000 } as Call)
+    await run.pluginsManager.settled()
+    const door = latest(run.runtime, 'mcp-http-handler', 'utility')
+    expect(run.pluginsManager.pending()).toEqual([])
+    await expect(run.pluginsManager.confirm(id, {})).rejects.toMatchObject({ code: 'not-found' })
     expect(await answerOf(door, waiting)).toBe('gone')
 
     // A connect for a revoked label is refused and a door call under it never reaches mcp
     expect(outcome(await ask(door, 'core.agentConnect', asked(2)))).toBe('not-granted')
-    expect(run.loader.pending()).toEqual([])
+    expect(run.pluginsManager.pending()).toEqual([])
     const mcpThen = latest(run.runtime, 'mcp')
     const before = mcpThen.inbox.length
     expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: `${CLAUDE}#2` }))).toBe('not-granted')
     expect(mcpThen.inbox.slice(before).filter(message => message.kind === 'call')).toEqual([])
 
     // With the gate switched off a connect is raised and confirmed while the new agent's door call is refused before mcp
-    const off = await run.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
+    const off = await run.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
     if (!('held' in off)) throw new Error('the gate went off at once')
-    await run.loader.confirm(off.held, { typed: 'gate' })
-    await run.loader.settled()
-    const now = latest(run.runtime, 'http', 'utility')
+    await run.pluginsManager.confirm(off.held, { typed: 'gate' })
+    await run.pluginsManager.settled()
+    const now = latest(run.runtime, 'mcp-http-handler', 'utility')
     const five = handleOf(await ask(now, 'core.agentConnect', asked(5)))
-    await run.loader.confirm(run.loader.pending()[0]!.id, {})
+    await run.pluginsManager.confirm(run.pluginsManager.pending()[0]!.id, {})
     expect(await answerOf(now, five)).toBe('yes')
     const mcpNow = latest(run.runtime, 'mcp')
     const seen = mcpNow.inbox.length

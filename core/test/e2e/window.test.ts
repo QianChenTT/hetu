@@ -20,7 +20,7 @@ describe('a window\'s way in', () => {
   it('shows the banner the shell draws from core.status', async () => {
     const app = await launch(await dataWith({}))
     const page = await editorPage(app)
-    // The install holds the gate and the capabilities plugin, so only the watchdog's slot reads absent once both started
+    // The install holds the gate and the grant risk classifier, so only the watchdog's policy job reads absent once both started
     const settled = ['watchdog: absent', 'pick a luoshu folder']
     await until(async () => JSON.stringify(await page.locator('#banner li').allTextContents()) === JSON.stringify(settled))
     expect(await page.locator('#banner li').allTextContents()).toEqual(settled)
@@ -84,13 +84,13 @@ describe('a window\'s way in', () => {
     const app = await launch(await dataWith({}))
     // The control: the window the core made answers through the same bridge
     expect(await self(await editorPage(app))).toMatchObject({ kind: 'window', role: 'editor' })
-    const preload = path.join(repo, 'core', 'dist', 'mount-preload.js')
-    const answered = await app.evaluate(async ({ BrowserWindow, session }, mountPreload) => {
+    const preload = path.join(repo, 'core', 'dist', 'editor-preload.js')
+    const answered = await app.evaluate(async ({ BrowserWindow, session }, editorPreload) => {
       const window = new BrowserWindow({
         show: false,
         webPreferences: {
           session: session.fromPartition('hetu-editor'), sandbox: true, contextIsolation: true,
-          preload: mountPreload,
+          preload: editorPreload,
         },
       })
       await window.loadURL('hetu://editor/')

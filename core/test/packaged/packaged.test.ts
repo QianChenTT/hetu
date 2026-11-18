@@ -27,7 +27,7 @@ describe('the packed folder', () => {
   })
 
   // macOS keeps the app's icon there too, which Info.plist names
-  it('holds app.asar and the install plugins in resources and nothing else', async () => {
+  it('holds app.asar and the core plugins in resources and nothing else', async () => {
     const icon = process.platform === 'darwin' ? ['electron.icns'] : []
     expect((await readdir(resourcesOf(appDir))).sort()).toEqual(['app.asar', ...icon, 'plugins'].sort())
   })
@@ -44,7 +44,7 @@ describe('a start', () => {
     expect(started.ready).toBe(true)
     expect(started.dataDir).toBe(dataDir)
     const events = started.records.map(record => `${record.event}${typeof record.plugin === 'string' ? ` ${record.plugin}` : ''}`)
-    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started gate', 'plugin.started capabilities', 'plugin.started search', 'plugin.started layout', 'plugin.started file-explorer', 'plugin.started http']))
+    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started gate', 'plugin.started grant-risk-classifier', 'plugin.started search', 'plugin.started layout', 'plugin.started file-explorer', 'plugin.started mcp-http-handler']))
     expect(started.records.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
     expect(started.records.find(record => record.event === 'core.ready')).toMatchObject({ gate: 'on' })
     expect([await exists(decoyData), await exists(decoyInstall)]).toEqual([false, false])
@@ -252,7 +252,7 @@ describe.runIf(process.platform !== 'linux')('a changed app.asar', () => {
   })
 })
 
-describe('a changed install plugin', () => {
+describe('a changed core plugin', () => {
   const list = async () => JSON.parse(await readFile(path.join(repo, 'dist-package', 'dir', 'stage', 'app', 'hetu-install.json'), 'utf8')) as { plugins: Record<string, { hash: string }> }
 
   async function tampered(id: string): Promise<string> {

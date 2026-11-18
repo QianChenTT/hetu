@@ -1,12 +1,12 @@
 import type { Caller } from '../api/envelope.ts'
-import type { FloorConstant } from '../api/floor.ts'
+import type { LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
 import { Carrier } from './carrier/carrier.ts'
 import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/seams.ts'
-import { Loader, type Failure } from './loader/loader.ts'
-import type { CarrierLink, Runtime } from './loader/seams.ts'
+import { PluginsManager, type Failure } from './plugins-manager/plugins-manager.ts'
+import type { CarrierLink, Runtime } from './plugins-manager/seams.ts'
 
 export type WireOptions = {
   booted: Booted
@@ -14,7 +14,7 @@ export type WireOptions = {
   // Where the install list is when it isn't in the install folder
   listDir?: string
   runtime: Runtime
-  // The guards expected on an action, the same list for the loader and the carrier. Defaults to core/api's
+  // The guards expected on an action, the same list for the plugins manager and the carrier. Defaults to core/api's
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
@@ -34,7 +34,7 @@ export type WireOptions = {
 // The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
 const runtimeActions = new Set(['security.open', 'core.quit', 'core.relaunch', 'core.pickFolder', 'editor.frame', 'editor.frameGone'])
 
-// The loader needs its link before the carrier exists, since the carrier needs the loader. Each call goes to the
+// The plugins manager needs its link before the carrier exists, since the carrier needs the plugins manager. Each call goes to the
 // carrier once wireCore attached it. One made before that throws
 export class LinkToCarrier implements CarrierLink {
   carrier: Carrier | null = null
@@ -80,36 +80,36 @@ export class LinkToCarrier implements CarrierLink {
     this.to.resume()
   }
 
-  limit(plugin: string, name: FloorConstant): number {
+  limit(plugin: string, name: LimitName): number {
     return this.to.limit(plugin, name)
   }
 }
 
-// What the carrier asks the loader for: every slot, guard and provider from the loader's roles and the watchdog's core
-// actions from its serve. wireCore and the loader's tests both build the carrier from it, so the tests run the wiring
+// What the carrier asks the plugins manager for: every policy job, guard and provider from the plugins manager's roles and the watchdog's core
+// actions from its serve. wireCore and the plugins manager's tests both build the carrier from it, so the tests run the wiring
 // that ships
 export function carrierOptions(
-  loader: Loader,
-  rest: Omit<CarrierOptions, 'loader' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
+  pluginsManager: PluginsManager,
+  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
 ): CarrierOptions {
   return {
-    loader,
-    gate: () => loader.role('gate', 'gate'),
-    guards: id => loader.role(id, 'guard'),
-    providers: id => loader.role(id, 'provider'),
-    watchdog: () => loader.role('watchdog', 'watchdog'),
-    core: loader.serve,
-    asks: loader.asks,
+    pluginsManager,
+    gate: () => pluginsManager.role('gate', 'gate'),
+    guards: id => pluginsManager.role(id, 'guard'),
+    providers: id => pluginsManager.role(id, 'provider'),
+    watchdog: () => pluginsManager.role('watchdog', 'watchdog'),
+    core: pluginsManager.serve,
+    asks: pluginsManager.asks,
     ...rest,
   }
 }
 
-// The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
-// every slot, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
-// the carrier writes its floor records and its audit queue through and serves log.history and log.verify from
-export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
+// The core joined in its order: the link, then the plugins manager holding it, then the carrier asking the plugins manager for
+// every policy job, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
+// the carrier writes its core records and its audit queue through and serves log.segments and log.verify from
+export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier } {
   const link = new LinkToCarrier()
-  const loader = new Loader({
+  const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
     ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
@@ -123,10 +123,10 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
   const { windows } = options
-  const carrier = new Carrier(carrierOptions(loader, {
+  const carrier = new Carrier(carrierOptions(pluginsManager, {
     log: options.booted.log,
-    core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : loader.serve(call)),
-    logFailed: () => loader.controlFailed('log', 'log-failing'),
+    core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : pluginsManager.serve(call)),
+    logFailed: () => pluginsManager.controlFailed('log', 'log-failing'),
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
@@ -134,5 +134,5 @@ export function wireCore(options: WireOptions): { loader: Loader, carrier: Carri
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   }))
   link.carrier = carrier
-  return { loader, carrier }
+  return { pluginsManager, carrier }
 }

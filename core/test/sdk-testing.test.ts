@@ -8,15 +8,15 @@ import type { Capability } from '../api/capabilities.ts'
 import { LIST_PAGE } from '../api/actions.ts'
 import { API_VERSION } from '../api/manifest.ts'
 import { quotas } from '../api/storage.ts'
-import type { Call, Provider } from '../api/slots.ts'
+import type { Call, Provider } from '../api/policy-jobs.ts'
 import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { tick } from './carrier-fakes.ts'
-import { Drawer, type Instance, type PortLike } from '../frontend/mount/bridge.ts'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { Versions } from '../frontend/mount/versions.ts'
+import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { Versions } from '../frontend/editor/versions.ts'
 import { Editor, type EditorClient } from '../sdk/editor.ts'
-import { fakeCore as mountCore } from './mount-fakes.ts'
+import { fakeCore as editorCore } from './editor-fakes.ts'
 
 const cores: FakeCore[] = []
 afterEach(async () => {
@@ -110,7 +110,7 @@ describe('the fake core', () => {
     expect(() => fakeCore({ manifest: manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })).toThrow()
   })
 
-  // As the loader refuses it with api, so a plugin's own tests fail where hetu would
+  // As the plugins manager refuses it with api, so a plugin's own tests fail where hetu would
   it('refuses a manifest whose api range leaves out this core, and takes an older one this core only added to', () => {
     expect(() => fakeCore({ manifest: manifest({ api: '^1' }) })).toThrow(/api/)
     expect(() => fakeCore({ manifest: manifest({ api: '^2', capabilities: [{ type: 'ui.edit', paths: ['**'] }] }) })).toThrow(/api/)
@@ -315,7 +315,7 @@ describe('a luoshu that fails for a while', () => {
   })
 })
 
-describe('a core that takes time and holds the floor lower', () => {
+describe('a core that takes time and holds the limits lower', () => {
   it('answers the luoshu, storage and cache after latencyMs', async () => {
     const fake = core(undefined, {}, { latencyMs: 60 })
     const { plugin, box } = reader()
@@ -666,7 +666,7 @@ describe("the fake drawer's ranges and commands", () => {
     // hetu's drawer, the plugin's client on a port to it
     const notes: Instance[] = []
     const selections = new Map<string, { anchor: number, head: number }[]>()
-    const core = mountCore({
+    const core = editorCore({
       'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
       'editor.reach': args => {
         const { path: asked } = args as { path?: string }
@@ -754,7 +754,7 @@ describe('the fake core playing another plugin', () => {
     let mcp: StandIn | null = null
     const { ctx } = await started(callerManifest, made => {
       mcp = made.standIn('mcp', {
-        actions: { handle: { from: ['caller'] }, admin: { from: ['http'] } },
+        actions: { handle: { from: ['caller'] }, admin: { from: ['mcp-http-handler'] } },
         handle: () => { throw { code: 'invalid' } },
       })
     })
@@ -778,17 +778,17 @@ describe('the fake core playing another plugin', () => {
     expect(seen).toEqual([false, true, true, false])
   })
 
-  // http runs in a utility process, so the fake core places it there on a port, as the loader does
+  // http runs in a utility process, so the fake core places it there on a port, as the plugins manager does
   it('places http under test in a utility process on a port, where the floor takes its two core actions', async () => {
-    const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const { made, ctx } = await started(http)
     expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
-    await until(() => made.floor.some(record => record.event === 'http.refused'))
-    expect(made.floor.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
-    // The core ends the half before any answer, as the loader ends the process, so the call never settles
+    await until(() => made.coreRecords.some(record => record.event === 'http.refused'))
+    expect(made.coreRecords.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
+    // The core ends the half before any answer, as the plugins manager ends the process, so the call never settles
     void ctx.bindFailed('port-taken').catch(() => {})
     await until(() => made.coreCalls.length === 1)
-    expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
+    expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
   })
 

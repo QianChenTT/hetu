@@ -1,4 +1,4 @@
-// Kept apart from zod, so the SDK and the floor constants load without it
+// Kept apart from zod, so the SDK and the limits load without it
 
 // Host halves share these tables in the same process, so a slip there can't change what the core decides with them
 export function frozen<T>(value: T): T {

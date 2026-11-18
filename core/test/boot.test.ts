@@ -184,7 +184,7 @@ describe('a later run', () => {
     expect(later.at(-1)).toEqual({ event: 'boot.suspect' })
   })
 
-  // The plugin files check is the loader's, which reads the bytes that run
+  // The plugin files check is the plugins manager's, which reads the bytes that run
   it('checks no plugin code and leaves enabled as the entry holds it', async () => {
     const first = await started()
     await addSearch(first)
@@ -340,7 +340,7 @@ describe('the tombstones', () => {
   })
 })
 
-// Record nothing stops the core's own floor records until recording is back on, boot's included
+// Record nothing stops the core's own core records until recording is back on, boot's included
 describe('recording off', () => {
   async function recordingOff() {
     const first = await started()

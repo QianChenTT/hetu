@@ -117,7 +117,7 @@ describe('the hidden renderer for workers', () => {
     expect(starts(renderers[1]).map(post => (post.message as { id: string }).id)).toEqual(['files'])
   })
 
-  it('names a plugin ended just before the renderer died, since its port closes first and the loader ends it then', async () => {
+  it('names a plugin ended just before the renderer died, since its port closes first and the plugins manager ends it then', async () => {
     const { workers, renderers, records } = runtime(40)
     workers.start(start('search').start)
     workers.start(start('git').start)
@@ -169,7 +169,7 @@ describe('the hidden renderer for workers', () => {
     ])
   })
 
-  it('hands a cutoff from the page to the loader and the watchdog once, for a running worker, and has nothing left to end', () => {
+  it('hands a cutoff from the page to the plugins manager and the watchdog once, for a running worker, and has nothing left to end', () => {
     const { workers, renderers, cutoffs, samples } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
@@ -243,7 +243,7 @@ describe('a renderer per community plugin', () => {
     expect(made.map(group => group.group)).toEqual(['hello', 'first-party', 'hello'])
   })
 
-  it('records a renderer that died just as its last plugin ended, since the loader ends the plugin when its port closes', async () => {
+  it('records a renderer that died just as its last plugin ended, since the plugins manager ends the plugin when its port closes', async () => {
     const { router, made, records } = routed()
     router.start(start('hello').start)
     made[0].renderers[0].says({ kind: 'ready' })

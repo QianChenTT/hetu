@@ -1,0 +1,7 @@
+{
+  "id": "grant-risk-classifier",
+  "name": "Grant risk classifier",
+  "version": "0.1.0",
+  "api": "^2",
+  "entries": { "host": "dist/host.js" }
+}

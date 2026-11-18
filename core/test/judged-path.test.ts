@@ -1,13 +1,13 @@
 import { mkdir, readdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call, Prepared } from '../api/slots.ts'
+import type { Call, Prepared } from '../api/policy-jobs.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message } from './loader-fakes.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -87,11 +87,11 @@ async function world(granted: Record<string, string[]>) {
     },
   }
   runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider, luoshu: luoshu.role } } }
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
   const junctions: string[] = []
   open.push(async () => {
     luoshu.close()
-    await loader.shutdown().catch(() => {})
+    await pluginsManager.shutdown().catch(() => {})
     carrier.close()
     await carrier.flush()
     for (const port of runtime.ports) port.close()
@@ -100,8 +100,8 @@ async function world(granted: Record<string, string[]>) {
     for (const junction of junctions) await rmdir(junction).catch(() => {})
     await rm(base, { recursive: true, force: true })
   })
-  await loader.start()
-  await loader.settled()
+  await pluginsManager.start()
+  await pluginsManager.settled()
   const ask = (id: string, action: string, args: unknown) => runtime.half(id).ask(action, args, 5000).then(replyOf)
   const at = (...names: string[]) => path.join(folder, ...names)
   // Another program swaps a folder for a junction to the folder given and puts it back

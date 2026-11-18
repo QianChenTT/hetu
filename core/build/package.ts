@@ -79,7 +79,7 @@ export function configFor(stage: string, kind: PackageKind, fuses: Readonly<Reco
     files: ['**/*'],
     asar: true,
     asarUnpack: [],
-    // Each install plugin beside app.asar, which the loader checks against the list inside it
+    // Each core plugin beside app.asar, which the plugins manager checks against the list inside it
     extraResources: [{ from: path.join(stage, 'plugins'), to: 'plugins', filter: ['**/*'] }],
     npmRebuild: false,
     nodeGypRebuild: false,

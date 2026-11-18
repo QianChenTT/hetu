@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { loadHost } from '../backend/runtime/hosts.ts'
-import type { HostLink, HostStart } from '../backend/loader/seams.ts'
+import type { HostLink, HostStart } from '../backend/plugins-manager/seams.ts'
 
 const encode = (text: string) => Buffer.from(text, 'utf8')
 
-// A host half's link as the loader hands it: what the half posted, and the carrier's messages to it
+// A host half's link as the plugins manager hands it: what the half posted, and the carrier's messages to it
 function link() {
   const posted: unknown[] = []
   let listener: ((message: unknown) => void) | null = null
@@ -27,7 +27,7 @@ function start(entry = 'host.js', text = 'export default 1', over: Partial<HostS
 const plugin = { kind: 'hetu-plugin', spec: { start() {} } }
 
 describe('loading a host half', () => {
-  it('imports the bytes the loader hashed, as one data: module, after freezing the built-ins', async () => {
+  it('imports the bytes the plugins manager hashed, as one data: module, after freezing the built-ins', async () => {
     const order: string[] = []
     let imported = ''
     await loadHost(start('host.js', 'export const é = 1'), {
@@ -61,7 +61,7 @@ describe('loading a host half', () => {
     expect(roles).toEqual({ provider, gate, luoshu })
   })
 
-  it('hands on the history and exec roles, which the loader gives the notes folder and the view of the grants', async () => {
+  it('hands on the history and exec roles, which the plugins manager gives the notes folder and the view of the grants', async () => {
     const history = { open: () => {} }
     const exec = { stateChanged: () => {} }
     expect(await loadHost(start(), { freeze: () => {}, importer: async () => ({ default: plugin, history }) })).toEqual({ history })

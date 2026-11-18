@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { firstPartyIds, installIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
+import { firstPartyIds, corePluginIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain } from './plain.ts'
 import { pathProblem } from './scope.ts'
 
@@ -10,7 +10,7 @@ export const INSTALL_LIST_FORMAT = 1
 // Refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_INSTALL_LIST_BYTES = 256 * 1024
 
-// The signer a first-party copy's entry carries until provenance lands. The loader accepts it only while the copy's
+// The signer a first-party copy's entry carries until provenance lands. The plugins manager accepts it only while the copy's
 // bytes equal the install's. The space keeps it apart from any signer identity provenance could pin, which is a URI or
 // an address
 export const FIRST_PARTY_SIGNER = 'hetu first-party'
@@ -39,7 +39,7 @@ const installPath = z.string().superRefine((value, ctx) => {
 
 // One plugin the install holds: where its folder is, its version and the hash of its files as hashFiles gives it.
 // firstParty marks a bundled copy of a first-party folder plugin, which the reconcile copies into the plugin folder.
-// Every other entry is an install plugin, whose grants are its manifest
+// Every other entry is a core plugin, whose grants are its manifest
 const listed = z.strictObject({
   path: installPath,
   version: pluginVersion,
@@ -60,7 +60,7 @@ export const installList = plain(
   }).superRefine((list, ctx) => {
     const paths = new Set<string>()
     for (const [id, entry] of Object.entries(list.plugins)) {
-      const fits = entry.firstParty === true ? isOne(firstPartyIds, id) : isOne(installIds, id)
+      const fits = entry.firstParty === true ? isOne(firstPartyIds, id) : isOne(corePluginIds, id)
       if (!fits) ctx.addIssue({ code: 'custom', message: `${id} is not ${entry.firstParty ? 'a first-party' : 'an install'} id` })
       if (paths.has(entry.path)) ctx.addIssue({ code: 'custom', message: `a folder named twice: ${entry.path}` })
       paths.add(entry.path)

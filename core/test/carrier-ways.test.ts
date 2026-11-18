@@ -108,24 +108,24 @@ describe('ports bound by closure', () => {
     port2.close()
   })
 
-  it('passes ready, pong and stopped to the loader with the bound caller', async () => {
-    const { connect, loader } = harness()
+  it('passes ready, pong and stopped to the plugins manager with the bound caller', async () => {
+    const { connect, pluginsManager } = harness()
     const search = connect(worker('search'))
     for (const kind of ['ready', 'pong', 'stopped']) search.post({ v: 1, kind })
     await search.ask('core.self')
-    expect(loader.lifecycle).toEqual(['ready', 'pong', 'stopped'].map(kind => ({ caller: worker('search'), kind })))
+    expect(pluginsManager.lifecycle).toEqual(['ready', 'pong', 'stopped'].map(kind => ({ caller: worker('search'), kind })))
   })
 
   // Everything heard from a utility half counts as its liveness, so one held over its rate is never read as hung
-  it('tells the loader it heard http\'s utility half for every message before the rate, dropped and unreadable ones too', async () => {
-    const { connect, loader } = harness()
-    loader.utility('http')
-    loader.human.plugins.http = { messagesPerSecond: 2, floodFactor: 1000 }
-    const http = connect(host('http'))
+  it('tells the plugins manager it heard http\'s utility half for every message before the rate, dropped and unreadable ones too', async () => {
+    const { connect, pluginsManager } = harness()
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.human.plugins['mcp-http-handler'] = { messagesPerSecond: 2, floodFactor: 1000 }
+    const http = connect(host('mcp-http-handler'))
     const posted = [{ v: 1, kind: 'pong' }, { v: 1, kind: 'pong' }, { v: 1, kind: 'pong' }, 'not an envelope', { v: 2, kind: 'pong' }, null, { v: 1, kind: 'pong' }]
     for (const message of posted) http.post(message)
     await tick(30)
-    const kinds = loader.lifecycle.filter(entry => entry.caller.kind === 'plugin' && entry.caller.id === 'http').map(entry => entry.kind)
+    const kinds = pluginsManager.lifecycle.filter(entry => entry.caller.kind === 'plugin' && entry.caller.id === 'mcp-http-handler').map(entry => entry.kind)
     expect(kinds.filter(kind => kind === 'alive')).toHaveLength(posted.length)
     // Only the two within the rate were read
     expect(kinds.filter(kind => kind === 'pong')).toHaveLength(2)
@@ -133,46 +133,46 @@ describe('ports bound by closure', () => {
     expect(kinds.slice(0, 2)).toEqual(['alive', 'pong'])
   })
 
-  it('tells the loader nothing more for a worker, http\'s own worker or a host half on a handle', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.utility('http')
-    loader.sandboxed('search')
-    loader.installed('watchdog')
-    loader.human.all = { messagesPerSecond: 2, floodFactor: 1000 }
+  it('tells the plugins manager nothing more for a worker, http\'s own worker or a host half on a handle', async () => {
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.sandboxed('search')
+    pluginsManager.installed('watchdog')
+    pluginsManager.human.all = { messagesPerSecond: 2, floodFactor: 1000 }
     const watchdog = hostHalf(carrier, host('watchdog'))
-    const posts = [connect(worker('search')), connect(worker('http')), { post: watchdog.handle.post }]
+    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: watchdog.handle.post }]
     for (const half of posts) for (let i = 0; i < 4; i++) half.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.lifecycle.filter(entry => entry.kind === 'alive')).toEqual([])
-    expect(loader.lifecycle).toHaveLength(6)
+    expect(pluginsManager.lifecycle.filter(entry => entry.kind === 'alive')).toEqual([])
+    expect(pluginsManager.lifecycle).toHaveLength(6)
   })
 
   it('still closes a utility half past its flood cap as flood, though it was heard', async () => {
-    const { connect, loader } = harness()
-    loader.utility('http')
-    loader.human.plugins.http = { messagesPerSecond: 2, floodFactor: 2, floodMs: 1000 }
-    const http = connect(host('http'))
+    const { connect, pluginsManager } = harness()
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.human.plugins['mcp-http-handler'] = { messagesPerSecond: 2, floodFactor: 2, floodMs: 1000 }
+    const http = connect(host('mcp-http-handler'))
     for (let i = 0; i < 6; i++) http.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.crashes).toEqual([{ caller: host('http'), reason: 'flood' }])
+    expect(pluginsManager.crashes).toEqual([{ caller: host('mcp-http-handler'), reason: 'flood' }])
   })
 
-  it('counts and reads a utility half\'s message when the loader throws as it hears it', async () => {
-    const { connect, loader } = harness()
-    loader.utility('http')
-    loader.heard = (caller, kind) => {
-      if (kind === 'alive') throw new Error('loader gone')
-      loader.lifecycle.push({ caller, kind })
+  it('counts and reads a utility half\'s message when the plugins manager throws as it hears it', async () => {
+    const { connect, pluginsManager } = harness()
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.heard = (caller, kind) => {
+      if (kind === 'alive') throw new Error('plugins manager gone')
+      pluginsManager.lifecycle.push({ caller, kind })
     }
-    const http = connect(host('http'))
-    expect((await http.ask('core.self')).result).toEqual(host('http'))
+    const http = connect(host('mcp-http-handler'))
+    expect((await http.ask('core.self')).result).toEqual(host('mcp-http-handler'))
     http.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.lifecycle).toEqual([{ caller: host('http'), kind: 'pong' }])
+    expect(pluginsManager.lifecycle).toEqual([{ caller: host('mcp-http-handler'), kind: 'pong' }])
   })
 
   it('drops a message of another version or kind unread, with no reply', async () => {
-    const { connect, gate, loader } = harness()
+    const { connect, gate, pluginsManager } = harness()
     const search = connect(worker('search'))
     search.post({ v: 2, kind: 'call', id: 101, action: 'luoshu.read', args: { path: 'a.md' } })
     search.post({ v: '1', kind: 'call', id: 102, action: 'luoshu.read', args: { path: 'a.md' } })
@@ -188,14 +188,14 @@ describe('ports bound by closure', () => {
     await tick()
     expect(search.inbox.filter(message => message.id !== sentinel)).toEqual([])
     expect(gate.asked).toEqual([])
-    expect(loader.lifecycle).toEqual([])
+    expect(pluginsManager.lifecycle).toEqual([])
   })
 })
 
 describe('the end of a way in', () => {
   it('reports a port closed under its plugin as crashed and answers the calls it held crashed', async () => {
-    const { connect, loader, gate } = harness()
-    loader.sandboxed('search', { query: {} })
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.sandboxed('search', { query: {} })
     gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
     const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
@@ -204,25 +204,25 @@ describe('the end of a way in', () => {
     search.port.close()
     const reply = await scribe.reply(id)
     expect(code(reply)).toBe('crashed')
-    expect(loader.crashes).toEqual([{ caller: worker('search'), reason: 'closed' }])
+    expect(pluginsManager.crashes).toEqual([{ caller: worker('search'), reason: 'closed' }])
   })
 
   it('reports nothing for its own close and tells the callee nothing more', async () => {
-    const { carrier, connect, loader } = harness()
+    const { carrier, connect, pluginsManager } = harness()
     const search = connect(worker('search'))
     const closed = new Promise(resolve => search.port.once('close', resolve))
     carrier.end(worker('search'))
     await closed
     await tick()
-    expect(loader.crashes).toEqual([])
+    expect(pluginsManager.crashes).toEqual([])
     // A new incarnation may take the half again
     const again = connect(worker('search', 2))
     expect((await again.ask('core.self')).result).toEqual(worker('search', 2))
   })
 
   it('answers the calls a planned stop held with stopped', async () => {
-    const { carrier, connect, loader, gate } = harness()
-    loader.sandboxed('search', { query: {} })
+    const { carrier, connect, pluginsManager, gate } = harness()
+    pluginsManager.sandboxed('search', { query: {} })
     gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
     const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
@@ -377,12 +377,12 @@ describe('the window way in', () => {
     expect((await way.ask('editor-1', 'core.self')).ok).toBe(true)
   })
 
-  it('passes no lifecycle message from a window to the loader', async () => {
-    const { carrier, loader } = harness()
+  it('passes no lifecycle message from a window to the plugins manager', async () => {
+    const { carrier, pluginsManager } = harness()
     const way = windowWay(carrier, { 'editor-1': editor })
     for (const kind of ['ready', 'pong', 'stopped']) way.post('editor-1', { v: 1, kind })
     await way.ask('editor-1', 'core.self')
-    expect(loader.lifecycle).toEqual([])
+    expect(pluginsManager.lifecycle).toEqual([])
   })
 })
 

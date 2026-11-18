@@ -77,7 +77,7 @@ export function isInstallOnly(type: string): boolean {
   return (installOnlyTypes as readonly string[]).includes(type)
 }
 
-export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only install plugins hold')
+export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only core plugins hold')
 
 // Counted per type and scope field across the list, so splitting a type over many entries doesn't get past the cap
 function capped<T extends z.ZodType<Capability>>(item: T) {

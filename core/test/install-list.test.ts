@@ -8,7 +8,7 @@ const hash = 'a'.repeat(64)
 const list = (plugins: object) => ({ format: 1, plugins })
 
 describe('the install list', () => {
-  it('takes install plugins and marked first-party copies', () => {
+  it('takes core plugins and marked first-party copies', () => {
     const parsed = installList.parse(list({
       gate: { path: 'plugins/gate', version: '1.0.0', hash },
       git: { path: 'plugins/git', version: '2.1.0', hash, firstParty: true },
@@ -85,8 +85,8 @@ describe('the lifecycle messages', () => {
   })
 
   // Each reason a crash, a kill, a missed beat or a failed bind leaves is the lastStop a restarted half's init carries
-  it('holds every reason the loader ends a plugin with, read from the loader\'s own source', () => {
-    const source = readFileSync(new URL('../backend/loader/loader.ts', import.meta.url), 'utf8')
+  it('holds every reason the plugins manager ends a plugin with, read from the plugins manager\'s own source', () => {
+    const source = readFileSync(new URL('../backend/plugins-manager/plugins-manager.ts', import.meta.url), 'utf8')
     const quoted = (text: string) => [...text.matchAll(/'([a-z-]+)'/g)].map(match => match[1])
     const given = [...source.matchAll(/this\.die\(([^)]*)\)/g)].flatMap(match => quoted(match[1]))
     // A crash's reason comes in through crashed and a failed bind's through core.bindFailed

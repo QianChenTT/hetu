@@ -38,20 +38,20 @@ function constant(main: string, name: 'PACKAGED' | 'LOCKED'): boolean {
   return value
 }
 
-const INSTALL_PLUGINS =['capabilities', 'exec', 'file-explorer', 'gate', 'hidden-marks', 'history', 'http', 'layout', 'luoshu', 'search', 'storage']
+const INSTALL_PLUGINS =['exec', 'file-explorer', 'gate', 'grant-risk-classifier', 'hidden-marks', 'history', 'layout', 'luoshu', 'mcp-http-handler', 'search', 'storage']
 
 // The time each stage built in a test may take. A stage builds main.js, the bootstraps, the frontend and every install
 // plugin, which took about 5 s on a shared macOS runner against vitest's 5 s, so each gets four times that
 const STAGE_MS = 20_000
 
 describe('the stage the package is built from', () => {
-  it('holds the app for app.asar and the install plugins beside it, and nothing else', async () => {
+  it('holds the app for app.asar and the core plugins beside it, and nothing else', async () => {
     const stage = path.join(await temp(), 'stage')
     await stageInstall(stage, { locked: true })
     expect((await readdir(stage)).sort()).toEqual(['app', 'plugins'])
     const app = await files(path.join(stage, 'app'))
-    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual([INSTALL_LIST, 'main.js', 'mount-preload.js', 'package.json', 'utility.js', 'workers-preload.js'])
-    expect(app.filter(file => file.startsWith('frontend/')).every(file => /^frontend\/(mount|trusted|workers)\/[\w.-]+\.(html|css|js)$/.test(file))).toBe(true)
+    expect(app.filter(file => !file.startsWith('frontend/'))).toEqual(['editor-preload.js', INSTALL_LIST, 'main.js', 'package.json', 'utility.js', 'workers-preload.js'])
+    expect(app.filter(file => file.startsWith('frontend/')).every(file => /^frontend\/(editor|trusted|workers)\/[\w.-]+\.(html|css|js)$/.test(file))).toBe(true)
     expect((await readdir(path.join(stage, 'plugins'))).sort()).toEqual(INSTALL_PLUGINS)
     const all = [...app, ...await files(path.join(stage, 'plugins'))]
     expect(all.filter(file => /node_modules|\.map$|\.ts$|(^|\/)log\//.test(file))).toEqual([])

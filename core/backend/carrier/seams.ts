@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction } from '../../api/ids.ts'
-import type { Access, Call, Gate, Guard, PluginState, Provider, SlotState, Watchdog } from '../../api/slots.ts'
+import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { AuditLog } from './audit.ts'
 
@@ -27,25 +27,25 @@ export type PluginInfo = {
   topics: readonly string[]
 }
 
-type Values = Readonly<Partial<Record<FloorConstant, number>>>
+type Values = Readonly<Partial<Record<LimitName, number>>>
 
-// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the floor
-// constant whether it raises or lowers it. One for the plugin wins over one for all
+// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the fixed
+// value whether it raises or lowers it. One for the plugin wins over one for all
 export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values>> }
 
-// What the loader owns: lifecycle, the state and the StateView it pushes to the gate
-export type Loader = {
-  // The state of the install plugin holding a slot or a guard role
-  slot(id: string): SlotState
-  // The number of the newest StateView pushed to the gate
+// What the plugins manager owns: lifecycle, the state and the grants snapshot it pushes to the gate
+export type PluginsManager = {
+  // The state of the core plugin holding a policy job or a guard role
+  policyJob(id: string): PolicyJobState
+  // The number of the newest grants snapshot pushed to the gate
   view(): number
   // null for no such plugin
   plugin(id: string): PluginInfo | null
   limits(): HumanLimits
   recordNothing(): boolean
-  // Whether the human revoked an agent's label and http has not yet said it ended its tokens, from the loader's state
+  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens, from the plugins manager's state
   revoked(label: string): boolean
-  // A way in closed under its plugin or was closed for a flood. The loader moves dependents to waiting before this
+  // A way in closed under its plugin or was closed for a flood. The plugins manager moves dependents to waiting before this
   // returns and the carrier then answers the calls the plugin held
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
   // Lifecycle messages a plugin sends, which the carrier only passes on, and alive for anything at all main heard from a
@@ -63,25 +63,25 @@ export type Asks = { raise(ask: string, access: Access): string | AskRefusal }
 // provider's or the gate's text can name paths
 export type Debug = (entry: { plugin: string | null, caller: Caller, action: string, text: string }) => void
 
-// A namespace a later part serves with its own checks: ui.* the runtime and the mount. The bus serves events.* inside
+// A namespace a later part serves with its own checks: ui.* the runtime and the drawer. The bus serves events.* inside
 // the carrier
 export type Served = (call: Call) => Promise<unknown>
 
-// What the floor lane writes through: the one EventLog boot opened, or something with its append. healthy still true
+// What the core record lane writes through: the one EventLog boot opened, or something with its append. healthy still true
 // after a failed append means the log refused that record, not that the log is down
-export type FloorLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
+export type CoreRecordLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
 
-// The one EventLog boot opened as the carrier holds it: the floor lane appends one record at a time, the audit writer
-// appends batches and log.history and log.verify read it
-export type CoreLog = FloorLog & AuditLog
+// The one EventLog boot opened as the carrier holds it: the core record lane appends one record at a time, the audit writer
+// appends batches and log.segments and log.verify read it
+export type CoreLog = CoreRecordLog & AuditLog
 
-// What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a
+// What became of one core record: on disk, not taken while the human turned recording off, or lost: dropped from a
 // full backlog, refused by the log or still waiting when the lane closed
 export type Landing = 'landed' | 'muted' | 'lost'
 
 export type CarrierOptions = {
-  loader: Loader
-  // The holder's interface while the slot or role is on, else null
+  pluginsManager: PluginsManager
+  // The holder's interface while the policy job or role is on, else null
   gate: () => Gate | null
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null
@@ -92,9 +92,9 @@ export type CarrierOptions = {
   // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
   armed?: (caller: Caller) => boolean
   // The core's log has failed: its oldest record waited logFailMs unwritten while recording was on. Told until the
-  // loader takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
+  // plugins manager takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
   logFailed?: () => boolean | void
-  // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
+  // Core actions the plugins manager and the runtime serve: watchdog.stop and watchdog.restart from the plugins manager, security.* once
   // the trusted window exists
   core?: Served
   served?: { ui?: Served }
@@ -106,8 +106,8 @@ export type CarrierOptions = {
   // The guards expected on an action, in the order they answer. Defaults to core/api's list, tests name others since
   // core/api expects none until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // How long the floor lane waits before it tries a failed append again
-  floorRetryMs?: number
+  // How long the core record lane waits before it tries a failed append again
+  coreRecordRetryMs?: number
   // How often the audit writer writes the queue, 100 ms unless a test names another
   auditEveryMs?: number
   // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page

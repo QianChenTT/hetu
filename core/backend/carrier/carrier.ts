@@ -3,26 +3,26 @@ import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreA
 import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, agentLabel, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
-  calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
+  calleeRefusalCodes, refusalCodes, callEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
-import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
+import { MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, slotIds,
+  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, policyJobIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
-  agentDoor, agentHost, agentOwn, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
-  type Sample, type Scope, type SlotState,
-} from '../../api/slots.ts'
+  agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
+  type Sample, type Scope, type PolicyJobState,
+} from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
-import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
+import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
@@ -80,7 +80,7 @@ type Pending = {
   timer: ReturnType<typeof setTimeout> | null
   done: boolean
   started: number
-  gate: SlotState
+  gate: PolicyJobState
   scope: Scope | undefined
   // The paths of a second ask the gate or a guard refused after the last one let on, which a call that ends refused
   // records in place of scope
@@ -90,7 +90,7 @@ type Pending = {
   filtering: Filtering | null
 }
 
-// The paths by their hash, the gate and StateView the answers came from, how many were asked about and the indexes kept
+// The paths by their hash, the gate and grants snapshot the answers came from, how many were asked about and the indexes kept
 type Filtering = { hash: string, gate: object, view: number | null, asked: number, kept: number[] }
 
 const hashOf = (paths: readonly string[]) => createHash('sha256').update(JSON.stringify(paths)).digest('hex')
@@ -124,7 +124,7 @@ type Shaped =
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
 // The core actions the trusted window may send inside its input delay, since they only read
-const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.history', 'log.verify'])
+const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.segments', 'log.verify'])
 
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
@@ -144,7 +144,7 @@ function field(message: unknown, name: string): unknown {
 // The plugin id or core namespace an action or a topic starts with
 const namespaceOf = (name: string) => name.slice(0, name.indexOf('.'))
 
-// A subscriber as a floor record names it
+// A subscriber as a core record names it
 function whoOf(caller: Caller): Record<string, Field> {
   if (caller.kind === 'plugin') return { plugin: caller.id, half: caller.half }
   if (caller.kind === 'window') return { window: caller.role }
@@ -215,13 +215,13 @@ function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
 }
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
-// Policy comes from the slots it asks: the gate decides and the carrier enforces
+// Policy comes from the policy jobs it asks: the gate decides and the carrier enforces
 export class Carrier {
   private readonly options: CarrierOptions
   private readonly now: () => number
   private readonly clock: () => number
   private readonly limits: Limits
-  private readonly lane: FloorLane
+  private readonly lane: CoreRecordLane
   private readonly coalesced: Coalesced
   private readonly queue: AuditQueue
   // The core's own writer of the audit queue, none with no log
@@ -234,10 +234,10 @@ export class Carrier {
   private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly bus: Bus
-  // The StateView number core.security last went out for
+  // The grants snapshot number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
-  // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
+  // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   private shutting = false
   // The once a second look, and the log's health it last saw
   private readonly looking: ReturnType<typeof setInterval>
@@ -250,11 +250,11 @@ export class Carrier {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
-    this.limits = new Limits(() => options.loader.limits())
-    this.lane = new FloorLane(options.log, {
+    this.limits = new Limits(() => options.pluginsManager.limits())
+    this.lane = new CoreRecordLane(options.log, {
       bound: () => this.limits.of(null, 'floorBacklog'),
       muted: () => this.muted(),
-      retryMs: options.floorRetryMs ?? 5000,
+      retryMs: options.coreRecordRetryMs ?? 5000,
       // Windows read core.status again, which says whether the log takes appends
       noticed: () => {
         if (!this.closed && !this.shutting) this.bus.emit('core.status')
@@ -285,7 +285,7 @@ export class Carrier {
       },
     })
     this.writer?.start()
-    this.logReads = log === null ? undefined : async call => (call.action === 'log.history' ? log.history() : log.verify())
+    this.logReads = log === null ? undefined : async call => (call.action === 'log.segments' ? log.history() : log.verify())
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logHealthy = options.log?.healthy
     this.looking = setInterval(() => this.look(), 1000)
@@ -307,7 +307,7 @@ export class Carrier {
     })
   }
 
-  // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
+  // For the plugins manager, before it records core.stopping. The six policy job states have no stopping, so from here a policy job, guard
   // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
   // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
   // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
@@ -321,21 +321,21 @@ export class Carrier {
     return this.shutting ? 'stopped' : code
   }
 
-  // A floor record from the core: boot, the loader and the carrier itself
-  floor(event: string, fields: Record<string, Field> = {}): void {
+  // A core record from the core: boot, the plugins manager and the carrier itself
+  coreRecord(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
   }
 
-  // A floor record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
+  // A core record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
   // frame of its that navigated
-  floorCoalesced(event: string, fields: Record<string, Field>): void {
+  coreRecordCoalesced(event: string, fields: Record<string, Field>): void {
     if (!this.closed) this.coalesced.hit(event, fields)
   }
 
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
-  // hears it while its slot is on. The page counts a second's worth before it reports
+  // hears it while its policy job is on. The page counts a second's worth before it reports
   sample(sample: Sample): void {
-    if (this.closed || this.slot('watchdog') !== 'on') return
+    if (this.closed || this.policyJob('watchdog') !== 'on') return
     const watchdog = this.holder(() => this.options.watchdog())
     if (watchdog === null) return
     try {
@@ -350,14 +350,14 @@ export class Carrier {
     if (!this.closed) this.bus.emit('core.quitting')
   }
 
-  // Writes what the audit queue holds, then the floor backlog: for a log that came back and for Quit, before close and
+  // Writes what the audit queue holds, then the core record backlog: for a log that came back and for Quit, before close and
   // after it. Never throws
   async flush(): Promise<void> {
     await this.writer?.flush()
     await this.lane.flush()
   }
 
-  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
   // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
   async drain(ms: number): Promise<number> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -375,9 +375,9 @@ export class Carrier {
     this.paused = false
   }
 
-  // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
-  // StateView moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
+  // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
+  // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
+  // core.security once a new grants snapshot applied a security change. The first grants snapshot the carrier reads is where it
   // starts, not a change
   changed(): void {
     if (this.closed || this.shutting) return
@@ -452,7 +452,7 @@ export class Carrier {
     }
   }
 
-  // For the loader: a planned stop or a revoked incarnation. Its subscriptions and credits go at once, calls delivered to
+  // For the plugins manager: a planned stop or a revoked incarnation. Its subscriptions and credits go at once, calls delivered to
   // the way answer code and the calls it made are given up. Not a crash, so nothing is reported
   end(caller: Caller, code: 'stopped' | 'crashed' = 'stopped'): void {
     const way = this.ways.get(keyOf(caller))
@@ -464,7 +464,7 @@ export class Carrier {
     for (const pending of [...way.made.values()]) this.stop(pending, 'stopped')
   }
 
-  // For the loader: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
+  // For the plugins manager: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
   // never registered drops it. Nothing the core sends counts against the half's rate
   send(caller: Caller, message: unknown): void {
     const way = this.ways.get(keyOf(caller))
@@ -472,15 +472,15 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost. A record
+  // For the plugins manager: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
   // still waiting when signal aborts comes out and settles lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     return this.lane.write(event, fields, signal)
   }
 
-  // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop
+  // For the plugins manager: a limit as the carrier enforces it for one plugin, so the plugins manager's start and stop
   // deadlines follow the same values
-  limit(plugin: string, name: FloorConstant): number {
+  limit(plugin: string, name: LimitName): number {
     return this.limits.of(plugin, name)
   }
 
@@ -537,7 +537,7 @@ export class Carrier {
     // keeps the heartbeat alone
     if (way.via === 'port' && way.caller.kind === 'plugin' && way.caller.half === 'host' && this.info(way.caller.id)?.place === 'utility') {
       try {
-        this.options.loader.heard(way.caller, 'alive')
+        this.options.pluginsManager.heard(way.caller, 'alive')
       } catch {}
     }
     const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
@@ -552,7 +552,7 @@ export class Carrier {
       else if (kind === 'cancel') this.cancelled(way, message)
       else if (kind === 'ack') this.acked(way, message)
       else if ((kind === 'ready' || kind === 'pong' || kind === 'stopped') && way.plugin !== null) {
-        this.options.loader.heard(way.caller, kind)
+        this.options.pluginsManager.heard(way.caller, kind)
       }
       // Anything else, another v and the kinds only the carrier sends included, is dropped unread
     } catch {}
@@ -562,7 +562,7 @@ export class Carrier {
   private dropped(way: Way): void {
     way.rate.dropped++
     const now = this.clock()
-    if (now - way.rate.toldAt < 1000 || this.slot('watchdog') !== 'on') return
+    if (now - way.rate.toldAt < 1000 || this.policyJob('watchdog') !== 'on') return
     const watchdog = this.holder(() => this.options.watchdog())
     if (watchdog === null) return
     const count = way.rate.dropped
@@ -595,15 +595,15 @@ export class Carrier {
     } catch {}
   }
 
-  // Its subscriptions and credits go first, so nothing the loader changes on hearing of the crash is sent to the dead
-  // way. The loader moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
+  // Its subscriptions and credits go first, so nothing the plugins manager changes on hearing of the crash is sent to the dead
+  // way. The plugins manager moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
   // the calls it made are given up and their callees told
   private dead(way: Way, reason: 'closed' | 'flood'): void {
     way.open = false
     if (this.ways.get(way.key) === way) this.ways.delete(way.key)
     this.bus.drop(way)
     try {
-      this.options.loader.crashed(way.caller, reason)
+      this.options.pluginsManager.crashed(way.caller, reason)
     } catch {}
     for (const pending of [...way.delivered.values()]) this.stop(pending, 'crashed')
     for (const pending of [...way.made.values()]) this.stop(pending, 'crashed')
@@ -633,7 +633,7 @@ export class Carrier {
   // that names a live call delivered on this same way. A call under a parent takes the parent's onBehalf and can't set
   // its own
   private shape(way: Way, message: unknown): Shaped {
-    const parsed = requestEnvelope.safeParse(message)
+    const parsed = callEnvelope.safeParse(message)
     if (!parsed.success) {
       return { ok: false, id: readId(message), action: readAction(message), onBehalf: undefined, parent: null, no: { code: 'invalid' } }
     }
@@ -683,13 +683,13 @@ export class Carrier {
       if (parent.depth + 1 > this.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')
     }
     // A label is an agent's only down a chain that started at the door's own call with a label, the door known by the
-    // way that call came on. The door's call is still http's own. Any other call keeps a label as text that grants
+    // way that call came on. The door's call is still mcp-http-handler's own. Any other call keeps a label as text that grants
     // nothing. A call from the door names the agent it is for in the agent label's form, so one with no label or another
     // is refused before mcp sees it
     const agent = parent?.lends
     const door = parent === null && action === agentDoor.action && this.isDoor(way)
     if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
-    // A label the human revoked is refused at the door with no word from http, so a revoke holds while http's token lives
+    // A label the human revoked is refused at the door with no word from mcp-http-handler, so a revoke holds while mcp-http-handler's token lives
     if (door && this.revoked(onBehalf as string)) return refuse('not-granted')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
@@ -752,27 +752,27 @@ export class Carrier {
     return { kind: 'power', capability: 'plugin.call', scope: frozen({ target: target.target }) }
   }
 
-  // The watchdog slot's holder is the install's watchdog, whose host half has an in-process handle. It holds the slot
-  // only while the slot is on: starting, failed, absent and tampered act as off and off makes no restarts. The handle
+  // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
+  // only while the policy job is on: starting, failed, absent and tampered act as off and off makes no restarts. The handle
   // can outlive that, minted before start and kept through a stop grace
   private isWatchdog(way: Way): boolean {
     const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
-    return holder && this.slot('watchdog') === 'on'
+    return holder && this.policyJob('watchdog') === 'on'
   }
 
-  // http's host half in its utility process: a way register made, so a port the loader minted, bound to plugin http's
-  // host half, with http placed utility as the loader reads it now. A worker of http matches the id, the way and the
-  // place, so the half is named too. The incarnation is not compared: the loader ends every way of an incarnation in
+  // mcp-http-handler's host half in its utility process: a way register made, so a port the plugins manager minted, bound to plugin mcp-http-handler's
+  // host half, with mcp-http-handler placed utility as the plugins manager reads it now. A worker of mcp-http-handler matches the id, the way and the
+  // place, so the half is named too. The incarnation is not compared: the plugins manager ends every way of an incarnation in
   // release before it mints the next, so no way of an older one is left to call
   private isDoor(way: Way): boolean {
     const { caller } = way
-    const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'http' && caller.half === 'host'
-    return half && this.info('http')?.place === 'utility'
+    const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'mcp-http-handler' && caller.half === 'host'
+    return half && this.info('mcp-http-handler')?.place === 'utility'
   }
 
-  // watchdog.* acts only on sandboxed plugins holding no slot or guard role
+  // watchdog.* acts only on sandboxed plugins holding no policy job or guard role
   private watchable(plugin: unknown): boolean {
-    if (typeof plugin !== 'string' || isOne(slotIds, plugin)) return false
+    if (typeof plugin !== 'string' || isOne(policyJobIds, plugin)) return false
     if (guardableActions.some(action => this.guardsFor(action).includes(plugin))) return false
     return this.info(plugin)?.place === 'sandboxed'
   }
@@ -853,7 +853,7 @@ export class Carrier {
       timer: null,
       done: false,
       started,
-      gate: this.slot('gate'),
+      gate: this.policyJob('gate'),
       // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
       // no path. A plugin call's target is already the plugin's id
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
@@ -892,14 +892,14 @@ export class Carrier {
     return this.deliver(pending, target, args, kind)
   }
 
-  // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
+  // The gate policy job's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
   // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
   // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
   // that is down. Once shutdown began a call for an agent answers stopped whatever the gate's state, so the door's call
   // during a shutdown answers the same with the gate on as with it off
   private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
     if (agent !== undefined && this.shutting) return 'stopped'
-    const gate = this.slot('gate')
+    const gate = this.policyJob('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
     if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
@@ -907,11 +907,11 @@ export class Carrier {
     return this.down('policy-down')
   }
 
-  // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
+  // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current grants snapshot
   // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
   // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-    if (stage === 'raw') pending.gate = this.slot('gate')
+    if (stage === 'raw') pending.gate = this.policyJob('gate')
     return this.decideFor(pending, stage, capability, scope, prompt)
   }
 
@@ -982,12 +982,12 @@ export class Carrier {
     }
   }
 
-  // Core actions: the carrier serves its own and hands the rest to the loader and the runtime
+  // Core actions: the carrier serves its own and hands the rest to the plugins manager and the runtime
   private async coreAction(pending: Pending, args: unknown): Promise<void> {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'editor.reach') return this.finish(pending, this.reach(args))
-    if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    if (pending.action === 'log.segments' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. Its reads answer
     const { caller } = pending
@@ -996,13 +996,13 @@ export class Carrier {
     }
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
-      this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
+      this.limits.lower(plugin, field(args, 'constant') as LimitName, field(args, 'value') as number)
       try {
         this.options.limited?.(plugin)
       } catch {}
       return this.finish(pending, { ok: true, result: null })
     }
-    // Coalesced by reason with the counts added up, so http calling at its whole rate still leaves two records a reason
+    // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
     // a second
     if (pending.action === 'core.agentRefused') {
       this.coalesced.hit('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
@@ -1018,7 +1018,7 @@ export class Carrier {
   private reach(args: unknown): Outcome {
     const plugin = field(args, 'plugin') as string
     const path = field(args, 'path') as string | undefined
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     if (state === 'off') {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
@@ -1058,9 +1058,9 @@ export class Carrier {
   // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
   // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
   // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
-  // gate or the StateView changed, so no answer from before a narrowing stands
+  // gate or the grants snapshot changed, so no answer from before a narrowing stands
   // For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
-  // The door's own call names http as its caller, which reads nothing and passes the answer on to the agent, so there the
+  // The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer on to the agent, so there the
   // agent's grant stands in for the caller's
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)
@@ -1072,7 +1072,7 @@ export class Carrier {
       const open = this.gateOpen(agent)
       if (open !== 'decide') return no(open as RefusalCode)
     }
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -1130,7 +1130,7 @@ export class Carrier {
     this.bus.sync()
     if (!this.bus.fits(way, topics, this.limits.of(way.plugin, 'topicsPerHalf'))) return this.finish(pending, no('invalid', 'too-large'))
     const gated = kind.kind === 'power' ? kind.scope.topics ?? [] : []
-    const down = gated.length > 0 && this.slot('gate') !== 'off' && !this.askable()
+    const down = gated.length > 0 && this.policyJob('gate') !== 'off' && !this.askable()
     if (kind.kind === 'power' && !down) {
       for (const stage of ['raw', 'canonical'] as const) {
         const refused = this.judge(pending, stage, kind.capability, kind.scope)
@@ -1166,16 +1166,16 @@ export class Carrier {
   // asks again whenever it moves. canList is true with the gate off by the human whatever the log, since deliveries
   // are never logged, as filterReadable passes every path then. A gate that can't be asked is down
   private busState(): { key: string, paths: Paths, view: number | null } {
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     const view = this.view()
     const paths: Paths = state === 'off' ? 'all' : this.askable() ? 'ask' : 'none'
     return { key: `${state} ${paths} ${view}`, paths, view }
   }
 
-  // The gate can be asked: its slot is on, there is a holder and the StateView can be read. Otherwise every answer
+  // The gate can be asked: its policy job is on, there is a holder and the grants snapshot can be read. Otherwise every answer
   // would be policy-down, so the bus holds paths back and a subscribe stands
   private askable(): boolean {
-    return this.slot('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
+    return this.policyJob('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
   }
 
   // canList on every delivery of a path and on each name a listing found: only an exact true counts and a throw is a no
@@ -1192,7 +1192,7 @@ export class Carrier {
   }
 
   // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
-  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
+  // grants snapshot included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
   // An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
   // waits for the Confirm. A declined ask refuses
   private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
@@ -1327,7 +1327,7 @@ export class Carrier {
   private guard(pending: Pending, prepared: Prepared): RefusalCode | null {
     if (!isOne(guardableActions, pending.action)) return null
     for (const id of this.guardsFor(pending.action)) {
-      const state = this.slot(id)
+      const state = this.policyJob(id)
       if (state === 'off') continue
       if (state === 'starting') return 'starting'
       const guard = state === 'on' ? this.holder(() => this.options.guards(id)) : null
@@ -1442,7 +1442,7 @@ export class Carrier {
   // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
   // the caller's second as filterReadable's does
   private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
-    const off = this.slot('gate') === 'off'
+    const off = this.policyJob('gate') === 'off'
     const gate = off ? null : this.holder(() => this.options.gate())
     const { agent } = pending
     let threw = false
@@ -1488,7 +1488,7 @@ export class Carrier {
   // Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second,
   // so a flood of listings costs main at most one listing past the budget each second
   private listingRefused(pending: Pending): RefusalCode | null {
-    if (this.slot('gate') === 'off') return null
+    if (this.policyJob('gate') === 'off') return null
     if (!this.askable()) return this.down('policy-down')
     return this.secondOf(pending.way.principal).spent >= this.limits.of(pending.way.plugin, 'filterMsPerSecond') ? 'throttled' : null
   }
@@ -1561,7 +1561,7 @@ export class Carrier {
     this.recordCall({
       at: started, caller: way.caller, ...(about.onBehalf !== undefined ? { onBehalf: about.onBehalf } : {}),
       root: about.parent?.root.caller ?? way.caller, action: about.action, code: refused.code, ms: this.now() - started,
-      gate: this.slot('gate'),
+      gate: this.policyJob('gate'),
     }, true)
   }
 
@@ -1582,8 +1582,8 @@ export class Carrier {
     this.checkLog()
   }
 
-  // Tells the loader that the log failed, as records queue and once a second, whatever the gate's state, until the
-  // loader takes it
+  // Tells the plugins manager that the log failed, as records queue and once a second, whatever the gate's state, until the
+  // plugins manager takes it
   private checkLog(): void {
     if (this.toldLog || this.muted() || !this.logFailing()) return
     try {
@@ -1591,7 +1591,7 @@ export class Carrier {
     } catch {}
   }
 
-  // Once a second, so windows hear when the log's health changed through an audit write, which the floor lane doesn't see
+  // Once a second, so windows hear when the log's health changed through an audit write, which the core record lane doesn't see
   private look(): void {
     if (this.closed || this.shutting) return
     this.checkLog()
@@ -1603,7 +1603,7 @@ export class Carrier {
 
   // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
   // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
-  // count. The loader then quits hetu to start it again, and meanwhile the gate off refuses a call with power
+  // count. The plugins manager then quits hetu to start it again, and meanwhile the gate off refuses a call with power
   private logFailing(): boolean {
     const oldest = this.queue.oldest()
     return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')
@@ -1630,12 +1630,12 @@ export class Carrier {
     } catch {}
   }
 
-  // The seams are later parts of the core and a throw there must not open anything: a slot that can't be read is
+  // The seams are later parts of the core and a throw there must not open anything: a policy job that can't be read is
   // failed, a plugin that can't be read is absent
-  private slot(id: string): SlotState {
+  private policyJob(id: string): PolicyJobState {
     try {
-      const state = this.options.loader.slot(id)
-      return isOne(slotStates, state) ? state : 'failed'
+      const state = this.options.pluginsManager.policyJob(id)
+      return isOne(policyJobStates, state) ? state : 'failed'
     } catch {
       return 'failed'
     }
@@ -1643,7 +1643,7 @@ export class Carrier {
 
   private info(id: string): PluginInfo | null {
     try {
-      const info = this.options.loader.plugin(id)
+      const info = this.options.pluginsManager.plugin(id)
       return info !== null && typeof info === 'object' && isOne(pluginStates, info.state) ? info : null
     } catch {
       return null
@@ -1652,17 +1652,17 @@ export class Carrier {
 
   private view(): number | null {
     try {
-      const view = this.options.loader.view()
+      const view = this.options.pluginsManager.view()
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
     }
   }
 
-  // Revoked unless the loader says plainly it is not, so a view that throws refuses
+  // Revoked unless the plugins manager says plainly it is not, so a view that throws refuses
   private revoked(label: string): boolean {
     try {
-      return this.options.loader.revoked(label) !== false
+      return this.options.pluginsManager.revoked(label) !== false
     } catch {
       return true
     }
@@ -1678,7 +1678,7 @@ export class Carrier {
 
   private muted(): boolean {
     try {
-      return this.options.loader.recordNothing() === true
+      return this.options.pluginsManager.recordNothing() === true
     } catch {
       return false
     }

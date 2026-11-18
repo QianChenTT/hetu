@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, exited, launch, logged, pageAt, repo, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
@@ -187,7 +187,7 @@ describe('a security control that fails while hetu runs', () => {
     const editor = await editorPage(app)
     await until(() => logged(dataDir, 'core.ready'))
     const done = exited(app)
-    // Any applied change gives the gate a new StateView, which this gate throws on
+    // Any applied change gives the gate a new grants snapshot, which this gate throws on
     expect((await ask(editor, 'security.request', { change: { kind: 'confirmOff', on: false } })).ok).toBe(true)
     expect(await done).toBe(1)
     expect(await logged(dataDir, 'core.failed', { control: 'gate', reason: 'state-changed' })).toBe(true)
@@ -291,7 +291,7 @@ describe('the switches and limits', () => {
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)
-    await showing(page, 'readyMs · floor 10000')
+    await showing(page, 'readyMs · fixed 10000')
     expect(await page.locator('section.install').innerText()).toContain('On macOS, programs running as you can change hetu’s install')
     await tick(PAST_DELAY)
     await page.getByLabel('New value for readyMs').fill('20000')
@@ -299,7 +299,7 @@ describe('the switches and limits', () => {
     await showing(page, 'Set readyMs to 20000 for every plugin')
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Confirm' }).click()
-    await showing(page, 'readyMs · floor 10000 · all: 20000')
+    await showing(page, 'readyMs · fixed 10000 · all: 20000')
     expect((await new StateStore(dataDir).load()).state.switches.limits.all).toEqual({ readyMs: 20000 })
 
     await page.locator('p', { hasText: 'Confirm off for this window: off' }).getByRole('button', { name: 'Switch on' }).click()
@@ -338,12 +338,12 @@ describe('the agent list', () => {
     const page = await trustedPage(app)
     await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · luoshu.read on "inbox/**"')
     const agents = page.locator('section.agents')
-    expect(await agents.innerText()).toContain('Its name and whether its token is live are http’s to know, not this list’s')
-    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once http hears')
+    expect(await agents.innerText()).toContain('Its name and whether its token is live are mcp-http-handler’s to know, not this list’s')
+    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once mcp-http-handler hears')
     expect(await agents.locator('p.agent', { hasText: '"client#2"' }).getByRole('button').count()).toBe(0)
     await tick(PAST_DELAY)
     await agents.locator('p.agent', { hasText: 'claude-code-client-metadata#3' }).getByRole('button', { name: 'Revoke' }).click()
-    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once http hears')
+    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once mcp-http-handler hears')
     // Applied at once, nothing waits for a Confirm
     expect(await page.locator('section.request').count()).toBe(0)
     const entry = (await new StateStore(dataDir).load()).state.plugins.mcp
@@ -444,10 +444,10 @@ describe('a plugin’s class', () => {
       },
     })
     const installDir = await temp()
-    await writeInstall(installDir, { gate: { files: await shipped('gate') }, capabilities: { files: await shipped('capabilities') } })
+    await writeInstall(installDir, { gate: { files: await shipped('gate') }, 'grant-risk-classifier': { files: await shipped('grant-risk-classifier') } })
     const app = await start(dataDir, installDir)
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'capabilities' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'grant-risk-classifier' }))
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)

@@ -1,7 +1,7 @@
 import { createHash, type Hash } from 'node:crypto'
 import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import type { LogSegment as Segment, LogVerification as Verification } from '../api/slots.ts'
+import type { LogSegment as Segment, LogVerification as Verification } from '../api/policy-jobs.ts'
 import { retried, syncDir, writable } from './disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused
@@ -26,7 +26,7 @@ const IDLE_GAP_MS = 2 * 60 * 60 * 1000
 export type Field = string | number | boolean | null
 // One record of a batch, its fields checked
 type Entry = { event: string, fields: Record<string, Field> }
-// history and verify answer with core/api's types, which the carrier hands on as log.history and log.verify
+// history and verify answer with core/api's types, which the carrier hands on as log.segments and log.verify
 export type { Segment, Verification }
 // What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
 // a new segment because the newest one didn't check out. unlinked is a newest segment that checks out but doesn't follow

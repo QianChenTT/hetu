@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { screenText } from './capabilities.ts'
 import type { RefusalCode } from './envelope.ts'
-import { floorConstants } from './floor.ts'
+import { defaultLimits } from './limits.ts'
 import { localName } from './ids.ts'
 import { frozen, plain, table } from './plain.ts'
 import { VERSION } from './version.ts'
@@ -98,7 +98,7 @@ export const bridgeCall = z.discriminatedUnion('verb', [
 ])
 export type BridgeCall = z.infer<typeof bridgeCall>
 
-const checked = plain(bridgeCall, floorConstants.argumentBytes)
+const checked = plain(bridgeCall, defaultLimits.argumentBytes)
 
 // A message from a plugin's port as the drawer reads it, null for anything that isn't a call it knows. The relay has
 // already held the text to the plugin's cap

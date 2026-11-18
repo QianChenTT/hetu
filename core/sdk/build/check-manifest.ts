@@ -3,10 +3,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { folderManifest, type InstallManifest, installManifest, MAX_MANIFEST_BYTES, supportsApi } from '../../api/manifest.ts'
-import { entryPaths } from '../../backend/loader/verify.ts'
+import { entryPaths } from '../../backend/plugins-manager/verify.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 
-// The problems the loader would refuse a plugin folder's manifest for, as text, none when it passes: the strict
+// The problems the plugins manager would refuse a plugin folder's manifest for, as text, none when it passes: the strict
 // parse with duplicate keys refused, core/api's schema (the install one with install) and the API range. built adds
 // each entry file the manifest names that is missing
 export async function checkManifest(dir: string, options: { install?: boolean, built?: boolean } = {}): Promise<string[]> {

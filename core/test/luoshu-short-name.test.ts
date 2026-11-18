@@ -8,10 +8,10 @@ import type { Capability } from '../api/capabilities.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { cleanup, harness, worker } from './carrier-fakes.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './loader-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 // What another plugin's write does once a write's temp file is open, after its version check and before its note lands
 const hook = { onTemp: null as null | (() => Promise<void>) }
@@ -67,19 +67,19 @@ async function world(folders: Record<string, Capability[]>) {
     gate: { exports: { gate: createGate() } },
     luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } },
   }
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
-    await loader.shutdown().catch(() => {})
+    await pluginsManager.shutdown().catch(() => {})
     carrier.close()
     await carrier.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
-  await loader.start()
-  await loader.settled()
-  for (const id of Object.keys(folders)) await until(() => loader.plugin(id)?.state === 'ready')
+  await pluginsManager.start()
+  await pluginsManager.settled()
+  for (const id of Object.keys(folders)) await until(() => pluginsManager.plugin(id)?.state === 'ready')
   const ask = async (id: string, action: string, args: unknown) => (await runtime.half(id).ask(action, args, 15_000)) as Reply | null
   return { folder, ask }
 }
