@@ -59,7 +59,7 @@ type Limit = 'messagesPerSecond' | 'callsInFlight' | 'callDeadlineMs'
 // editor is the bridge the runtime connects to each port to the drawer
 export type RunOptions = { limits?: Partial<Record<Limit, number>>, editor?: Editor }
 
-// What the stopped answer keeps back from the grace, so it lands before the loader ends the way
+// What the stopped answer keeps back from the grace, so it lands before the plugins manager ends the way
 const STOP_MARGIN_MS = 250
 
 export function definePlugin(spec: PluginSpec): Plugin {
@@ -181,7 +181,7 @@ class Half {
     try {
       await this.spec.start(ctx)
     } catch (err) {
-      // No ready goes out, so the loader's start-timeout ends the half
+      // No ready goes out, so the plugins manager's start-timeout ends the half
       this.phase = 'failed'
       console.error('hetu: start threw', err)
       return

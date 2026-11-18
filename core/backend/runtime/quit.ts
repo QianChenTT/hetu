@@ -1,12 +1,12 @@
 // What Quit needs from the joined core and from boot
 export type QuitParts = {
-  loader: { shutdown(): Promise<void> }
+  pluginsManager: { shutdown(): Promise<void> }
   carrier: { flush(): Promise<void>, close(): void }
   release(): Promise<void>
 }
 
 // The longest Quit waits on each step before it goes on. Shutdown stops one plugin at a time, each within its stop
-// grace, so its deadline only catches a loader that hangs. A flush waits on an append that may never settle
+// grace, so its deadline only catches a plugins manager that hangs. A flush waits on an append that may never settle
 export type Deadlines = { readonly shutdown: number, readonly flush: number, readonly release: number }
 export const QUIT_DEADLINES: Deadlines = Object.freeze({ shutdown: 30_000, flush: 2_000, release: 2_000 })
 
@@ -33,7 +33,7 @@ export async function quitInOrder(parts: QuitParts, deadlines: Deadlines = QUIT_
       clearTimeout(timer)
     }
   }
-  await wait('shutdown', () => parts.loader.shutdown(), deadlines.shutdown)
+  await wait('shutdown', () => parts.pluginsManager.shutdown(), deadlines.shutdown)
   await wait('flush', () => parts.carrier.flush(), deadlines.flush)
   try {
     parts.carrier.close()
@@ -69,7 +69,7 @@ export type FailureParts = {
 }
 
 // A control that failed while hetu ran: windows hear core.quitting, then after the grace hetu quits with exit code 1
-// and starts again, unless HETU_NO_RELAUNCH says not to. Once the loader stopped in the stopped mode instead, only the
+// and starts again, unless HETU_NO_RELAUNCH says not to. Once the plugins manager stopped in the stopped mode instead, only the
 // trusted window stays
 export function afterFailure(
   failure: { action: 'relaunch', control: string, reason: string } | { action: 'stopped', mode: unknown },

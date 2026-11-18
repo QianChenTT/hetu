@@ -8,7 +8,7 @@ import { StateStore } from '../backend/boot/state.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, workerManifest, type Files,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -28,18 +28,18 @@ const code = (work: Promise<unknown>) => work.then(() => 'none', (err: { code?: 
 describe('a security request', () => {
   it('applies a narrowing change at once with its record', async () => {
     const made = await harness({ switches: { confirmOff: true } })
-    await made.loader.start()
-    expect(await made.loader.request({ kind: 'confirmOff', on: false }, editor)).toEqual({ applied: true })
+    await made.pluginsManager.start()
+    expect(await made.pluginsManager.request({ kind: 'confirmOff', on: false }, editor)).toEqual({ applied: true })
     expect((await stateIn(made.dataDir)).switches.confirmOff).toBe(false)
     expect(made.link.events('security.applied')).toMatchObject([{ kind: 'confirmOff', window: 'editor', by: 'narrows' }])
-    expect(made.loader.pending()).toEqual([])
+    expect(made.pluginsManager.pending()).toEqual([])
   })
 
   it('holds a widening change for the Confirm and applies nothing', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
-    expect(made.loader.pending()).toEqual([{ id, kind: 'skipVerification', plugin: null }])
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    expect(made.pluginsManager.pending()).toEqual([{ id, kind: 'skipVerification', plugin: null }])
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
     expect(made.link.events('security.request')).toMatchObject([{ kind: 'skipVerification', window: 'editor' }])
     expect(made.link.events('security.applied')).toEqual([])
@@ -47,54 +47,54 @@ describe('a security request', () => {
 
   it('holds a change that destroys data', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'plugin.remove', plugin: 'alpha' }, editor))
-    expect(made.loader.pending()).toEqual([{ id, kind: 'plugin.remove', plugin: 'alpha' }])
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.remove', plugin: 'alpha' }, editor))
+    expect(made.pluginsManager.pending()).toEqual([{ id, kind: 'plugin.remove', plugin: 'alpha' }])
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
   it('applies a held change on its Confirm, after the Confirm record', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
-    await made.loader.confirm(id, {})
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.confirm(id, {})
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
     const order = made.link.records.map(record => record.event).filter(event => event.startsWith('security.'))
     expect(order).toEqual(['security.request', 'security.confirm', 'security.applied'])
     expect(made.link.events('security.applied')).toMatchObject([{ kind: 'skipVerification', by: 'confirm' }])
-    expect(made.loader.pending()).toEqual([])
+    expect(made.pluginsManager.pending()).toEqual([])
   })
 
   it('gives the same change asked twice the same id', async () => {
     const made = await harness()
-    await made.loader.start()
-    const one = held(await made.loader.request({ kind: 'grant.widen', plugin: 'alpha', capability: notes }, editor))
-    const two = held(await made.loader.request({ kind: 'grant.widen', plugin: 'alpha', capability: { paths: ['notes/**'], type: 'luoshu.read' } }, editor))
+    await made.pluginsManager.start()
+    const one = held(await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'alpha', capability: notes }, editor))
+    const two = held(await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'alpha', capability: { paths: ['notes/**'], type: 'luoshu.read' } }, editor))
     expect(two).toBe(one)
-    expect(made.loader.pending()).toHaveLength(1)
+    expect(made.pluginsManager.pending()).toHaveLength(1)
   })
 
   // One window could fill every place, so the trusted window's own requests and every prompt answered
   // throttled. Each sender has places of its own
   it('keeps places for the trusted window and the core when another window filled its own', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     for (let i = 0; i < 16; i++) {
-      held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 20000 + i, plugin: null }, editor))
+      held(await made.pluginsManager.request({ kind: 'limit.set', constant: 'readyMs', value: 20000 + i, plugin: null }, editor))
     }
-    expect(await code(made.loader.request({ kind: 'confirmOff', on: true }, editor))).toBe('throttled')
-    held(await made.loader.request({ kind: 'confirmOff', on: true }, trusted))
+    expect(await code(made.pluginsManager.request({ kind: 'confirmOff', on: true }, editor))).toBe('throttled')
+    held(await made.pluginsManager.request({ kind: 'confirmOff', on: true }, trusted))
     // The core raised alpha's approval at start, in its own places
-    expect(made.loader.pending().filter(request => request.kind === 'plugin.approve')).toHaveLength(1)
+    expect(made.pluginsManager.pending().filter(request => request.kind === 'plugin.approve')).toHaveLength(1)
   })
 
   // Two narrowings at once must both stand
   it('applies two narrowings made at once to two switches, both standing', async () => {
     const made = await harness({ switches: { devMode: ['alpha'], confirmOff: true } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await Promise.all([
-      made.loader.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor),
-      made.loader.request({ kind: 'confirmOff', on: false }, editor),
+      made.pluginsManager.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor),
+      made.pluginsManager.request({ kind: 'confirmOff', on: false }, editor),
     ])
     const { switches } = await stateIn(made.dataDir)
     expect([switches.devMode, switches.confirmOff]).toEqual([[], false])
@@ -102,52 +102,52 @@ describe('a security request', () => {
 
   it('holds at most 16 and answers throttled past them', async () => {
     const made = await harness()
-    await made.loader.start()
+    await made.pluginsManager.start()
     for (let i = 0; i < 16; i++) {
-      held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 20000 + i, plugin: null }, editor))
+      held(await made.pluginsManager.request({ kind: 'limit.set', constant: 'readyMs', value: 20000 + i, plugin: null }, editor))
     }
-    expect(await code(made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 30000, plugin: null }, editor))).toBe('throttled')
-    expect(made.loader.pending()).toHaveLength(16)
+    expect(await code(made.pluginsManager.request({ kind: 'limit.set', constant: 'readyMs', value: 30000, plugin: null }, editor))).toBe('throttled')
+    expect(made.pluginsManager.pending()).toHaveLength(16)
   })
 
   it('answers stale and drops the request when the state it read changed before the Confirm', async () => {
     const made = await harness({ switches: { devMode: ['alpha'] } })
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
-    await made.loader.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor)
-    expect(await code(made.loader.confirm(id, {}))).toBe('stale')
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor)
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('stale')
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
-    expect(made.loader.pending()).toEqual([])
+    expect(made.pluginsManager.pending()).toEqual([])
   })
 
   it('answers stale when a state file was edited outside hetu', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     await writeFile(path.join(made.dataDir, 'state', 'luoshu.json'), 'planted')
-    expect(await code(made.loader.confirm(id, {}))).toBe('stale')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('stale')
   })
 
   it('applies nothing and keeps the request when the Confirm record is lost', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     made.link.landing = event => (event === 'security.confirm' ? 'lost' : 'landed')
-    expect(await code(made.loader.confirm(id, {}))).toBe('failed')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
-    expect(made.loader.pending()).toHaveLength(1)
+    expect(made.pluginsManager.pending()).toHaveLength(1)
   })
 
   // Nothing tested the wait running out on a record that never settles
   it('applies nothing once its record\u2019s wait runs out on a log that never answers', async () => {
-    const made = await harness({ loader: { confirmRecordMs: 100 } })
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    const made = await harness({ pluginsManager: { confirmRecordMs: 100 } })
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     made.link.landing = (event, _fields, signal) => event === 'security.confirm'
       ? new Promise(resolve => signal?.addEventListener('abort', () => resolve('lost')))
       : 'landed'
     const started = performance.now()
-    expect(await code(made.loader.confirm(id, {}))).toBe('failed')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
     expect(performance.now() - started).toBeLessThan(1000)
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
   })
@@ -155,34 +155,34 @@ describe('a security request', () => {
   // Record nothing is on, so the record is muted and the change still applies
   it('applies on a muted Confirm record', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     made.link.landing = () => 'muted'
-    await made.loader.confirm(id, {})
+    await made.pluginsManager.confirm(id, {})
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
   })
 
   it('answers not-found for a request it doesn\'t hold', async () => {
     const made = await harness()
-    await made.loader.start()
-    expect(await code(made.loader.confirm('nope', {}))).toBe('not-found')
-    expect(await code(made.loader.cancel('nope'))).toBe('not-found')
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.confirm('nope', {}))).toBe('not-found')
+    expect(await code(made.pluginsManager.cancel('nope'))).toBe('not-found')
   })
 
   it('drops a cancelled request with its record', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
-    await made.loader.cancel(id)
-    expect(made.loader.pending()).toEqual([])
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.cancel(id)
+    expect(made.pluginsManager.pending()).toEqual([])
     expect(made.link.events('security.cancel')).toMatchObject([{ kind: 'skipVerification' }])
-    expect(await code(made.loader.confirm(id, {}))).toBe('not-found')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('not-found')
   })
 
   it('records the change by kind, target and hash, never the folder', async () => {
     const made = await harness()
-    await made.loader.start()
-    held(await made.loader.request({ kind: 'luoshu.pick', folder: path.join(made.base, 'notes') }, editor))
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'luoshu.pick', folder: path.join(made.base, 'notes') }, editor))
     const [record] = made.link.events('security.request')
     expect(record).toMatchObject({ kind: 'luoshu.pick', target: null, window: 'editor' })
     expect(record.hash).toMatch(/^[0-9a-f]{64}$/)
@@ -194,52 +194,52 @@ describe('typing to prove attention', () => {
   it('confirms switching a security control off only with its id typed', async () => {
     const gate = allowAll()
     const made = await harness({ behave: { gate: { exports: { gate } } } })
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, editor))
-    expect(await code(made.loader.confirm(id, {}))).toBe('invalid')
-    expect(await code(made.loader.confirm(id, { typed: 'Gate' }))).toBe('invalid')
-    expect(made.loader.policyJob('gate')).toBe('on')
-    await made.loader.confirm(id, { typed: 'gate' })
-    expect(made.loader.policyJob('gate')).toBe('off')
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, editor))
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('invalid')
+    expect(await code(made.pluginsManager.confirm(id, { typed: 'Gate' }))).toBe('invalid')
+    expect(made.pluginsManager.policyJob('gate')).toBe('on')
+    await made.pluginsManager.confirm(id, { typed: 'gate' })
+    expect(made.pluginsManager.policyJob('gate')).toBe('off')
   })
 
   it('confirms recording off only with log typed', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
-    expect(await code(made.loader.confirm(id, { typed: 'gate' }))).toBe('invalid')
-    await made.loader.confirm(id, { typed: 'log' })
-    expect(made.loader.recordNothing()).toBe(true)
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    expect(await code(made.pluginsManager.confirm(id, { typed: 'gate' }))).toBe('invalid')
+    await made.pluginsManager.confirm(id, { typed: 'log' })
+    expect(made.pluginsManager.recordNothing()).toBe(true)
   })
 })
 
 describe('confirmOff', () => {
   it('applies a widening change the trusted window asks for at once', async () => {
     const made = await harness({ switches: { confirmOff: true } })
-    await made.loader.start()
-    expect(await made.loader.request({ kind: 'skipVerification', on: true }, trusted)).toEqual({ applied: true })
+    await made.pluginsManager.start()
+    expect(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, trusted)).toEqual({ applied: true })
     expect(made.link.events('security.applied')).toMatchObject([{ kind: 'skipVerification', by: 'confirm-off' }])
   })
 
   it('still holds one any other window asks for', async () => {
     const made = await harness({ switches: { confirmOff: true } })
-    await made.loader.start()
-    held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
   })
 
   // confirmOff skips the Confirm, never the typing that switching protection off asks for
   it('still holds a change that asks for typing, so the word is typed', async () => {
     const made = await harness({ switches: { confirmOff: true } })
-    await made.loader.start()
-    held(await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
-    held(await made.loader.request({ kind: 'recordNothing', on: true }, trusted))
-    expect(made.loader.policyJob('gate')).toBe('on')
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
+    held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, trusted))
+    expect(made.pluginsManager.policyJob('gate')).toBe('on')
   })
 
   it('still holds one from the trusted window while it is off', async () => {
     const made = await harness()
-    await made.loader.start()
-    held(await made.loader.request({ kind: 'skipVerification', on: true }, trusted))
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, trusted))
   })
 })
 
@@ -248,24 +248,24 @@ describe('limits', () => {
   // the audit, so a limit waits for the human's Confirm either way
   it('hold one lowered as well as one raised', async () => {
     const made = await harness({ switches: { limits: { all: { readyMs: 20000 }, plugins: {} } } })
-    await made.loader.start()
-    held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 15000, plugin: null }, editor))
-    held(await made.loader.request({ kind: 'limit.set', constant: 'readyMs', value: 30000, plugin: null }, editor))
-    held(await made.loader.request({ kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }, editor))
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'limit.set', constant: 'readyMs', value: 15000, plugin: null }, editor))
+    held(await made.pluginsManager.request({ kind: 'limit.set', constant: 'readyMs', value: 30000, plugin: null }, editor))
+    held(await made.pluginsManager.request({ kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }, editor))
     expect((await stateIn(made.dataDir)).switches.limits.all.readyMs).toBe(20000)
   })
 })
 
-describe('the kinds the loader applies since the trusted window', () => {
+describe('the kinds the plugins manager applies since the trusted window', () => {
   it('grant.widen adds a capability to a folder plugin\'s entry and grant.narrow takes it out with its switch', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed({ granted: [panel] }) } })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'alpha', capability: notes })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'alpha', capability: notes })
     expect((await stateIn(made.dataDir)).plugins.alpha.granted).toEqual([panel, notes])
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'alpha', capability: notes })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'alpha', capability: notes })
     expect((await stateIn(made.dataDir)).plugins.alpha.granted).toEqual([panel, notes])
-    await made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: notes })
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'alpha', capability: notes })
+    await made.pluginsManager.apply({ kind: 'item.off', plugin: 'alpha', capability: notes })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'alpha', capability: notes })
     const entry = (await stateIn(made.dataDir)).plugins.alpha
     expect(entry.granted).toEqual([panel])
     expect(entry.off ?? []).toEqual([])
@@ -276,12 +276,12 @@ describe('the kinds the loader applies since the trusted window', () => {
     const storage = path.join(made.dataDir, 'storage', 'alpha')
     await mkdir(storage, { recursive: true })
     await writeFile(path.join(storage, 'key'), 'value')
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.clearStorage', plugin: 'alpha' })
-    await made.loader.settled()
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.clearStorage', plugin: 'alpha' })
+    await made.pluginsManager.settled()
     expect(await readdir(storage).catch(() => [])).toEqual([])
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
-    expect(made.loader.plugin('alpha')?.incarnation).toBe(2)
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    expect(made.pluginsManager.plugin('alpha')?.incarnation).toBe(2)
   })
 
   it('plugin.reset clears a folder plugin\'s storage and cache and removes its entry, so it waits for approval again', async () => {
@@ -290,12 +290,12 @@ describe('the kinds the loader applies since the trusted window', () => {
       await mkdir(path.join(made.dataDir, kind, 'alpha'), { recursive: true })
       await writeFile(path.join(made.dataDir, kind, 'alpha', 'key'), 'value')
     }
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.reset', plugin: 'alpha' })
-    await made.loader.settled()
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'alpha' })
+    await made.pluginsManager.settled()
     expect((await stateIn(made.dataDir)).plugins.alpha).toBeUndefined()
-    expect(stateOf(made.loader, 'alpha')).toBe('found')
-    expect(reasonOf(made.loader, 'alpha')).toBe('new')
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('found')
+    expect(reasonOf(made.pluginsManager, 'alpha')).toBe('new')
     for (const kind of ['storage', 'cache']) expect(await readdir(path.join(made.dataDir, kind, 'alpha')).catch(() => [])).toEqual([])
     // The code stays, it waits to be approved again
     expect(await readdir(path.join(made.dataDir, 'plugins', 'alpha'))).toContain('hetu-plugin.json')
@@ -307,8 +307,8 @@ describe('the kinds the loader applies since the trusted window', () => {
       folder: { alpha: worker('alpha') }, entries: { alpha: signed() },
       switches: { limits: { all: { readyMs: 20000 }, plugins: { alpha: { readyMs: 1 }, beta: { readyMs: 2 } } } },
     })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.reset', plugin: 'alpha' })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'alpha' })
     const { limits } = (await stateIn(made.dataDir)).switches
     expect(limits.plugins).toEqual({ beta: { readyMs: 2 } })
     expect(limits.all).toEqual({ readyMs: 20000 })
@@ -318,12 +318,12 @@ describe('the kinds the loader applies since the trusted window', () => {
     const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } }, markers: ['luoshu'] })
     await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')
-    await made.loader.start()
-    expect(reasonOf(made.loader, 'luoshu')).toBe('marker')
-    await made.loader.apply({ kind: 'plugin.reset', plugin: 'luoshu' })
+    await made.pluginsManager.start()
+    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('marker')
+    await made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'luoshu' })
     expect(await readdir(path.join(made.dataDir, 'starting'))).toEqual([])
     // A host half starts once per run, so it waits for Restart hetu
-    expect(reasonOf(made.loader, 'luoshu')).toBe('restart-hetu')
+    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('restart-hetu')
   })
 })
 
@@ -331,10 +331,10 @@ describe('the kinds the loader applies since the trusted window', () => {
 describe('recording off and on', () => {
   it('drains what waits before the record of recording going off and counts what still waits in it', async () => {
     const made = await harness()
-    await made.loader.start()
+    await made.pluginsManager.start()
     made.link.waiting = 2
-    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
-    await made.loader.confirm(id, { typed: 'log' })
+    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    await made.pluginsManager.confirm(id, { typed: 'log' })
     const at = made.link.timeline.indexOf('drain')
     expect(at).toBeGreaterThan(-1)
     expect(made.link.timeline.indexOf('record security.confirm')).toBeGreaterThan(at)
@@ -343,21 +343,21 @@ describe('recording off and on', () => {
 
   it('drains nothing for any other change', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
-    await made.loader.confirm(id, {})
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.confirm(id, {})
     expect(made.link.timeline).not.toContain('drain')
   })
 
   it('switches recording back on before its record, so that record is the first one written again', async () => {
     const made = await harness({ switches: { recordNothing: true } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     let recording: boolean | null = null
     made.link.landing = event => {
-      if (event === 'security.applied') recording = !made.loader.recordNothing()
+      if (event === 'security.applied') recording = !made.pluginsManager.recordNothing()
       return 'landed'
     }
-    expect(await made.loader.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
     expect(recording).toBe(true)
     // Only recording going off drains
     expect(made.link.timeline).not.toContain('drain')
@@ -380,7 +380,7 @@ describe('first-use asks', () => {
   it('reach the gate as items whose first use asks, from the firstUse list in the entry', async () => {
     const gate = allowAll()
     const made = await asking({ behave: { gate: { exports: { gate } } } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const view = gate.seen.at(-1)!
     expect(view.plugins.alpha.map(item => item.firstUse)).toEqual([true, true])
     expect(view.plugins.beta.map(item => item.firstUse)).toEqual([false])
@@ -388,92 +388,92 @@ describe('first-use asks', () => {
 
   it('hold an item.on for the item asked, named for the plugin', async () => {
     const made = await asking()
-    await made.loader.start()
-    const id = made.loader.asks.raise(key(notes), access('alpha'))
+    await made.pluginsManager.start()
+    const id = made.pluginsManager.asks.raise(key(notes), access('alpha'))
     expect(typeof id).toBe('string')
-    expect(made.loader.pending()).toEqual([{ id, kind: 'item.on', plugin: 'alpha' }])
+    expect(made.pluginsManager.pending()).toEqual([{ id, kind: 'item.on', plugin: 'alpha' }])
   })
 
   it('answer the same ask with the same id and another one while it is open with throttled', async () => {
     const made = await asking()
-    await made.loader.start()
-    const id = made.loader.asks.raise(key(notes), access('alpha'))
-    expect(made.loader.asks.raise(key(notes), access('alpha'))).toBe(id)
-    expect(made.loader.asks.raise(key(panel), access('alpha', panel))).toEqual({ code: 'throttled' })
+    await made.pluginsManager.start()
+    const id = made.pluginsManager.asks.raise(key(notes), access('alpha'))
+    expect(made.pluginsManager.asks.raise(key(notes), access('alpha'))).toBe(id)
+    expect(made.pluginsManager.asks.raise(key(panel), access('alpha', panel))).toEqual({ code: 'throttled' })
   })
 
   it('answer not-granted for an item the plugin holds with no first use, or doesn\'t hold', async () => {
     const made = await asking()
-    await made.loader.start()
-    expect(made.loader.asks.raise(key(notes), access('beta'))).toEqual({ code: 'not-granted' })
-    expect(made.loader.asks.raise(key({ type: 'storage' }), access('alpha', { type: 'storage' }))).toEqual({ code: 'not-granted' })
-    expect(made.loader.asks.raise(key(notes), { ...access('alpha'), caller: editor })).toEqual({ code: 'not-granted' })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.asks.raise(key(notes), access('beta'))).toEqual({ code: 'not-granted' })
+    expect(made.pluginsManager.asks.raise(key({ type: 'storage' }), access('alpha', { type: 'storage' }))).toEqual({ code: 'not-granted' })
+    expect(made.pluginsManager.asks.raise(key(notes), { ...access('alpha'), caller: editor })).toEqual({ code: 'not-granted' })
   })
 
   it('switch the item on for good once confirmed', async () => {
     const gate = allowAll()
     const made = await asking({ behave: { gate: { exports: { gate } } } })
-    await made.loader.start()
-    const id = made.loader.asks.raise(key(notes), access('alpha')) as string
-    await made.loader.confirm(id, {})
+    await made.pluginsManager.start()
+    const id = made.pluginsManager.asks.raise(key(notes), access('alpha')) as string
+    await made.pluginsManager.confirm(id, {})
     expect(gate.seen.at(-1)!.plugins.alpha.map(item => item.firstUse)).toEqual([false, true])
     expect((await stateIn(made.dataDir)).plugins.alpha.firstUse).toEqual([panel])
   })
 
   it('answer declined for the rest of the run once the human cancelled one', async () => {
     const made = await asking()
-    await made.loader.start()
-    const id = made.loader.asks.raise(key(notes), access('alpha')) as string
-    await made.loader.cancel(id)
-    expect(made.loader.asks.raise(key(notes), access('alpha'))).toEqual({ code: 'not-granted', reason: 'declined' })
+    await made.pluginsManager.start()
+    const id = made.pluginsManager.asks.raise(key(notes), access('alpha')) as string
+    await made.pluginsManager.cancel(id)
+    expect(made.pluginsManager.asks.raise(key(notes), access('alpha'))).toEqual({ code: 'not-granted', reason: 'declined' })
     // Another item still asks
-    expect(typeof made.loader.asks.raise(key(panel), access('alpha', panel))).toBe('string')
+    expect(typeof made.pluginsManager.asks.raise(key(panel), access('alpha', panel))).toBe('string')
   })
 })
 
 describe('requests the core raises itself', () => {
   it('raise plugin.approve for a plugin found in the folder', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
-    await made.loader.start()
-    expect(stateOf(made.loader, 'alpha')).toBe('found')
-    const [request] = made.loader.pending()
+    await made.pluginsManager.start()
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('found')
+    const [request] = made.pluginsManager.pending()
     expect(request).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
-    await made.loader.confirm(request.id, {})
+    await made.pluginsManager.confirm(request.id, {})
     expect((await stateIn(made.dataDir)).plugins.alpha).toBeDefined()
   })
 })
 
 describe('the wiring', () => {
-  it('hands the carrier the loader\'s asks unless a test names others', async () => {
+  it('hands the carrier the plugins manager\'s asks unless a test names others', async () => {
     const made = await harness()
-    expect(carrierOptions(made.loader, { log: null }).asks).toBe(made.loader.asks)
+    expect(carrierOptions(made.pluginsManager, { log: null }).asks).toBe(made.pluginsManager.asks)
     const other = { raise: () => 'req-1' }
-    expect(carrierOptions(made.loader, { log: null, asks: other }).asks).toBe(other)
+    expect(carrierOptions(made.pluginsManager, { log: null, asks: other }).asks).toBe(other)
   })
 })
 
-describe('the core actions the loader serves', () => {
+describe('the core actions the plugins manager serves', () => {
   const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
 
   it('takes a security request from a window and confirms or cancels it from the trusted one', async () => {
     const made = await harness()
-    await made.loader.start()
-    const answer = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'skipVerification', on: true } })) as { held: string }
+    await made.pluginsManager.start()
+    const answer = await made.pluginsManager.serve(call(editor, 'security.request', { change: { kind: 'skipVerification', on: true } })) as { held: string }
     expect(answer).toEqual({ held: expect.any(String) })
-    await made.loader.serve(call(trusted, 'security.confirm', { requestId: answer.held }))
+    await made.pluginsManager.serve(call(trusted, 'security.confirm', { requestId: answer.held }))
     expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
-    const again = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'confirmOff', on: true } })) as { held: string }
-    expect(await made.loader.serve(call(trusted, 'security.cancel', { requestId: again.held }))).toBe(null)
-    expect(made.loader.pending()).toEqual([])
+    const again = await made.pluginsManager.serve(call(editor, 'security.request', { change: { kind: 'confirmOff', on: true } })) as { held: string }
+    expect(await made.pluginsManager.serve(call(trusted, 'security.cancel', { requestId: again.held }))).toBe(null)
+    expect(made.pluginsManager.pending()).toEqual([])
   })
 
   it('passes what the human typed on to the Confirm', async () => {
     const made = await harness({ behave: { gate: { exports: { gate: allowAll() } } } })
-    await made.loader.start()
-    const { held: id } = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'plugin.off', plugin: 'gate' } })) as { held: string }
-    expect(await code(made.loader.serve(call(trusted, 'security.confirm', { requestId: id })))).toBe('invalid')
-    await made.loader.serve(call(trusted, 'security.confirm', { requestId: id, typed: 'gate' }))
-    expect(made.loader.policyJob('gate')).toBe('off')
+    await made.pluginsManager.start()
+    const { held: id } = await made.pluginsManager.serve(call(editor, 'security.request', { change: { kind: 'plugin.off', plugin: 'gate' } })) as { held: string }
+    expect(await code(made.pluginsManager.serve(call(trusted, 'security.confirm', { requestId: id })))).toBe('invalid')
+    await made.pluginsManager.serve(call(trusted, 'security.confirm', { requestId: id, typed: 'gate' }))
+    expect(made.pluginsManager.policyJob('gate')).toBe('off')
   })
 
   it('lists each plugin, the switches, the requests in the core\'s words and the stopped mode for the trusted window', async () => {
@@ -482,9 +482,9 @@ describe('the core actions the loader serves', () => {
       folder: { alpha: worker('alpha') },
       entries: { alpha: signed({ granted: [notes, panel], off: [panel] }) },
     })
-    await made.loader.start()
-    await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, editor)
-    const list = await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+    await made.pluginsManager.start()
+    await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, editor)
+    const list = await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList
     expect(list.plugins.find(plugin => plugin.id === 'gate')).toMatchObject({ from: 'install', place: 'host', state: 'ready', security: true, on: true })
     expect(list.plugins.find(plugin => plugin.id === 'alpha')).toMatchObject({
       from: 'folder', place: 'sandboxed', security: false, on: true,
@@ -503,81 +503,81 @@ describe('the core actions the loader serves', () => {
 
   it('lists the limits the human set, for all and for each plugin, as copies the window can’t change', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
-    await made.loader.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'alpha' })
-    const list = await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'limit.set', constant: 'readyMs', value: 20000, plugin: null })
+    await made.pluginsManager.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 8, plugin: 'alpha' })
+    const list = await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList
     expect(list.limits).toEqual({ all: { readyMs: 20000 }, plugins: { alpha: { callsInFlight: 8 } } })
     list.limits.all.readyMs = 1
-    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
+    expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
   })
 
   it('names the notes folder once luoshu.pick applies', async () => {
     const made = await harness()
-    await made.loader.start()
+    await made.pluginsManager.start()
     const folder = path.join(made.base, 'notes')
-    await made.loader.apply({ kind: 'luoshu.pick', folder })
-    expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
+    await made.pluginsManager.apply({ kind: 'luoshu.pick', folder })
+    expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
   })
 
   it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    await made.loader.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
-    expect(stateOf(made.loader, 'alpha')).toBe('stopped')
-    expect(reasonOf(made.loader, 'alpha')).toBe('human')
-    await made.loader.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
-    await made.loader.settled()
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
-    expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-granted')
-    expect(await code(made.loader.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
+    await made.pluginsManager.start()
+    await made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
+    expect(reasonOf(made.pluginsManager, 'alpha')).toBe('human')
+    await made.pluginsManager.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
+    await made.pluginsManager.settled()
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    expect(await code(made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-granted')
+    expect(await code(made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
   })
 
   // The human stops a plugin from the trusted window, so only the trusted window starts it again
   it('restarts a plugin the human stopped only from the trusted window, never from the editor or the watchdog', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    await made.loader.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
-    expect(await code(made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' })))).toBe('not-granted')
+    await made.pluginsManager.start()
+    await made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
+    expect(await code(made.pluginsManager.serve(call(editor, 'core.restart', { plugin: 'alpha' })))).toBe('not-granted')
     const watchdog = { kind: 'plugin' as const, id: 'watchdog', half: 'host', incarnation: 1 }
-    expect(await code(made.loader.serve(call(watchdog, 'watchdog.restart', { plugin: 'alpha' })))).toBe('not-granted')
-    expect(stateOf(made.loader, 'alpha')).toBe('stopped')
-    await made.loader.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
-    await made.loader.settled()
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
+    expect(await code(made.pluginsManager.serve(call(watchdog, 'watchdog.restart', { plugin: 'alpha' })))).toBe('not-granted')
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
+    await made.pluginsManager.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
+    await made.pluginsManager.settled()
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
   // Only a utility half, the door, is kept to the trusted window
   it('restarts a running sandboxed plugin from the editor window too', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
-    await made.loader.start()
-    await made.loader.serve(call(editor, 'core.restart', { plugin: 'alpha' }))
-    await made.loader.settled()
-    expect(stateOf(made.loader, 'alpha')).toBe('ready')
-    expect(made.loader.plugin('alpha')?.incarnation).toBe(2)
+    await made.pluginsManager.start()
+    await made.pluginsManager.serve(call(editor, 'core.restart', { plugin: 'alpha' }))
+    await made.pluginsManager.settled()
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    expect(made.pluginsManager.plugin('alpha')?.incarnation).toBe(2)
   })
 
   it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {
     const made = await harness()
-    await made.loader.start()
+    await made.pluginsManager.start()
     for (const action of ['security.open', 'core.quit', 'core.relaunch']) {
-      expect(await code(made.loader.serve(call(editor, action)))).toBe('unavailable')
+      expect(await code(made.pluginsManager.serve(call(editor, action)))).toBe('unavailable')
     }
   })
 })
 
-// Each request applies or waits in the loader's one queue, with Cancel, so nothing slips between a
+// Each request applies or waits in the plugins manager's one queue, with Cancel, so nothing slips between a
 // Confirm and its change
 describe('requests in one queue', () => {
   it('lets a Cancel made while a Confirm waits on its record wait for that Confirm', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     let land!: (landing: 'landed') => void
     made.link.landing = event => (event === 'security.confirm' ? new Promise(resolve => { land = resolve }) : 'landed')
-    const confirmed = made.loader.confirm(id, {})
+    const confirmed = made.pluginsManager.confirm(id, {})
     await new Promise(resolve => setTimeout(resolve, 20))
-    const cancelled = code(made.loader.cancel(id))
+    const cancelled = code(made.pluginsManager.cancel(id))
     land('landed')
     await confirmed
     expect(await cancelled).toBe('not-found')
@@ -587,13 +587,13 @@ describe('requests in one queue', () => {
 
   it('applies a narrowing change only after a Confirm already under way', async () => {
     const made = await harness({ switches: { devMode: ['alpha'] } })
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     let land!: (landing: 'landed') => void
     made.link.landing = event => (event === 'security.confirm' ? new Promise(resolve => { land = resolve }) : 'landed')
-    const confirmed = made.loader.confirm(id, {})
+    const confirmed = made.pluginsManager.confirm(id, {})
     await new Promise(resolve => setTimeout(resolve, 20))
-    const narrowed = made.loader.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor)
+    const narrowed = made.pluginsManager.request({ kind: 'devMode', plugin: 'alpha', on: false }, editor)
     await new Promise(resolve => setTimeout(resolve, 20))
     expect((await stateIn(made.dataDir)).switches.devMode).toEqual(['alpha'])
     land('landed')
@@ -605,12 +605,12 @@ describe('requests in one queue', () => {
 
   it('tells the windows when a request is raised and when one goes', async () => {
     const made = await harness()
-    await made.loader.start()
+    await made.pluginsManager.start()
     const before = made.link.changes
-    const id = held(await made.loader.request({ kind: 'skipVerification', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
     expect(made.link.changes).toBeGreaterThan(before)
     const raised = made.link.changes
-    await made.loader.cancel(id)
+    await made.pluginsManager.cancel(id)
     expect(made.link.changes).toBeGreaterThan(raised)
   })
 })
@@ -621,21 +621,21 @@ describe('the delay before a request counts', () => {
   it('refuses a Confirm until the request has been first in line for the delay, and starts it again for the next one', async () => {
     // Two changes to two plugins' entries, so confirming the first leaves the second fresh
     const made = await harness({
-      loader: { confirmDelayMs: 200 },
+      pluginsManager: { confirmDelayMs: 200 },
       folder: { alpha: worker('alpha'), beta: worker('beta') },
       entries: { alpha: signed(), beta: signed() },
     })
-    await made.loader.start()
-    const first = held(await made.loader.request({ kind: 'grant.widen', plugin: 'alpha', capability: notes }, editor))
-    const second = held(await made.loader.request({ kind: 'grant.widen', plugin: 'beta', capability: notes }, editor))
-    expect(await code(made.loader.confirm(first, {}))).toBe('throttled')
+    await made.pluginsManager.start()
+    const first = held(await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'alpha', capability: notes }, editor))
+    const second = held(await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'beta', capability: notes }, editor))
+    expect(await code(made.pluginsManager.confirm(first, {}))).toBe('throttled')
     // Only the first in line counts
     await new Promise(resolve => setTimeout(resolve, 250))
-    expect(await code(made.loader.confirm(second, {}))).toBe('throttled')
-    await made.loader.confirm(first, {})
-    expect(await code(made.loader.confirm(second, {}))).toBe('throttled')
+    expect(await code(made.pluginsManager.confirm(second, {}))).toBe('throttled')
+    await made.pluginsManager.confirm(first, {})
+    expect(await code(made.pluginsManager.confirm(second, {}))).toBe('throttled')
     await new Promise(resolve => setTimeout(resolve, 250))
-    await made.loader.confirm(second, {})
+    await made.pluginsManager.confirm(second, {})
     expect((await stateIn(made.dataDir)).plugins.beta.granted).toEqual([notes])
   })
 })
@@ -644,8 +644,8 @@ describe('the delay before a request counts', () => {
 describe('the request to approve a plugin', () => {
   it('lists its version and every grant its manifest asks for', async () => {
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [notes, { type: 'net.fetch', hosts: ['example.com'] }] }) } })
-    await made.loader.start()
-    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    await made.pluginsManager.start()
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
@@ -656,8 +656,8 @@ describe('the request to approve a plugin', () => {
       { type: 'exec', commands: [['git', 'status']], env: ['HOME'] },
     ]
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: asks }) } })
-    await made.loader.start()
-    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    await made.pluginsManager.start()
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0].notes.slice(0, 4)).toEqual([
       'Version 1.0.0', 'It asks for: plugin.call to "notes"', 'It asks for: events.subscribe to "notes.saved"',
       'It asks for: exec of ["git","status"] with "HOME" from your environment',
@@ -666,8 +666,8 @@ describe('the request to approve a plugin', () => {
 
   it('says when it asks for nothing', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
-    await made.loader.start()
-    const list = await made.loader.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    await made.pluginsManager.start()
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'])
   })
 })
@@ -676,19 +676,19 @@ describe('the request to approve a plugin', () => {
 describe('stopping recording with the log down', () => {
   it('applies though its own record was lost, since the log is what it switches off', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
     made.link.landing = () => 'lost'
-    await made.loader.confirm(id, { typed: 'log' })
-    expect(made.loader.recordNothing()).toBe(true)
+    await made.pluginsManager.confirm(id, { typed: 'log' })
+    expect(made.pluginsManager.recordNothing()).toBe(true)
   })
 
   it('lets the audit writer go again when the switch can\u2019t be written', async () => {
     const made = await harness()
-    await made.loader.start()
-    const id = held(await made.loader.request({ kind: 'recordNothing', on: true }, editor))
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
     made.store.writeSwitches = async () => { throw new Error('read-only') }
-    expect(await code(made.loader.confirm(id, { typed: 'log' }))).toBe('failed')
+    expect(await code(made.pluginsManager.confirm(id, { typed: 'log' }))).toBe('failed')
     expect(made.link.timeline.slice(-2)).toEqual(expect.arrayContaining(['resume']))
   })
 })

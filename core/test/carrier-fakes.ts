@@ -6,7 +6,7 @@ import { scopeMatches } from '../api/scope.ts'
 import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions, HumanLimits, Loader, PluginInfo } from '../backend/carrier/seams.ts'
+import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/seams.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 export const host = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'host', incarnation })
@@ -17,7 +17,7 @@ export type Message = Record<string, unknown>
 
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
-export class FakeLoader implements Loader {
+export class FakePluginsManager implements PluginsManager {
   policyJobs: Record<string, PolicyJobState> = { gate: 'on', watchdog: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
@@ -106,10 +106,10 @@ export class FakeGate implements Gate {
   readonly lists: { caller: Caller, path: string }[] = []
   // Answers canList in place of the grant table, a throw included
   listable: ((caller: Caller, path: string) => unknown) | null = null
-  private readonly loader: FakeLoader
+  private readonly pluginsManager: FakePluginsManager
 
-  constructor(loader: FakeLoader) {
-    this.loader = loader
+  constructor(pluginsManager: FakePluginsManager) {
+    this.pluginsManager = pluginsManager
   }
 
   grantsOf(caller: Caller): readonly Capability[] {
@@ -125,7 +125,7 @@ export class FakeGate implements Gate {
 
   // The grant table's answer on the current grants snapshot
   granted(access: Access): Decision {
-    const view = this.loader.current
+    const view = this.pluginsManager.current
     return holds(this.grantsOf(access.caller), access) ? { allow: true, view } : { allow: false, code: 'not-granted', view }
   }
 
@@ -362,8 +362,8 @@ export const code = (reply: Message) => (reply.refusal as { code?: string } | un
 const live: { carrier: Carrier, ports: MessagePort[] }[] = []
 
 export function harness(over: Partial<CarrierOptions> = {}) {
-  const loader = new FakeLoader()
-  const gate = new FakeGate(loader)
+  const pluginsManager = new FakePluginsManager()
+  const gate = new FakeGate(pluginsManager)
   const luoshu = new FakeLuoshu()
   const storage = new FakeStorage()
   const guards: Record<string, FakeGuard> = {}
@@ -372,12 +372,12 @@ export function harness(over: Partial<CarrierOptions> = {}) {
   const log = new FakeLog()
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
-  loader.installed('luoshu')
-  loader.installed('storage')
+  pluginsManager.installed('luoshu')
+  pluginsManager.installed('storage')
   // The luoshu's manifest declares the two topics it publishes
-  loader.plugins.luoshu.topics = ['changed', 'outside']
+  pluginsManager.plugins.luoshu.topics = ['changed', 'outside']
   const carrier = new Carrier({
-    loader,
+    pluginsManager,
     gate: () => gate,
     guards: id => guards[id] ?? null,
     providers: id => providers[id] ?? null,
@@ -398,7 +398,7 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     carrier.register(port1, caller)
     return new Side(port2)
   }
-  return { carrier, loader, gate, luoshu, storage, guards, providers, samples, log, debug, asks, connect }
+  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, samples, log, debug, asks, connect }
 }
 
 // A window's way in with a sender check that knows one sender per window

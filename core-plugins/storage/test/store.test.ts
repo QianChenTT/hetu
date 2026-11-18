@@ -242,7 +242,7 @@ describe('the quota', () => {
     expect(await ask(store, search, 'cache.get', { key: 'a' })).toBe(1)
   })
 
-  it('counts from disk, so a space the loader cleared takes a full quota again', async () => {
+  it('counts from disk, so a space the plugins manager cleared takes a full quota again', async () => {
     const store = opened({ quotas: small })
     for (const key of ['a', 'b', 'c']) await ask(store, search, 'storage.set', { key, value: 1 })
     await rm(spaceDir('storage', 'search'), { recursive: true })
@@ -285,7 +285,7 @@ describe('a clear of a space', () => {
     const store = opened()
     await ask(store, search, 'storage.set', { key: 'kept', value: 1 })
     const queued = Array.from({ length: 20 }, (_, i) => ask(store, search, 'storage.set', { key: `planted${i}`, value: i }))
-    // Each set's prepare answers first, then its perform joins the space's queue, as for a plugin the loader then stops
+    // Each set's prepare answers first, then its perform joins the space's queue, as for a plugin the plugins manager then stops
     await new Promise(resolve => setImmediate(resolve))
     const cleared = store.clear('storage', 'search')
     await Promise.all(queued)

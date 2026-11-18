@@ -34,8 +34,8 @@ function started() {
   const exec = new Recording()
   made.providers.history = history
   made.providers.exec = exec
-  made.loader.installed('history')
-  made.loader.installed('exec')
+  made.pluginsManager.installed('history')
+  made.pluginsManager.installed('exec')
   const asked: Access[] = []
   made.gate.decision = access => {
     asked.push(access)
@@ -153,8 +153,8 @@ describe('an exec call through the carrier', () => {
   })
 
   it('hands the call to the provider with the gate off, which keeps its own check, and records it with gate off', async () => {
-    const { carrier, connect, loader, exec, asked, log } = started()
-    loader.policyJobs.gate = 'off'
+    const { carrier, connect, pluginsManager, exec, asked, log } = started()
+    pluginsManager.policyJobs.gate = 'off'
     const reply = await connect(worker('git')).ask('exec.run', { command: ['curl', 'https://example.com'] })
     expect(reply.ok).toBe(true)
     expect(asked).toEqual([])

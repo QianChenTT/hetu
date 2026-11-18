@@ -10,10 +10,10 @@ afterEach(cleanup)
 // search serves query, git serves log and scribe serves handle for http only
 function plugins(over: Partial<CarrierOptions> = {}) {
   const parts = harness(over)
-  const { loader, gate, connect } = parts
-  loader.sandboxed('search', { query: {} })
-  loader.sandboxed('git', { log: {} })
-  loader.sandboxed('scribe', { handle: { from: ['mcp-http-handler'] } })
+  const { pluginsManager, gate, connect } = parts
+  pluginsManager.sandboxed('search', { query: {} })
+  pluginsManager.sandboxed('git', { log: {} })
+  pluginsManager.sandboxed('scribe', { handle: { from: ['mcp-http-handler'] } })
   gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['scribe'] }]
   gate.grants.scribe = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
   gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }, { type: 'luoshu.read', paths: ['notes/**', 'private/**'] }]
@@ -47,7 +47,7 @@ describe('plugin.call', () => {
   })
 
   it('lets only the callers a declared from names reach the action, the plugin\'s own halves aside', async () => {
-    const { http, search, scribe, connect, loader, carrier } = plugins()
+    const { http, search, scribe, connect, pluginsManager, carrier } = plugins()
     expect(code(await search.ask('scribe.handle'))).toBe('not-granted')
     http.call('scribe.handle')
     await scribe.delivered('scribe.handle')
@@ -56,7 +56,7 @@ describe('plugin.call', () => {
     await tick()
     expect(deliveries(scribe, 'scribe.handle')).toHaveLength(2)
     // A window is never in from, even with the gate off
-    loader.policyJobs.gate = 'off'
+    pluginsManager.policyJobs.gate = 'off'
     const way = windowWay(carrier, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'scribe.handle'))).toBe('not-granted')
   })
@@ -69,8 +69,8 @@ describe('plugin.call', () => {
     ['waiting', 'unavailable'],
     ['crashed', 'unavailable'],
   ] as const)('answers a call to a %s target %s at once', async (state, expected) => {
-    const { scribe, git, loader } = plugins()
-    loader.sandboxed('git', { log: {} }, state)
+    const { scribe, git, pluginsManager } = plugins()
+    pluginsManager.sandboxed('git', { log: {} }, state)
     const started = Date.now()
     expect(code(await scribe.ask('git.log'))).toBe(expected)
     expect(Date.now() - started).toBeLessThan(1000)
@@ -78,8 +78,8 @@ describe('plugin.call', () => {
   })
 
   it('answers unavailable for a ready target whose serving half has no way in', async () => {
-    const { scribe, loader } = plugins()
-    loader.sandboxed('git', { log: {} }, 'ready', 2)
+    const { scribe, pluginsManager } = plugins()
+    pluginsManager.sandboxed('git', { log: {} }, 'ready', 2)
     expect(code(await scribe.ask('git.log'))).toBe('unavailable')
   })
 
@@ -125,10 +125,10 @@ describe('plugin.call', () => {
   })
 
   it('ignores a reply from a new incarnation for a call the old one was given', async () => {
-    const { scribe, search, connect, loader } = plugins()
+    const { scribe, search, connect, pluginsManager } = plugins()
     const id = scribe.call('search.query')
     const got = await search.delivered('search.query')
-    loader.sandboxed('search', { query: {} }, 'ready', 2)
+    pluginsManager.sandboxed('search', { query: {} }, 'ready', 2)
     const again = connect(worker('search', 2))
     again.answer(got.callId, ['forged.md'])
     await tick(20)
@@ -165,19 +165,19 @@ describe('plugin.call', () => {
   })
 
   it('fails a callee result past its cap with too-large', async () => {
-    const { scribe, search, loader } = plugins()
-    loader.human.plugins.search = { resultBytes: 64 }
+    const { scribe, search, pluginsManager } = plugins()
+    pluginsManager.human.plugins.search = { resultBytes: 64 }
     const id = scribe.call('search.query')
     const got = await search.delivered('search.query')
     search.answer(got.callId, 'x'.repeat(100))
     expect((await scribe.reply(id)).refusal).toEqual({ code: 'failed', action: 'search.query', reason: 'too-large' })
   })
 
-  // A loader whose actions is not an object throws outside every step's own try
+  // A plugins manager whose actions is not an object throws outside every step's own try
   it('answers failed at once for a call that threw in flight', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.plugins.git = { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: null as never, topics: [] }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.plugins.git = { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: null as never, topics: [] }
     connect(worker('git'))
     const started = Date.now()
     expect(code(await connect(worker('search')).ask('git.log'))).toBe('failed')
@@ -203,8 +203,8 @@ describe('parent', () => {
   })
 
   it('shrinks the deadline along parent', async () => {
-    const { http, scribe, git, loader } = plugins()
-    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
+    const { http, scribe, git, pluginsManager } = plugins()
+    pluginsManager.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
     http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     scribe.call('git.log', undefined, { parent: parent.callId })
@@ -214,10 +214,10 @@ describe('parent', () => {
   })
 
   it('stops at a depth of 4', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
     const chain = ['p1', 'p2', 'p3', 'p4', 'p5']
-    for (const id of chain) loader.sandboxed(id, { go: {} })
+    for (const id of chain) pluginsManager.sandboxed(id, { go: {} })
     const sides = chain.map(id => connect(worker(id)))
     const root = connect(worker('p0'))
     root.call('p1.go')
@@ -233,11 +233,11 @@ describe('parent', () => {
   })
 
   it('holds a plugin to its own lower depth', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('p1', { go: {} })
-    loader.sandboxed('p2', { go: {} })
-    loader.human.plugins.p1 = { parentDepth: 1 }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('p1', { go: {} })
+    pluginsManager.sandboxed('p2', { go: {} })
+    pluginsManager.human.plugins.p1 = { parentDepth: 1 }
     const p1 = connect(worker('p1'))
     const p2 = connect(worker('p2'))
     connect(worker('p0')).call('p1.go')
@@ -265,8 +265,8 @@ describe('parent', () => {
   // The parent's timer may not have run yet, say when a host half kept main busy past the deadline
   it('refuses a sub-call under a parent already past its deadline', async () => {
     let clock = 1_000_000
-    const { http, scribe, git, loader } = plugins({ clock: () => clock })
-    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
+    const { http, scribe, git, pluginsManager } = plugins({ clock: () => clock })
+    pluginsManager.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
     http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     clock += 5000
@@ -277,8 +277,8 @@ describe('parent', () => {
 
 describe('deadlines and cancel', () => {
   it('times a call out, cancels its sub-calls and drops their late replies', async () => {
-    const { http, scribe, git, loader } = plugins()
-    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 80 }
+    const { http, scribe, git, pluginsManager } = plugins()
+    pluginsManager.human.plugins['mcp-http-handler'] = { callDeadlineMs: 80 }
     const id = http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     const sub = scribe.call('git.log', undefined, { parent: parent.callId })
@@ -347,8 +347,8 @@ describe('deadlines and cancel', () => {
   })
 
   it('frees the root caller\'s ceiling once the answered call\'s sub-calls are cancelled', async () => {
-    const { http, scribe, loader } = plugins()
-    loader.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
+    const { http, scribe, pluginsManager } = plugins()
+    pluginsManager.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
     const id = http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     scribe.call('git.log', undefined, { parent: parent.callId })
@@ -423,8 +423,8 @@ describe('deadlines and cancel', () => {
 
   // Past the longest delay a timer takes, Node would fire the timer at once
   it('holds a deadline raised past the longest timer to the longest timer', async () => {
-    const { http, scribe, loader } = plugins()
-    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 30 * 24 * 3600 * 1000 }
+    const { http, scribe, pluginsManager } = plugins()
+    pluginsManager.human.plugins['mcp-http-handler'] = { callDeadlineMs: 30 * 24 * 3600 * 1000 }
     const id = http.call('scribe.handle')
     const got = await scribe.delivered('scribe.handle')
     await tick(50)
@@ -435,8 +435,8 @@ describe('deadlines and cancel', () => {
   })
 
   it('keeps a delivered deadline a safe integer whatever deadline the human\'s limits hold', async () => {
-    const { http, scribe, loader } = plugins()
-    loader.human.all = { callDeadlineMs: Number.MAX_SAFE_INTEGER }
+    const { http, scribe, pluginsManager } = plugins()
+    pluginsManager.human.all = { callDeadlineMs: Number.MAX_SAFE_INTEGER }
     const id = http.call('scribe.handle')
     const got = await scribe.delivered('scribe.handle')
     expect(delivery.safeParse(got).success).toBe(true)
@@ -454,8 +454,8 @@ describe('deadlines and cancel', () => {
       }
     }],
     ['a guard', (parts: ReturnType<typeof harness>, late: () => void) => {
-      parts.loader.policyJobs.leases = 'on'
-      parts.loader.human.plugins.leases = { guardAnswerMs: 10000 }
+      parts.pluginsManager.policyJobs.leases = 'on'
+      parts.pluginsManager.human.plugins.leases = { guardAnswerMs: 10000 }
       parts.guards.leases = new FakeGuard()
       parts.guards.leases.answer = () => {
         late()
@@ -465,10 +465,10 @@ describe('deadlines and cancel', () => {
   ])('performs no provider call that %s ran past its deadline and lets go of the lock', async (_name, slow) => {
     let clock = 1_000_000
     const parts = harness({ clock: () => clock, guardsFor: () => ['leases'] })
-    const { connect, gate, luoshu, loader } = parts
+    const { connect, gate, luoshu, pluginsManager } = parts
     gate.grants.search = [{ type: 'luoshu.write', paths: ['**'] }]
-    loader.policyJobs.leases = 'off'
-    loader.human.plugins.search = { callDeadlineMs: 5000 }
+    pluginsManager.policyJobs.leases = 'off'
+    pluginsManager.human.plugins.search = { callDeadlineMs: 5000 }
     slow(parts, () => { clock += 5000 })
     expect(code(await connect(worker('search')).ask('luoshu.write', { path: 'a.md', text: 'x' }))).toBe('timeout')
     expect(luoshu.performed).toEqual([])
@@ -478,8 +478,8 @@ describe('deadlines and cancel', () => {
 
   it('delivers no plugin call the gate ran past its deadline', async () => {
     let clock = 1_000_000
-    const { scribe, search, gate, loader } = plugins({ clock: () => clock })
-    loader.human.plugins.scribe = { callDeadlineMs: 5000 }
+    const { scribe, search, gate, pluginsManager } = plugins({ clock: () => clock })
+    pluginsManager.human.plugins.scribe = { callDeadlineMs: 5000 }
     gate.decision = access => {
       if (access.stage === 'canonical') clock += 5000
       return gate.granted(access)
@@ -530,12 +530,12 @@ describe('filterReadable', () => {
   })
 
   it('gives back every path with the gate off and refuses policy-down while it starts or is failed', async () => {
-    const { search, got, loader, gate } = await incoming()
-    loader.policyJobs.gate = 'off'
+    const { search, got, pluginsManager, gate } = await incoming()
+    pluginsManager.policyJobs.gate = 'off'
     const paths = ['notes/a.md', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
     for (const state of ['starting', 'failed', 'absent'] as const) {
-      loader.policyJobs.gate = state
+      pluginsManager.policyJobs.gate = state
       expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('policy-down')
     }
     expect(gate.reads).toEqual([])
@@ -543,12 +543,12 @@ describe('filterReadable', () => {
 
   // A saved index or another store from a build before dot names were refused could still hold one
   it('gives back no path with a dot segment whatever the gate says with the gate on or off and asks it nothing about one', async () => {
-    const { search, got, loader, gate } = await incoming()
+    const { search, got, pluginsManager, gate } = await incoming()
     gate.readable = () => true
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
     expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
-    loader.policyJobs.gate = 'off'
+    pluginsManager.policyJobs.gate = 'off'
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
   })
 
@@ -622,11 +622,11 @@ describe('filterReadable', () => {
   })
 
   it('starts over when the grants snapshot moved or the paths changed since the throttled try', async () => {
-    const { clock, named, filter, gate, loader } = await timed()
+    const { clock, named, filter, gate, pluginsManager } = await timed()
     const many = named(150)
     expect(code(await filter(many))).toBe('throttled')
     // A narrowing between tries must not leave answers from before it standing
-    loader.current = 2
+    pluginsManager.current = 2
     clock.now += 1000
     expect(code(await filter(many))).toBe('throttled')
     expect(gate.reads.slice(100, 102).map(read => read.path)).toEqual(['notes/0.md', 'notes/0.md'])
@@ -647,8 +647,8 @@ describe('filterReadable', () => {
   })
 
   it('takes the human\'s budget for the caller', async () => {
-    const { loader, paths, filter } = await timed()
-    loader.human.plugins.scribe = { filterMsPerSecond: 200 }
+    const { pluginsManager, paths, filter } = await timed()
+    pluginsManager.human.plugins.scribe = { filterMsPerSecond: 200 }
     expect((await filter()).result).toEqual(paths)
     expect((await filter()).result).toEqual(paths)
     expect(code(await filter())).toBe('throttled')
@@ -698,19 +698,19 @@ describe('a listing', () => {
   })
 
   it('lets every name with no dot segment through with the gate off by the human and answers policy-down while the gate is down', async () => {
-    const { search, loader } = listing()
-    loader.policyJobs.gate = 'off'
+    const { search, pluginsManager } = listing()
+    pluginsManager.policyJobs.gate = 'off'
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
-    loader.policyJobs.gate = 'failed'
+    pluginsManager.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
   })
 
   // The luoshu's walk leaves dot names out itself. This is the carrier's own check behind it
   it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s and fails a page that holds one', async state => {
-    const { search, loader, gate, luoshu } = listing()
+    const { search, pluginsManager, gate, luoshu } = listing()
     for (const path of ['notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json']) luoshu.files.set(path, 'x')
     gate.listable = () => true
-    loader.policyJobs.gate = state
+    pluginsManager.policyJobs.gate = state
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
     expect(gate.lists.filter(asked => asked.path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.')))).toEqual([])
     luoshu.perform_ = () => ({ paths: ['notes/.hidden.md'], next: null })
@@ -766,18 +766,18 @@ describe('calls a provider holds', () => {
 })
 
 describe('a crash', () => {
-  it('lets the loader move dependents to waiting before any call the plugin held is answered', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('search', { query: {} })
+  it('lets the plugins manager move dependents to waiting before any call the plugin held is answered', async () => {
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
     const way = windowWay(carrier, { 'editor-1': editor })
     way.post('editor-1', { v: 1, kind: 'call', id: 1, action: 'search.query', args: {} })
     await search.delivered('search.query')
     let answeredFirst = -1
-    loader.crashed = (caller, reason) => {
+    pluginsManager.crashed = (caller, reason) => {
       answeredFirst = way.replies.length
-      loader.crashes.push({ caller, reason })
+      pluginsManager.crashes.push({ caller, reason })
     }
     search.port.close()
     for (let i = 0; i < 100 && way.replies.length === 0; i++) await tick(2)
@@ -835,29 +835,29 @@ describe('editor.reach', () => {
   })
 
   it('counts an edit that would ask at first use as no edit', async () => {
-    const { way, gate, loader } = made()
-    gate.decision = () => ({ ask: 'item', view: loader.current })
+    const { way, gate, pluginsManager } = made()
+    gate.decision = () => ({ ask: 'item', view: pluginsManager.current })
     expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: false })
   })
 
   it('answers every reach with the gate off and policy-down while it starts, is failed or absent', async () => {
-    const { way, loader } = made()
-    loader.policyJobs.gate = 'off'
+    const { way, pluginsManager } = made()
+    pluginsManager.policyJobs.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
       .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['starting', 'failed', 'absent'] as const) {
-      loader.policyJobs.gate = state
+      pluginsManager.policyJobs.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
     }
   })
 
   // No note the human opened has such a path, so a plugin reaches none through one
   it.each(['on', 'off'] as const)('answers no reach for a path with a dot segment whatever the gate says, with the gate %s', async state => {
-    const { way, loader, gate } = made()
+    const { way, pluginsManager, gate } = made()
     gate.readable = () => true
     gate.listable = () => true
-    gate.decision = () => ({ allow: true, view: loader.current })
-    loader.policyJobs.gate = state
+    gate.decision = () => ({ allow: true, view: pluginsManager.current })
+    pluginsManager.policyJobs.gate = state
     for (const path of ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/edit/.config/x.md', '\u200c.obsidian/app.json']) {
       expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })).result, path).toMatchObject({ read: false, edit: false, uiRead: false, list: false })
     }
@@ -869,13 +869,13 @@ describe('editor.reach', () => {
     let now = 0
     const parts = harness({ clock: () => now })
     const way = windowWay(parts.carrier, { editor })
-    parts.loader.policyJobs.gate = 'off'
+    parts.pluginsManager.policyJobs.gate = 'off'
     parts.log.failing = true
     const search = parts.connect(worker('search'))
     await search.ask('storage.get', { key: 'index' })
     now = 30_000
     expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' }))).toBe('policy-down')
-    parts.loader.nothing = true
+    parts.pluginsManager.nothing = true
     expect((await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, edit: true })
   })
 

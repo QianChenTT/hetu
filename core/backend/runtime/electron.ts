@@ -3,7 +3,7 @@ import type { LimitName } from '../../api/limits.ts'
 import { measurePlain } from '../../api/measure.ts'
 import { messageCap, newBudget, spend } from '../../api/rate.ts'
 import type { Port } from '../carrier/seams.ts'
-import type { Runtime, WorkerStart } from '../loader/seams.ts'
+import type { Runtime, WorkerStart } from '../plugins-manager/seams.ts'
 import { type HostLoading, loadHost } from './hosts.ts'
 
 // A MessagePortMain as the carrier reads a port. A worker's messages reach main only through the relay in the worker
@@ -50,8 +50,8 @@ function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() =>
   }
 }
 
-// The loader's runtime on Electron. Workers start and end in the hidden renderer. A host half loads from the bytes the
-// loader hashed, the built-ins frozen once before the first one. A utility half forks through the utility runtime.
+// The plugins manager's runtime on Electron. Workers start and end in the hidden renderer. A host half loads from the bytes the
+// plugins manager hashed, the built-ins frozen once before the first one. A utility half forks through the utility runtime.
 // limit is the carrier's: a limit as it applies to one plugin
 export function electronRuntime(
   channel: () => { port1: MessagePortMain, port2: MessagePortMain },

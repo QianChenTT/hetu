@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { reasonCodes, windowRoles } from '../api/envelope.ts'
 import { pluginId } from '../api/ids.ts'
 import { quotas, spaceOf } from '../api/storage.ts'
-import { folders } from '../backend/loader/folders.ts'
+import { folders } from '../backend/plugins-manager/folders.ts'
 
 const MiB = 1024 * 1024
 
 describe('a caller\'s space', () => {
-  it('is a plugin\'s id, the folder the loader clears for it', () => {
+  it('is a plugin\'s id, the folder the plugins manager clears for it', () => {
     const space = spaceOf({ kind: 'plugin', id: 'search', half: 'worker', incarnation: 3 })
     expect(space).toBe('search')
     expect(path.basename(folders.storage('data', 'search'))).toBe(space)

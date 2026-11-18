@@ -3,12 +3,12 @@ import { cleanup, code, FakeGuard, FakeLog, harness, host, hostHalf, tick, worke
 
 afterEach(cleanup)
 
-// What the loader asks of the carrier through CarrierLink: lifecycle messages down a half's own way, core records it
+// What the plugins manager asks of the carrier through CarrierLink: lifecycle messages down a half's own way, core records it
 // can wait on and the limits the carrier enforces
-describe('the carrier as the loader\'s link', () => {
+describe('the carrier as the plugins manager\'s link', () => {
   it('posts a lifecycle message down the half\'s own port', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.sandboxed('search')
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
     carrier.send(worker('search'), { v: 1, kind: 'stop', graceMs: 3000 })
     expect(await search.waitFor(message => message.kind === 'stop')).toEqual({ v: 1, kind: 'stop', graceMs: 3000 })
@@ -41,31 +41,31 @@ describe('the carrier as the loader\'s link', () => {
 
   // Only messages a half sends count against its rate. Twenty pings at a rate of 2 would be a flood if they counted
   it('counts no message it sends against the plugin\'s rate', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.human.plugins.search = { messagesPerSecond: 2 }
-    loader.sandboxed('search')
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.human.plugins.search = { messagesPerSecond: 2 }
+    pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
     for (let i = 0; i < 20; i++) carrier.send(worker('search'), { v: 1, kind: 'ping' })
     expect((await search.ask('core.self')).ok).toBe(true)
-    expect(loader.crashes).toEqual([])
+    expect(pluginsManager.crashes).toEqual([])
   })
 
   it('gives record the core record lane\'s landing', async () => {
     const log = new FakeLog()
-    const { carrier, loader } = harness({ log })
+    const { carrier, pluginsManager } = harness({ log })
     expect(await carrier.record('plugin.copied', { plugin: 'git' })).toBe('landed')
-    loader.nothing = true
+    pluginsManager.nothing = true
     expect(await carrier.record('plugin.copied', { plugin: 'mcp' })).toBe('muted')
     expect(log.records.map(record => [record.event, record.fields.plugin])).toEqual([['plugin.copied', 'git']])
   })
 
   it('takes a limit from the human for the plugin, then for all, then the fixed value, lowered by the watchdog', async () => {
-    const { carrier, loader } = harness()
-    loader.sandboxed('search')
+    const { carrier, pluginsManager } = harness()
+    pluginsManager.sandboxed('search')
     expect(carrier.limit('search', 'readyMs')).toBe(10000)
-    loader.human.all = { readyMs: 20000 }
+    pluginsManager.human.all = { readyMs: 20000 }
     expect(carrier.limit('search', 'readyMs')).toBe(20000)
-    loader.human.plugins.search = { readyMs: 15000 }
+    pluginsManager.human.plugins.search = { readyMs: 15000 }
     expect(carrier.limit('search', 'readyMs')).toBe(15000)
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'readyMs', value: 5000 })).ok).toBe(true)
@@ -73,14 +73,14 @@ describe('the carrier as the loader\'s link', () => {
   })
 })
 
-// The loader reports a policy job or guard stopping for shutdown as failed, so nothing passes unguarded. Once the loader says
+// The plugins manager reports a policy job or guard stopping for shutdown as failed, so nothing passes unguarded. Once the plugins manager says
 // shutdown began, what is down answers stopped rather than reading as a failure
 describe('shutdown', () => {
   // A call with power, a guarded write and a read from a provider, each meeting what shutdown takes down
   function setup() {
     const parts = harness({ guardsFor: () => ['leases'] })
-    const { connect, gate, guards, loader } = parts
-    loader.policyJobs.leases = 'on'
+    const { connect, gate, guards, pluginsManager } = parts
+    pluginsManager.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
@@ -88,16 +88,16 @@ describe('shutdown', () => {
   }
 
   it('answers stopped for a call with power once shutdown began and the gate reads failed', async () => {
-    const { carrier, loader, search } = setup()
+    const { carrier, pluginsManager, search } = setup()
     carrier.stopping()
-    loader.policyJobs.gate = 'failed'
+    pluginsManager.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('stopped')
   })
 
   it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {
-    const { carrier, loader, scribe, luoshu } = setup()
+    const { carrier, pluginsManager, scribe, luoshu } = setup()
     carrier.stopping()
-    loader.policyJobs.leases = 'failed'
+    pluginsManager.policyJobs.leases = 'failed'
     expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
     expect(luoshu.performed).toEqual([])
   })
@@ -110,23 +110,23 @@ describe('shutdown', () => {
   })
 
   it('answers policy-down, guard-down and unavailable for the same calls before shutdown', async () => {
-    const { loader, scribe, providers, search } = setup()
-    loader.policyJobs.leases = 'failed'
+    const { pluginsManager, scribe, providers, search } = setup()
+    pluginsManager.policyJobs.leases = 'failed'
     expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     delete (providers as Record<string, unknown>).luoshu
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('unavailable')
-    loader.policyJobs.gate = 'failed'
+    pluginsManager.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
   })
 
   // A change the human confirmed just before Quit still applies during shutdown. A narrowing ends what it removed
   it('ends a subscription a change applied during shutdown no longer grants', async () => {
-    const { carrier, gate, loader, search } = setup()
+    const { carrier, gate, pluginsManager, search } = setup()
     gate.grants.search.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     carrier.stopping()
     gate.grants.search = gate.grants.search.filter(grant => grant.type !== 'events.subscribe')
-    loader.current = 2
+    pluginsManager.current = 2
     carrier.changed()
     const luoshu = hostHalf(carrier, host('luoshu'))
     await luoshu.ask('events.publish', { topic: 'luoshu.changed' })
@@ -136,12 +136,12 @@ describe('shutdown', () => {
   })
 
   it('writes no events.waiting or events.ended while shutdown takes the gate down', async () => {
-    const { carrier, gate, loader, log, search } = setup()
+    const { carrier, gate, pluginsManager, log, search } = setup()
     gate.grants.search.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     carrier.stopping()
-    loader.policyJobs.gate = 'failed'
-    loader.current = 2
+    pluginsManager.policyJobs.gate = 'failed'
+    pluginsManager.current = 2
     carrier.changed()
     const luoshu = hostHalf(carrier, host('luoshu'))
     await luoshu.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })

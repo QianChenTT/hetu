@@ -237,7 +237,7 @@ export class Carrier {
   // The grants snapshot number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
-  // Shutdown began: the loader reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
+  // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   private shutting = false
   // The once a second look, and the log's health it last saw
   private readonly looking: ReturnType<typeof setInterval>
@@ -250,7 +250,7 @@ export class Carrier {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
-    this.limits = new Limits(() => options.loader.limits())
+    this.limits = new Limits(() => options.pluginsManager.limits())
     this.lane = new CoreRecordLane(options.log, {
       bound: () => this.limits.of(null, 'floorBacklog'),
       muted: () => this.muted(),
@@ -307,7 +307,7 @@ export class Carrier {
     })
   }
 
-  // For the loader, before it records core.stopping. The six policy job states have no stopping, so from here a policy job, guard
+  // For the plugins manager, before it records core.stopping. The six policy job states have no stopping, so from here a policy job, guard
   // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
   // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
   // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
@@ -321,7 +321,7 @@ export class Carrier {
     return this.shutting ? 'stopped' : code
   }
 
-  // A core record from the core: boot, the loader and the carrier itself
+  // A core record from the core: boot, the plugins manager and the carrier itself
   coreRecord(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
   }
@@ -375,7 +375,7 @@ export class Carrier {
     this.paused = false
   }
 
-  // For the loader, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
+  // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
   // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
   // core.security once a new grants snapshot applied a security change. The first grants snapshot the carrier reads is where it
   // starts, not a change
@@ -452,7 +452,7 @@ export class Carrier {
     }
   }
 
-  // For the loader: a planned stop or a revoked incarnation. Its subscriptions and credits go at once, calls delivered to
+  // For the plugins manager: a planned stop or a revoked incarnation. Its subscriptions and credits go at once, calls delivered to
   // the way answer code and the calls it made are given up. Not a crash, so nothing is reported
   end(caller: Caller, code: 'stopped' | 'crashed' = 'stopped'): void {
     const way = this.ways.get(keyOf(caller))
@@ -464,7 +464,7 @@ export class Carrier {
     for (const pending of [...way.made.values()]) this.stop(pending, 'stopped')
   }
 
-  // For the loader: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
+  // For the plugins manager: a lifecycle message (init, deps, stop or ping) down a half's own way. A way that is gone or was
   // never registered drops it. Nothing the core sends counts against the half's rate
   send(caller: Caller, message: unknown): void {
     const way = this.ways.get(keyOf(caller))
@@ -472,13 +472,13 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the loader: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
+  // For the plugins manager: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
   // still waiting when signal aborts comes out and settles lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     return this.lane.write(event, fields, signal)
   }
 
-  // For the loader: a limit as the carrier enforces it for one plugin, so the loader's start and stop
+  // For the plugins manager: a limit as the carrier enforces it for one plugin, so the plugins manager's start and stop
   // deadlines follow the same values
   limit(plugin: string, name: LimitName): number {
     return this.limits.of(plugin, name)
@@ -537,7 +537,7 @@ export class Carrier {
     // keeps the heartbeat alone
     if (way.via === 'port' && way.caller.kind === 'plugin' && way.caller.half === 'host' && this.info(way.caller.id)?.place === 'utility') {
       try {
-        this.options.loader.heard(way.caller, 'alive')
+        this.options.pluginsManager.heard(way.caller, 'alive')
       } catch {}
     }
     const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
@@ -552,7 +552,7 @@ export class Carrier {
       else if (kind === 'cancel') this.cancelled(way, message)
       else if (kind === 'ack') this.acked(way, message)
       else if ((kind === 'ready' || kind === 'pong' || kind === 'stopped') && way.plugin !== null) {
-        this.options.loader.heard(way.caller, kind)
+        this.options.pluginsManager.heard(way.caller, kind)
       }
       // Anything else, another v and the kinds only the carrier sends included, is dropped unread
     } catch {}
@@ -595,15 +595,15 @@ export class Carrier {
     } catch {}
   }
 
-  // Its subscriptions and credits go first, so nothing the loader changes on hearing of the crash is sent to the dead
-  // way. The loader moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
+  // Its subscriptions and credits go first, so nothing the plugins manager changes on hearing of the crash is sent to the dead
+  // way. The plugins manager moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
   // the calls it made are given up and their callees told
   private dead(way: Way, reason: 'closed' | 'flood'): void {
     way.open = false
     if (this.ways.get(way.key) === way) this.ways.delete(way.key)
     this.bus.drop(way)
     try {
-      this.options.loader.crashed(way.caller, reason)
+      this.options.pluginsManager.crashed(way.caller, reason)
     } catch {}
     for (const pending of [...way.delivered.values()]) this.stop(pending, 'crashed')
     for (const pending of [...way.made.values()]) this.stop(pending, 'crashed')
@@ -760,9 +760,9 @@ export class Carrier {
     return holder && this.policyJob('watchdog') === 'on'
   }
 
-  // mcp-http-handler's host half in its utility process: a way register made, so a port the loader minted, bound to plugin mcp-http-handler's
-  // host half, with mcp-http-handler placed utility as the loader reads it now. A worker of mcp-http-handler matches the id, the way and the
-  // place, so the half is named too. The incarnation is not compared: the loader ends every way of an incarnation in
+  // mcp-http-handler's host half in its utility process: a way register made, so a port the plugins manager minted, bound to plugin mcp-http-handler's
+  // host half, with mcp-http-handler placed utility as the plugins manager reads it now. A worker of mcp-http-handler matches the id, the way and the
+  // place, so the half is named too. The incarnation is not compared: the plugins manager ends every way of an incarnation in
   // release before it mints the next, so no way of an older one is left to call
   private isDoor(way: Way): boolean {
     const { caller } = way
@@ -982,7 +982,7 @@ export class Carrier {
     }
   }
 
-  // Core actions: the carrier serves its own and hands the rest to the loader and the runtime
+  // Core actions: the carrier serves its own and hands the rest to the plugins manager and the runtime
   private async coreAction(pending: Pending, args: unknown): Promise<void> {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
@@ -1582,8 +1582,8 @@ export class Carrier {
     this.checkLog()
   }
 
-  // Tells the loader that the log failed, as records queue and once a second, whatever the gate's state, until the
-  // loader takes it
+  // Tells the plugins manager that the log failed, as records queue and once a second, whatever the gate's state, until the
+  // plugins manager takes it
   private checkLog(): void {
     if (this.toldLog || this.muted() || !this.logFailing()) return
     try {
@@ -1603,7 +1603,7 @@ export class Carrier {
 
   // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
   // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
-  // count. The loader then quits hetu to start it again, and meanwhile the gate off refuses a call with power
+  // count. The plugins manager then quits hetu to start it again, and meanwhile the gate off refuses a call with power
   private logFailing(): boolean {
     const oldest = this.queue.oldest()
     return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')
@@ -1634,7 +1634,7 @@ export class Carrier {
   // failed, a plugin that can't be read is absent
   private policyJob(id: string): PolicyJobState {
     try {
-      const state = this.options.loader.policyJob(id)
+      const state = this.options.pluginsManager.policyJob(id)
       return isOne(policyJobStates, state) ? state : 'failed'
     } catch {
       return 'failed'
@@ -1643,7 +1643,7 @@ export class Carrier {
 
   private info(id: string): PluginInfo | null {
     try {
-      const info = this.options.loader.plugin(id)
+      const info = this.options.pluginsManager.plugin(id)
       return info !== null && typeof info === 'object' && isOne(pluginStates, info.state) ? info : null
     } catch {
       return null
@@ -1652,17 +1652,17 @@ export class Carrier {
 
   private view(): number | null {
     try {
-      const view = this.options.loader.view()
+      const view = this.options.pluginsManager.view()
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
     }
   }
 
-  // Revoked unless the loader says plainly it is not, so a view that throws refuses
+  // Revoked unless the plugins manager says plainly it is not, so a view that throws refuses
   private revoked(label: string): boolean {
     try {
-      return this.options.loader.revoked(label) !== false
+      return this.options.pluginsManager.revoked(label) !== false
     } catch {
       return true
     }
@@ -1678,7 +1678,7 @@ export class Carrier {
 
   private muted(): boolean {
     try {
-      return this.options.loader.recordNothing() === true
+      return this.options.pluginsManager.recordNothing() === true
     } catch {
       return false
     }

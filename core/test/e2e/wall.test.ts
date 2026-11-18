@@ -2,13 +2,13 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hostManifest, workerManifest, writeFolder, writeInstall } from '../loader-fakes.ts'
+import { entryFor, filesFor, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, exited, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
 // The luoshu's host half as one ES module, which can import only Node's built-ins: its plugin, its provider role and
-// the luoshu role the loader hands the folder to
+// the luoshu role the plugins manager hands the folder to
 const host = `
 export default Object.freeze({ kind: 'hetu-plugin', spec: Object.freeze({ start() {} }) })
 export const luoshu = { open() {} }

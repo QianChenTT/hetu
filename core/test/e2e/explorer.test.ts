@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { firstPartyEntry, hashOf } from '../loader-fakes.ts'
+import { firstPartyEntry, hashOf } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, repo, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)

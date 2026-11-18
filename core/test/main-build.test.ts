@@ -11,7 +11,7 @@ import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildPlugin } from '../sdk/build/esbuild.ts'
-import { writeFolder } from './loader-fakes.ts'
+import { writeFolder } from './plugins-manager-fakes.ts'
 
 // The SDK's build as it is. Two tests change the inputs it reports, for a bundle esbuild doesn't make today
 vi.mock('../sdk/build/esbuild.ts', async importOriginal => {

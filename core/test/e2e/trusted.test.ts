@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, exited, launch, logged, pageAt, repo, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)

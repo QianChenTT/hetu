@@ -17,7 +17,7 @@ import { type Editors, Notes } from '../frontend/editor/notes.ts'
 import type { SettingsValue } from '../frontend/editor/settings.ts'
 import type { UiHooks } from '../frontend/editor/ui-port.ts'
 import { Versions } from '../frontend/editor/versions.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall } from './loader-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 const versionOf = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -53,18 +53,18 @@ async function joined(folder: string, options: { behave?: FakeRuntime['behave'],
   const luoshu = createLuoshu()
   const runtime = new FakeRuntime()
   runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } }, ...options.behave }
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     luoshu.close()
-    await loader.shutdown().catch(() => {})
+    await pluginsManager.shutdown().catch(() => {})
     carrier.close()
     await carrier.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
   })
-  await loader.start()
-  await loader.settled()
+  await pluginsManager.start()
+  await pluginsManager.settled()
   const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
   const waiting = new Map<number, (reply: Reply) => void>()
   const receive = carrier.window<string>(sender => (sender === 'editor' ? editor : null))
@@ -79,7 +79,7 @@ async function joined(folder: string, options: { behave?: FakeRuntime['behave'],
       waiting.delete(reply.id)
     })
   })
-  return { loader, carrier, runtime, dataDir, base, ask, receive }
+  return { pluginsManager, carrier, runtime, dataDir, base, ask, receive }
 }
 
 // A plugin's port to the editor window's drawer, each reply read once the drawer answered

@@ -6,7 +6,7 @@ import { held, type Run, type Sitting, summary } from '../../../scripts/measure-
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)

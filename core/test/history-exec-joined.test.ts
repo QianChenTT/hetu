@@ -10,7 +10,7 @@ import { createExec } from '../../core-plugins/exec/src/exec.ts'
 import { createGate } from '../../core-plugins/gate/src/gate.ts'
 import { createHistory } from '../../core-plugins/history/src/history.ts'
 import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './loader-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -61,21 +61,21 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
     history: { exports: { provider: history.provider, history: history.role } },
     exec: { exports: { provider: exec.provider, exec: exec.role } },
   }
-  const { loader, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     history.close()
     exec.close()
-    await loader.shutdown().catch(() => {})
+    await pluginsManager.shutdown().catch(() => {})
     carrier.close()
     await carrier.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
   })
-  await loader.start()
-  await loader.settled()
-  for (const plugin of folders) await until(() => loader.plugin(plugin.id)?.state === 'ready')
+  await pluginsManager.start()
+  await pluginsManager.settled()
+  for (const plugin of folders) await until(() => pluginsManager.plugin(plugin.id)?.state === 'ready')
 
   const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
   const waiting = new Map<number, (reply: Reply) => void>()
@@ -93,7 +93,7 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   })
   // A call from a folder plugin's worker, its reply within the deadline a command needs
   const plugin = async (id: string, action: string, args: unknown) => (await runtime.half(id).ask(action, args, 15_000)) as Reply | null
-  return { loader, carrier, dataDir, folder, window, plugin }
+  return { pluginsManager, carrier, dataDir, folder, window, plugin }
 }
 
 const exists = (file: string) => stat(file).then(() => true, () => false)

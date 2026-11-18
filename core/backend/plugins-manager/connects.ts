@@ -38,7 +38,7 @@ export const MAX_CONNECT_ANSWERS = 16
 
 export type ConnectAnswer = 'waiting' | 'yes' | 'no' | 'gone'
 
-// What the connect needs from the loader, which holds the requests and the state
+// What the connect needs from the plugins manager, which holds the requests and the state
 export type ConnectHost = {
   clock(): number
   // Whether a request holding this very change still waits for the human
@@ -87,7 +87,7 @@ export class Connects {
     return this.waits() && this.waiting!.handle === handle ? 'waiting' : 'gone'
   }
 
-  // The human's Confirm, from the loader's apply once its record landed. A label the core came to hold while the
+  // The human's Confirm, from the plugins manager's apply once its record landed. A label the core came to hold while the
   // connect waited fails it
   confirmed(change: AgentConnect): void {
     if (this.waiting?.change !== change) throw new Error('no connect waits for this Confirm')

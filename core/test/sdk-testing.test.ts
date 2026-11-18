@@ -110,7 +110,7 @@ describe('the fake core', () => {
     expect(() => fakeCore({ manifest: manifest({ capabilities: [{ type: 'luoshu.teleport' }] }) })).toThrow()
   })
 
-  // As the loader refuses it with api, so a plugin's own tests fail where hetu would
+  // As the plugins manager refuses it with api, so a plugin's own tests fail where hetu would
   it('refuses a manifest whose api range leaves out this core, and takes an older one this core only added to', () => {
     expect(() => fakeCore({ manifest: manifest({ api: '^1' }) })).toThrow(/api/)
     expect(() => fakeCore({ manifest: manifest({ api: '^2', capabilities: [{ type: 'ui.edit', paths: ['**'] }] }) })).toThrow(/api/)
@@ -778,14 +778,14 @@ describe('the fake core playing another plugin', () => {
     expect(seen).toEqual([false, true, true, false])
   })
 
-  // http runs in a utility process, so the fake core places it there on a port, as the loader does
+  // http runs in a utility process, so the fake core places it there on a port, as the plugins manager does
   it('places http under test in a utility process on a port, where the floor takes its two core actions', async () => {
     const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const { made, ctx } = await started(http)
     expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
     await until(() => made.coreRecords.some(record => record.event === 'http.refused'))
     expect(made.coreRecords.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
-    // The core ends the half before any answer, as the loader ends the process, so the call never settles
+    // The core ends the half before any answer, as the plugins manager ends the process, so the call never settles
     void ctx.bindFailed('port-taken').catch(() => {})
     await until(() => made.coreCalls.length === 1)
     expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])

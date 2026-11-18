@@ -2,7 +2,7 @@ import type { BrowserWindow, MessagePortMain, Session } from 'electron'
 import type { Sample } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { firstPartyIds } from '../../api/ids.ts'
-import type { WorkerStart } from '../loader/seams.ts'
+import type { WorkerStart } from '../plugins-manager/seams.ts'
 import { SCHEME } from './before-ready.ts'
 import { webPreferences } from './windows.ts'
 
@@ -30,7 +30,7 @@ export type WorkerRendererOptions = {
   // For the watchdog: a worker's errors, its drops in the relay and its cutoff
   sample(sample: Sample): void
   // How long an ended worker still counts as held for a renderer that dies. Its ports close a few ms before Electron
-  // tells the renderer is gone, and the loader ends the plugin on that close
+  // tells the renderer is gone, and the plugins manager ends the plugin on that close
   endingMs?: number
 }
 
@@ -162,7 +162,7 @@ export class WorkerRenderer {
     }
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     const caller = { kind: 'plugin' as const, id, half: 'worker' as const, incarnation }
-    // The page already ended the worker, so the loader's end that follows has nothing to send
+    // The page already ended the worker, so the plugins manager's end that follows has nothing to send
     if (kind === 'cutoff' && (reason === 'malformed' || reason === 'flood') && this.running.delete(key(id, incarnation))) {
       this.options.cutoff(id, incarnation, reason)
       this.options.sample({ kind: 'cutoff', caller, reason })
@@ -232,7 +232,7 @@ export const groupOf = (id: string): string => ((firstPartyIds as readonly strin
 // The hidden renderers, one per group, each opened when its first worker starts. A community plugin's renderer closes a
 // moment after it holds nothing, which a stop, a crash or a cutoff leaves, so a run doesn't keep one for every plugin it
 // ever started. The moment lets a renderer whose death ended its plugin still be recorded, since its ports close and
-// the loader ends the plugin a few ms before Electron tells the renderer is gone. About 70 MB each while it runs
+// the plugins manager ends the plugin a few ms before Electron tells the renderer is gone. About 70 MB each while it runs
 export class WorkerRenderers {
   private readonly make: (group: string) => WorkerRenderer
   private readonly idleMs: number

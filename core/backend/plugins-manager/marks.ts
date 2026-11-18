@@ -2,7 +2,7 @@ import { MAX_AGENT_ITEMS, type Plugin, type Switches } from '../boot/state.ts'
 
 // The revoked marks: each label the human revoked whose tokens mcp-http-handler has not yet said it ended. They sit on the agent
 // host's entry while it has one and in the switches while it has none, so a Reset or a Remove of the host drops no
-// mark. What changes them is worked out here and the loader writes it
+// mark. What changes them is worked out here and the plugins manager writes it
 
 // Each label once in the order first named, at most as many as an entry holds: the oldest go to make room
 function capped(labels: readonly string[]): { marks: string[], dropped: string[] } {

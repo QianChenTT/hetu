@@ -118,7 +118,7 @@ describe('the items that ask at first use', () => {
 })
 
 // Data moves along plugin.call both ways and along a subscription from the plugin that owns the topic to the one that
-// hears it. The loader hands what lies upstream and downstream that way, and the class reached stays plugin.call's
+// hears it. The plugins manager hands what lies upstream and downstream that way, and the class reached stays plugin.call's
 describe('the pair rule over where data moves', () => {
   const hears: Capability = { type: 'events.subscribe', topics: ['notes.done'] }
   const hearsMore: Capability = { type: 'events.subscribe', topics: ['luoshu.changed'] }
@@ -230,7 +230,7 @@ describe('the screen\'s line on programs that run other programs', () => {
   })
 })
 
-// The loader hands every plugin a change moves to another class, with the class stored and the one the change gives
+// The plugins manager hands every plugin a change moves to another class, with the class stored and the one the change gives
 describe('the classes a change moves', () => {
   it('shows each move up by the plugin with both classes, into 4 and below it', () => {
     expect(caps.moves!([

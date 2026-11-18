@@ -67,7 +67,7 @@ describe('the judge a call with power carries to its provider', () => {
 
   it('asks the guards on the new paths and answers their refusal', async () => {
     const guarded = harness({ guardsFor: () => ['leases'] })
-    guarded.loader.policyJobs.leases = 'on'
+    guarded.pluginsManager.policyJobs.leases = 'on'
     guarded.guards.leases = new FakeGuard()
     guarded.guards.leases.answer = (call: GuardCall) => (call.scope.paths?.[0] === 'other/a.md' ? 'deny' : 'allow')
     guarded.gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }]
@@ -123,7 +123,7 @@ describe('the judge a call with power carries to its provider', () => {
   ] as const)('asks the gate and the guards the same things on the second ask as on the first, with only the paths changed, for %s', async (_name, id, agent) => {
     const parts = harness({ guardsFor: () => ['leases', 'second'] })
     for (const guard of ['leases', 'second']) {
-      parts.loader.policyJobs[guard] = 'on'
+      parts.pluginsManager.policyJobs[guard] = 'on'
       parts.guards[guard] = new FakeGuard()
     }
     parts.gate.grants[id] = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
@@ -137,8 +137,8 @@ describe('the judge a call with power carries to its provider', () => {
     const caller = parts.connect(worker(id))
     let extra: object = { onBehalf: 'agent-a' }
     if (agent !== undefined) {
-      parts.loader.utility('mcp-http-handler')
-      parts.loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
+      parts.pluginsManager.utility('mcp-http-handler')
+      parts.pluginsManager.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
       parts.gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp'] }]
       parts.connect(host('mcp-http-handler')).call('mcp.handle', {}, { onBehalf: agent })
       extra = { parent: (await caller.delivered('mcp.handle')).callId }

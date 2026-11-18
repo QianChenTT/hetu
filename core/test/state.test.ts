@@ -1283,7 +1283,7 @@ describe('removing a plugin', () => {
     await expect(store.removePlugin('search')).resolves.toBeUndefined()
   })
 
-  // Reads like an uninstalled plugin, the same as a wiped file. The loader's scan for a code folder with no entry asks
+  // Reads like an uninstalled plugin, the same as a wiped file. The plugins manager's scan for a code folder with no entry asks
   // about such a folder
   it('reads a deleted entry as no plugin at all, with no check of its own', async () => {
     await addPlugin('search')

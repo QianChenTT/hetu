@@ -46,7 +46,7 @@ export const providers = table({
   net: 'net',
 } as const)
 
-// Served by the carrier, the loader and the runtime, never by a plugin. log.* reads the event log the core writes
+// Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
 export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
 // The actions a guard may hook: each one that changes a note
@@ -82,7 +82,7 @@ export const corePluginIds = frozen([
 export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
-// the reserved first-party signer and bytes equal to the install's copy, which the loader checks
+// the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
 export const firstPartyIds = frozen(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'] as const)
 
 const reserved = new Set<string>([

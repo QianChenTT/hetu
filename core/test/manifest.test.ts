@@ -46,12 +46,12 @@ describe('a manifest', () => {
     expect(installManifest.parse(leases)).toEqual(leases)
   })
 
-  it('leaves reserved ids to the loader, which takes the first-party copies', () => {
+  it('leaves reserved ids to the plugins manager, which takes the first-party copies', () => {
     expect(folderManifest.safeParse({ ...minimal, id: 'git' }).success).toBe(true)
     expect(installManifest.safeParse({ ...minimal, id: 'gate' }).success).toBe(true)
   })
 
-  it('parses an api range outside this core, which the loader refuses with api', () => {
+  it('parses an api range outside this core, which the plugins manager refuses with api', () => {
     expect(API_VERSION).toBe(3)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
@@ -300,7 +300,7 @@ describe('size caps', () => {
   })
 })
 
-// The loader looks names up in these maps, so an action or frame the author never declared must find nothing
+// The plugins manager looks names up in these maps, so an action or frame the author never declared must find nothing
 describe('the parsed maps', () => {
   const declared = { ...minimal, entries: { frames: { panel: 'p.html' } }, provides: { actions: { query: { from: ['mcp-http-handler'] } } } }
 

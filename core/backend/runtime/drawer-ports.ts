@@ -1,5 +1,5 @@
 import type { PluginFile } from '../../lib/hash-files.ts'
-import type { WorkerStart } from '../loader/seams.ts'
+import type { WorkerStart } from '../plugins-manager/seams.ts'
 
 // The ports between plugin workers and the editor page's drawer. Main makes one channel for each pair of a running worker
 // whose plugin holds a ui item and an editor page load, once the page's dom-ready says its preload listens, and hands
@@ -59,7 +59,7 @@ type ViewsSide = {
   ended(id: string, incarnation: number): void
 }
 
-// The runtime's worker starts and ends with the drawer ports told: a start marked drawer and every end, which the loader
+// The runtime's worker starts and ends with the drawer ports told: a start marked drawer and every end, which the plugins manager
 // sends for each incarnation that ends, a crash included. The views host gets a drawer worker's files and frames, which
 // it serves the plugin's frames and icons from until that incarnation ends
 export function withDrawers(workers: WorkerSide, drawers: Pick<DrawerPorts<unknown>, 'started' | 'ended'>, views?: ViewsSide): WorkerSide {

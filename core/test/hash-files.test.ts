@@ -118,7 +118,7 @@ describe('reading the files', () => {
     for (const { path: name, bytes } of files) expect(bytes).toEqual(bytesOf(pinned[name as keyof typeof pinned]))
   })
 
-  // The loader runs these bytes, so a file changed on disk after the read can't reach what was hashed
+  // The plugins manager runs these bytes, so a file changed on disk after the read can't reach what was hashed
   it('keeps the bytes it read, whatever happens on disk after', async () => {
     const root = await folder('search', { 'a.js': 'checked' })
     const files = await readFiles(root)
@@ -171,7 +171,7 @@ describe('reading the files', () => {
     await expect(readFiles(root)).rejects.toThrow(/not a file or folder: pipe/)
   })
 
-  it('answers a missing folder with ENOENT, which the loader reads as missing code', async () => {
+  it('answers a missing folder with ENOENT, which the plugins manager reads as missing code', async () => {
     await expect(readFiles(path.join(dir, 'gone'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 

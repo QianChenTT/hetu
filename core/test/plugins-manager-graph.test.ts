@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { corePluginIds, policyJobIds } from '../api/ids.ts'
-import { plan, type Node, type Status } from '../backend/loader/graph.ts'
-import { bootOrder } from '../backend/loader/loader.ts'
+import { plan, type Node, type Status } from '../backend/plugins-manager/graph.ts'
+import { bootOrder } from '../backend/plugins-manager/plugins-manager.ts'
 
 const ok: Status = { kind: 'ok' }
 const node = (id: string, requires: string[] = [], status: Status = ok, rank = 0): Node => ({ id, status, requires, rank })

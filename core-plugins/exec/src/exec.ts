@@ -34,7 +34,7 @@ type Ready = { key: string, program: string, env: readonly string[] }
 
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string')
 
-// The view the loader hands over, checked and indexed once. A throw marks exec failed, so a view it can't read leaves
+// The view the plugins manager hands over, checked and indexed once. A throw marks exec failed, so a view it can't read leaves
 // it refusing
 function indexed(view: ExecView): View {
   if (typeof view !== 'object' || view === null) throw new Error('a view exec can\'t read')

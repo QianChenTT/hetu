@@ -95,10 +95,10 @@ describe('a move judged on both ends', () => {
   })
 
   it('answers switched-off when the read the second requirement needs is switched off', async () => {
-    const { connect, gate, loader, luoshu } = harness()
+    const { connect, gate, pluginsManager, luoshu } = harness()
     gate.decision = access => (access.capability === 'luoshu.read'
-      ? { allow: false, code: 'switched-off', view: loader.current }
-      : { allow: true, view: loader.current })
+      ? { allow: false, code: 'switched-off', view: pluginsManager.current }
+      : { allow: true, view: pluginsManager.current })
     luoshu.files.set('a.md', 'a')
     expect(code(await connect(worker('sorter')).ask('luoshu.move', { from: 'a.md', to: 'b.md' }))).toBe('switched-off')
     expect(luoshu.performed).toEqual([])
@@ -144,7 +144,7 @@ describe('a remove', () => {
 describe('the guards over a move and a remove', () => {
   const guarded = () => {
     const parts = harness({ guardsFor: () => ['leases'] })
-    parts.loader.policyJobs.leases = 'on'
+    parts.pluginsManager.policyJobs.leases = 'on'
     parts.guards.leases = new FakeGuard()
     parts.guards.leases.answer = call => (call.scope.paths?.includes('locked/x.md') ? 'deny' : 'allow')
     parts.gate.grants.sorter = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]

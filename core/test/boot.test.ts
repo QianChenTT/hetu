@@ -184,7 +184,7 @@ describe('a later run', () => {
     expect(later.at(-1)).toEqual({ event: 'boot.suspect' })
   })
 
-  // The plugin files check is the loader's, which reads the bytes that run
+  // The plugin files check is the plugins manager's, which reads the bytes that run
   it('checks no plugin code and leaves enabled as the entry holds it', async () => {
     const first = await started()
     await addSearch(first)

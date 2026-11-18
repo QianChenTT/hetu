@@ -12,8 +12,8 @@ import type { Gate, GrantsSnapshot } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
-import { Loader, type LoaderOptions } from '../backend/loader/loader.ts'
-import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/loader/seams.ts'
+import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
+import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/plugins-manager/seams.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
@@ -34,7 +34,7 @@ export async function until(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-// What the loader needs from the carrier, around a real carrier for the ways in. send, record, changed, stopping and
+// What the plugins manager needs from the carrier, around a real carrier for the ways in. send, record, changed, stopping and
 // limit are the join's to build, faked here
 export class FakeLink implements CarrierLink {
   carrier: Carrier | null = null
@@ -42,7 +42,7 @@ export class FakeLink implements CarrierLink {
   readonly sent: { caller: Caller, message: Message }[] = []
   readonly ended: { caller: Caller, code: string }[] = []
   readonly registered: Caller[] = []
-  // What the loader asked of the carrier, in order: stopping, each record and each lifecycle message by plugin
+  // What the plugins manager asked of the carrier, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
   landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
@@ -179,12 +179,12 @@ export class Half {
 export class FakeRuntime implements Runtime {
   readonly started: { id: string, incarnation: number, half: 'worker' | 'host' | 'utility', code: string | null }[] = []
   readonly terminated: { id: string, incarnation: number }[] = []
-  // The utility processes the loader asked to end, and every utility start as the loader made it
+  // The utility processes the plugins manager asked to end, and every utility start as the plugins manager made it
   readonly killed: { id: string, incarnation: number }[] = []
   readonly utilityStarts: UtilityStart[] = []
   // The workers started with a port to the drawer
   readonly drawers: string[] = []
-  // Every worker start as the loader made it
+  // Every worker start as the plugins manager made it
   readonly workerStarts: WorkerStart[] = []
   readonly halves = new Map<string, Half>()
   readonly ports: MessagePort[] = []
@@ -367,9 +367,9 @@ export const coreInstall = (): Record<string, Listing> => ({
   gate: { files: filesFor(hostManifest('gate')) },
 })
 
-// A real carrier over the loader, built from the options wireCore builds it from, with no core record log
-export function wire(loader: Loader, link: FakeLink): Carrier {
-  const carrier = new Carrier(carrierOptions(loader, { log: null }))
+// A real carrier over the plugins manager, built from the options wireCore builds it from, with no core record log
+export function wire(pluginsManager: PluginsManager, link: FakeLink): Carrier {
+  const carrier = new Carrier(carrierOptions(pluginsManager, { log: null }))
   link.carrier?.close()
   link.carrier = carrier
   return carrier
@@ -382,7 +382,7 @@ export type Harness = {
   store: StateStore
   link: FakeLink
   runtime: FakeRuntime
-  loader: Loader
+  pluginsManager: PluginsManager
   carrier: Carrier
 }
 
@@ -391,10 +391,10 @@ const live: Harness[] = []
 const bases = new Set<string>()
 
 export async function tempBase(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), 'hetu-loader-'))
+  return mkdtemp(path.join(tmpdir(), 'hetu-plugins-manager-'))
 }
 
-// A loader over a real StateStore and a real carrier, with the fake runtime. state writes the entries and switches the
+// A plugins manager over a real StateStore and a real carrier, with the fake runtime. state writes the entries and switches the
 // boot hands over. removedKnown and markers stand in for what boot found
 export async function harness(options: {
   base?: string
@@ -406,7 +406,7 @@ export async function harness(options: {
   markers?: string[]
   behave?: FakeRuntime['behave']
   limits?: FakeLink['limits']
-  loader?: Partial<LoaderOptions>
+  pluginsManager?: Partial<PluginsManagerOptions>
   // Runs once the folders and entries are written and before the store loads, to plant what boot would find
   before?: (dirs: { dataDir: string, installDir: string }) => Promise<void>
 } = {}): Promise<Harness> {
@@ -431,24 +431,24 @@ export async function harness(options: {
   link.limits = { readyMs: 1000, stopGraceMs: 100, ...options.limits }
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const loader = new Loader({
+  const pluginsManager = new PluginsManager({
     booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir, markers: options.markers ?? [] },
     installDir,
     link,
     runtime,
     // A request counts at once unless a test is about the delay
     confirmDelayMs: 0,
-    ...options.loader,
+    ...options.pluginsManager,
   })
-  const carrier = wire(loader, link)
-  const made = { base, installDir, dataDir, store, link, runtime, loader, carrier }
+  const carrier = wire(pluginsManager, link)
+  const made = { base, installDir, dataDir, store, link, runtime, pluginsManager, carrier }
   live.push(made)
   return made
 }
 
 export async function cleanup(): Promise<void> {
   for (const made of live.splice(0)) {
-    await made.loader.shutdown().catch(() => {})
+    await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
     made.link.carrier?.close()
     for (const port of made.runtime.ports) port.close()
@@ -459,5 +459,5 @@ export async function cleanup(): Promise<void> {
   }
 }
 
-export const stateOf = (loader: Loader, id: string) => loader.plugin(id)?.state ?? null
-export const reasonOf = (loader: Loader, id: string) => loader.list().find(row => row.id === id)?.reason ?? null
+export const stateOf = (pluginsManager: PluginsManager, id: string) => pluginsManager.plugin(id)?.state ?? null
+export const reasonOf = (pluginsManager: PluginsManager, id: string) => pluginsManager.list().find(row => row.id === id)?.reason ?? null

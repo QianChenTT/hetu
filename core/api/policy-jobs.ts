@@ -57,7 +57,7 @@ export type Access = {
   readonly scope: Scope
 }
 
-// The agent door: mcp-http-handler's host half in its utility process, on the port the loader minted, calling mcp.handle on behalf
+// The agent door: mcp-http-handler's host half in its utility process, on the port the plugins manager minted, calling mcp.handle on behalf
 // of an agent, named by its label. Every call under that call carries the label as the agent's and can't set its own. A
 // label set anywhere else names nobody's agent, the same half on an in-process handle or with mcp-http-handler placed elsewhere too
 export const agentDoor = frozen({ plugin: 'mcp-http-handler', half: 'host', action: 'mcp.handle' } as const)
@@ -78,7 +78,7 @@ export type Decision =
 // use still asks for a Confirm
 export type GrantedItem = { readonly capability: Capability, readonly off: boolean, readonly firstUse: boolean }
 
-// What the loader pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
+// What the plugins manager pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
 // volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
@@ -134,7 +134,7 @@ export type ScreenSubject = {
 // and the one the change gives it, null for a class not known
 export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
 
-// The grant risk classifier policy job. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
+// The grant risk classifier policy job. A plugin's class from 0 to 4, the items that ask at first use and the screen. The plugins manager asks
 // it at every class change, the changed plugin's and every other plugin's whose links the change moves. A throw counts
 // as the policy job down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
 // classes the change moves, which a policy job without it shows none of. alerts says whether a move made with no Confirm on
@@ -147,7 +147,7 @@ export type GrantRiskClassifier = {
   alerts?(move: ClassMove): boolean
 }
 
-// How the loader clears a space through the storage plugin, so the clear runs after every call already queued on the
+// How the plugins manager clears a space through the storage plugin, so the clear runs after every call already queued on the
 // space and nothing a stopped plugin queued lands after it
 export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
 
@@ -158,11 +158,11 @@ export type Opening = { readonly folder: string | null, readonly dataDir: string
 // a file. None in a core with no bin, where a remove answers unavailable
 export type LuoshuOpening = Opening & { readonly trash?: (absolute: string) => Promise<void> }
 
-// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.pick applies. A throw marks
+// How the plugins manager hands the luoshu its folder: when the plugin is ready and each time luoshu.pick applies. A throw marks
 // the luoshu failed
 export type LuoshuRole = { open(opening: LuoshuOpening): void }
 
-// How the loader hands history the notes folder: when the plugin is ready and each time luoshu.pick applies. A throw
+// How the plugins manager hands history the notes folder: when the plugin is ready and each time luoshu.pick applies. A throw
 // marks history failed
 export type HistoryRole = { open(opening: Opening): void }
 
@@ -177,7 +177,7 @@ export type ExecView = {
   readonly opening: Opening
 }
 
-// How the loader hands exec its view. A throw marks exec failed
+// How the plugins manager hands exec its view. A throw marks exec failed
 export type ExecRole = { stateChanged(view: ExecView): void }
 
 // A host guard answers from its own state and makes no calls
@@ -205,7 +205,7 @@ export type Provider = {
 export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const)
 export type PolicyJobState = typeof policyJobStates[number]
 
-// A plugin's lifecycle state, which the loader owns
+// A plugin's lifecycle state, which the plugins manager owns
 export const pluginStates = frozen([
   'found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed',
 ] as const)

@@ -26,9 +26,9 @@ const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason
 
 export type Storage = Provider & {
   readonly quotas: Quotas
-  // The data folder the loader hands an install host half. Calls before it answer unavailable
+  // The data folder the plugins manager hands an install host half. Calls before it answer unavailable
   open(dataDir: string): void
-  // Removes a space in its turn, after every call already queued on it, for the loader's clears
+  // Removes a space in its turn, after every call already queued on it, for the plugins manager's clears
   clear(kind: Kind, space: string): Promise<void>
 }
 
@@ -61,7 +61,7 @@ export function createStorage(options: { quotas?: Quotas } = {}): Storage {
     swept.add(dir)
   }
 
-  // What the space holds apart from the key being set, read from disk each time, so a space the loader cleared while
+  // What the space holds apart from the key being set, read from disk each time, so a space the plugins manager cleared while
   // its plugin was stopped never leaves a stale count
   async function withinQuota(dir: string, own: string, size: number, quota: Quota): Promise<void> {
     let bytes = size

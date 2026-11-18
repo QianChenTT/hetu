@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { RelayLimits } from '../../api/rate.ts'
 import { VERSION } from '../../api/version.ts'
 import { baseEnv } from '../../lib/clean-env.ts'
-import type { Runtime, UtilityStart } from '../loader/seams.ts'
+import type { Runtime, UtilityStart } from '../plugins-manager/seams.ts'
 
 // What the runtime gives utilityProcess.fork. env replaces the child's whole environment
 export type ForkOptions = { env: Record<string, string>, cwd: string, stdio: 'ignore' | 'inherit', serviceName: string }

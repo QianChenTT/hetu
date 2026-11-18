@@ -4,7 +4,7 @@ import type { HeldRequest, ListedPlugin, SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import { describeChange } from '../api/describe.ts'
 import { limitNames, defaultLimits } from '../api/limits.ts'
-import { connectChange } from '../backend/loader/connects.ts'
+import { connectChange } from '../backend/plugins-manager/connects.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
 const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({

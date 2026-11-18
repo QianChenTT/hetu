@@ -14,7 +14,7 @@ const MAX_HELD = 4 * MAX_PENDING
 // How long a Confirm waits for its record to land before it applies nothing
 export const CONFIRM_RECORD_MS = 10_000
 
-// What the requests need from the loader, which owns the state
+// What the requests need from the plugins manager, which owns the state
 export type RequestHost = {
   effect(change: Change): ChangeEffect
   // The digest of the state files the change reads, read from disk

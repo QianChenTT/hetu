@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { COMMUNITY_PACKAGE, communityHash, communitySource, PIN, type Pin } from '../build/community.ts'
-import { writeFolder } from './loader-fakes.ts'
+import { writeFolder } from './plugins-manager-fakes.ts'
 
 const repo = path.join(import.meta.dirname, '..', '..')
 const made: string[] = []

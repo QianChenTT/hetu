@@ -8,8 +8,8 @@ import { describeChange } from '../api/describe.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Call } from '../api/policy-jobs.ts'
 import { StateStore } from '../backend/boot/state.ts'
-import { connectChange, Connects, type ConnectAsked } from '../backend/loader/connects.ts'
-import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './loader-fakes.ts'
+import { connectChange, Connects, type ConnectAsked } from '../backend/plugins-manager/connects.ts'
+import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -175,11 +175,11 @@ async function started(over: { agents?: { agent: string, capability: Capability 
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
     behave: { gate: { exports: { gate } } },
-    loader: { clock: () => clock.now, confirmDelayMs: delayMs },
+    pluginsManager: { clock: () => clock.now, confirmDelayMs: delayMs },
   })
-  await made.loader.start()
+  await made.pluginsManager.start()
   let n = 0
-  const serve = (caller: Caller, action: string, args: unknown, onBehalf?: string) => made.loader.serve({
+  const serve = (caller: Caller, action: string, args: unknown, onBehalf?: string) => made.pluginsManager.serve({
     callId: `call-${++n}`, caller, action, args, deadline: Date.now() + 30_000, ...(onBehalf !== undefined ? { onBehalf } : {}),
   } as Call)
   // core.agentConnect and core.agentConnected as the carrier hands them over once its floor let http's door through
@@ -189,16 +189,16 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const agentAsk = (label: string, capabilities: Capability[]) => serve(mcpWorker, 'core.agentAsk', { capabilities }, label)
   const list = async () => await serve(trusted, 'security.list', undefined) as SecurityList
   const state = async () => (await new StateStore(made.dataDir).load()).state
-  const first = () => made.loader.pending()[0]!.id
+  const first = () => made.pluginsManager.pending()[0]!.id
   return { ...made, gate, clock, connect, collect, agentAsk, list, state, first }
 }
 
 describe('a connect http asks for', () => {
   it('raises a request only the core raises and answers at once with a handle the core made', async () => {
-    const { loader, connect, list, link, first } = await started()
+    const { pluginsManager, connect, list, link, first } = await started()
     const handle = await connect()
     expect(handle).toMatch(/^[A-Za-z0-9_-]{32}$/)
-    expect(loader.pending()).toEqual([{ id: first(), kind: 'agent.connect', plugin: 'mcp-http-handler' }])
+    expect(pluginsManager.pending()).toEqual([{ id: first(), kind: 'agent.connect', plugin: 'mcp-http-handler' }])
     expect(handle).not.toBe(first())
     const shown = (await list()).requests[0]!
     expect(shown.text).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${LABEL}"`)
@@ -208,59 +208,59 @@ describe('a connect http asks for', () => {
   })
 
   it('makes each handle afresh and never from what http sent', async () => {
-    const { loader, connect, first } = await started()
+    const { pluginsManager, connect, first } = await started()
     const one = await connect()
-    await loader.cancel(first())
+    await pluginsManager.cancel(first())
     const two = await connect({ client: 'other-client', number: 1 })
     expect(two).not.toBe(one)
     for (const handle of [one, two]) for (const sent of [CLAUDE, 'other-client', 'Claude Code', asked.redirect]) expect(handle).not.toContain(sent)
   })
 
   it('holds one connect waiting in all, a second refused while one waits whether it reads the same or not', async () => {
-    const { loader, connect } = await started()
+    const { pluginsManager, connect } = await started()
     const both = await Promise.all([code(connect()), code(connect())])
     expect(both.sort()).toEqual([null, 'throttled'].sort())
     expect(await code(connect({ client: 'other-client', number: 1 }))).toBe('throttled')
-    expect(loader.pending()).toHaveLength(1)
+    expect(pluginsManager.pending()).toHaveLength(1)
   })
 
   it('refuses a label the core holds items for, holds as revoked or has an ask waiting for and raises nothing', async () => {
-    const { loader, connect, agentAsk } = await started({ agents: [{ agent: 'held#1', capability: inbox }], revoked: ['gone#1'] })
+    const { pluginsManager, connect, agentAsk } = await started({ agents: [{ agent: 'held#1', capability: inbox }], revoked: ['gone#1'] })
     expect(await code(connect({ client: 'held', number: 1 }))).toBe('not-granted')
     expect(await code(connect({ client: 'gone', number: 1 }))).toBe('not-granted')
     await agentAsk('asking#2', [inbox])
     expect(await code(connect({ client: 'asking', number: 2 }))).toBe('not-granted')
-    expect(loader.pending().map(one => one.kind)).toEqual(['agent.ask'])
+    expect(pluginsManager.pending().map(one => one.kind)).toEqual(['agent.ask'])
     // Another number under the same client id is another agent
     expect(await code(connect({ client: 'held', number: 2 }))).toBeNull()
   })
 
   it('refuses with invalid what makes no label or what the core won\'t show, before any request', async () => {
-    const { loader, connect, link } = await started()
+    const { pluginsManager, connect, link } = await started()
     for (const over of [{ client: 'a#b' }, { number: 0 }, { redirect: 'http://claude.ai@localhost/cb' }, { redirect: 'com.example:/cb' }, { name: `Cla${ch(0x200b)}ude` }]) {
       expect(await code(connect(over)), JSON.stringify(over)).toBe('invalid')
     }
-    expect(loader.pending()).toEqual([])
+    expect(pluginsManager.pending()).toEqual([])
     expect(link.events('security.request')).toEqual([])
   })
 })
 
 describe('the answer to a connect', () => {
   it('answers waiting before the Confirm, yes once after it, then gone', async () => {
-    const { loader, connect, collect, first } = await started()
+    const { pluginsManager, connect, collect, first } = await started()
     const handle = await connect()
     expect(await collect(handle)).toBe('waiting')
     expect(await collect(handle)).toBe('waiting')
-    await loader.confirm(first(), {})
-    expect(loader.pending()).toEqual([])
+    await pluginsManager.confirm(first(), {})
+    expect(pluginsManager.pending()).toEqual([])
     expect(await collect(handle)).toBe('yes')
     expect(await collect(handle)).toBe('gone')
   })
 
   it('answers no once after a Cancel and refuses that client id for a minute, then takes it again', async () => {
-    const { loader, connect, collect, clock, first } = await started()
+    const { pluginsManager, connect, collect, clock, first } = await started()
     const handle = await connect()
-    await loader.cancel(first())
+    await pluginsManager.cancel(first())
     expect(await collect(handle)).toBe('no')
     expect(await collect(handle)).toBe('gone')
     expect(await code(connect({ number: 4 }))).toBe('throttled')
@@ -268,7 +268,7 @@ describe('the answer to a connect', () => {
     expect(await code(connect({ number: 4 }))).toBe('throttled')
     // Another client id is not held back
     const other = await connect({ client: 'other-client', number: 1 })
-    await loader.cancel(first())
+    await pluginsManager.cancel(first())
     expect(await collect(other)).toBe('no')
     clock.now += 1
     expect(await code(connect({ number: 4 }))).toBeNull()
@@ -283,66 +283,66 @@ describe('the answer to a connect', () => {
   })
 
   it('lapses a minute after it was raised, then answers gone and can\'t be confirmed, a new connect then taken', async () => {
-    const { loader, connect, collect, clock, first, link } = await started()
+    const { pluginsManager, connect, collect, clock, first, link } = await started()
     const handle = await connect()
     const id = first()
     clock.now += 59_999
     expect(await collect(handle)).toBe('waiting')
     clock.now += 1
     expect(await collect(handle)).toBe('gone')
-    expect(loader.pending()).toEqual([])
-    expect(await code(loader.confirm(id, {}))).toBe('not-found')
+    expect(pluginsManager.pending()).toEqual([])
+    expect(await code(pluginsManager.confirm(id, {}))).toBe('not-found')
     expect(link.events('security.lapsed')).toMatchObject([{ kind: 'agent.connect' }])
     expect(await code(connect())).toBeNull()
   })
 
   it('refuses a Confirm inside the input delay, which leaves the connect waiting', async () => {
-    const { loader, connect, collect, clock, first } = await started({}, 1000)
+    const { pluginsManager, connect, collect, clock, first } = await started({}, 1000)
     const handle = await connect()
     clock.now += 999
-    expect(await code(loader.confirm(first(), {}))).toBe('throttled')
+    expect(await code(pluginsManager.confirm(first(), {}))).toBe('throttled')
     expect(await collect(handle)).toBe('waiting')
     clock.now += 1
-    await loader.confirm(first(), {})
+    await pluginsManager.confirm(first(), {})
     expect(await collect(handle)).toBe('yes')
   })
 
   it('withdraws a waiting connect when http stops, so its handle answers gone and its Confirm is refused', async () => {
-    const { loader, connect, collect, first, link } = await started()
+    const { pluginsManager, connect, collect, first, link } = await started()
     const handle = await connect()
     const id = first()
-    loader.crashed(door, 'closed')
-    expect(loader.pending()).toEqual([])
+    pluginsManager.crashed(door, 'closed')
+    expect(pluginsManager.pending()).toEqual([])
     expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.connect' }])
-    expect(await code(loader.confirm(id, {}))).toBe('not-found')
+    expect(await code(pluginsManager.confirm(id, {}))).toBe('not-found')
     expect(await collect(handle)).toBe('gone')
   })
 
   it('drops a yes http never collected when http stops', async () => {
-    const { loader, connect, collect, first } = await started()
+    const { pluginsManager, connect, collect, first } = await started()
     const handle = await connect()
-    await loader.confirm(first(), {})
-    loader.crashed(door, 'closed')
+    await pluginsManager.confirm(first(), {})
+    pluginsManager.crashed(door, 'closed')
     expect(await collect(handle)).toBe('gone')
   })
 
   it('keeps the minute after a Cancel across a stop of http', async () => {
-    const { loader, connect, first } = await started()
+    const { pluginsManager, connect, first } = await started()
     await connect()
-    await loader.cancel(first())
-    loader.crashed(door, 'closed')
+    await pluginsManager.cancel(first())
+    pluginsManager.crashed(door, 'closed')
     expect(await code(connect({ number: 4 }))).toBe('throttled')
   })
 
   it('withdraws nothing of a connect when mcp stops', async () => {
-    const { loader, connect, collect } = await started()
+    const { pluginsManager, connect, collect } = await started()
     const handle = await connect()
-    loader.crashed(mcpWorker, 'closed')
+    pluginsManager.crashed(mcpWorker, 'closed')
     expect(await collect(handle)).toBe('waiting')
   })
 
   it('applies nothing for a Confirm whose connect a stop of http withdrew while its record landed', async () => {
-    const { loader, connect, collect, first, link } = await started()
+    const { pluginsManager, connect, collect, first, link } = await started()
     const handle = await connect()
     let land = () => {}
     const holding = new Promise<void>(held => {
@@ -351,20 +351,20 @@ describe('the answer to a connect', () => {
         held()
       }) : 'landed')
     })
-    const confirming = code(loader.confirm(first(), {}))
+    const confirming = code(pluginsManager.confirm(first(), {}))
     await holding
-    loader.crashed(door, 'closed')
+    pluginsManager.crashed(door, 'closed')
     land()
     expect(await confirming).toBe('not-found')
     expect(await collect(handle)).toBe('gone')
   })
 
   it('keeps the newest sixteen answers http never collected', async () => {
-    const { loader, connect, collect, first } = await started()
+    const { pluginsManager, connect, collect, first } = await started()
     const handles: string[] = []
     for (let i = 1; i <= 17; i++) {
       handles.push(await connect({ number: i }))
-      await loader.confirm(first(), {})
+      await pluginsManager.confirm(first(), {})
     }
     expect(await collect(handles[0]!)).toBe('gone')
     for (const handle of handles.slice(1)) expect(await collect(handle)).toBe('yes')
@@ -397,59 +397,59 @@ describe('the connect\'s state alone', () => {
 
 describe('the Confirm of a connect', () => {
   it('changes no state: nothing on mcp\'s entry, in the switches or in what the gate sees', async () => {
-    const { loader, connect, state, first, gate } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
+    const { pluginsManager, connect, state, first, gate } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
     const before = await state()
     const views = gate.seen.length
     await connect()
-    await loader.confirm(first(), {})
+    await pluginsManager.confirm(first(), {})
     expect(await state()).toEqual(before)
     expect(gate.seen.length).toBe(views)
   })
 
   it('goes stale against no write, so another agent\'s Confirm or a write of the switches meanwhile leaves it to be confirmed', async () => {
-    const { loader, connect, collect, agentAsk, state, dataDir } = await started()
+    const { pluginsManager, connect, collect, agentAsk, state, dataDir } = await started()
     await agentAsk('client#1', [inbox])
     const handle = await connect()
-    const [ask, connecting] = loader.pending()
-    await loader.confirm(ask!.id, {})
+    const [ask, connecting] = pluginsManager.pending()
+    await pluginsManager.confirm(ask!.id, {})
     expect((await state()).plugins.mcp!.agents).toEqual([{ agent: 'client#1', capability: inbox }])
     const switches = (await state()).switches
     await new StateStore(dataDir).writeSwitches({ ...switches, devMode: ['search'] })
-    await loader.confirm(connecting!.id, {})
+    await pluginsManager.confirm(connecting!.id, {})
     expect(await collect(handle)).toBe('yes')
   })
 
   it('fails when the label was revoked while it waited and hands no yes', async () => {
-    const { loader, connect, collect, agentAsk, first } = await started()
+    const { pluginsManager, connect, collect, agentAsk, first } = await started()
     const handle = await connect()
     const id = first()
     // The label asks under a door call before its connect is answered, then the human turns it away
     await agentAsk(LABEL, [inbox])
-    await loader.request({ kind: 'agent.revoke', agent: LABEL }, trusted)
-    expect(loader.pending().map(one => one.id)).toEqual([id])
-    expect(await code(loader.confirm(id, {}))).toBe('failed')
+    await pluginsManager.request({ kind: 'agent.revoke', agent: LABEL }, trusted)
+    expect(pluginsManager.pending().map(one => one.id)).toEqual([id])
+    expect(await code(pluginsManager.confirm(id, {}))).toBe('failed')
     expect(await collect(handle)).toBe('waiting')
   })
 })
 
 describe('a connect in the line of requests', () => {
   it('waits in the order it was raised, behind the asks before it and before the asks after it', async () => {
-    const { loader, connect, agentAsk, list } = await started()
+    const { pluginsManager, connect, agentAsk, list } = await started()
     await agentAsk('client#1', [inbox])
     await connect()
     await agentAsk('client#2', [inbox])
-    expect(loader.pending().map(one => one.kind)).toEqual(['agent.ask', 'agent.connect', 'agent.ask'])
+    expect(pluginsManager.pending().map(one => one.kind)).toEqual(['agent.ask', 'agent.connect', 'agent.ask'])
     expect((await list()).requests[1]!.agent).toBe(LABEL)
   })
 
   it('is taken behind sixteen asks, in a place of its own, lapsing there if they are not answered within its minute', async () => {
-    const { loader, connect, collect, agentAsk, clock } = await started()
+    const { pluginsManager, connect, collect, agentAsk, clock } = await started()
     for (let i = 1; i <= 16; i++) await agentAsk(`client#${i}`, [inbox])
     expect(await code(agentAsk('client#17', [inbox]))).toBe('throttled')
     const handle = await connect()
-    expect(loader.pending().map(one => one.kind).indexOf('agent.connect')).toBe(16)
+    expect(pluginsManager.pending().map(one => one.kind).indexOf('agent.connect')).toBe(16)
     clock.now += 60_000
     expect(await collect(handle)).toBe('gone')
-    expect(loader.pending()).toHaveLength(16)
+    expect(pluginsManager.pending()).toHaveLength(16)
   })
 })

@@ -168,7 +168,7 @@ export class Bus {
     if (missed.length > 0) this.signal(subscriber, 'events.dropped', missed)
   }
 
-  // Runs before anything the gate decides here, so a change the loader didn't report is still seen. While the gate is
+  // Runs before anything the gate decides here, so a change the plugins manager didn't report is still seen. While the gate is
   // down every live path subscription is marked, since a path may be held back from it. A gated subscription the gate
   // didn't allow on the current grants snapshot waits too, path-less events included. Only an exact allow counts, so a
   // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the grants snapshot

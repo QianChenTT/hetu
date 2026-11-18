@@ -8,7 +8,7 @@ import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
 // The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the test install

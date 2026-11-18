@@ -24,7 +24,7 @@ export type Booted = {
   // False when this boot found the switches gone, failed or newer: removed may then miss a first-party plugin the human
   // removed, so the reconcile can't tell a removed plugin from one never copied. A one-boot signal. Boot writes the
   // defaults over a wipe and the next write replaces a failed file, after which a boot reads the empty removed as
-  // known. So the loader acts on false in the boot that sees it
+  // known. So the plugins manager acts on false in the boot that sees it
   removedKnown: boolean
   // The one writer of the state, passed on so no second store races it
   store: StateStore
@@ -32,7 +32,7 @@ export type Booted = {
   logHealthy: boolean
   dataDir: string
   dev: boolean
-  // Host halves whose start marker an earlier run left, so their start never reached ready. The loader holds each one
+  // Host halves whose start marker an earlier run left, so their start never reached ready. The plugins manager holds each one
   // failed for this run
   markers: string[]
   release: () => Promise<void>
@@ -167,7 +167,7 @@ async function record(log: EventLog, event: string, fields: Record<string, strin
 }
 
 // Holds no policy and starts nothing, it reads and checks the state and says what it found. wireCore hands what it
-// found to the loader and its log to the carrier
+// found to the plugins manager and its log to the carrier
 export async function boot(options: BootOptions): Promise<Booted> {
   const { dataDir, dev } = resolveDataDir(options)
   await mkdir(dataDir, { recursive: true })

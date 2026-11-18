@@ -7,7 +7,7 @@ import { MAX_LABEL_LENGTH } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import {
   allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
 
@@ -174,7 +174,7 @@ describe('agents\' items in the grants snapshot', () => {
       },
       behave: { gate: { exports: { gate } } },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return { ...made, gate }
   }
 

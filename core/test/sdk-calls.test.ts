@@ -11,8 +11,8 @@ afterEach(cleanup)
 // search reads notes/** and calls mcp, which serves handle from its own port
 function setup() {
   const parts = harness()
-  parts.loader.sandboxed('search')
-  parts.loader.sandboxed('mcp', { handle: {} })
+  parts.pluginsManager.sandboxed('search')
+  parts.pluginsManager.sandboxed('mcp', { handle: {} })
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['mcp'] }]
   parts.luoshu.files.set('notes/a.md', 'hello')
   return { ...parts, ...clientOn(parts.carrier, worker('search')), mcp: parts.connect(worker('mcp')) }
@@ -89,29 +89,29 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 // search as a running plugin, so the limits the runtime knows reach its calls
 async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions = {}) {
   const parts = harness()
-  parts.loader.sandboxed('search')
-  parts.loader.sandboxed('mcp', { handle: {} })
+  parts.pluginsManager.sandboxed('search')
+  parts.pluginsManager.sandboxed('mcp', { handle: {} })
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
   parts.luoshu.files.set('notes/a.md', 'hello')
   let ctx: PluginContext | null = null
   const transport = sdkTransport(parts.carrier, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport, { limits })
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
-  await until(() => ctx !== null && parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
+  await until(() => ctx !== null && parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
   return { ...parts, ctx: ctx!, transport, mcp: parts.connect(worker('mcp')) }
 }
 
 describe('what a call hides', () => {
   it('retries a call refused starting until the provider is ready', async () => {
-    const { ctx, loader } = await plugin()
-    loader.installed('luoshu', 'starting')
-    setTimeout(() => loader.installed('luoshu', 'ready'), 100)
+    const { ctx, pluginsManager } = await plugin()
+    pluginsManager.installed('luoshu', 'starting')
+    setTimeout(() => pluginsManager.installed('luoshu', 'ready'), 100)
     expect(await ctx.luoshu.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
   })
 
   it('gives up on starting at the call\'s deadline with the last refusal', async () => {
-    const { ctx, loader } = await plugin()
-    loader.installed('luoshu', 'starting')
+    const { ctx, pluginsManager } = await plugin()
+    pluginsManager.installed('luoshu', 'starting')
     const started = Date.now()
     await expect(ctx.luoshu.read({ path: 'notes/a.md' }, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
     expect(Date.now() - started).toBeLessThan(1000)
@@ -119,7 +119,7 @@ describe('what a call hides', () => {
 
   it('retries a call refused throttled', async () => {
     const parts = await plugin()
-    parts.loader.human.plugins.search = { callsInFlight: 1 }
+    parts.pluginsManager.human.plugins.search = { callsInFlight: 1 }
     let release: () => void = () => {}
     parts.luoshu.hold.prepare = new Promise<void>(resolve => { release = () => resolve() })
     const reads = [1, 2, 3].map(() => parts.ctx.luoshu.read({ path: 'notes/a.md' }))
@@ -142,11 +142,11 @@ describe('what a call hides', () => {
     const parts = await plugin({ messagesPerSecond: 20 })
     // The carrier counts messages as they arrive, and a busy runner hands over messages sent apart in a bunch. 24
     // leaves room for that and still drops a burst of 40 sent at once
-    parts.loader.human.plugins.search = { messagesPerSecond: 24 }
+    parts.pluginsManager.human.plugins.search = { messagesPerSecond: 24 }
     const selves = Array.from({ length: 40 }, () => parts.ctx.call('core', 'self', {}, { timeoutMs: 6000 }))
     const results = await Promise.all(selves)
     expect(results.every(result => (result as { id?: string }).id === 'search')).toBe(true)
-    expect(parts.loader.crashes).toEqual([])
+    expect(parts.pluginsManager.crashes).toEqual([])
   })
 
   it('settles a call whose reply never came', async () => {

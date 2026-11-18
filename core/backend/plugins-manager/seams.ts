@@ -8,10 +8,10 @@ import type { Landing, Port } from '../carrier/seams.ts'
 // The carrier says what became of a core record, so the type lives with it
 export type { Landing }
 
-// What the loader needs from the carrier, a small interface the loader's tests fake. register, handle and end are the
+// What the plugins manager needs from the carrier, a small interface the plugins manager's tests fake. register, handle and end are the
 // carrier's own. The join builds send, record, changed, stopping and limit in the carrier
 export type CarrierLink = {
-  // Binds a half's port to its caller. The loader calls it in the same step that mints the port
+  // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port
   register(port: Port, caller: Caller): void
   // A host half's in-process way in, bound like a port
   handle(caller: Caller, receive: (message: unknown) => void): { post: (message: unknown) => void }
@@ -23,7 +23,7 @@ export type CarrierLink = {
   // one record is on disk. It settles at once with muted while the human turned recording off. It settles with lost
   // when the backlog dropped it, the log refused it or the lane closed with it still waiting. It never rejects. A copy,
   // an update or a restore applies only on landed or muted, so a record the log can't write yet holds the change back
-  // until it lands or the loader gives up. A loader that gives up aborts signal, which takes a record still waiting
+  // until it lands or the plugins manager gives up. A plugins manager that gives up aborts signal, which takes a record still waiting
   // out of the backlog and settles it lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   // A policy job state, a plugin state or the grants snapshot changed, so the carrier asks the gate about live subscriptions again
@@ -31,7 +31,7 @@ export type CarrierLink = {
   // Shutdown has begun. The six policy job states have no stopping and the carrier reads anything else as failed, so
   // shutdown says so here instead. From this call on the carrier answers stopped where it would answer policy-down,
   // guard-down or unavailable for a policy job, a guard or a provider that is down. It writes no policy job change as a failure
-  // either. The loader keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
+  // either. The plugins manager keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
   // passes unguarded and nothing reads as down
   stopping(): void
   // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
@@ -40,12 +40,12 @@ export type CarrierLink = {
   // Recording didn't go off after a drain, so the audit writer goes on
   resume(): void
   // A limit as it applies to one plugin: the human's value for it or for all, lowered by the watchdog. The
-  // loader takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
+  // plugins manager takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
   limit(plugin: string, name: LimitName): number
 }
 
 // What a host half's module gives the core once imported: the role interfaces it holds. The carrier asks them
-// through the loader, which hands one on only while its plugin is ready
+// through the plugins manager, which hands one on only while its plugin is ready
 export type HostExports = {
   gate?: Gate
   guard?: Guard
@@ -62,7 +62,7 @@ export type HostExports = {
 export type HostLink = { post(message: unknown): void, listen(listener: (message: unknown) => void): void }
 
 // drawer says the plugin holds a ui item, so the runtime gives its worker a port to each editor page as well
-// files and frames come only with drawer: the bytes the loader checked, which serve the plugin's frames and icons
+// files and frames come only with drawer: the bytes the plugins manager checked, which serve the plugin's frames and icons
 export type WorkerStart = {
   id: string
   incarnation: number
@@ -75,11 +75,11 @@ export type WorkerStart = {
 export type HostStart = { id: string, incarnation: number, root: string, files: readonly PluginFile[], entry: string, link: HostLink }
 
 // A host entry that runs in a utility process: its verified bytes and the plugin's end of a new channel. exited is how
-// the runtime tells the loader the process ended, with killed true when the runtime itself ended it. The exit code is
+// the runtime tells the plugins manager the process ended, with killed true when the runtime itself ended it. The exit code is
 // never passed on: a kill exits 0 on Windows, so it can't tell a kill from a clean exit
 export type UtilityStart = { id: string, incarnation: number, code: Buffer, port: unknown, exited: (how: { killed: boolean }) => void }
 
-// What the loader needs from the runtime, the only part that touches Electron, faked in the loader's tests
+// What the plugins manager needs from the runtime, the only part that touches Electron, faked in the plugins manager's tests
 export type Runtime = {
   // Both ends of a new channel for plugin id: core for the carrier and plugin for the half's code. MessageChannelMain in
   // Electron, whose core end reads only text within the plugin's cap. counted has main weigh each message against the

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RelayLimits } from '../api/rate.ts'
-import type { UtilityStart } from '../backend/loader/seams.ts'
+import type { UtilityStart } from '../backend/plugins-manager/seams.ts'
 import { type ForkOptions, utilityEnv, utilityRuntime, type UtilityChild } from '../backend/runtime/utility.ts'
 import { baseEnv } from '../lib/clean-env.ts'
 
@@ -113,7 +113,7 @@ describe('the utility runtime', () => {
     }])
   })
 
-  it('tells the loader an exit it caused as killed, even when the exit code reads 0', () => {
+  it('tells the plugins manager an exit it caused as killed, even when the exit code reads 0', () => {
     const { runtime, forks, exits, start } = fake()
     runtime.startUtility(start())
     runtime.kill('mcp-http-handler', 1)
@@ -122,7 +122,7 @@ describe('the utility runtime', () => {
     expect(exits).toEqual([{ id: 'mcp-http-handler', killed: true }])
   })
 
-  it('tells the loader an exit it didn\'t cause as not killed, whatever the exit code', () => {
+  it('tells the plugins manager an exit it didn\'t cause as not killed, whatever the exit code', () => {
     for (const code of [0, 1, -1073741819]) {
       const { runtime, forks, exits, start } = fake()
       runtime.startUtility(start())
@@ -198,7 +198,7 @@ describe('the utility runtime', () => {
     expect(() => runtime.limited('mcp-http-handler')).not.toThrow()
   })
 
-  it('throws when the fork throws, so the loader reads start-failed', () => {
+  it('throws when the fork throws, so the plugins manager reads start-failed', () => {
     const runtime = utilityRuntime({ fork: () => { throw new Error('no fork') }, bootstrap: 'utility.js', locked: true, limits: () => limits })
     expect(() => runtime.startUtility({ id: 'mcp-http-handler', incarnation: 1, code: Buffer.from(''), port: null, exited: () => {} })).toThrow('no fork')
   })

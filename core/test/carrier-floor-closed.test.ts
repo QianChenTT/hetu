@@ -16,11 +16,11 @@ afterEach(cleanup)
 describe('the floor\'s core branch', () => {
   it.each(['on', 'off', 'failed'] as const)('refuses a core action whose from it has no rule for to every caller, with the gate %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
-    loader.policyJobs.gate = state
-    loader.utility('mcp-http-handler')
-    loader.sandboxed('search')
-    loader.installed('watchdog')
+    const { carrier, connect, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return null } })
+    pluginsManager.policyJobs.gate = state
+    pluginsManager.utility('mcp-http-handler')
+    pluginsManager.sandboxed('search')
+    pluginsManager.installed('watchdog')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const replies = [
       await connect(worker('search')).ask('core.ghost'),

@@ -15,7 +15,7 @@ type CoreRecord = {
 // audit queue's batches. While the log can't write they wait in a bounded backlog. One past the bound is dropped and
 // counted and the count lands as core-records.dropped once the backlog has. A write never blocks and never throws. Nothing is
 // taken in while the human turned recording off. Each write gives back a promise that never rejects and settles once
-// the record's fate is known, for the loader, which applies some changes only once their record is on disk. A waiter
+// the record's fate is known, for the plugins manager, which applies some changes only once their record is on disk. A waiter
 // that gives up aborts its signal: a record still waiting then comes out and settles lost, so the log never shows a
 // change that didn't apply. One whose append is under way can't be called back: it lands if that append works and comes out if it fails
 export class CoreRecordLane {

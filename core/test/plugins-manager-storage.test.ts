@@ -1,7 +1,7 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, workerManifest } from './loader-fakes.ts'
+import { cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -21,9 +21,9 @@ describe('clearing a plugin’s spaces', () => {
       folder: { tool: filesFor(workerManifest('tool')) },
       entries: { tool: root => entryFor(root) },
     })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.clearStorage', plugin: 'tool' })
-    await made.loader.apply({ kind: 'plugin.reset', plugin: 'tool' })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.clearStorage', plugin: 'tool' })
+    await made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'tool' })
     expect(storage.cleared).toEqual(['storage/tool', 'storage/tool', 'cache/tool'])
   })
 
@@ -31,8 +31,8 @@ describe('clearing a plugin’s spaces', () => {
     const made = await harness({ folder: { tool: filesFor(workerManifest('tool')) }, entries: { tool: root => entryFor(root) } })
     await mkdir(path.join(made.dataDir, 'storage', 'tool'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'storage', 'tool', 'key-a'), 'x')
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.clearStorage', plugin: 'tool' })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.clearStorage', plugin: 'tool' })
     expect(await readdir(path.join(made.dataDir, 'storage')).catch(() => [])).toEqual([])
   })
 })

@@ -2,7 +2,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ExecView, Opening } from '../api/policy-jobs.ts'
 import { StateStore } from '../backend/boot/state.ts'
-import { cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest } from './loader-fakes.ts'
+import { cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -39,8 +39,8 @@ describe('history\'s folder', () => {
   it('goes to history with hetu\'s data and install folders once it is ready, null with none picked', async () => {
     const history = historyRole()
     const made = await harness({ install: install(), behave: { history: { exports: { history } } } })
-    await made.loader.start()
-    await until(() => stateOf(made.loader, 'history') === 'ready')
+    await made.pluginsManager.start()
+    await until(() => stateOf(made.pluginsManager, 'history') === 'ready')
     expect(history.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir }])
   })
 
@@ -55,22 +55,22 @@ describe('history\'s folder', () => {
         await new StateStore(dataDir).writeLuoshu({ folder: first })
       },
     })
-    await made.loader.start()
-    await until(() => stateOf(made.loader, 'history') === 'ready')
+    await made.pluginsManager.start()
+    await until(() => stateOf(made.pluginsManager, 'history') === 'ready')
     const second = path.join(made.base, 'other notes')
-    await made.loader.apply({ kind: 'luoshu.pick', folder: second })
+    await made.pluginsManager.apply({ kind: 'luoshu.pick', folder: second })
     expect(history.opened.map(opening => opening.folder)).toEqual([first, second])
   })
 
   it('marks history failed when its open throws, and when its module gives no history role', async () => {
     const throwing = await harness({ install: install(), behave: { history: { exports: { history: historyRole(true) } } } })
-    await throwing.loader.start()
-    await until(() => stateOf(throwing.loader, 'history') === 'failed')
-    expect(reasonOf(throwing.loader, 'history')).toBe('state-changed')
+    await throwing.pluginsManager.start()
+    await until(() => stateOf(throwing.pluginsManager, 'history') === 'failed')
+    expect(reasonOf(throwing.pluginsManager, 'history')).toBe('state-changed')
     const none = await harness({ install: install(), behave: { history: { exports: {} } } })
-    await none.loader.start()
-    await until(() => stateOf(none.loader, 'history') === 'failed')
-    expect(reasonOf(none.loader, 'history')).toBe('no-role')
+    await none.pluginsManager.start()
+    await until(() => stateOf(none.pluginsManager, 'history') === 'failed')
+    expect(reasonOf(none.pluginsManager, 'history')).toBe('no-role')
   })
 
   it('waits while the luoshu is switched off, since history requires it', async () => {
@@ -83,10 +83,10 @@ describe('history\'s folder', () => {
         await store.writeSwitches({ ...(await store.load()).state.switches, off: ['luoshu'] })
       },
     })
-    await made.loader.start()
-    await made.loader.settled()
-    expect(stateOf(made.loader, 'luoshu')).toBe('off')
-    expect(stateOf(made.loader, 'history')).toBe('waiting')
+    await made.pluginsManager.start()
+    await made.pluginsManager.settled()
+    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('off')
+    expect(stateOf(made.pluginsManager, 'history')).toBe('waiting')
     expect(history.opened).toEqual([])
   })
 })
@@ -99,8 +99,8 @@ describe('exec\'s view of the grants', () => {
       entries: { git: signed({ granted: [status, push, read] }), search: signed({ granted: [read] }) },
       behave: { exec: { exports: { exec } } },
     })
-    await made.loader.start()
-    await until(() => stateOf(made.loader, 'exec') === 'ready')
+    await made.pluginsManager.start()
+    await until(() => stateOf(made.pluginsManager, 'exec') === 'ready')
     return { ...made, exec }
   }
 
@@ -121,13 +121,13 @@ describe('exec\'s view of the grants', () => {
 
   it('is renewed with every applied change: the any command switch, the notes folder and a plugin switched off', async () => {
     const made = await started()
-    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
+    await made.pluginsManager.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
     expect(made.exec.seen.at(-1)!.any).toEqual(['git'])
     const folder = path.join(made.base, 'notes')
-    await made.loader.apply({ kind: 'luoshu.pick', folder })
+    await made.pluginsManager.apply({ kind: 'luoshu.pick', folder })
     expect(made.exec.seen.at(-1)!.opening.folder).toBe(folder)
     expect(made.exec.seen.at(-1)!.any).toEqual(['git'])
-    await made.loader.apply({ kind: 'plugin.off', plugin: 'git' })
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'git' })
     expect(made.exec.seen.at(-1)!.plugins).toEqual({})
     expect(made.exec.seen.length).toBeGreaterThanOrEqual(4)
   })
@@ -136,33 +136,33 @@ describe('exec\'s view of the grants', () => {
   // command would run again exactly when the gate isn't there to refuse it
   it('drops an exec item the human switched off and takes it back when switched on again', async () => {
     const made = await started()
-    await made.loader.apply({ kind: 'item.off', plugin: 'git', capability: status })
+    await made.pluginsManager.apply({ kind: 'item.off', plugin: 'git', capability: status })
     expect(made.exec.seen.at(-1)!.plugins.git.map(item => item.commands)).toEqual([[['git', 'push'], ['git', 'fetch']]])
-    await made.loader.apply({ kind: 'item.off', plugin: 'git', capability: push })
+    await made.pluginsManager.apply({ kind: 'item.off', plugin: 'git', capability: push })
     expect(made.exec.seen.at(-1)!.plugins).toEqual({})
-    await made.loader.apply({ kind: 'item.on', plugin: 'git', capability: status })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: status })
     expect(made.exec.seen.at(-1)!.plugins.git.map(item => item.commands)).toEqual([[['git', 'status']]])
   })
 
   it('marks exec failed when it throws on a view, and when its module gives no exec role', async () => {
     const throwing = await harness({ install: install(), behave: { exec: { exports: { exec: execRole(true) } } } })
-    await throwing.loader.start()
-    await until(() => stateOf(throwing.loader, 'exec') === 'failed')
-    expect(reasonOf(throwing.loader, 'exec')).toBe('state-changed')
+    await throwing.pluginsManager.start()
+    await until(() => stateOf(throwing.pluginsManager, 'exec') === 'failed')
+    expect(reasonOf(throwing.pluginsManager, 'exec')).toBe('state-changed')
     const none = await harness({ install: install(), behave: { exec: { exports: {} } } })
-    await none.loader.start()
-    await until(() => stateOf(none.loader, 'exec') === 'failed')
-    expect(reasonOf(none.loader, 'exec')).toBe('no-role')
+    await none.pluginsManager.start()
+    await until(() => stateOf(none.pluginsManager, 'exec') === 'failed')
+    expect(reasonOf(none.pluginsManager, 'exec')).toBe('no-role')
   })
 
   // A plugin added later under the same id must ask again, so nothing the human let the old one do carries over
   it('forgets the any command switch, dev mode and raised limits of a plugin it removes', async () => {
     const made = await started()
-    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
-    await made.loader.apply({ kind: 'devMode', plugin: 'git', on: true })
-    await made.loader.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'git' })
-    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'search', on: true })
-    await made.loader.apply({ kind: 'plugin.remove', plugin: 'git' })
+    await made.pluginsManager.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
+    await made.pluginsManager.apply({ kind: 'devMode', plugin: 'git', on: true })
+    await made.pluginsManager.apply({ kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'git' })
+    await made.pluginsManager.apply({ kind: 'exec.anyCommand', plugin: 'search', on: true })
+    await made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'git' })
     const { switches } = (await made.store.load()).state
     expect(switches.execAnyCommand).toEqual(['search'])
     expect(switches.devMode).toEqual([])
@@ -174,8 +174,8 @@ describe('exec\'s view of the grants', () => {
     const exec = execRole()
     const made = await started(exec)
     exec.stateChanged = () => { throw new Error('can\'t read') }
-    await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
-    expect(stateOf(made.loader, 'exec')).toBe('failed')
-    expect(reasonOf(made.loader, 'exec')).toBe('state-changed')
+    await made.pluginsManager.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
+    expect(stateOf(made.pluginsManager, 'exec')).toBe('failed')
+    expect(reasonOf(made.pluginsManager, 'exec')).toBe('state-changed')
   })
 })

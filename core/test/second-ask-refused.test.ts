@@ -34,7 +34,7 @@ async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: strin
   luoshu.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
   const parts = harness({ guardsFor: () => (given.guard ? ['leases'] : []) })
   if (given.guard) {
-    parts.loader.policyJobs.leases = 'on'
+    parts.pluginsManager.policyJobs.leases = 'on'
     parts.guards.leases = new FakeGuard()
     parts.guards.leases.answer = given.guard
   }
@@ -45,7 +45,7 @@ async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: strin
     release: luoshu.provider.release,
     perform: async (call: Call, prepared: Prepared) => {
       await rename(path.join(folder, 'plain'), path.join(folder, 'Plain'))
-      if (given.policyJob !== undefined) parts.loader.policyJobs.gate = given.policyJob
+      if (given.policyJob !== undefined) parts.pluginsManager.policyJobs.gate = given.policyJob
       return luoshu.provider.perform(call, prepared)
     },
   }
@@ -147,14 +147,14 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     await history.start(dataDir)
     history.role.open({ folder, dataDir, installDir: path.join(base, 'install') })
     const parts = harness()
-    parts.loader.installed('history')
+    parts.pluginsManager.installed('history')
     parts.gate.grants.search = [{ type: 'history', access: 'commit', paths: ['box/n.md'] }] as never
     parts.providers.history = {
       prepare: history.provider.prepare,
       release: history.provider.release,
       perform: async (call: Call, prepared: Prepared) => {
         await writeFile(path.join(folder, 'box', 'N.md'), 'OTHER NOTE')
-        if (policyJob !== undefined) parts.loader.policyJobs.gate = policyJob
+        if (policyJob !== undefined) parts.pluginsManager.policyJobs.gate = policyJob
         return history.provider.perform(call, prepared)
       },
     }

@@ -3,11 +3,11 @@ import { createExec } from './exec.ts'
 
 const made = createExec()
 
-// The provider role the carrier routes exec.* to, and the exec role the loader hands each view of the grants to
+// The provider role the carrier routes exec.* to, and the exec role the plugins manager hands each view of the grants to
 export const provider = made.provider
 export const exec = made.role
 
-// Starts on the data folder the loader hands an install host half. Without one the start throws and exec counts as
+// Starts on the data folder the plugins manager hands an install host half. Without one the start throws and exec counts as
 // failed, so calls answer unavailable
 export default definePlugin({
   async start(ctx) {

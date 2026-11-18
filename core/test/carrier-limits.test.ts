@@ -136,10 +136,10 @@ describe('the message count', () => {
 
 describe('the ceiling', () => {
   it('throttles a caller past its calls in flight before the gate hears of it', async () => {
-    const { connect, loader, gate } = harness()
-    loader.sandboxed('git', { log: {} })
+    const { connect, pluginsManager, gate } = harness()
+    pluginsManager.sandboxed('git', { log: {} })
     gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }]
-    loader.human.plugins.search = { callsInFlight: 2 }
+    pluginsManager.human.plugins.search = { callsInFlight: 2 }
     const search = connect(worker('search'))
     const git = connect(worker('git'))
     const first = search.call('git.log')
@@ -156,10 +156,10 @@ describe('the ceiling', () => {
   })
 
   it('throttles a caller past its bytes in flight', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('git', { log: {} })
-    loader.human.plugins.search = { bytesInFlight: 1000 }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.plugins.search = { bytesInFlight: 1000 }
     const search = connect(worker('search'))
     connect(worker('git'))
     search.call('git.log', 'x'.repeat(600))
@@ -169,11 +169,11 @@ describe('the ceiling', () => {
   })
 
   it('charges a sub-call to the root of its parent links as well as to its caller', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('scribe', { handle: {} })
-    loader.sandboxed('git', { log: {} })
-    loader.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('scribe', { handle: {} })
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
     const http = connect(worker('mcp-http-handler'))
     const scribe = connect(worker('scribe'))
     connect(worker('git'))
@@ -192,10 +192,10 @@ describe('the ceiling', () => {
   })
 
   it('frees the bytes of a call that ended while another is still in flight', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('git', { log: {} })
-    loader.human.plugins.search = { bytesInFlight: 1000 }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.plugins.search = { bytesInFlight: 1000 }
     const search = connect(worker('search'))
     const git = connect(worker('git'))
     const first = search.call('git.log', 'x'.repeat(600))
@@ -211,10 +211,10 @@ describe('the ceiling', () => {
 
   // A window runs on the fixed ceiling, which a value for all lowered by mistake can't take below
   it('keeps a ceiling per window at the fixed value', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('git', { log: {} })
-    loader.human.all = { callsInFlight: 1 }
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.all = { callsInFlight: 1 }
     const git = connect(worker('git'))
     const way = windowWay(carrier, { 'editor-1': editor, 'editor-2': { kind: 'window', role: 'editor', n: 2 } })
     for (let id = 100; id < 100 + defaultLimits.callsInFlight; id++) way.post('editor-1', { v: 1, kind: 'call', id, action: 'git.log', args: {} })
@@ -227,10 +227,10 @@ describe('the ceiling', () => {
   })
 
   it('keeps one ceiling across a plugin\'s halves', async () => {
-    const { connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('git', { log: {} })
-    loader.human.plugins.search = { callsInFlight: 1 }
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.plugins.search = { callsInFlight: 1 }
     const search = connect(worker('search'))
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     connect(worker('git'))
@@ -243,8 +243,8 @@ describe('the ceiling', () => {
 describe('the rate', () => {
   it('drops one over the rate with no reply and tells the watchdog at most once a second with the count', async () => {
     let clock = 1_000_000
-    const { connect, loader, samples } = harness({ clock: () => clock })
-    loader.human.plugins.search = { messagesPerSecond: 5 }
+    const { connect, pluginsManager, samples } = harness({ clock: () => clock })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 5 }
     const search = connect(worker('search'))
     const ids = Array.from({ length: 8 }, () => search.call('core.self'))
     await search.reply(ids[4])
@@ -261,8 +261,8 @@ describe('the rate', () => {
 
   it('counts a message that could not be read against the rate', async () => {
     const clock = 1_000_000
-    const { carrier, loader } = harness({ clock: () => clock })
-    loader.human.plugins.search = { messagesPerSecond: 1 }
+    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
     const listeners: Record<string, (value: unknown) => void> = {}
     const sent: unknown[] = []
     const port: Port = {
@@ -280,8 +280,8 @@ describe('the rate', () => {
 
   it('records a watchdog that throws on a sample', async () => {
     const clock = 1_000_000
-    const { carrier, connect, loader, log } = harness({ clock: () => clock, watchdog: () => ({ sample: () => { throw new Error('broken') } }) })
-    loader.human.plugins.search = { messagesPerSecond: 1 }
+    const { carrier, connect, pluginsManager, log } = harness({ clock: () => clock, watchdog: () => ({ sample: () => { throw new Error('broken') } }) })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
     const search = connect(worker('search'))
     await search.ask('core.self')
     search.call('core.self')
@@ -293,8 +293,8 @@ describe('the rate', () => {
 
   it('counts every message, not only calls', async () => {
     const clock = 1_000_000
-    const { connect, loader } = harness({ clock: () => clock })
-    loader.human.plugins.search = { messagesPerSecond: 3 }
+    const { connect, pluginsManager } = harness({ clock: () => clock })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 3 }
     const search = connect(worker('search'))
     search.post({ v: 1, kind: 'pong' })
     search.post({ v: 1, kind: 'cancel', id: 99 })
@@ -306,16 +306,16 @@ describe('the rate', () => {
 
   it('tells no watchdog while the policy job is not on and keeps the count for later', async () => {
     let clock = 1_000_000
-    const { connect, loader, samples } = harness({ clock: () => clock })
-    loader.policyJobs.watchdog = 'off'
-    loader.human.plugins.search = { messagesPerSecond: 1 }
+    const { connect, pluginsManager, samples } = harness({ clock: () => clock })
+    pluginsManager.policyJobs.watchdog = 'off'
+    pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
     const search = connect(worker('search'))
     search.call('core.self')
     search.call('core.self')
     search.call('core.self')
     await tick(20)
     expect(samples).toEqual([])
-    loader.policyJobs.watchdog = 'on'
+    pluginsManager.policyJobs.watchdog = 'on'
     clock += 1000
     search.call('core.self')
     search.call('core.self')
@@ -326,25 +326,25 @@ describe('the rate', () => {
   // Past the fixed flood cap too, since a window's way is never closed and a value for all can't lower its rate
   it('drops a window\'s messages over the rate but never closes its way in', async () => {
     const clock = 1_000_000
-    const { carrier, loader } = harness({ clock: () => clock })
-    loader.human.all = { messagesPerSecond: 2, floodMs: 1000, floodFactor: 1 }
+    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    pluginsManager.human.all = { messagesPerSecond: 2, floodMs: 1000, floodFactor: 1 }
     const way = windowWay(carrier, { 'editor-1': editor })
     const sent = defaultLimits.messagesPerSecond * defaultLimits.floodFactor + 10
     for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
     await tick(50)
     expect(way.replies).toHaveLength(defaultLimits.messagesPerSecond)
     expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
-    expect(loader.crashes).toEqual([])
+    expect(pluginsManager.crashes).toEqual([])
   })
 })
 
 describe('the flood cap', () => {
   it('closes the port, reports the plugin crashed with flood once and answers what it held crashed', async () => {
     const clock = 1_000_000
-    const { connect, loader, gate } = harness({ clock: () => clock })
-    loader.sandboxed('search', { query: {} })
+    const { connect, pluginsManager, gate } = harness({ clock: () => clock })
+    pluginsManager.sandboxed('search', { query: {} })
     gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
-    loader.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
+    pluginsManager.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
     const scribe = connect(worker('scribe'))
     const search = connect(worker('search'))
     const id = scribe.call('search.query')
@@ -354,49 +354,49 @@ describe('the flood cap', () => {
     await closed
     expect(code(await scribe.reply(id))).toBe('crashed')
     await tick(20)
-    expect(loader.crashes).toEqual([{ caller: worker('search'), reason: 'flood' }])
-    // Only the first 2 of the first second reached the loader
-    expect(loader.lifecycle).toHaveLength(2)
+    expect(pluginsManager.crashes).toEqual([{ caller: worker('search'), reason: 'flood' }])
+    // Only the first 2 of the first second reached the plugins manager
+    expect(pluginsManager.lifecycle).toHaveLength(2)
   })
 
   it('stays under the cap below ten times the rate', async () => {
     const clock = 1_000_000
-    const { connect, loader } = harness({ clock: () => clock })
-    loader.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
+    const { connect, pluginsManager } = harness({ clock: () => clock })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 2, floodMs: 1000 }
     const search = connect(worker('search'))
     for (let i = 0; i < 20; i++) search.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.crashes).toEqual([])
+    expect(pluginsManager.crashes).toEqual([])
   })
 
   // A lowering is a throttle. Messages sent under the rate in force when each was sent never make a flood
   it('closes no port for what it sent before the watchdog lowered its rate', async () => {
     let clock = 1_000_000
-    const { carrier, connect, loader } = harness({ clock: () => clock })
-    loader.human.plugins.search = { messagesPerSecond: 200 }
-    loader.sandboxed('search')
+    const { carrier, connect, pluginsManager } = harness({ clock: () => clock })
+    pluginsManager.human.plugins.search = { messagesPerSecond: 200 }
+    pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
     for (let second = 0; second < 3; second++) {
       clock = 1_000_000 + second * 1000
       for (let i = 0; i < 200; i++) search.post({ v: 1, kind: 'pong' })
-      for (let i = 0; i < 200 && loader.lifecycle.length < (second + 1) * 200; i++) await tick(5)
+      for (let i = 0; i < 200 && pluginsManager.lifecycle.length < (second + 1) * 200; i++) await tick(5)
     }
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 })).ok).toBe(true)
     clock = 1_002_500
     search.post({ v: 1, kind: 'pong' })
     await tick(20)
-    expect(loader.crashes).toEqual([])
-    expect(loader.lifecycle).toHaveLength(600)
+    expect(pluginsManager.crashes).toEqual([])
+    expect(pluginsManager.lifecycle).toHaveLength(600)
   })
 })
 
 describe('watchdog.limit', () => {
   it('lowers a sandboxed plugin\'s constant and never raises one', async () => {
-    const { carrier, connect, loader } = harness()
-    loader.policyJobs.gate = 'off'
-    loader.sandboxed('search')
-    loader.sandboxed('git', { log: {} })
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('search')
+    pluginsManager.sandboxed('git', { log: {} })
     const watchdog = hostHalf(carrier, host('watchdog'))
     const search = connect(worker('search'))
     connect(worker('git'))
@@ -415,15 +415,15 @@ describe('watchdog.limit', () => {
     ['a constant outside the list', { plugin: 'search', constant: 'gateBypass', value: 1 }],
     ['a value that is not a positive whole number', { plugin: 'search', constant: 'callsInFlight', value: 0 }],
   ])('refuses %s', async (_name, args) => {
-    const { carrier, loader } = harness()
-    loader.sandboxed('search')
+    const { carrier, pluginsManager } = harness()
+    pluginsManager.sandboxed('search')
     expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.limit', args))).toBe('invalid')
   })
 })
 
 describe('samples from the runtime', () => {
   it('hands the watchdog a worker\'s errors, its drops in the page and its cutoff, while the watchdog policy job is on', () => {
-    const { carrier, loader, samples } = harness()
+    const { carrier, pluginsManager, samples } = harness()
     carrier.sample({ kind: 'errors', caller: worker('search'), count: 2 })
     carrier.sample({ kind: 'dropped', caller: worker('search'), count: 5 })
     carrier.sample({ kind: 'cutoff', caller: worker('search'), reason: 'flood' })
@@ -432,7 +432,7 @@ describe('samples from the runtime', () => {
       { kind: 'dropped', caller: worker('search'), count: 5 },
       { kind: 'cutoff', caller: worker('search'), reason: 'flood' },
     ])
-    loader.policyJobs.watchdog = 'off'
+    pluginsManager.policyJobs.watchdog = 'off'
     carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })
     expect(samples).toHaveLength(3)
   })
@@ -444,8 +444,8 @@ describe('samples from the runtime', () => {
 
   it('tells the runtime whose limits watchdog.limit lowered, so the relay in the page applies them too', async () => {
     const limited: string[] = []
-    const { carrier, loader } = harness({ limited: plugin => { limited.push(plugin) } })
-    loader.sandboxed('search')
+    const { carrier, pluginsManager } = harness({ limited: plugin => { limited.push(plugin) } })
+    pluginsManager.sandboxed('search')
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 })).ok).toBe(true)
     expect(limited).toEqual(['search'])

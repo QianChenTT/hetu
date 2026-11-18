@@ -21,14 +21,14 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 // search serves query (and other, which it never provides) through the SDK. tester calls it from its own port
 async function serving(handler: (call: IncomingCall, args: unknown, ctx: PluginContext) => unknown, testerGrants: Capability[] = []) {
   const parts = harness()
-  parts.loader.sandboxed('search', { query: {}, other: {} })
-  parts.loader.sandboxed('tester')
+  parts.pluginsManager.sandboxed('search', { query: {}, other: {} })
+  parts.pluginsManager.sandboxed('tester')
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
   parts.gate.grants.tester = [{ type: 'plugin.call', targets: ['search'] }, ...testerGrants]
   parts.luoshu.files.set('notes/a.md', 'hello')
   run(definePlugin({ start: ctx => { ctx.provide('query', (call, args) => handler(call, args, ctx)) } }), sdkTransport(parts.carrier, worker('search')))
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
-  await until(() => parts.loader.lifecycle.some(entry => entry.kind === 'ready'))
+  await until(() => parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
   return { ...parts, tester: parts.connect(worker('tester')) }
 }
 

@@ -170,7 +170,7 @@ const coreTable = {
     from: 'http',
     args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
-  // mcp-http-handler's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
+  // mcp-http-handler's bind on its port failed. The plugins manager ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
   'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
   // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's

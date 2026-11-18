@@ -33,8 +33,8 @@ type Values = Readonly<Partial<Record<LimitName, number>>>
 // value whether it raises or lowers it. One for the plugin wins over one for all
 export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values>> }
 
-// What the loader owns: lifecycle, the state and the grants snapshot it pushes to the gate
-export type Loader = {
+// What the plugins manager owns: lifecycle, the state and the grants snapshot it pushes to the gate
+export type PluginsManager = {
   // The state of the core plugin holding a policy job or a guard role
   policyJob(id: string): PolicyJobState
   // The number of the newest grants snapshot pushed to the gate
@@ -43,9 +43,9 @@ export type Loader = {
   plugin(id: string): PluginInfo | null
   limits(): HumanLimits
   recordNothing(): boolean
-  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens, from the loader's state
+  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens, from the plugins manager's state
   revoked(label: string): boolean
-  // A way in closed under its plugin or was closed for a flood. The loader moves dependents to waiting before this
+  // A way in closed under its plugin or was closed for a flood. The plugins manager moves dependents to waiting before this
   // returns and the carrier then answers the calls the plugin held
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
   // Lifecycle messages a plugin sends, which the carrier only passes on, and alive for anything at all main heard from a
@@ -80,7 +80,7 @@ export type CoreLog = CoreRecordLog & AuditLog
 export type Landing = 'landed' | 'muted' | 'lost'
 
 export type CarrierOptions = {
-  loader: Loader
+  pluginsManager: PluginsManager
   // The holder's interface while the policy job or role is on, else null
   gate: () => Gate | null
   guards: (id: string) => Guard | null
@@ -92,9 +92,9 @@ export type CarrierOptions = {
   // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
   armed?: (caller: Caller) => boolean
   // The core's log has failed: its oldest record waited logFailMs unwritten while recording was on. Told until the
-  // loader takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
+  // plugins manager takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
   logFailed?: () => boolean | void
-  // Core actions the loader and the runtime serve: watchdog.stop and watchdog.restart from the loader, security.* once
+  // Core actions the plugins manager and the runtime serve: watchdog.stop and watchdog.restart from the plugins manager, security.* once
   // the trusted window exists
   core?: Served
   served?: { ui?: Served }

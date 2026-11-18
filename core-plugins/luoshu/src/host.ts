@@ -6,7 +6,7 @@ let publisher: ((topic: 'changed' | 'outside', path: string) => void) | null = n
 
 const made = createLuoshu({ publish: (topic, path) => publisher?.(topic, path) })
 
-// The provider role the carrier routes luoshu.* to, and the luoshu role the loader hands the folder to
+// The provider role the carrier routes luoshu.* to, and the luoshu role the plugins manager hands the folder to
 export const provider = made.provider
 export const luoshu = made.role
 

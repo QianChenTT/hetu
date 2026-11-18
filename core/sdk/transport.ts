@@ -1,4 +1,4 @@
-// A half's end of its way to the carrier: the HostLink the loader gives a host half. A worker's port is to sit
+// A half's end of its way to the carrier: the HostLink the plugins manager gives a host half. A worker's port is to sit
 // behind the same two calls. Messages the carrier sends before listen wait for it
 export type Transport = {
   post(message: unknown): void

@@ -10,7 +10,7 @@ export const INSTALL_LIST_FORMAT = 1
 // Refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_INSTALL_LIST_BYTES = 256 * 1024
 
-// The signer a first-party copy's entry carries until provenance lands. The loader accepts it only while the copy's
+// The signer a first-party copy's entry carries until provenance lands. The plugins manager accepts it only while the copy's
 // bytes equal the install's. The space keeps it apart from any signer identity provenance could pin, which is a URI or
 // an address
 export const FIRST_PARTY_SIGNER = 'hetu first-party'

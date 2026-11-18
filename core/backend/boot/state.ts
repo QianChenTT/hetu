@@ -396,7 +396,7 @@ export class StateStore {
     return { state, suspect, checks, removedKnown: switchesRead.result === 'ok' }
   }
 
-  // Entries only. The plugin files check is the loader's, which reads the bytes that run, so nothing here changes
+  // Entries only. The plugin files check is the plugins manager's, which reads the bytes that run, so nothing here changes
   // enabled
   private async readPlugins(state: SecurityState, checks: Check[]): Promise<void> {
     let names: string[] = []

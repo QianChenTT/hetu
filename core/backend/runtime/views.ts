@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { PluginFile } from '../../lib/hash-files.ts'
 
-// The views host: each running plugin's frames and icons, served from the bytes the loader checked when it started the
+// The views host: each running plugin's frames and icons, served from the bytes the plugins manager checked when it started the
 // plugin's worker, never read from disk again. A frame loads once from a single-use hetu://views/<token>/<entry>: the
 // entry page is served once, the plugin's other files under the token for as long as the frame lives, and no other
 // page, so a frame that navigates finds nothing. Icons come from hetu://views/icon/<plugin>/<file>, svg or png only.

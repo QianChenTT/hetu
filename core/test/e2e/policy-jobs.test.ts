@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/state.ts'
-import { writeInstall, type Files, type Listing } from '../loader-fakes.ts'
+import { writeInstall, type Files, type Listing } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, records, repo, temp, until } from './helpers.ts'
 
 afterEach(cleanup)

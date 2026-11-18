@@ -29,7 +29,7 @@ import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import { agentItems, type FileResult, type Plugin, type SecurityState, type StateStore, type Switches } from '../boot/state.ts'
-import type { AskRefusal, Asks, HumanLimits, Loader as Seam, PluginInfo, Served } from '../carrier/seams.ts'
+import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/seams.ts'
 import {
   clear, clearFailedOnce, folders, readFailedOnce, readInstalled, removeMarker, stage, swapIn, writeFailedOnce, writeInstalled,
   writeMarker, type Installed,
@@ -41,7 +41,7 @@ import type { CarrierLink, HostExports, Runtime } from './seams.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
-export type LoaderOptions = {
+export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore,
   // the data folder and the start markers it found
   booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir' | 'markers'>
@@ -58,7 +58,7 @@ export type LoaderOptions = {
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
   // A security control failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the
-  // trusted window once the loader stopped in the stopped mode
+  // trusted window once the plugins manager stopped in the stopped mode
   onFailure?: (failure: Failure) => void
   // How long a request must be first in line before its Confirm counts. The input delay unless a test names another
   confirmDelayMs?: number
@@ -124,7 +124,7 @@ type Live = {
   marked: boolean
 }
 
-// A plugin the loader knows. read holds the bytes that run. held is what happened in this run that only a restart
+// A plugin the plugins manager knows. read holds the bytes that run. held is what happened in this run that only a restart
 // clears. ran is a host half that started in this run, which can't start again until Restart hetu. updated is the
 // version an app update replaced, until its record lands
 type Known = {
@@ -300,10 +300,10 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
   return items
 }
 
-// The loader: what may run, where, when and as whom. It checks every plugin's bytes once before they run, places each
+// The plugins manager: what may run, where, when and as whom. It checks every plugin's bytes once before they run, places each
 // by where its code came from, resolves the requires graph, mints every port and handle and owns every lifecycle state.
 // It runs no plugin code itself and decides no grant
-export class Loader implements Seam {
+export class PluginsManager implements Seam {
   private readonly link: CarrierLink
   private readonly runtime: Runtime
   private readonly store: StateStore
@@ -342,9 +342,9 @@ export class Loader implements Seam {
   private again = false
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
-  private readonly onFailure: LoaderOptions['onFailure']
-  private readonly trash: LoaderOptions['trash']
-  private readonly limited: LoaderOptions['limited']
+  private readonly onFailure: PluginsManagerOptions['onFailure']
+  private readonly trash: PluginsManagerOptions['trash']
+  private readonly limited: PluginsManagerOptions['limited']
   // controls while only the security controls may start, all once they are up, stopped once one failed
   private phase: 'controls' | 'all' | 'stopped' = 'controls'
   private stoppedMode: StoppedMode | null = null
@@ -361,7 +361,7 @@ export class Loader implements Seam {
   // The pass at start has classed every entry, so the grant risk classifier coming up from here on is the human's switch-on
   private classedAtStart = false
 
-  constructor(options: LoaderOptions) {
+  constructor(options: PluginsManagerOptions) {
     const { booted } = options
     this.link = options.link
     this.runtime = options.runtime
@@ -510,7 +510,7 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // ---- what else the core asks of the loader
+  // ---- what else the core asks of the plugins manager
 
   // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
   // has checked that the caller is a window, or holds the watchdog policy job and names a sandboxed plugin holding no policy job or
@@ -550,7 +550,7 @@ ${capabilityKey(change.capability)}`)
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
         if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
         // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
-        // ended, so it is the human's in the trusted window alone, as its stop is. The place is the loader's to know,
+        // ended, so it is the human's in the trusted window alone, as its stop is. The place is the plugins manager's to know,
         // so the rule is here and not in the floor, which sees only that a window asked
         if (call.action === 'core.restart' && k.place === 'utility' && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
@@ -727,7 +727,7 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // Every plugin the loader knows and what each holds, id's own being granted, which may be a change not applied yet,
+  // Every plugin the plugins manager knows and what each holds, id's own being granted, which may be a change not applied yet,
   // and another plugin's as a pending change to it would leave it
   private holders(id: string, granted: readonly Capability[], pending?: Pending) {
     const gone = pending?.granted === null ? pending.id : null
@@ -1048,7 +1048,7 @@ ${capabilityKey(change.capability)}`)
     return ['The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use']
   }
 
-  // What a window's banner shows, from the loader's own states and the state it runs with
+  // What a window's banner shows, from the plugins manager's own states and the state it runs with
   private banner(): CoreStatus {
     const down = new Set(['crashed', 'failed', 'unresponsive'])
     const { switches } = this.state
@@ -2090,7 +2090,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
-  // change raises the grants snapshot by one. Requests reach it through the Confirm, tests and the loader's own reconcile
+  // change raises the grants snapshot by one. Requests reach it through the Confirm, tests and the plugins manager's own reconcile
   // directly
   apply(input: Change): Promise<void> {
     return this.serial(async () => {
@@ -2403,7 +2403,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.bump()
   }
 
-  // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
+  // Each plugin's grants as the gate judges them, copied so freezing them leaves the plugins manager's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first grants snapshot and before the plugin
   // folder is scanned. A core plugin's come from its manifest, read before the host tier starts. An item the entry
   // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the

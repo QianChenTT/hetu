@@ -16,7 +16,7 @@ hetu is a local notes app designed around that problem
 
 Many security decisions in hetu are still handed to the user: approving a plugin, giving it more power, switching a guard off. Most people are here for the features and can't be expected to know what each approval risks. So an approval made for convenience points to a gap in hetu's design, not a mistake by the user. Each confirmation says plainly what is being changed. The goal is fewer of these decisions left to the user and a safe choice that is also the easy one
 
-The Electron app runs the core today: boot, loader, carrier and runtime, the gate, grant-risk-classifier, storage, luoshu, history and exec as host plugins, search and the layout as sandboxed plugins, the editor window with hidden marks, the trusted window and a Windows installer. Leases, MCP for agents and the commit per write still run only in the older daemon. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
+The Electron app runs the core today: boot, plugins-manager, carrier and runtime, the gate, grant-risk-classifier, storage, luoshu, history and exec as host plugins, search and the layout as sandboxed plugins, the editor window with hidden marks, the trusted window and a Windows installer. Leases, MCP for agents and the commit per write still run only in the older daemon. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
 
 ## Names
 
@@ -24,7 +24,7 @@ Hetu and Luoshu are the two diagrams of an old Chinese story, the Yellow River C
 
 ## Layout
 
-- [core/](core/): the core, the four parts that can't be switched off (boot, loader, carrier and runtime), with the Electron entry, the three fixed pages, the SDK and the build. Each folder's README says what it holds and where it moves
+- [core/](core/): the core, the four parts that can't be switched off (boot, plugins-manager, carrier and runtime), with the Electron entry, the three fixed pages, the SDK and the build. Each folder's README says what it holds and where it moves
 - [core-plugins/](core-plugins/): everything that decides or adds a feature, the gate among them
 - [daemon/](daemon/): today's vault daemon, removed file by file as the core replaces it. MCP for agents and a REST and Server-Sent Events API for the editor over one core: scoped leases, version checks, a git commit per lease and per save, a watcher for outside writes and an event log in `~/.hetu/logs`
 - [editor/](editor/): today's text-first CodeMirror 6 editor, removed the same way. Reads and saves through the daemon, shows agent edits live and goes view only while an agent holds a note

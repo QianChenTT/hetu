@@ -8,7 +8,7 @@ import { defaultSwitches, StateStore, type Switches } from '../../backend/boot/s
 import { baseEnv } from '../../lib/clean-env.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../loader-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, until, workersPage } from './helpers.ts'
 
 // The utility place's proof: http's host entry in a utility process, here a hello plugin standing in for http, called

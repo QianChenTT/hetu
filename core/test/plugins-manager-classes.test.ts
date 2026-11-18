@@ -10,7 +10,7 @@ import type { GrantRiskClassifier } from '../api/policy-jobs.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
   workerManifest, writeFolder, type Files, type Listing, type Message,
-} from './loader-fakes.ts'
+} from './plugins-manager-fakes.ts'
 import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
 import { createGate } from '../../core-plugins/gate/src/gate.ts'
 
@@ -27,7 +27,7 @@ const withCapabilities = () => ({ ...coreInstall(), 'grant-risk-classifier': { f
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: `c${Math.random()}`, caller, action, args, deadline: Date.now() + 30_000 })
 
 async function listed(made: Awaited<ReturnType<typeof harness>>): Promise<SecurityList> {
-  return await made.loader.serve(call(trusted, 'security.list')) as SecurityList
+  return await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList
 }
 
 const DOWN = 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'
@@ -50,16 +50,16 @@ function breakable(): GrantRiskClassifier & { broken: boolean } {
 }
 
 async function approved(made: Awaited<ReturnType<typeof harness>>, id: string): Promise<HeldRequest> {
-  await made.loader.request({ kind: 'plugin.approve', plugin: id }, editor)
+  await made.pluginsManager.request({ kind: 'plugin.approve', plugin: id }, editor)
   const request = (await listed(made)).requests.find(held => held.kind === 'plugin.approve' && held.plugin === id)!
-  await made.loader.apply({ kind: 'plugin.approve', plugin: id })
+  await made.pluginsManager.apply({ kind: 'plugin.approve', plugin: id })
   return request
 }
 
 describe('an approval', () => {
   it('writes the class and the items that ask at first use from the grant risk classifier policy job, and its screen under the core\'s words', async () => {
     const made = await harness({ install: withCapabilities(), folder: { reader: worker('reader', [read, fetchOne, exec]) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const request = await approved(made, 'reader')
     expect(request.notes).toContain('Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
     const entry = (await made.store.load()).state.plugins.reader
@@ -76,7 +76,7 @@ describe('an approval', () => {
         middle: root => entryFor(root, { granted: [{ type: 'plugin.call', targets: ['sender'] }], class: 3 }),
       },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'notes')
     const entry = (await made.store.load()).state.plugins.notes
     expect(entry.class).toBe(4)
@@ -85,8 +85,8 @@ describe('an approval', () => {
 
   it('writes a null class and every item at first use with the policy job down, and says so', async () => {
     const made = await harness({ folder: { reader: worker('reader', [read, { type: 'storage' }]) } })
-    await made.loader.start()
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
     const request = await approved(made, 'reader')
     expect(request.notes).toContain('The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use')
     const entry = (await made.store.load()).state.plugins.reader
@@ -102,7 +102,7 @@ describe('a network plugin’s approval', () => {
       folder: { sync: worker('sync', [fetchOne]), notes: worker('notes') },
       entries: { notes: root => entryFor(root, { granted: [read, { type: 'plugin.call', targets: ['sync'] }], class: 1 }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const request = await approved(made, 'sync')
     expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: notes')
   })
@@ -111,10 +111,10 @@ describe('a network plugin’s approval', () => {
 describe('a staged update', () => {
   async function updating(entry: object, install = withCapabilities(), next: Capability[] = []) {
     const made = await harness({ install, folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const dir = path.join(made.dataDir, 'staging', 'calc-next')
     await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: next })))
-    return { made, outcome: await made.loader.update('calc', dir) }
+    return { made, outcome: await made.pluginsManager.update('calc', dir) }
   }
 
   it('loads on its own for a class 0 plugin with views while the policy job is on', async () => {
@@ -125,7 +125,7 @@ describe('a staged update', () => {
   it('loads on its own for a class 0 plugin while the policy job is on, its record first', async () => {
     const { made, outcome } = await updating({ class: 0 })
     expect(outcome).toEqual({ outcome: 'applied' })
-    expect(made.loader.pending()).toEqual([])
+    expect(made.pluginsManager.pending()).toEqual([])
     expect(made.link.events('plugin.updated')).toEqual([{ plugin: 'calc', from: '1.0.0', to: '1.1.0' }])
   })
 
@@ -138,7 +138,7 @@ describe('a staged update', () => {
   ] as [string, object, ReturnType<typeof withCapabilities>, Capability[]][])('waits for the Confirm with %s', async (_name, entry, install, next) => {
     const { made, outcome } = await updating(entry, install, next)
     expect(outcome).toMatchObject({ outcome: 'confirm' })
-    expect(made.loader.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'calc' }])
+    expect(made.pluginsManager.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'calc' }])
   })
 })
 
@@ -147,7 +147,7 @@ describe('a first-party copy', () => {
 
   it('takes its class from the policy job, which starts before the copy', async () => {
     const made = await harness({ install: { ...withCapabilities(), git: bundled(worker('git', [read])) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const entry = (await made.store.load()).state.plugins.git
     expect(entry.class).toBe(1)
     expect(entry.firstUse).toBeUndefined()
@@ -155,7 +155,7 @@ describe('a first-party copy', () => {
 
   it('asks at the first use of every item with the policy job down', async () => {
     const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read, { type: 'storage' }])) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const entry = (await made.store.load()).state.plugins.git
     expect(entry.class).toBeNull()
     expect(entry.firstUse).toEqual([read, { type: 'storage' }])
@@ -173,11 +173,11 @@ describe('the plugins connected through plugin.call', () => {
         bridge: root => entryFor(root, { granted: [{ type: 'storage' }], class: 0 }),
       },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const request = await approved(made, 'sender')
     expect((await made.store.load()).state.plugins.sender.class).toBe(4)
     expect(request.notes).toContain('Plugins that read and are connected to it through plugin.call: reader')
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.view' } })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'bridge', capability: { type: 'ui.view' } })
     expect((await made.store.load()).state.plugins.bridge.class).toBe(4)
   })
 })
@@ -197,7 +197,7 @@ describe('a subscription to another plugin\'s topics', () => {
       entries: Object.fromEntries(Object.entries(plugins).filter(([other]) => other !== id)
         .map(([other, granted]) => [other, (root: string) => entryFor(root, { granted, class: 0 })])),
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const request = await approved(made, id)
     const entry = (await made.store.load()).state.plugins[id]
     return { class: entry.class, firstUse: entry.firstUse ?? [], notes: request.notes }
@@ -262,12 +262,12 @@ describe('a subscription to another plugin\'s topics', () => {
 describe('a widened or narrowed grant', () => {
   it('adds an item that asks at first use, takes it off when the grant goes, and keeps the class in step', async () => {
     const made = await harness({ install: withCapabilities(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) } })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: exec })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: exec })
     let entry = (await made.store.load()).state.plugins.tool
     expect(entry.class).toBe(4)
     expect(entry.firstUse).toEqual([exec])
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'tool', capability: exec })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'tool', capability: exec })
     entry = (await made.store.load()).state.plugins.tool
     expect(entry.class).toBe(1)
     expect(entry.firstUse ?? []).toEqual([])
@@ -296,7 +296,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n, firstUse]]) =>
         [id, (root: string) => entryFor(root, { granted, class: n, ...(firstUse === undefined ? {} : { firstUse }) })])),
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return made
   }
 
@@ -307,7 +307,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       folder: { ...Object.fromEntries(Object.keys(others).map(other => [other, worker(other)])), [id]: worker(id, granted) },
       entries: Object.fromEntries(Object.entries(others).map(([other, [held, n]]) => [other, (root: string) => entryFor(root, { granted: held, class: n })])),
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, id)
     return await stored(made, id)
   }
@@ -319,10 +319,10 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
   ] as [string, Seeded, Capability, Capability[]][])('makes the plugin\'s own fetch ask once a widened %s closes the pair, as an approval lists it', async (_name, others, capability, expected) => {
     const gate = allowAll()
     const made = await seeded({ ...others, sync: [[fetchOne], 3] }, gate)
-    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability }, editor)
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability }, editor)
     const request = (await listed(made)).requests.find(held => held.kind === 'grant.widen')!
     expect(request.notes).toContain('Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability })
     const entry = await stored(made, 'sync')
     expect(shape(entry)).toEqual({ class: 4, firstUse: expected })
     expect(asking(gate, 'sync')).toEqual(expected)
@@ -331,30 +331,30 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
   it('adds a widened fetch that closes the pair on a plugin that already reads', async () => {
     const made = await seeded({ tool: [[read], 1] })
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: fetchOne })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: 4, firstUse: [fetchOne] })
   })
 
   it('keeps a fetch the human confirmed from asking again when a widen adds another that asks', async () => {
     const gate = allowAll()
     const made = await seeded({ sync: [[read, fetchOne], 4, [fetchOne]] }, gate)
-    await made.loader.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: fetchTwo })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability: fetchTwo })
     expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [fetchTwo] })
     expect(asking(gate, 'sync')).toEqual([fetchTwo])
   })
 
   it('takes off a subscription a widened read makes stop asking and keeps the confirmed fetch confirmed', async () => {
     const made = await seeded({ reader: [[read], 4], sync: [[fetchOne, hears('reader.done')], 4, [fetchOne, hears('reader.done')]] })
-    await made.loader.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
     expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [] })
   })
 
   it('makes the plugin.call that still brings the network in ask once the plugin\'s own fetch is narrowed', async () => {
     const gate = allowAll()
     const made = await seeded({ sender: [[fetchTwo], 3], tool: [[read, fetchOne, calls('sender')], 4, [fetchOne]] }, gate)
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'tool', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'tool', capability: fetchOne })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: 4, firstUse: [calls('sender')] })
     expect(asking(gate, 'tool')).toEqual([calls('sender')])
   })
@@ -362,7 +362,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
   it('stops the fetch asking once the read that paired it is narrowed, with no word', async () => {
     const gate = allowAll()
     const made = await seeded({ tool: [[read, fetchOne], 4, [fetchOne]] }, gate)
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'tool', capability: read })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'tool', capability: read })
     const entry = await stored(made, 'tool')
     expect(entry.class).toBe(3)
     expect(entry.firstUse).toBeUndefined()
@@ -371,19 +371,19 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
   it('makes every item ask with the policy job down, as an approval and a copy do then', async () => {
     const made = await seeded({ tool: [[read], null, []] }, allowAll(), true)
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: null, firstUse: [read, { type: 'storage' }] })
   })
 
   // An update keeps the grants, so under the same links the same items ask and a confirmed one stays confirmed
   it('keeps the list through an update, an item asking and a confirmed one confirmed', async () => {
     const made = await seeded({ tool: [[read, fetchOne, exec], 4, [fetchOne, exec]] })
-    await made.loader.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
     const dir = path.join(made.dataDir, 'staging', 'tool-next')
     await writeFolder(dir, filesFor(workerManifest('tool', { version: '1.1.0', capabilities: [read, fetchOne, exec] })))
-    expect(await made.loader.update('tool', dir)).toMatchObject({ outcome: 'confirm' })
-    await made.loader.apply({ kind: 'plugin.update', plugin: 'tool' })
+    expect(await made.pluginsManager.update('tool', dir)).toMatchObject({ outcome: 'confirm' })
+    await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'tool' })
     expect(await stored(made, 'tool')).toMatchObject({ version: '1.1.0', class: 4, firstUse: [fetchOne] })
   })
 
@@ -395,7 +395,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
     // The notes on the Confirm of a widen the editor window asks for, the change not applied
     async function widening(made: Made, plugin: string, capability: Capability): Promise<string[]> {
-      await made.loader.request({ kind: 'grant.widen', plugin, capability }, editor)
+      await made.pluginsManager.request({ kind: 'grant.widen', plugin, capability }, editor)
       return (await listed(made)).requests.find(held => held.kind === 'grant.widen' && held.plugin === plugin)!.notes
     }
 
@@ -406,7 +406,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       })
       const write = made.store.writePlugin.bind(made.store)
       made.store.writePlugin = async (id, entry) => (id === 'tool' ? Promise.reject(new Error('disk full')) : write(id, entry))
-      await made.loader.start()
+      await made.pluginsManager.start()
       made.store.writePlugin = write
       expect((await stored(made, 'tool')).class).toBe(n)
       return made
@@ -426,7 +426,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     it('names a move up below 4 and adds no item that asks at first use', async () => {
       const made = await seeded({ tool: [[read], 1] })
       expect(raises(await widening(made, 'tool', commit))).toEqual(['Raises tool from class 1, Reader to class 2, Writer'])
-      await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: commit })
+      await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: commit })
       expect(shape(await stored(made, 'tool'))).toEqual({ class: 2, firstUse: [] })
     })
 
@@ -438,7 +438,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     it('names nothing for a widen that leaves the class below the one its entry holds and stores the lower one', async () => {
       const made = await stuck([read, commit], 4)
       expect(raises(await widening(made, 'tool', { type: 'storage' }))).toEqual([])
-      await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
+      await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
       expect((await stored(made, 'tool')).class).toBe(2)
     })
 
@@ -456,14 +456,14 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
     it('applies a narrow with no Confirm, so its move down is named nowhere', async () => {
       const made = await seeded({ sync: [[read, fetchOne], 4, [fetchOne]] })
-      expect(await made.loader.request({ kind: 'grant.narrow', plugin: 'sync', capability: read }, editor)).toEqual({ applied: true })
+      expect(await made.pluginsManager.request({ kind: 'grant.narrow', plugin: 'sync', capability: read }, editor)).toEqual({ applied: true })
       expect((await listed(made)).requests).toEqual([])
       expect((await stored(made, 'sync')).class).toBe(3)
     })
 
     it('names no own move on a first approval, which has no class before it', async () => {
       const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync', [read, fetchOne]) } })
-      await made.loader.start()
+      await made.pluginsManager.start()
       const request = await approved(made, 'sync')
       expect(raises(request.notes)).toEqual([])
       expect((await stored(made, 'sync')).class).toBe(4)
@@ -493,14 +493,14 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
       },
       switches: { devMode: ['reader'] },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await tick(30)
     const listener = made.runtime.half('listener')
     const clock = made.runtime.half('clock')
     expect((await listener.ask('events.subscribe', { topics: ['reader.done', 'clock.tick'] }))?.result).toEqual({ standing: [] })
     await clock.ask('events.publish', { topic: 'clock.tick' })
     await until(() => signalled(listener.inbox).length === 1)
-    await made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })
+    await made.pluginsManager.apply({ kind: 'plugin.approve', plugin: 'reader' })
     expect((await made.store.load()).state.plugins.listener).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
     // Nothing reaches it while it waits
     await clock.ask('events.publish', { topic: 'clock.tick' })
@@ -512,9 +512,9 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
 
   it('waits with nothing delivered and holds the item\'s Confirm for the human, then goes on after it with one events.dropped', async () => {
     const { made, listener, clock } = await moved()
-    const asked = made.loader.pending().filter(request => request.kind === 'item.on')
+    const asked = made.pluginsManager.pending().filter(request => request.kind === 'item.on')
     expect(asked).toEqual([expect.objectContaining({ kind: 'item.on', plugin: 'listener' })])
-    await made.loader.apply({ kind: 'item.on', plugin: 'listener', capability: hears })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'listener', capability: hears })
     await clock.ask('events.publish', { topic: 'clock.tick' })
     await until(() => signalled(listener.inbox).length === 3)
     await tick(30)
@@ -523,8 +523,8 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
 
   it('ends once the human declines the Confirm and tells the plugin, whose subscribe again is refused as declined', async () => {
     const { made, listener, clock } = await moved()
-    const [asked] = made.loader.pending().filter(request => request.kind === 'item.on')
-    await made.loader.cancel(asked.id)
+    const [asked] = made.pluginsManager.pending().filter(request => request.kind === 'item.on')
+    await made.pluginsManager.cancel(asked.id)
     await clock.ask('events.publish', { topic: 'clock.tick' })
     await until(() => signalled(listener.inbox).length === 2)
     await tick(30)
@@ -541,7 +541,7 @@ describe('the plugin list', () => {
       folder: { tool: worker('tool'), other: worker('other') },
       entries: { tool: root => entryFor(root, { class: 2 }), other: root => entryFor(root, { class: null }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const plugins = (await listed(made)).plugins
     expect(plugins.find(plugin => plugin.id === 'tool')?.class).toBe(2)
     expect(plugins.find(plugin => plugin.id === 'other')?.class).toBeNull()
@@ -552,9 +552,9 @@ describe('the plugin list', () => {
 describe('the grant risk classifier policy job', () => {
   it('stops hetu when its module gives no grantRiskClassifier role', async () => {
     const made = await harness({ install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: {} } } })
-    await made.loader.start()
-    await until(() => stateOf(made.loader, 'grant-risk-classifier') === 'failed')
-    expect(reasonOf(made.loader, 'grant-risk-classifier')).toBe('no-role')
+    await made.pluginsManager.start()
+    await until(() => stateOf(made.pluginsManager, 'grant-risk-classifier') === 'failed')
+    expect(reasonOf(made.pluginsManager, 'grant-risk-classifier')).toBe('no-role')
   })
 })
 
@@ -569,10 +569,10 @@ describe('what the class rests on', () => {
         runner: root => entryFor(root, { granted: [exec], class: 4 }),
       },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const dir = path.join(made.dataDir, 'staging', 'calc-next')
     await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: [call] })))
-    expect(await made.loader.update('calc', dir)).toMatchObject({ outcome: 'confirm' })
+    expect(await made.pluginsManager.update('calc', dir)).toMatchObject({ outcome: 'confirm' })
   })
 
   it('reads the class again when an update applies', async () => {
@@ -585,11 +585,11 @@ describe('what the class rests on', () => {
         runner: root => entryFor(root, { granted: [exec], class: 4 }),
       },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const dir = path.join(made.dataDir, 'staging', 'calc-next')
     await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: [call] })))
-    await made.loader.update('calc', dir)
-    await made.loader.apply({ kind: 'plugin.update', plugin: 'calc' })
+    await made.pluginsManager.update('calc', dir)
+    await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'calc' })
     expect((await made.store.load()).state.plugins.calc.class).toBe(4)
   })
 
@@ -604,7 +604,7 @@ describe('what the class rests on', () => {
       behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: capabilities as never } } },
       folder: { reader: worker('reader', [read]) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'reader')
     const entry = (await made.store.load()).state.plugins.reader
     expect(entry.class).toBeNull()
@@ -617,14 +617,14 @@ describe('a new copy of a first-party plugin', () => {
 
   async function copied(base: string | undefined, capabilities: Capability[], version: string) {
     const made = await harness({ ...(base === undefined ? {} : { base }), install: { ...withCapabilities(), git: bundled(filesFor(workerManifest('git', { version, capabilities }))) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return made
   }
 
   it('asks again for an item that never asked before, once the new grants make it close a pair', async () => {
     const first = await copied(undefined, [fetchOne], '1.0.0')
     expect((await first.store.load()).state.plugins.git.firstUse).toBeUndefined()
-    await first.loader.shutdown()
+    await first.pluginsManager.shutdown()
     const second = await copied(first.base, [fetchOne, read], '1.1.0')
     const entry = (await second.store.load()).state.plugins.git
     expect(entry.class).toBe(4)
@@ -634,7 +634,7 @@ describe('a new copy of a first-party plugin', () => {
   it('keeps an item asking that asked before and that the human never confirmed', async () => {
     const first = await copied(undefined, [read, fetchOne], '1.0.0')
     expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
-    await first.loader.shutdown()
+    await first.pluginsManager.shutdown()
     const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
     expect((await second.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
   })
@@ -642,8 +642,8 @@ describe('a new copy of a first-party plugin', () => {
   it('keeps an item the human confirmed from asking again', async () => {
     const first = await copied(undefined, [read, fetchOne], '1.0.0')
     expect((await first.store.load()).state.plugins.git.firstUse).toEqual([fetchOne])
-    await first.loader.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
-    await first.loader.shutdown()
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
+    await first.pluginsManager.shutdown()
     const second = await copied(first.base, [read, fetchOne, { type: 'storage' }], '1.1.0')
     expect((await second.store.load()).state.plugins.git.firstUse).toBeUndefined()
   })
@@ -662,9 +662,9 @@ describe('a class another plugin\'s change moves', () => {
 
   // The notes on the Confirm of a window's request for change, the change applied after
   async function confirmed(made: Made, change: Change): Promise<string[]> {
-    await made.loader.request(change, editor)
+    await made.pluginsManager.request(change, editor)
     const request = (await listed(made)).requests.find(held => held.kind === change.kind && held.plugin === ('plugin' in change ? change.plugin : null))!
-    await made.loader.apply(change)
+    await made.pluginsManager.apply(change)
     return request.notes
   }
 
@@ -675,7 +675,7 @@ describe('a class another plugin\'s change moves', () => {
       folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return made
   }
 
@@ -686,7 +686,7 @@ describe('a class another plugin\'s change moves', () => {
       behave: { gate: { exports: { gate } } },
       folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'listener')
     return made
   }
@@ -702,7 +702,7 @@ describe('a class another plugin\'s change moves', () => {
     expect(entry.class).toBe(4)
     expect(entry.firstUse).toEqual([fetchOne, hears('reader.done')])
     expect(gate.seen.at(-1)!.plugins.listener.map(item => item.firstUse)).toEqual([true, true])
-    const asked = made.loader.asks.raise(capabilityKey(fetchOne), {
+    const asked = made.pluginsManager.asks.raise(capabilityKey(fetchOne), {
       stage: 'canonical', caller: { kind: 'plugin', id: 'listener', half: 'worker', incarnation: 1 }, action: 'net.fetch',
       capability: 'net.fetch', scope: {},
     })
@@ -732,7 +732,7 @@ describe('a class another plugin\'s change moves', () => {
     expect((await stored(made, 'a')).class).toBe(2)
     const dir = path.join(made.dataDir, 'staging', 'a-next')
     await writeFolder(dir, filesFor(workerManifest('a', { version: '1.1.0', capabilities: [{ type: 'ui.view' }, calls('b')] })))
-    expect(await made.loader.update('a', dir)).toMatchObject({ outcome: 'confirm' })
+    expect(await made.pluginsManager.update('a', dir)).toMatchObject({ outcome: 'confirm' })
   })
 
   it('stores a move down without a word once the plugin that lifted it goes and the list shrinks', async () => {
@@ -748,9 +748,9 @@ describe('a class another plugin\'s change moves', () => {
 
   it('stores a move down once the grant that lifted it is narrowed', async () => {
     const made = await plugins({ a: [[read, calls('b')], 1], b: [[{ type: 'storage' }], 0] })
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'b', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'b', capability: fetchOne })
     expect(await stored(made, 'a')).toMatchObject({ class: 4, firstUse: [calls('b')] })
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'b', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'b', capability: fetchOne })
     const entry = await stored(made, 'a')
     expect(entry.class).toBe(1)
     expect(entry.firstUse).toBeUndefined()
@@ -771,7 +771,7 @@ describe('a class another plugin\'s change moves', () => {
       folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]), lone: worker('lone') },
       entries: { lone: root => entryFor(root, { granted: [read, calls('far')], class: 2, firstUse: [read] }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const before = await entryFile(made, 'lone')
     await approved(made, 'listener')
     await approved(made, 'reader')
@@ -783,13 +783,13 @@ describe('a class another plugin\'s change moves', () => {
     const made = await listening()
     const write = made.store.writePlugin.bind(made.store)
     made.store.writePlugin = async (id, entry) => (id === 'reader' ? Promise.reject(new Error('disk full')) : write(id, entry))
-    await expect(made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })).rejects.toThrow('disk full')
+    await expect(made.pluginsManager.apply({ kind: 'plugin.approve', plugin: 'reader' })).rejects.toThrow('disk full')
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
     made.store.writePlugin = write
-    await made.loader.apply({ kind: 'plugin.approve', plugin: 'reader' })
+    await made.pluginsManager.apply({ kind: 'plugin.approve', plugin: 'reader' })
     const remove = made.store.removePlugin.bind(made.store)
     made.store.removePlugin = async () => Promise.reject(new Error('disk full'))
-    await expect(made.loader.apply({ kind: 'plugin.remove', plugin: 'reader' })).rejects.toThrow('disk full')
+    await expect(made.pluginsManager.apply({ kind: 'plugin.remove', plugin: 'reader' })).rejects.toThrow('disk full')
     made.store.removePlugin = remove
     expect((await stored(made, 'listener')).class).toBe(4)
   })
@@ -800,7 +800,7 @@ describe('a class another plugin\'s change moves', () => {
       folder: { notes: worker('notes') },
       entries: { notes: root => entryFor(root, { granted: [read, calls('git')], class: 1 }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect((await stored(made, 'git')).class).toBe(4)
     expect(await stored(made, 'notes')).toMatchObject({ class: 4, firstUse: [calls('git')] })
   })
@@ -847,7 +847,7 @@ describe('the classes at start', () => {
   // A first start that approves the listener and then the reader, so both entries are right
   async function approvedBoth(): Promise<Made> {
     const made = await harness({ install: withCapabilities(), folder: folder() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'listener')
     await approved(made, 'reader')
     return made
@@ -857,29 +857,29 @@ describe('the classes at start', () => {
     const gate = allowAll()
     const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
     const seen = atStart(made, gate)
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
-    expect(stateOf(made.loader, 'listener')).toBe('ready')
+    expect(stateOf(made.pluginsManager, 'listener')).toBe('ready')
     expect(asking(gate, seen())).toEqual([true, true])
     expect(asking(gate)).toEqual([true, true])
   })
 
   it('raises a stale network listener to 4 with its fetch and subscription asking on a start whose install the last start recorded', async () => {
     const first = await harness({ install: withCapabilities(), folder: folder() })
-    await first.loader.start()
-    await first.loader.shutdown()
+    await first.pluginsManager.start()
+    await first.pluginsManager.shutdown()
     const made = await harness({ base: first.base, install: withCapabilities(), folder: folder(), entries: stale })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
   })
 
   it('writes no entry that is right and leaves each file byte for byte', async () => {
     const first = await approvedBoth()
-    await first.loader.shutdown()
+    await first.pluginsManager.shutdown()
     const before = { listener: await entryFile(first, 'listener'), reader: await entryFile(first, 'reader') }
     const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
     const seen = writes(made)
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(seen).toEqual([])
     expect((await entryFile(made, 'listener')).equals(before.listener)).toBe(true)
     expect((await entryFile(made, 'reader')).equals(before.reader)).toBe(true)
@@ -887,12 +887,12 @@ describe('the classes at start', () => {
 
   it('keeps an item the human confirmed from asking again on a start whose install the last start recorded', async () => {
     const first = await approvedBoth()
-    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
     expect((await stored(first, 'listener')).firstUse).toEqual([hears('reader.done')])
-    await first.loader.shutdown()
+    await first.pluginsManager.shutdown()
     const before = await entryFile(first, 'listener')
     const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')] })
     expect((await entryFile(made, 'listener')).equals(before)).toBe(true)
   })
@@ -903,13 +903,13 @@ describe('the classes at start', () => {
   it('asks for the items an app update to a core plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
     const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('mcp-http-handler.done')]) })
     const first = await harness({ install: speaker('1.0.0', []), folder: listener() })
-    await first.loader.start()
+    await first.pluginsManager.start()
     await approved(first, 'listener')
     expect(await stored(first, 'listener')).toMatchObject({ class: 4, firstUse: [exec] })
-    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: exec })
-    await first.loader.shutdown()
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'listener', capability: exec })
+    await first.pluginsManager.shutdown()
     const made = await harness({ base: first.base, install: speaker('1.1.0', [read]), folder: listener() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('mcp-http-handler.done')] })
   })
 
@@ -929,14 +929,14 @@ describe('the classes at start', () => {
     ['skipVerification on', async () => ({ install: speaker('1.0.0', []), switches: { skipVerification: true } })],
   ] as [string, Next][])('keeps a confirmed item that asks only through its links confirmed whatever the install: %s', async (_name, next) => {
     const first = await harness({ install: speaker('1.0.0', []), folder: folder() })
-    await first.loader.start()
+    await first.pluginsManager.start()
     await approved(first, 'listener')
     await approved(first, 'reader')
-    await first.loader.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'listener', capability: fetchOne })
     expect((await stored(first, 'listener')).firstUse).toEqual([hears('reader.done')])
-    await first.loader.shutdown()
+    await first.pluginsManager.shutdown()
     const made = await harness({ base: first.base, ...await next(first), folder: folder() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')], confirmed: [fetchOne] })
   })
 
@@ -947,8 +947,8 @@ describe('the classes at start', () => {
     })
     const files = { listener: await entryFile(made, 'listener'), other: await entryFile(made, 'other') }
     const seen = writes(made)
-    await made.loader.start()
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
     expect(seen).toEqual([])
     expect((await entryFile(made, 'listener')).equals(files.listener)).toBe(true)
     expect((await entryFile(made, 'other')).equals(files.other)).toBe(true)
@@ -958,10 +958,10 @@ describe('the classes at start', () => {
     const gate = allowAll()
     const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
     made.store.writePlugin = async () => Promise.reject(new Error('disk full'))
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(made.link.events('fault')).toContainEqual({ plugin: 'listener', step: 'reclass' })
     expect(asking(gate)).toEqual([true, true])
-    expect(stateOf(made.loader, 'listener')).toBe('ready')
+    expect(stateOf(made.pluginsManager, 'listener')).toBe('ready')
   })
 })
 
@@ -1122,9 +1122,9 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
       behave: { gate: { exports: { gate } }, 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
       switches: policyJob === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
     })
-    await made.loader.start()
-    for (const [id, item] of scenario.confirm ?? []) await made.loader.apply({ kind: 'item.on', plugin: id, capability: item })
-    if (scenario.atStart !== true && policyJob === 'off') await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
+    await made.pluginsManager.start()
+    for (const [id, item] of scenario.confirm ?? []) await made.pluginsManager.apply({ kind: 'item.on', plugin: id, capability: item })
+    if (scenario.atStart !== true && policyJob === 'off') await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
     if (scenario.atStart !== true && policyJob === 'down') role.broken = true
     let notes: string[] | null = null
     const { change } = scenario
@@ -1132,13 +1132,13 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
       if (change.kind === 'plugin.update') {
         const dir = path.join(made.dataDir, 'staging', `${change.plugin}-next`)
         await writeFolder(dir, filesFor(workerManifest(change.plugin, { version: '1.1.0', capabilities: scenario.staged ?? [] })))
-        expect(await made.loader.update(change.plugin, dir)).toMatchObject({ outcome: 'confirm' })
+        expect(await made.pluginsManager.update(change.plugin, dir)).toMatchObject({ outcome: 'confirm' })
       } else {
-        await made.loader.request(change, editor)
+        await made.pluginsManager.request(change, editor)
       }
       const held = (await listed(made)).requests.find(request => request.kind === change.kind && 'plugin' in change && request.plugin === change.plugin)
       notes = held?.notes ?? null
-      if (held !== undefined) await made.loader.apply(change)
+      if (held !== undefined) await made.pluginsManager.apply(change)
     }
     const entry = (await made.store.load()).state.plugins[scenario.subject]!
     return {
@@ -1150,7 +1150,7 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
         ...(entry.unclassed === undefined ? {} : { unclassed: entry.unclassed }),
       },
       gated: (gate.seen.at(-1)!.plugins[scenario.subject] ?? []).filter(item => item.firstUse).map(item => item.capability),
-      others: made.loader.pending().filter(request => request.plugin === scenario.subject && request.kind !== change?.kind && request.kind !== 'class.raised'),
+      others: made.pluginsManager.pending().filter(request => request.plugin === scenario.subject && request.kind !== change?.kind && request.kind !== 'class.raised'),
       alerted: (await listed(made)).requests.filter(request => request.kind === 'class.raised' && request.plugin === scenario.subject).map(request => request.text),
     }
   }
@@ -1181,16 +1181,16 @@ describe('what the human confirmed, recorded in the entry', () => {
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const shape = (entry: Plugin) => ({ class: entry.class, firstUse: entry.firstUse ?? [] })
   async function closed(made: Made): Promise<void> {
-    await made.loader.shutdown().catch(() => {})
+    await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
     made.link.carrier?.close()
   }
 
   it('records an item the human lets the plugin use once it asks and takes it off the list', async () => {
     const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync', [read, fetchOne]) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'sync')
-    await made.loader.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
     expect(await stored(made, 'sync')).toMatchObject({ class: 4, confirmed: [fetchOne] })
     expect((await stored(made, 'sync')).firstUse ?? []).toEqual([])
   })
@@ -1200,8 +1200,8 @@ describe('what the human confirmed, recorded in the entry', () => {
       install: withCapabilities(), folder: { tool: worker('tool') },
       entries: { tool: root => entryFor(root, { granted: [read], class: 1, off: [read] }) },
     })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'item.on', plugin: 'tool', capability: read })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'tool', capability: read })
     expect((await stored(made, 'tool')).confirmed).toBeUndefined()
   })
 
@@ -1210,7 +1210,7 @@ describe('what the human confirmed, recorded in the entry', () => {
       install: withCapabilities(), folder: { sync: worker('sync') },
       entries: { sync: root => entryFor(root, { granted: [read, fetchOne], class: 4 }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(shape(await stored(made, 'sync'))).toEqual({ class: 4, firstUse: [fetchOne] })
   })
 
@@ -1219,16 +1219,16 @@ describe('what the human confirmed, recorded in the entry', () => {
     const wider: Capability = { type: 'net.fetch', hosts: ['example.com', 'example.org'] }
     const bundled = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), git: { files: filesFor(workerManifest('git', { version, capabilities })), firstParty: true } })
     const first = await harness({ install: bundled('1.0.0', [read, fetchOne]) })
-    await first.loader.start()
-    await first.loader.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
+    await first.pluginsManager.start()
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
     await closed(first)
     const same = await harness({ base: first.base, install: bundled('1.1.0', [read, fetchOne, { type: 'storage' }]) })
-    await same.loader.start()
+    await same.pluginsManager.start()
     expect(await stored(same, 'git')).toMatchObject({ class: 4, confirmed: [fetchOne] })
     expect((await stored(same, 'git')).firstUse ?? []).toEqual([])
     await closed(same)
     const changed = await harness({ base: first.base, install: bundled('1.2.0', [read, wider]) })
-    await changed.loader.start()
+    await changed.pluginsManager.start()
     const entry = await stored(changed, 'git')
     expect(shape(entry)).toEqual({ class: 4, firstUse: [wider] })
     expect(entry.confirmed).toBeUndefined()
@@ -1245,9 +1245,9 @@ describe('what the human confirmed, recorded in the entry', () => {
   // The first run under the install before the update: the listener at class 4 for exec, which the human confirmed
   async function confirmedExec(base: string, http = speaker('1.0.0', []), switches: Partial<Switches> = {}): Promise<void> {
     const made = await harness({ base, install: installOf(http), switches, folder: { listener: worker('listener', listenerGrants) } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'listener')
-    await made.loader.apply({ kind: 'item.on', plugin: 'listener', capability: exec })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'listener', capability: exec })
     expect(shape(await stored(made, 'listener'))).toEqual({ class: 4, firstUse: [] })
     await closed(made)
   }
@@ -1258,13 +1258,13 @@ describe('what the human confirmed, recorded in the entry', () => {
     const base = await tempBase()
     await confirmedExec(base)
     const crashed = await harness({ base, install: updated() })
-    ;(crashed.loader as unknown as { reconcile: () => Promise<void> }).reconcile = async () => {
+    ;(crashed.pluginsManager as unknown as { reconcile: () => Promise<void> }).reconcile = async () => {
       throw new Error('the process died here')
     }
-    await crashed.loader.start().catch(() => {})
+    await crashed.pluginsManager.start().catch(() => {})
     await closed(crashed)
     const made = await harness({ base, install: updated() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
   })
 
@@ -1272,10 +1272,10 @@ describe('what the human confirmed, recorded in the entry', () => {
     const base = await tempBase()
     await confirmedExec(base)
     const off = await harness({ base, install: updated(), switches: { off: ['grant-risk-classifier'] } })
-    await off.loader.start()
+    await off.pluginsManager.start()
     await closed(off)
     const made = await harness({ base, install: updated() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
   })
 
@@ -1283,9 +1283,9 @@ describe('what the human confirmed, recorded in the entry', () => {
     const base = await tempBase()
     const granted = [exec, commit]
     const first = await harness({ base, install: withCapabilities(), folder: { tool: worker('tool', granted) } })
-    await first.loader.start()
+    await first.pluginsManager.start()
     await approved(first, 'tool')
-    await first.loader.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
+    await first.pluginsManager.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
     expect(shape(await stored(first, 'tool'))).toEqual({ class: 4, firstUse: [] })
     await closed(first)
     const real = createGrantRiskClassifier()
@@ -1297,7 +1297,7 @@ describe('what the human confirmed, recorded in the entry', () => {
       base, install: { ...coreInstall(), 'grant-risk-classifier': { files: filesFor(hostManifest('grant-risk-classifier', { version: '1.1.0' })) } },
       behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: stricter } } },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'tool')).toMatchObject({ class: 4, firstUse: [commit], confirmed: [exec] })
   })
 
@@ -1308,7 +1308,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     await writeFolder(scratch, real.files)
     await confirmedExec(base, speaker('1.0.0', [], { hash: await hashOf(scratch) }), { devMode: ['mcp-http-handler'] })
     const made = await harness({ base, install: installOf(real) })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
   })
 
@@ -1320,26 +1320,26 @@ describe('what the human confirmed, recorded in the entry', () => {
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]) },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
-    await off.loader.start()
+    await off.pluginsManager.start()
     const dir = path.join(off.dataDir, 'staging', 'listener-next')
     await writeFolder(dir, filesFor(workerManifest('listener', { version: '1.1.0', capabilities: granted })))
-    await off.loader.update('listener', dir)
-    await off.loader.apply({ kind: 'plugin.update', plugin: 'listener' })
+    await off.pluginsManager.update('listener', dir)
+    await off.pluginsManager.apply({ kind: 'plugin.update', plugin: 'listener' })
     await closed(off)
     const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(shape(await stored(made, 'listener'))).toEqual({ class: 4, firstUse: granted })
   })
 
   it('classes an entry written while off from nothing at the next start with the policy job on and drops its mark', async () => {
     const base = await tempBase()
     const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
-    await off.loader.start()
+    await off.pluginsManager.start()
     await approved(off, 'sync')
     expect(await stored(off, 'sync')).toMatchObject({ class: null, unclassed: true })
     await closed(off)
     const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const entry = await stored(made, 'sync')
     expect(shape(entry)).toEqual({ class: 4, firstUse: [fetchOne] })
     expect(entry.unclassed).toBeUndefined()
@@ -1358,7 +1358,7 @@ describe('the grant risk classifier switched off by the human', () => {
     const made = await harness({
       install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: { sync: worker('sync', [read, fetchOne]) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'sync')
     expect(flags(gate, 'sync')).toEqual([fetchOne])
     return { made, gate }
@@ -1366,9 +1366,9 @@ describe('the grant risk classifier switched off by the human', () => {
 
   it('hands the gate no first-use flags while it is off and the stored ones again once it is switched on', async () => {
     const { made, gate } = await asking()
-    await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([])
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([fetchOne])
   })
 
@@ -1377,10 +1377,10 @@ describe('the grant risk classifier switched off by the human', () => {
     const made = await harness({
       install: withCapabilities(), behave: { gate: { exports: { gate } } }, switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     await approved(made, 'sync')
     expect(flags(gate, 'sync')).toEqual([])
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     expect(flags(gate, 'sync')).toEqual([read, fetchOne])
     await until(() => flags(gate, 'sync').length === 1)
     expect(flags(gate, 'sync')).toEqual([fetchOne])
@@ -1404,10 +1404,10 @@ describe('the grant risk classifier switched off by the human', () => {
         sender: root => entryFor(root, { granted: [fetchOne], class: 3 }),
       },
     })
-    await made.loader.start()
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('off')
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => made.pluginsManager.pending().some(request => request.kind === 'class.raised'))
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
     expect((await stored(made, 'tool')).class).toBe(3)
     const notices = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
@@ -1422,11 +1422,11 @@ describe('the grant risk classifier switched off by the human', () => {
     const gate = allowAll()
     const made = await harness({
       install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: { sync: worker('sync', [read, fetchOne]) },
-      loader: { onFailure: () => {} },
+      pluginsManager: { onFailure: () => {} },
     })
-    await made.loader.start()
-    made.loader.crashed({ kind: 'plugin', id: 'grant-risk-classifier', half: 'host', incarnation: 1 }, 'closed')
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('failed')
+    await made.pluginsManager.start()
+    made.pluginsManager.crashed({ kind: 'plugin', id: 'grant-risk-classifier', half: 'host', incarnation: 1 }, 'closed')
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('failed')
     const request = await approved(made, 'sync')
     expect(request.notes).toContain(DOWN)
     expect(await stored(made, 'sync')).toMatchObject({ class: null, firstUse: [read, fetchOne] })
@@ -1439,7 +1439,7 @@ describe('the grant risk classifier switched off by the human', () => {
       install: withCapabilities(), folder: { tool: worker('tool') },
       entries: { tool: root => entryFor(root, { granted: [exec], class: 4, firstUse: [exec], unclassed: true }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     const entry = await stored(made, 'tool')
     expect(entry).toMatchObject({ class: 4, firstUse: [exec] })
     expect(entry.unclassed).toBeUndefined()
@@ -1447,7 +1447,7 @@ describe('the grant risk classifier switched off by the human', () => {
 
   it('says on its own switch-off that nothing asks while it is off', async () => {
     const { made } = await asking()
-    await made.loader.request({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }, trusted)
+    await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }, trusted)
     const request = (await listed(made)).requests.find(held => held.kind === 'plugin.off')!
     expect(request.notes).toContain('Plugins then go unclassified and nothing asks at its first use until it is on again')
   })
@@ -1467,13 +1467,13 @@ describe('a move up with no Confirm on screen', () => {
       folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return made
   }
 
   it('raises a notice for a widen Confirm-off applied that moves its plugin into 4, its class and asks stored already', async () => {
     const made = await confirmOff({ sync: [[fetchOne], 3] })
-    expect(await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)).toEqual({ applied: true })
     expect(await stored(made, 'sync')).toMatchObject({ class: 4, firstUse: [fetchOne] })
     expect((await notices(made)).map(request => [request.plugin, request.text, request.notes])).toEqual([[
       'sync', '"sync" moved from class 3, Network to class 4, Powerful with no Confirm on screen',
@@ -1483,7 +1483,7 @@ describe('a move up with no Confirm on screen', () => {
 
   it('names the plugin a Confirm-off change moves through its links, with the plugin changed', async () => {
     const made = await confirmOff({ a: [[read, { type: 'plugin.call', targets: ['b'] }], 1], b: [[{ type: 'storage' }], 1] })
-    await made.loader.request({ kind: 'grant.widen', plugin: 'b', capability: fetchOne }, trusted)
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'b', capability: fetchOne }, trusted)
     expect((await notices(made)).map(request => [request.plugin, request.text, request.notes[0]])).toEqual([
       ['b', '"b" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', 'Why: a grant given to "b" without a Confirm'],
       ['a', '"a" moved from class 1, Reader to class 4, Powerful with no Confirm on screen', 'Why: a grant given to "b" without a Confirm'],
@@ -1492,7 +1492,7 @@ describe('a move up with no Confirm on screen', () => {
 
   it('raises nothing for a move up inside 1 to 3 that nobody confirmed', async () => {
     const made = await confirmOff({ tool: [[read], 1] })
-    await made.loader.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
     expect((await stored(made, 'tool')).class).toBe(2)
     expect(await notices(made)).toEqual([])
   })
@@ -1504,28 +1504,28 @@ describe('a move up with no Confirm on screen', () => {
       install: withCapabilities(), switches: { confirmOff: true }, behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
       folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) },
     })
-    await made.loader.start()
-    await made.loader.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
+    await made.pluginsManager.start()
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'tool', capability: commit }, trusted)
     expect((await notices(made)).map(request => request.text)).toEqual(['"tool" moved from class 1, Reader to class 2, Writer with no Confirm on screen'])
   })
 
   it('raises nothing for the same widen through the Confirm, which shows the move', async () => {
     const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync') }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) } })
-    await made.loader.start()
-    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
+    await made.pluginsManager.start()
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
     const [held] = (await listed(made)).requests
-    await made.loader.confirm(held!.id, {})
+    await made.pluginsManager.confirm(held!.id, {})
     expect((await stored(made, 'sync')).class).toBe(4)
     expect(await notices(made)).toEqual([])
   })
 
   it.each(['confirm', 'cancel'] as const)('changes nothing but what the entry owes when the human answers it with %s and the notice goes', async answer => {
     const made = await confirmOff({ sync: [[fetchOne], 3] })
-    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
     const before = await made.store.load()
     const [notice] = await notices(made)
-    if (answer === 'confirm') await made.loader.confirm(notice!.id, {})
-    else await made.loader.cancel(notice!.id)
+    if (answer === 'confirm') await made.pluginsManager.confirm(notice!.id, {})
+    else await made.pluginsManager.cancel(notice!.id)
     expect(await notices(made)).toEqual([])
     expect(before.state.plugins.sync!.owed).toEqual({ from: 3, cause: 'widen', by: 'sync' })
     delete before.state.plugins.sync!.owed
@@ -1534,7 +1534,7 @@ describe('a move up with no Confirm on screen', () => {
 
   it('takes no notice a window asks for, since only the core raises one', async () => {
     const made = await confirmOff({ sync: [[fetchOne], 3] })
-    await expect(made.loader.request({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause: 'start', by: null } as unknown as Change, editor))
+    await expect(made.pluginsManager.request({ kind: 'class.raised', plugin: 'sync', from: 0, to: 4, cause: 'start', by: null } as unknown as Change, editor))
       .rejects.toMatchObject({ code: 'invalid' })
     expect(await notices(made)).toEqual([])
   })
@@ -1569,8 +1569,8 @@ describe('a pass whose role fails for one entry', () => {
 
   it('stores that entry strict at start and classes the others', async () => {
     const made = await setup()
-    await made.loader.start()
-    expect(made.loader.policyJob('grant-risk-classifier')).toBe('on')
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('on')
     const listener = await stored(made, 'listener')
     expect({ class: listener.class, firstUse: listener.firstUse }).toEqual({ class: null, firstUse: [fetchOne, hears] })
     expect(listener.unclassed).toBeUndefined()
@@ -1580,11 +1580,11 @@ describe('a pass whose role fails for one entry', () => {
 
   it('stores that entry strict in the pass when the policy job is switched on again', async () => {
     const made = await setup({ off: ['grant-risk-classifier'] })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect((await stored(made, 'listener')).class).toBe(3)
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => made.loader.policyJob('grant-risk-classifier') === 'on')
-    await made.loader.settled()
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => made.pluginsManager.policyJob('grant-risk-classifier') === 'on')
+    await made.pluginsManager.settled()
     await tick(30)
     expect(await stored(made, 'listener')).toMatchObject({ class: null, firstUse: [fetchOne, hears] })
   })
@@ -1600,7 +1600,7 @@ describe('an update applied with no Confirm', () => {
   const staged = async (made: Made, id: string, capabilities: Capability[]) => {
     const dir = path.join(made.dataDir, 'staging', `${id}-next`)
     await writeFolder(dir, filesFor(workerManifest(id, { version: '1.1.0', capabilities })))
-    return made.loader.update(id, dir)
+    return made.pluginsManager.update(id, dir)
   }
 
   it('empties the record of a class 0 plugin whose update applied alone, so its items ask once the network comes back', async () => {
@@ -1612,15 +1612,15 @@ describe('an update applied with no Confirm', () => {
         relay: root => entryFor(root, { granted: [fetchOne], class: 4 }),
       },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await stored(made, 'mid')).toMatchObject({ class: 4, firstUse: [hears, calls] })
-    await made.loader.apply({ kind: 'item.on', plugin: 'mid', capability: hears })
-    await made.loader.apply({ kind: 'item.on', plugin: 'mid', capability: calls })
-    await made.loader.apply({ kind: 'grant.narrow', plugin: 'relay', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'mid', capability: hears })
+    await made.pluginsManager.apply({ kind: 'item.on', plugin: 'mid', capability: calls })
+    await made.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'relay', capability: fetchOne })
     expect(await stored(made, 'mid')).toMatchObject({ class: 0, confirmed: [hears, calls] })
     expect(await staged(made, 'mid', [hears, calls])).toEqual({ outcome: 'applied' })
     expect((await stored(made, 'mid')).confirmed).toBeUndefined()
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'relay', capability: fetchOne })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'relay', capability: fetchOne })
     expect(await stored(made, 'mid')).toMatchObject({ version: '1.1.0', class: 4, firstUse: [hears, calls] })
   })
 
@@ -1630,11 +1630,11 @@ describe('an update applied with no Confirm', () => {
         install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool') },
         entries: { tool: root => entryFor(root, { granted: [read, fetchOne], class: 4 }) },
       })
-      await made.loader.start()
-      await made.loader.apply({ kind: 'item.on', plugin: 'tool', capability: fetchOne })
+      await made.pluginsManager.start()
+      await made.pluginsManager.apply({ kind: 'item.on', plugin: 'tool', capability: fetchOne })
       expect(await staged(made, 'tool', [read, fetchOne])).toMatchObject({ outcome: 'confirm' })
-      const answer = await made.loader.request({ kind: 'plugin.update', plugin: 'tool' }, trusted)
-      if (!confirmOff) await made.loader.confirm((answer as { held: string }).held, {})
+      const answer = await made.pluginsManager.request({ kind: 'plugin.update', plugin: 'tool' }, trusted)
+      if (!confirmOff) await made.pluginsManager.confirm((answer as { held: string }).held, {})
       const entry = await stored(made, 'tool')
       expect(entry.version).toBe('1.1.0')
       expect({ firstUse: entry.firstUse ?? [], confirmed: entry.confirmed ?? [] })
@@ -1660,7 +1660,7 @@ describe('a notice owed until the human answers it', () => {
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
   async function closed(made: Made): Promise<void> {
-    await made.loader.shutdown().catch(() => {})
+    await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
     made.link.carrier?.close()
   }
@@ -1668,10 +1668,10 @@ describe('a notice owed until the human answers it', () => {
   async function updated(granted: Capability[], n: number, second: () => ReturnType<typeof v1>): Promise<{ base: string, made: Made }> {
     const base = await tempBase()
     const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n }) } })
-    await one.loader.start()
+    await one.pluginsManager.start()
     await closed(one)
     const made = await harness({ base, install: second() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return { base, made }
   }
 
@@ -1684,7 +1684,7 @@ describe('a notice owed until the human answers it', () => {
     expect((await stored(made, 'p')).owed).toEqual({ from: n, cause: 'start', by: null })
     await closed(made)
     const again = await harness({ base, install: second() })
-    await again.loader.start()
+    await again.pluginsManager.start()
     expect(await notices(again)).toEqual([notice('p', from, to)])
   })
 
@@ -1692,30 +1692,30 @@ describe('a notice owed until the human answers it', () => {
     const base = await tempBase()
     const granted = [calls('mcp-http-handler')]
     const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) } })
-    await one.loader.start()
+    await one.pluginsManager.start()
     await closed(one)
     const dying = await harness({ base, install: fetches() })
-    ;(dying.loader as unknown as { raiseOwed: () => void }).raiseOwed = () => {
+    ;(dying.pluginsManager as unknown as { raiseOwed: () => void }).raiseOwed = () => {
       throw new Error('the process died here')
     }
-    await dying.loader.start().catch(() => {})
+    await dying.pluginsManager.start().catch(() => {})
     expect((await stored(dying, 'p')).class).toBe(3)
     await closed(dying)
     const next = await harness({ base, install: fetches() })
-    await next.loader.start()
+    await next.pluginsManager.start()
     expect(await notices(next)).toEqual([notice('p', 'class 0, Contained', 'class 3, Network')])
   })
 
   it.each(['confirm', 'cancel'] as const)('clears what is owed once the human answers with %s, so no restart raises it again', async answer => {
     const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     const [held] = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
-    if (answer === 'confirm') await made.loader.confirm(held!.id, {})
-    else await made.loader.cancel(held!.id)
+    if (answer === 'confirm') await made.pluginsManager.confirm(held!.id, {})
+    else await made.pluginsManager.cancel(held!.id)
     expect((await stored(made, 'p')).owed).toBeUndefined()
     expect(await stored(made, 'p')).toMatchObject({ class: 3 })
     await closed(made)
     const again = await harness({ base, install: fetches() })
-    await again.loader.start()
+    await again.pluginsManager.start()
     expect(await notices(again)).toEqual([])
   })
 
@@ -1723,7 +1723,7 @@ describe('a notice owed until the human answers it', () => {
     const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
     const further = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) } })
-    await further.loader.start()
+    await further.pluginsManager.start()
     expect(await notices(further)).toEqual([notice('p', 'class 0, Contained', 'class 4, Powerful')])
     expect((await stored(further, 'p')).owed).toEqual({ from: 0, cause: 'start', by: null })
   })
@@ -1732,7 +1732,7 @@ describe('a notice owed until the human answers it', () => {
     const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
     const back = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', []) } })
-    await back.loader.start()
+    await back.pluginsManager.start()
     expect(await stored(back, 'p')).toMatchObject({ class: 0 })
     expect((await stored(back, 'p')).owed).toBeUndefined()
     expect(await notices(back)).toEqual([])
@@ -1746,10 +1746,10 @@ describe('a notice owed until the human answers it', () => {
       base, install: v1(), folder: Object.fromEntries(ids.map(id => [id, worker(id, granted)])),
       entries: Object.fromEntries(ids.map(id => [id, (root: string) => entryFor(root, { granted, class: 0 })])),
     })
-    await one.loader.start()
+    await one.pluginsManager.start()
     await closed(one)
     const two = await harness({ base, install: fetches(), folder: { newcomer: worker('newcomer', [read]) } })
-    await two.loader.start()
+    await two.pluginsManager.start()
     const held = () => listed(two).then(list => list.requests)
     expect((await held()).some(request => request.kind === 'plugin.approve' && request.plugin === 'newcomer')).toBe(true)
     const raised = (await held()).filter(request => request.kind === 'class.raised')
@@ -1757,7 +1757,7 @@ describe('a notice owed until the human answers it', () => {
     const missing = ids.filter(id => !raised.some(request => request.plugin === id))
     expect(missing).toHaveLength(1)
     expect((await stored(two, missing[0]!)).owed).toBeDefined()
-    await two.loader.confirm(raised[0]!.id, {})
+    await two.pluginsManager.confirm(raised[0]!.id, {})
     expect((await held()).filter(request => request.kind === 'class.raised').map(request => request.plugin)).toContain(missing[0])
   })
 
@@ -1769,9 +1769,9 @@ describe('a notice owed until the human answers it', () => {
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]), ...extra },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
-    await made.loader.start()
-    await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => made.pluginsManager.pending().some(request => request.kind === 'class.raised'))
     expect(await notices(made)).toContain(notice('listener', 'class 3, Network', 'class 4, Powerful'))
   })
 })
@@ -1804,21 +1804,21 @@ describe('a notice owed across an entry stored strict', () => {
   }
   const failing = (type: Capability['type']) => ({ 'grant-risk-classifier': { exports: { grantRiskClassifier: failingFor(type) } } })
   async function closed(made: Made): Promise<void> {
-    await made.loader.shutdown().catch(() => {})
+    await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
     made.link.carrier?.close()
   }
   // A start on the same data, the role failing for that type when one is named
   async function started(base: string, install: () => ReturnType<typeof v1>, type?: Capability['type']): Promise<Made> {
     const made = await harness({ base, install: install(), ...(type === undefined ? {} : { behave: failing(type) }) })
-    await made.loader.start()
+    await made.pluginsManager.start()
     return made
   }
   // p stored at a class right under the first install
   async function seeded(granted: Capability[], n: number): Promise<string> {
     const base = await tempBase()
     const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n }) } })
-    await one.loader.start()
+    await one.pluginsManager.start()
     await closed(one)
     return base
   }
@@ -1851,11 +1851,11 @@ describe('a notice owed across an entry stored strict', () => {
       base, install: fetches(), switches: { off: ['grant-risk-classifier'] }, behave: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) },
     })
-    await off.loader.start()
+    await off.pluginsManager.start()
     expect((await stored(off, 'p')).class).toBe(0)
-    await off.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => off.loader.policyJob('grant-risk-classifier') === 'on')
-    await off.loader.settled()
+    await off.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    await until(() => off.pluginsManager.policyJob('grant-risk-classifier') === 'on')
+    await off.pluginsManager.settled()
     await tick(30)
     expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } })
     expect(await notices(off)).toEqual([])
@@ -1895,17 +1895,17 @@ describe('a notice owed across an entry stored strict', () => {
       base, install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
       folder: { sync: worker('sync', [fetchOne]) }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
     })
-    await made.loader.start()
+    await made.pluginsManager.start()
     role.broken = true
-    await made.loader.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, editor)
+    await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, editor)
     const held = (await listed(made)).requests.find(request => request.kind === 'grant.widen' && request.plugin === 'sync')!
     expect(held.notes).toContain(DOWN)
-    await made.loader.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
+    await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'sync', capability: read })
     expect(await stored(made, 'sync')).toMatchObject({ class: null })
     expect((await stored(made, 'sync')).owed).toBeUndefined()
     await closed(made)
     const known = await harness({ base, install: withCapabilities() })
-    await known.loader.start()
+    await known.pluginsManager.start()
     expect(await stored(known, 'sync')).toMatchObject({ class: 4 })
     expect(await notices(known)).toEqual([])
   })
@@ -1917,8 +1917,8 @@ describe('a notice owed across an entry stored strict', () => {
     expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 3, cause: 'start', by: null } })
     await closed(strict)
     const off = await harness({ base, install: v1(), switches: { off: ['grant-risk-classifier'] } })
-    await off.loader.start()
-    await off.loader.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('mcp-http-handler.done') })
+    await off.pluginsManager.start()
+    await off.pluginsManager.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('mcp-http-handler.done') })
     expect(await stored(off, 'p')).toMatchObject({ class: null, unclassed: true, owed: { from: 3, cause: 'start', by: null } })
     await closed(off)
     const known = await started(base, v1)
@@ -1939,7 +1939,7 @@ describe('a notice owed across an entry stored strict', () => {
       base, install: fetches(), behave: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n, ...extra }) },
     })
-    await strict.loader.start()
+    await strict.pluginsManager.start()
     expect(await stored(strict, 'p')).toMatchObject({ class: null, ...extra })
     expect((await stored(strict, 'p')).owed).toBeUndefined()
     await closed(strict)
@@ -1957,7 +1957,7 @@ describe('a notice for a plugin never classed', () => {
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => [held.plugin, held.text, held.notes[0]])
   const fromNothing = (id: string, to: string) => `${JSON.stringify(id)} moved from a class not known to ${to} with no Confirm on screen`
   async function closed(made: Made): Promise<void> {
-    await made.loader.shutdown().catch(() => {})
+    await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
     made.link.carrier?.close()
   }
@@ -1965,20 +1965,20 @@ describe('a notice for a plugin never classed', () => {
   it('raises one at the next start with the policy job on for a plugin approved while off', async () => {
     const base = await tempBase()
     const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
-    await off.loader.start()
+    await off.pluginsManager.start()
     await approved(off, 'sync')
     await closed(off)
     const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect(await notices(made)).toEqual([['sync', fromNothing('sync', 'class 4, Powerful'), 'Why: the classing at start, which found what changed while hetu was not running']])
   })
 
   it('raises one for a plugin approved Confirm-off, even below 4, and none for one approved through its Confirm', async () => {
     for (const confirmOff of [true, false]) {
       const made = await harness({ install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool', [read]) } })
-      await made.loader.start()
-      const answer = await made.loader.request({ kind: 'plugin.approve', plugin: 'tool' }, trusted)
-      if (!confirmOff) await made.loader.confirm((answer as { held: string }).held, {})
+      await made.pluginsManager.start()
+      const answer = await made.pluginsManager.request({ kind: 'plugin.approve', plugin: 'tool' }, trusted)
+      if (!confirmOff) await made.pluginsManager.confirm((answer as { held: string }).held, {})
       expect((await made.store.load()).state.plugins.tool!.class).toBe(1)
       expect(await notices(made)).toEqual(confirmOff ? [['tool', fromNothing('tool', 'class 1, Reader'), 'Why: the approval of "tool" without a Confirm']] : [])
       await cleanup()
@@ -1988,12 +1988,12 @@ describe('a notice for a plugin never classed', () => {
   it('raises none for an entry the policy job down left with a class not known, which counts as 4', async () => {
     const base = await tempBase()
     const down = await harness({ base, install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
-    await down.loader.start()
+    await down.pluginsManager.start()
     await approved(down, 'sync')
     expect((await down.store.load()).state.plugins.sync).toMatchObject({ class: null })
     await closed(down)
     const made = await harness({ base, install: withCapabilities() })
-    await made.loader.start()
+    await made.pluginsManager.start()
     expect((await made.store.load()).state.plugins.sync).toMatchObject({ class: 4 })
     expect(await notices(made)).toEqual([])
   })

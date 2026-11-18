@@ -23,7 +23,7 @@ describe('the host half as it ships', () => {
     expect(await checkManifest(root, { install: true })).toEqual([])
     const manifest = JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { requires: string[], capabilities?: unknown }
     expect(manifest.requires).toEqual(['luoshu'])
-    // It reads notes through the folder the loader hands it and holds no grant of its own
+    // It reads notes through the folder the plugins manager hands it and holds no grant of its own
     expect(manifest.capabilities).toBeUndefined()
   })
 })

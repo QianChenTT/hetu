@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { filesFor, workerManifest, writeInstall } from '../loader-fakes.ts'
+import { filesFor, workerManifest, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, dataWith, exited, launch, logged, records, temp, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)

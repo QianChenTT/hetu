@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ActionResults, CoreStatus } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import { cleanup, coreInstall, entryFor, filesFor, harness, manifest, stateOf, workerManifest } from './loader-fakes.ts'
+import { cleanup, coreInstall, entryFor, filesFor, harness, manifest, stateOf, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -14,44 +14,44 @@ const hiddenMarks = () => ({ files: filesFor(manifest('hidden-marks', { entries:
 
 describe('in-page plugins', () => {
   it('names an in-page core plugin in core.status while it is ready', async () => {
-    const { loader } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() } })
-    await loader.start()
-    expect(stateOf(loader, 'hidden-marks')).toBe('ready')
-    expect(((await loader.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual(['hidden-marks'])
+    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() } })
+    await pluginsManager.start()
+    expect(stateOf(pluginsManager, 'hidden-marks')).toBe('ready')
+    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual(['hidden-marks'])
   })
 
   it('leaves it out once the human switched it off', async () => {
-    const { loader } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() }, switches: { off: ['hidden-marks'] } })
-    await loader.start()
-    expect(((await loader.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
+    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': hiddenMarks() }, switches: { off: ['hidden-marks'] } })
+    await pluginsManager.start()
+    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
   })
 
   it('leaves it out when its bytes fail the install list', async () => {
-    const { loader } = await harness({ install: { ...coreInstall(), 'hidden-marks': { ...hiddenMarks(), hash: wrongHash } } })
-    await loader.start()
-    expect(stateOf(loader, 'hidden-marks')).toBe('refused')
-    expect(((await loader.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
+    const { pluginsManager } = await harness({ install: { ...coreInstall(), 'hidden-marks': { ...hiddenMarks(), hash: wrongHash } } })
+    await pluginsManager.start()
+    expect(stateOf(pluginsManager, 'hidden-marks')).toBe('refused')
+    expect(((await pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).page).toEqual([])
   })
 })
 
 describe('a worker with a port to the drawer', () => {
   it('is marked at its start only when the plugin holds a ui item', async () => {
-    const { loader, runtime } = await harness({
+    const { pluginsManager, runtime } = await harness({
       folder: { alpha: filesFor(workerManifest('alpha'), { 'worker.js': 'a' }), beta: filesFor(workerManifest('beta'), { 'worker.js': 'b' }) },
       entries: {
         alpha: root => entryFor(root, { granted: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }] }),
         beta: root => entryFor(root, { granted: [{ type: 'luoshu.read', paths: ['**'] }] }),
       },
     })
-    await loader.start()
-    expect(stateOf(loader, 'alpha')).toBe('ready')
-    expect(stateOf(loader, 'beta')).toBe('ready')
+    await pluginsManager.start()
+    expect(stateOf(pluginsManager, 'alpha')).toBe('ready')
+    expect(stateOf(pluginsManager, 'beta')).toBe('ready')
     expect(runtime.drawers).toEqual(['alpha'])
   })
 
   it('hands it the verified files and frames, which serve its frames and icons, and none to a worker without a ui item', async () => {
     const views = { board: { title: 'Board', kind: 'view', frame: 'board' } }
-    const { loader, runtime } = await harness({
+    const { pluginsManager, runtime } = await harness({
       folder: {
         alpha: filesFor(workerManifest('alpha', { entries: { worker: 'worker.js', frames: { board: 'board.html' } }, views }), { 'worker.js': 'a', 'board.html': '<p>b</p>' }),
         beta: filesFor(workerManifest('beta'), { 'worker.js': 'b' }),
@@ -61,7 +61,7 @@ describe('a worker with a port to the drawer', () => {
         beta: root => entryFor(root, { granted: [{ type: 'storage' }] }),
       },
     })
-    await loader.start()
+    await pluginsManager.start()
     const alpha = runtime.workerStarts.find(start => start.id === 'alpha')!
     expect(alpha.files?.map(file => file.path).sort()).toEqual(['board.html', 'hetu-plugin.json', 'worker.js'])
     expect(alpha.frames).toEqual({ board: 'board.html' })
@@ -75,7 +75,7 @@ describe('core.views', () => {
   const theme = { tokens: { 'color-bg': '#fafafa' } }
 
   it('lists each plugin that declares views or a theme, with whether it runs and has a worker', async () => {
-    const { loader } = await harness({
+    const { pluginsManager } = await harness({
       folder: {
         alpha: filesFor(workerManifest('alpha', { views }), { 'worker.js': 'a' }),
         beta: filesFor(workerManifest('beta', { theme }), { 'worker.js': 'b' }),
@@ -89,8 +89,8 @@ describe('core.views', () => {
         delta: root => entryFor(root, { granted: [{ type: 'ui.view' }], enabled: false }),
       },
     })
-    await loader.start()
-    const listed = (await loader.serve(call(editor, 'core.views'))) as ActionResults['core.views']
+    await pluginsManager.start()
+    const listed = (await pluginsManager.serve(call(editor, 'core.views'))) as ActionResults['core.views']
     expect(listed.plugins.sort((a, b) => a.plugin.localeCompare(b.plugin))).toEqual([
       { plugin: 'alpha', name: 'alpha', running: true, worker: true, views, theme: null },
       { plugin: 'beta', name: 'beta', running: true, worker: true, views: {}, theme },
@@ -99,11 +99,11 @@ describe('core.views', () => {
   })
 
   it('leaves out a plugin whose bytes fail their check', async () => {
-    const { loader } = await harness({
+    const { pluginsManager } = await harness({
       folder: { alpha: filesFor(workerManifest('alpha', { views }), { 'worker.js': 'a' }) },
       entries: { alpha: root => entryFor(root, { granted: [{ type: 'ui.view' }], contentHash: wrongHash }) },
     })
-    await loader.start()
-    expect(((await loader.serve(call(editor, 'core.views'))) as ActionResults['core.views']).plugins).toEqual([])
+    await pluginsManager.start()
+    expect(((await pluginsManager.serve(call(editor, 'core.views'))) as ActionResults['core.views']).plugins).toEqual([])
   })
 })

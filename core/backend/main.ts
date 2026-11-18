@@ -4,7 +4,7 @@ import { boot, type Booted } from './boot/boot.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
-import type { Failure, Loader } from './loader/loader.ts'
+import type { Failure, PluginsManager } from './plugins-manager/plugins-manager.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
@@ -56,7 +56,7 @@ async function start(): Promise<void> {
   // still hold their workers, then the renderers end and the process exits. Before the core is wired there is only boot's
   // lock to give back. Electron closes no window itself, since the renderer must outlive the core's shutdown
   let parts: QuitParts | null = null
-  let loaderOf: Loader | null = null
+  let pluginsManagerOf: PluginsManager | null = null
   let carrierOf: Carrier | null = null
   let workers: WorkerRenderers | null = null
   let quitting: Promise<void> | null = null
@@ -75,7 +75,7 @@ async function start(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, DRAFT_GRACE_MS))
       }
       for (const window of seen) if (!window.isDestroyed()) window.close()
-      if (!failed) await loaderOf?.cleanQuit()
+      if (!failed) await pluginsManagerOf?.cleanQuit()
       const missed = parts === null ? (await booted.release(), []) : await quitInOrder(parts)
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
@@ -109,9 +109,9 @@ async function start(): Promise<void> {
       lockDown(sessions[role], role, pages, views)
     }
 
-    // The carrier and the loader exist once the core is wired, before any worker starts
+    // The carrier and the plugins manager exist once the core is wired, before any worker starts
     let carrier: Carrier | null = null
-    let loader: Loader | null = null
+    let pluginsManager: PluginsManager | null = null
     const limit = (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name]
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
@@ -119,7 +119,7 @@ async function start(): Promise<void> {
       open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, LOCKED, group),
       record: (event, fields) => carrier?.coreRecord(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
-      cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
+      cutoff: (id, incarnation, reason) => pluginsManager?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
       sample: sample => carrier?.sample(sample),
     }))
     workers = renderer
@@ -159,7 +159,7 @@ async function start(): Promise<void> {
       editor = null
     }
     // A failure while running: windows hear core.quitting and get their grace, then hetu quits with an error and starts
-    // once more. Or the loader stopped in the stopped mode, which leaves only the trusted window
+    // once more. Or the plugins manager stopped in the stopped mode, which leaves only the trusted window
     const onFailure = (failure: Failure) => afterFailure(failure, {
       quitting: () => quitting !== null,
       announce: () => {
@@ -220,10 +220,10 @@ async function start(): Promise<void> {
       },
     })
     carrier = wired.carrier
-    loader = wired.loader
-    loaderOf = wired.loader
+    pluginsManager = wired.pluginsManager
+    pluginsManagerOf = wired.pluginsManager
     carrierOf = wired.carrier
-    parts = { loader: wired.loader, carrier: wired.carrier, release: booted.release }
+    parts = { pluginsManager: wired.pluginsManager, carrier: wired.carrier, release: booted.release }
 
     // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
     // load's preload listens
@@ -265,7 +265,7 @@ async function start(): Promise<void> {
     // is the trusted window
     app.on('second-instance', () => {
       if (quitting !== null) return
-      if (wired.loader.stopped() !== null) {
+      if (wired.pluginsManager.stopped() !== null) {
         trusted.show()
         return
       }
@@ -277,10 +277,10 @@ async function start(): Promise<void> {
       editor.focus()
     })
 
-    await wired.loader.start()
+    await wired.pluginsManager.start()
     if (quitting !== null) return
     // A security control failed at start: only the trusted window opens, with the human's three choices
-    if (wired.loader.stopped() !== null) trusted.show()
+    if (wired.pluginsManager.stopped() !== null) trusted.show()
     else editor = show(editorWindow())
   } catch (err) {
     tell(err)
