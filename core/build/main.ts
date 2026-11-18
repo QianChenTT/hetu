@@ -118,7 +118,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   // before it starts the host half
   const plugins: Record<string, unknown> = {}
   for (const id of INSTALL) {
-    const source = path.join(core, '..', 'plugins', id)
+    const source = path.join(core, '..', 'core-plugins', id)
     const root = path.join(outDir, 'plugins', id)
     await rm(root, { recursive: true, force: true })
     await mkdir(path.join(root, 'dist'), { recursive: true })
@@ -133,13 +133,13 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   // copies into the plugin folder. A community plugin's manifest is copied and its source bundled with hetu's own SDK.
   // Nothing of the package is run and its hash is of what this build wrote, as every other plugin's is
   for (const [id, from] of Object.entries(FIRST_PARTY)) {
-    const source = from === 'hetu' ? path.join(repo, 'plugins', id) : await communitySource(repo, id)
+    const source = from === 'hetu' ? path.join(repo, 'core-plugins', id) : await communitySource(repo, id)
     const root = path.join(outDir, 'plugins', id)
     const { version } = await writeFirstParty(source, root, from)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
   }
   for (const [id, module] of Object.entries(PAGE)) {
-    const source = path.join(core, '..', 'plugins', id)
+    const source = path.join(core, '..', 'core-plugins', id)
     const root = path.join(outDir, 'plugins', id)
     await rm(root, { recursive: true, force: true })
     await mkdir(path.join(root, 'dist'), { recursive: true })

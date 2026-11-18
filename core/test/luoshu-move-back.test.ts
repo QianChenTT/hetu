@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { cleanup, code, harness, tick, worker } from './carrier-fakes.ts'
 
 // What another program does right after a move's link, and the path whose every unlink fails

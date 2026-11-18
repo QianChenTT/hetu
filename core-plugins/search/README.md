@@ -7,4 +7,4 @@ First-party search, a sandboxed plugin built on `@hetu/sdk`. It requires the luo
 - `src/worker.ts`: the plugin
 - `test/search.test.ts`: search on `@hetu/sdk/testing` in each of its modes
 
-`npm test -w plugins/search` runs the tests
+`npm test -w core-plugins/search` runs the tests

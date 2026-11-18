@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, GuardCall, Prepared } from '../api/slots.ts'
-import { createHistory } from '../../plugins/history/src/history.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createHistory } from '../../core-plugins/history/src/history.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { cleanup, FakeGuard, harness, worker } from './carrier-fakes.ts'
 
 const bases: string[] = []

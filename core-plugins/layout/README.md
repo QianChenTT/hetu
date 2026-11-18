@@ -16,4 +16,4 @@ Three columns, left, main and right, over a status row:
 - `src/worker.ts`: the plugin, on `ctx.ui` and `ctx.storage`
 - `test/`: fit and arrange on their own, the plugin on `@hetu/sdk/testing`'s fake drawer
 
-`npm test -w plugins/layout` runs the tests
+`npm test -w core-plugins/layout` runs the tests

@@ -11,8 +11,8 @@ import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
   workerManifest, writeFolder, type Files, type Listing, type Message,
 } from './loader-fakes.ts'
-import { createCapabilities } from '../../plugins/capabilities/src/capabilities.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
+import { createCapabilities } from '../../core-plugins/capabilities/src/capabilities.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
 
 afterEach(cleanup)
 

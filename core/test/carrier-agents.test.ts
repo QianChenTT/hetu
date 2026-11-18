@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createGate } from '../../plugins/gate/src/gate.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
 import type { Access, Call, Gate } from '../api/slots.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
 import { buildHost, buildPlugin, checkBundle, checkHostImports } from '../sdk/build/esbuild.ts'
 
-const search = path.join(import.meta.dirname, '..', '..', 'plugins', 'search')
+const search = path.join(import.meta.dirname, '..', '..', 'core-plugins', 'search')
 const dirs: string[] = []
 
 afterEach(async () => {

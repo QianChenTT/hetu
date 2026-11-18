@@ -6,9 +6,9 @@ import type { Call, Prepared } from '../api/slots.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../plugins/gate/src/gate.ts'
-import { createHistory } from '../../plugins/history/src/history.ts'
-import { createLuoshu } from '../../plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createHistory } from '../../core-plugins/history/src/history.ts'
+import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './loader-fakes.ts'
 
 const open: (() => Promise<void>)[] = []

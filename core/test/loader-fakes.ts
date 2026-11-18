@@ -1,5 +1,5 @@
 import { API_VERSION } from '../api/manifest.ts'
-import { createCapabilities } from '../../plugins/capabilities/src/capabilities.ts'
+import { createCapabilities } from '../../core-plugins/capabilities/src/capabilities.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
