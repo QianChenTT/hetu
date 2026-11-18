@@ -3,7 +3,7 @@ import { cleanup, code, FakeGuard, FakeLog, harness, host, hostHalf, tick, worke
 
 afterEach(cleanup)
 
-// What the loader asks of the carrier through CarrierLink: lifecycle messages down a half's own way, floor records it
+// What the loader asks of the carrier through CarrierLink: lifecycle messages down a half's own way, core records it
 // can wait on and the limits the carrier enforces
 describe('the carrier as the loader\'s link', () => {
   it('posts a lifecycle message down the half\'s own port', async () => {
@@ -50,7 +50,7 @@ describe('the carrier as the loader\'s link', () => {
     expect(loader.crashes).toEqual([])
   })
 
-  it('gives record the floor lane\'s landing', async () => {
+  it('gives record the core record lane\'s landing', async () => {
     const log = new FakeLog()
     const { carrier, loader } = harness({ log })
     expect(await carrier.record('plugin.copied', { plugin: 'git' })).toBe('landed')
@@ -59,7 +59,7 @@ describe('the carrier as the loader\'s link', () => {
     expect(log.records.map(record => [record.event, record.fields.plugin])).toEqual([['plugin.copied', 'git']])
   })
 
-  it('takes a limit from the human for the plugin, then for all, then the floor, lowered by the watchdog', async () => {
+  it('takes a limit from the human for the plugin, then for all, then the fixed value, lowered by the watchdog', async () => {
     const { carrier, loader } = harness()
     loader.sandboxed('search')
     expect(carrier.limit('search', 'readyMs')).toBe(10000)

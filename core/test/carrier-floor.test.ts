@@ -110,7 +110,7 @@ describe('shape', () => {
     expect((await search.ask('storage.set', { key: 'index', value: big })).refusal).toEqual({ code: 'invalid', action: 'storage.set', reason: 'too-large' })
     loader.human.plugins.search = { argumentBytes: 2 * MiB }
     expect((await search.ask('storage.set', { key: 'index', value: big })).ok).toBe(true)
-    // Another plugin keeps the floor's cap
+    // Another plugin keeps the fixed cap
     expect(code(await connect(worker('git')).ask('storage.set', { key: 'index', value: big }))).toBe('invalid')
     const watchdog = hostHalf(carrier, host('watchdog'))
     expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'argumentBytes', value: 100 })).ok).toBe(true)

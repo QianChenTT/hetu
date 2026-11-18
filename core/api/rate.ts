@@ -1,4 +1,4 @@
-import type { FloorConstant } from './floor.ts'
+import type { LimitName } from './limits.ts'
 import { measurePlain } from './measure.ts'
 
 // One way in's messages against its rate and its flood cap, in fixed windows of a second and of floodMs. floodCap is
@@ -21,7 +21,7 @@ export function newRate(): Rate {
 // is more than floodFactor times the rate on average across a window of floodMs. A clock that went back starts the
 // windows again. A lowered rate drops at once but reaches the flood cap only with the next window, so messages sent
 // under the old rate never count as a flood under the new one
-export function countMessage(rate: Rate, now: number, limit: (name: FloorConstant) => number): 'pass' | 'drop' | 'flood' {
+export function countMessage(rate: Rate, now: number, limit: (name: LimitName) => number): 'pass' | 'drop' | 'flood' {
   const perSecond = limit('messagesPerSecond')
   const floodMs = limit('floodMs')
   if (now - rate.second >= 1000 || now < rate.second) {
@@ -45,7 +45,7 @@ export const ENVELOPE_ROOM = 64 * 1024
 // The most a worker's message may weigh: its largest result and the envelope around it. JSON text can run longer than
 // the value it holds, six characters for each control character, so a result within resultBytes whose JSON doesn't fit
 // fails in the SDK before it is sent
-export const messageCap = (limit: (name: FloorConstant) => number): number => limit('resultBytes') + ENVELOPE_ROOM
+export const messageCap = (limit: (name: LimitName) => number): number => limit('resultBytes') + ENVELOPE_ROOM
 
 // What a message costs main to read: the larger of its text's length and what the carrier measures of the value, 8 a
 // value and slot and the bytes of each key and string. The measure bounds how many values main builds and the length

@@ -5,7 +5,7 @@ const MiB = 1024 * 1024
 // Fixed constants that protect main, starting values until they are measured in Electron. The watchdog may lower one
 // per plugin and only the human may set one, per plugin or for all, raised or lowered with a Confirm, since a lower value
 // can starve hetu's own controls or its audit. A window's own way never runs below these
-export const floorConstants = table({
+export const defaultLimits = table({
   messagesPerSecond: 1000, // per port
   bytesPerSecond: 4 * MiB, // per port, what a worker's messages may weigh in a second, see weigh in rate.ts
   callsInFlight: 64, // per caller
@@ -33,13 +33,13 @@ export const floorConstants = table({
   firstUseAsks: 1, // open at once per plugin
 } as const)
 
-export type FloorConstant = keyof typeof floorConstants
+export type LimitName = keyof typeof defaultLimits
 
-export const floorConstantNames = frozen(Object.keys(floorConstants) as FloorConstant[])
+export const limitNames = frozen(Object.keys(defaultLimits) as LimitName[])
 
 // The longest delay a timer takes, about 24.8 days. Node fires a longer one at once, so a raised deadline would time
 // every call out
 export const MAX_TIMER_MS = 2 ** 31 - 1
 
 // The constants that are times in ms, none of which the human may raise past MAX_TIMER_MS
-export const timeConstants = frozen(floorConstantNames.filter(name => name.endsWith('Ms')))
+export const timeLimitNames = frozen(limitNames.filter(name => name.endsWith('Ms')))

@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import { ENVELOPE_ROOM, messageCap, newBudget, spend, weigh } from '../api/rate.ts'
 
 const Mi = 1024 * 1024
 
 describe('the text budget', () => {
-  it('is 4 MiB a second per port, as the carrier measures a value, which the human may change like any floor constant', () => {
-    expect(floorConstants.bytesPerSecond).toBe(4 * Mi)
+  it('is 4 MiB a second per port, as the carrier measures a value, which the human may change like any limit', () => {
+    expect(defaultLimits.bytesPerSecond).toBe(4 * Mi)
   })
 
   it('caps one message at the largest result and room for its envelope', () => {
-    const limit = (name: keyof typeof floorConstants) => floorConstants[name]
+    const limit = (name: keyof typeof defaultLimits) => defaultLimits[name]
     expect(messageCap(limit)).toBe(16 * Mi + ENVELOPE_ROOM)
-    expect(messageCap(name => (name === 'resultBytes' ? 1000 : floorConstants[name]))).toBe(1000 + ENVELOPE_ROOM)
+    expect(messageCap(name => (name === 'resultBytes' ? 1000 : defaultLimits[name]))).toBe(1000 + ENVELOPE_ROOM)
   })
 
   it('lets one message of the cap through at once, then refills at its rate', () => {

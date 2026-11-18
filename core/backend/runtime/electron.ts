@@ -1,5 +1,5 @@
 import type { MessagePortMain } from 'electron'
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 import { measurePlain } from '../../api/measure.ts'
 import { messageCap, newBudget, spend } from '../../api/rate.ts'
 import type { Port } from '../carrier/seams.ts'
@@ -52,11 +52,11 @@ function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() =>
 
 // The loader's runtime on Electron. Workers start and end in the hidden renderer. A host half loads from the bytes the
 // loader hashed, the built-ins frozen once before the first one. A utility half forks through the utility runtime.
-// limit is the carrier's: a floor constant as it applies to one plugin
+// limit is the carrier's: a limit as it applies to one plugin
 export function electronRuntime(
   channel: () => { port1: MessagePortMain, port2: MessagePortMain },
   workers: Pick<Runtime, 'terminate'> & { start(start: WorkerStart): void },
-  limit: (plugin: string, name: FloorConstant) => number,
+  limit: (plugin: string, name: LimitName) => number,
   hosts: HostLoading,
   utility: Pick<Runtime, 'startUtility' | 'kill'>,
 ): Runtime {

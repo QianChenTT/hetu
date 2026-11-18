@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../lib/event-log.ts'
-import { AuditQueue, FloorLane } from '../backend/carrier/records.ts'
+import { AuditQueue, CoreRecordLane } from '../backend/carrier/records.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions, CoreLog, FloorLog, Landing } from '../backend/carrier/seams.ts'
+import type { CarrierOptions, CoreLog, CoreRecordLog, Landing } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -200,7 +200,7 @@ describe('audit records', () => {
     }
   })
 
-  it('drops a record past the bound, counts it in a floor record and still answers the call', async () => {
+  it('drops a record past the bound, counts it in a core record and still answers the call', async () => {
     const { carrier, connect, loader, log } = harness()
     loader.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
@@ -363,20 +363,20 @@ describe('reading the log', () => {
   })
 })
 
-describe('the floor lane', () => {
+describe('the core record lane', () => {
   let dir: string | null = null
   afterEach(async () => {
     if (dir !== null) await rm(dir, { recursive: true, force: true })
     dir = null
   })
 
-  it('writes floor records straight through the EventLog, one append each', async () => {
+  it('writes core records straight through the EventLog, one append each', async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'hetu-carrier-'))
     const log = new EventLog(dir)
     await log.open()
     const { carrier } = harness({ log })
-    carrier.floor('plugin.found', { plugin: 'search' })
-    carrier.floor('plugin.checked', { plugin: 'search', ok: true })
+    carrier.coreRecord('plugin.found', { plugin: 'search' })
+    carrier.coreRecord('plugin.checked', { plugin: 'search', ok: true })
     await carrier.flush()
     const lines = (await readFile(path.join(dir, 'events', 'events-1.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(lines.map(line => [line.event, line.plugin])).toEqual([['plugin.found', 'search'], ['plugin.checked', 'search']])
@@ -385,7 +385,7 @@ describe('the floor lane', () => {
   it('says once when the log stops writing and once when it writes again', async () => {
     const log = new FakeLog()
     let noticed = 0
-    const lane = new FloorLane(log, { bound: () => 10, muted: () => false, retryMs: 60_000, noticed: () => { noticed++ } })
+    const lane = new CoreRecordLane(log, { bound: () => 10, muted: () => false, retryMs: 60_000, noticed: () => { noticed++ } })
     log.failing = true
     void lane.write('plugin.found', { plugin: 'a' })
     void lane.write('plugin.found', { plugin: 'b' })
@@ -406,7 +406,7 @@ describe('the floor lane', () => {
     const way = windowWay(carrier, { editor })
     await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
     log.failing = true
-    carrier.floor('plugin.found', { plugin: 'a' })
+    carrier.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     expect(way.events().map(event => event.topic)).toEqual(['core.status'])
     log.failing = false
@@ -418,7 +418,7 @@ describe('the floor lane', () => {
     const log = new FakeLog()
     const { carrier } = harness({ log })
     log.failing = true
-    for (const plugin of ['a', 'b', 'c']) carrier.floor('plugin.found', { plugin })
+    for (const plugin of ['a', 'b', 'c']) carrier.coreRecord('plugin.found', { plugin })
     await tick()
     expect(log.records).toEqual([])
     log.failing = false
@@ -431,20 +431,20 @@ describe('the floor lane', () => {
     const { carrier, loader } = harness({ log })
     loader.human.all = { floorBacklog: 3 }
     log.failing = true
-    for (const plugin of ['a', 'b', 'c', 'd', 'e']) carrier.floor('plugin.found', { plugin })
+    for (const plugin of ['a', 'b', 'c', 'd', 'e']) carrier.coreRecord('plugin.found', { plugin })
     await tick()
     log.failing = false
     await carrier.flush()
     expect(log.records.map(record => [record.event, record.fields.plugin ?? record.fields.count])).toEqual([
-      ['plugin.found', 'a'], ['plugin.found', 'b'], ['plugin.found', 'c'], ['floor.dropped', 2],
+      ['plugin.found', 'a'], ['plugin.found', 'b'], ['plugin.found', 'c'], ['core-records.dropped', 2],
     ])
   })
 
   it('tries the backlog again on its own once the log comes back', async () => {
     const log = new FakeLog()
-    const { carrier } = harness({ log, floorRetryMs: 20 })
+    const { carrier } = harness({ log, coreRecordRetryMs: 20 })
     log.failing = true
-    carrier.floor('plugin.found', { plugin: 'a' })
+    carrier.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     log.failing = false
     for (let i = 0; i < 50 && log.records.length === 0; i++) await tick(5)
@@ -455,18 +455,18 @@ describe('the floor lane', () => {
     const log = new FakeLog()
     const { carrier } = harness({ log })
     log.refuses.add('bad')
-    carrier.floor('bad', {})
-    carrier.floor('plugin.found', { plugin: 'a' })
+    carrier.coreRecord('bad', {})
+    carrier.coreRecord('plugin.found', { plugin: 'a' })
     await carrier.flush()
     await tick()
-    expect(log.records.map(record => record.event)).toEqual(['plugin.found', 'floor.dropped'])
+    expect(log.records.map(record => record.event)).toEqual(['plugin.found', 'core-records.dropped'])
   })
 
   // The count's own record must not count itself, or the drain loops on microtasks and main freezes
   it('settles when a healthy log refuses the drop count too', async () => {
     const log = new FakeLog()
     log.refuses.add('bad')
-    log.refuses.add('floor.dropped')
+    log.refuses.add('core-records.dropped')
     let appends = 0
     const append = log.append.bind(log)
     log.append = async (event, fields) => {
@@ -478,7 +478,7 @@ describe('the floor lane', () => {
       return append(event, fields)
     }
     const { carrier } = harness({ log })
-    carrier.floor('bad', {})
+    carrier.coreRecord('bad', {})
     await carrier.flush()
     expect(appends).toBe(2)
   })
@@ -497,19 +497,19 @@ describe('the floor lane', () => {
       verify: async () => ({ ok: true }),
     }
     const { carrier } = harness({ log })
-    carrier.floor('plugin.found', { plugin: 'a' })
+    carrier.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     failing = false
     await carrier.flush()
     expect(records).toEqual(['plugin.found'])
   })
 
-  it('keeps the floor fields as they were when written', async () => {
+  it('keeps the core record fields as they were when written', async () => {
     const log = new FakeLog()
     log.failing = true
     const { carrier } = harness({ log })
     const fields = { plugin: 'a' }
-    carrier.floor('plugin.found', fields)
+    carrier.coreRecord('plugin.found', fields)
     await tick()
     fields.plugin = 'b'
     log.failing = false
@@ -583,10 +583,10 @@ describe('the floor lane', () => {
     ])
   })
 
-  it('coalesces the floor records main writes for a plugin, such as a frame of its that navigated', async () => {
+  it('coalesces the core records main writes for a plugin, such as a frame of its that navigated', async () => {
     const { carrier, log } = harness()
-    for (let i = 0; i < 3; i++) carrier.floorCoalesced('frame.navigated', { plugin: 'kanban' })
-    carrier.floorCoalesced('frame.navigated', { plugin: 'board' })
+    for (let i = 0; i < 3; i++) carrier.coreRecordCoalesced('frame.navigated', { plugin: 'kanban' })
+    carrier.coreRecordCoalesced('frame.navigated', { plugin: 'board' })
     await tick()
     expect(log.events('frame.navigated').map(record => record.fields)).toEqual([{ plugin: 'kanban', count: 1 }, { plugin: 'board', count: 1 }])
     carrier.close()
@@ -627,14 +627,14 @@ describe('the floor lane', () => {
 })
 
 describe('record nothing', () => {
-  it('writes no floor record and no audit record while the human turned recording off', async () => {
+  it('writes no core record and no audit record while the human turned recording off', async () => {
     const log = new FakeLog()
     const { carrier, connect, loader, gate } = harness({ log })
     loader.nothing = true
     gate.decision = () => { throw new Error('broken') }
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
-    carrier.floor('plugin.found', { plugin: 'search' })
+    carrier.coreRecord('plugin.found', { plugin: 'search' })
     await carrier.flush()
     carrier.close()
     await carrier.flush()
@@ -661,10 +661,10 @@ describe('record nothing', () => {
     const search = connect(worker('search'))
     loader.nothing = true
     await search.ask('core.self')
-    carrier.floor('plugin.found', { plugin: 'during' })
+    carrier.coreRecord('plugin.found', { plugin: 'during' })
     loader.nothing = false
     await search.ask('storage.get', { key: 'k' })
-    carrier.floor('plugin.found', { plugin: 'after' })
+    carrier.coreRecord('plugin.found', { plugin: 'after' })
     await carrier.flush()
     expect(log.events('audit.call').map(record => record.fields.action)).toEqual(['storage.get'])
     expect(log.events('plugin.found').map(record => record.fields.plugin)).toEqual(['after'])
@@ -690,13 +690,13 @@ describe('record nothing', () => {
   })
 })
 
-describe('a floor record\'s landing', () => {
-  const laneOf = (log: FloorLog, options: { bound?: number, muted?: boolean } = {}) =>
-    new FloorLane(log, { bound: () => options.bound ?? 10, muted: () => options.muted ?? false, retryMs: 60_000 })
+describe('a core record\'s landing', () => {
+  const laneOf = (log: CoreRecordLog, options: { bound?: number, muted?: boolean } = {}) =>
+    new CoreRecordLane(log, { bound: () => options.bound ?? 10, muted: () => options.muted ?? false, retryMs: 60_000 })
 
   it('settles landed once the log appended it', async () => {
     let append: () => void = () => {}
-    const log: FloorLog = { append: () => new Promise<void>(resolve => { append = resolve }), healthy: true }
+    const log: CoreRecordLog = { append: () => new Promise<void>(resolve => { append = resolve }), healthy: true }
     let landing: Landing | 'waiting' = 'waiting'
     const written = laneOf(log).write('plugin.copied', { plugin: 'git' })
     void Promise.resolve(written).then(result => { landing = result })
@@ -1000,7 +1000,7 @@ describe('a failing log', () => {
     expect(queue.oldest()).toBe(null)
   })
 
-  it('tells windows to read core.status again when the log\'s health changes through a write the floor lane didn\'t make', async () => {
+  it('tells windows to read core.status again when the log\'s health changes through a write the core record lane didn\'t make', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
       const log = new FakeLog()
@@ -1025,12 +1025,12 @@ describe('a failing log', () => {
 // Record nothing's own record is the last one: the loader drains what waits before it writes that record, and
 // what still waits once recording is off is let go, counted in that record
 describe('recording going off', () => {
-  it('drains the audit queue and the floor backlog and says nothing still waits', async () => {
+  it('drains the audit queue and the core record backlog and says nothing still waits', async () => {
     const log = new FakeLog()
     const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
-    carrier.floor('plugin.found', { plugin: 'alpha' })
+    carrier.coreRecord('plugin.found', { plugin: 'alpha' })
     expect(await carrier.drain(1000)).toBe(0)
     expect(log.events('audit.call')).toHaveLength(1)
     expect(log.events('plugin.found')).toHaveLength(1)
@@ -1043,7 +1043,7 @@ describe('recording going off', () => {
     log.failing = true
     await search.ask('storage.get', { key: 'k' })
     await search.ask('storage.set', { key: 'k', value: 1 })
-    carrier.floor('plugin.found', { plugin: 'alpha' })
+    carrier.coreRecord('plugin.found', { plugin: 'alpha' })
     const started = performance.now()
     expect(await carrier.drain(50)).toBe(3)
     expect(performance.now() - started).toBeLessThan(1000)

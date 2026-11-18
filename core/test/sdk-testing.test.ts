@@ -315,7 +315,7 @@ describe('a luoshu that fails for a while', () => {
   })
 })
 
-describe('a core that takes time and holds the floor lower', () => {
+describe('a core that takes time and holds the limits lower', () => {
   it('answers the luoshu, storage and cache after latencyMs', async () => {
     const fake = core(undefined, {}, { latencyMs: 60 })
     const { plugin, box } = reader()
@@ -783,8 +783,8 @@ describe('the fake core playing another plugin', () => {
     const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const { made, ctx } = await started(http)
     expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
-    await until(() => made.floor.some(record => record.event === 'http.refused'))
-    expect(made.floor.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
+    await until(() => made.coreRecords.some(record => record.event === 'http.refused'))
+    expect(made.coreRecords.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
     // The core ends the half before any answer, as the loader ends the process, so the call never settles
     void ctx.bindFailed('port-taken').catch(() => {})
     await until(() => made.coreCalls.length === 1)

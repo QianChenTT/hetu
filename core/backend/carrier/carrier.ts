@@ -5,7 +5,7 @@ import {
   ack as ackSchema, agentLabel, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
   calleeRefusalCodes, refusalCodes, callEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
-import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
+import { MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
   coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, policyJobIds,
   type GuardableAction,
@@ -22,7 +22,7 @@ import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
 import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
-import { AuditQueue, Coalesced, FloorLane, type Join } from './records.ts'
+import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
 
 type Send = (message: unknown) => void
@@ -144,7 +144,7 @@ function field(message: unknown, name: string): unknown {
 // The plugin id or core namespace an action or a topic starts with
 const namespaceOf = (name: string) => name.slice(0, name.indexOf('.'))
 
-// A subscriber as a floor record names it
+// A subscriber as a core record names it
 function whoOf(caller: Caller): Record<string, Field> {
   if (caller.kind === 'plugin') return { plugin: caller.id, half: caller.half }
   if (caller.kind === 'window') return { window: caller.role }
@@ -221,7 +221,7 @@ export class Carrier {
   private readonly now: () => number
   private readonly clock: () => number
   private readonly limits: Limits
-  private readonly lane: FloorLane
+  private readonly lane: CoreRecordLane
   private readonly coalesced: Coalesced
   private readonly queue: AuditQueue
   // The core's own writer of the audit queue, none with no log
@@ -251,10 +251,10 @@ export class Carrier {
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
     this.limits = new Limits(() => options.loader.limits())
-    this.lane = new FloorLane(options.log, {
+    this.lane = new CoreRecordLane(options.log, {
       bound: () => this.limits.of(null, 'floorBacklog'),
       muted: () => this.muted(),
-      retryMs: options.floorRetryMs ?? 5000,
+      retryMs: options.coreRecordRetryMs ?? 5000,
       // Windows read core.status again, which says whether the log takes appends
       noticed: () => {
         if (!this.closed && !this.shutting) this.bus.emit('core.status')
@@ -321,14 +321,14 @@ export class Carrier {
     return this.shutting ? 'stopped' : code
   }
 
-  // A floor record from the core: boot, the loader and the carrier itself
-  floor(event: string, fields: Record<string, Field> = {}): void {
+  // A core record from the core: boot, the loader and the carrier itself
+  coreRecord(event: string, fields: Record<string, Field> = {}): void {
     this.lane.write(event, fields)
   }
 
-  // A floor record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
+  // A core record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
   // frame of its that navigated
-  floorCoalesced(event: string, fields: Record<string, Field>): void {
+  coreRecordCoalesced(event: string, fields: Record<string, Field>): void {
     if (!this.closed) this.coalesced.hit(event, fields)
   }
 
@@ -350,14 +350,14 @@ export class Carrier {
     if (!this.closed) this.bus.emit('core.quitting')
   }
 
-  // Writes what the audit queue holds, then the floor backlog: for a log that came back and for Quit, before close and
+  // Writes what the audit queue holds, then the core record backlog: for a log that came back and for Quit, before close and
   // after it. Never throws
   async flush(): Promise<void> {
     await this.writer?.flush()
     await this.lane.flush()
   }
 
-  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
   // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
   async drain(ms: number): Promise<number> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -472,15 +472,15 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the loader: a floor record it can wait on, landed once on disk, muted while recording is off or lost. A record
+  // For the loader: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
   // still waiting when signal aborts comes out and settles lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     return this.lane.write(event, fields, signal)
   }
 
-  // For the loader: a floor constant as the carrier enforces it for one plugin, so the loader's start and stop
+  // For the loader: a limit as the carrier enforces it for one plugin, so the loader's start and stop
   // deadlines follow the same values
-  limit(plugin: string, name: FloorConstant): number {
+  limit(plugin: string, name: LimitName): number {
     return this.limits.of(plugin, name)
   }
 
@@ -996,7 +996,7 @@ export class Carrier {
     }
     if (pending.action === 'watchdog.limit') {
       const plugin = field(args, 'plugin') as string
-      this.limits.lower(plugin, field(args, 'constant') as FloorConstant, field(args, 'value') as number)
+      this.limits.lower(plugin, field(args, 'constant') as LimitName, field(args, 'value') as number)
       try {
         this.options.limited?.(plugin)
       } catch {}
@@ -1591,7 +1591,7 @@ export class Carrier {
     } catch {}
   }
 
-  // Once a second, so windows hear when the log's health changed through an audit write, which the floor lane doesn't see
+  // Once a second, so windows hear when the log's health changed through an audit write, which the core record lane doesn't see
   private look(): void {
     if (this.closed || this.shutting) return
     this.checkLog()

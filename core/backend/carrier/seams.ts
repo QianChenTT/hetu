@@ -1,5 +1,5 @@
 import type { Caller } from '../../api/envelope.ts'
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction } from '../../api/ids.ts'
 import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
@@ -27,10 +27,10 @@ export type PluginInfo = {
   topics: readonly string[]
 }
 
-type Values = Readonly<Partial<Record<FloorConstant, number>>>
+type Values = Readonly<Partial<Record<LimitName, number>>>
 
-// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the floor
-// constant whether it raises or lowers it. One for the plugin wins over one for all
+// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the fixed
+// value whether it raises or lowers it. One for the plugin wins over one for all
 export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values>> }
 
 // What the loader owns: lifecycle, the state and the grants snapshot it pushes to the gate
@@ -67,15 +67,15 @@ export type Debug = (entry: { plugin: string | null, caller: Caller, action: str
 // the carrier
 export type Served = (call: Call) => Promise<unknown>
 
-// What the floor lane writes through: the one EventLog boot opened, or something with its append. healthy still true
+// What the core record lane writes through: the one EventLog boot opened, or something with its append. healthy still true
 // after a failed append means the log refused that record, not that the log is down
-export type FloorLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
+export type CoreRecordLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
 
-// The one EventLog boot opened as the carrier holds it: the floor lane appends one record at a time, the audit writer
+// The one EventLog boot opened as the carrier holds it: the core record lane appends one record at a time, the audit writer
 // appends batches and log.segments and log.verify read it
-export type CoreLog = FloorLog & AuditLog
+export type CoreLog = CoreRecordLog & AuditLog
 
-// What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a
+// What became of one core record: on disk, not taken while the human turned recording off, or lost: dropped from a
 // full backlog, refused by the log or still waiting when the lane closed
 export type Landing = 'landed' | 'muted' | 'lost'
 
@@ -106,8 +106,8 @@ export type CarrierOptions = {
   // The guards expected on an action, in the order they answer. Defaults to core/api's list, tests name others since
   // core/api expects none until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
-  // How long the floor lane waits before it tries a failed append again
-  floorRetryMs?: number
+  // How long the core record lane waits before it tries a failed append again
+  coreRecordRetryMs?: number
   // How often the audit writer writes the queue, 100 ms unless a test names another
   auditEveryMs?: number
   // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page

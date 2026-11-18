@@ -12,7 +12,7 @@ export const QUIT_DEADLINES: Deadlines = Object.freeze({ shutdown: 30_000, flush
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-// shutdown, flush, close, flush and release. The first flush writes what the audit queue holds and gives a floor
+// shutdown, flush, close, flush and release. The first flush writes what the audit queue holds and gives a core record
 // backlog waiting to retry one more try before close drops it. The second writes the records of the calls close
 // stopped and waits for the drain close leaves running, which carries the counts close writes.
 // The lock goes last, once nothing more is written. Returns each step that didn't finish and why, since the log is

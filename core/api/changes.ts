@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
 import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './envelope.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
 import { isSecurityControl, pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
 import { agentDoor, agentHost } from './policy-jobs.ts'
@@ -45,10 +45,10 @@ export const change = z.discriminatedUnion('kind', [
   // is refused here rather than cut short where the timer runs
   z.strictObject({
     kind: z.literal('limit.set'),
-    constant: z.enum(floorConstantNames),
+    constant: z.enum(limitNames),
     value: z.int().positive(),
     plugin: pluginId.nullable(),
-  }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
+  }).refine(set => !timeLimitNames.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
   // Every item of one agent's grant goes at once and the label is kept as revoked until mcp-http-handler says it ended its tokens
   z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])

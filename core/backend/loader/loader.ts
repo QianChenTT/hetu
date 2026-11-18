@@ -10,7 +10,7 @@ import {
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
-import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
+import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
   firstPartyIds, guardableActions, guards as expectedGuards, corePluginIds, isReservedId, isSecurityControl, pluginId, providers,
   securityControls, policyJobIds, utilityIds,
@@ -1322,7 +1322,7 @@ ${capabilityKey(change.capability)}`)
     return found.hash !== null && found.hash !== hash
   }
 
-  // Applies only once its record has landed, so the copy's floor record is on disk before the entry widens anything. A
+  // Applies only once its record has landed, so the copy's core record is on disk before the entry widens anything. A
   // restore is asked for on a Confirm, a copy at start has none
   private async copy(id: string, read: Read, listed: Listed, cause: 'copy' | 'restore', enabled: boolean, previous: string | null, confirm = false): Promise<boolean> {
     const dir = await stage(this.dataDir, id, read.files)
@@ -2732,8 +2732,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return run === undefined ? null : { k, live, run }
   }
 
-  private limitOf(id: string, name: FloorConstant): number {
-    let value: number = floorConstants[name]
+  private limitOf(id: string, name: LimitName): number {
+    let value: number = defaultLimits[name]
     try {
       const given = this.link.limit(id, name)
       if (Number.isSafeInteger(given) && given > 0) value = given

@@ -340,7 +340,7 @@ describe('the tombstones', () => {
   })
 })
 
-// Record nothing stops the core's own floor records until recording is back on, boot's included
+// Record nothing stops the core's own core records until recording is back on, boot's included
 describe('recording off', () => {
   async function recordingOff() {
     const first = await started()

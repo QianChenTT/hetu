@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CAPABILITIES } from '../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
-import { MAX_TIMER_MS } from '../api/floor.ts'
+import { MAX_TIMER_MS } from '../api/limits.ts'
 import { corePluginIds } from '../api/ids.ts'
 import {
   defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,

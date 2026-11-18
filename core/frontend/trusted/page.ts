@@ -171,12 +171,12 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     const limits = element('section')
     limits.className = 'limits'
     limits.append(element('h2', 'Limits'))
-    limits.append(element('p', 'Each runs at the floor’s value unless you set one, for all plugins or for one. Every change waits for your Confirm'))
+    limits.append(element('p', 'Each runs at the fixed value unless you set one, for all plugins or for one. Every change waits for your Confirm'))
     for (const limit of shown.limits) {
       const row = element('div')
       row.className = 'limit'
       const set = [...(limit.all !== null ? [`all: ${limit.all}`] : []), ...limit.plugins.map(one => `${one.plugin}: ${one.value}`)]
-      row.append(element('p', [limit.constant, `floor ${limit.floor}`, ...set].join(' · ')))
+      row.append(element('p', [limit.constant, `fixed ${limit.fixed}`, ...set].join(' · ')))
       const value = element('input')
       value.inputMode = 'numeric'
       value.autocomplete = 'off'

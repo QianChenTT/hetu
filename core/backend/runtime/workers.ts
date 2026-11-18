@@ -21,7 +21,7 @@ export type Renderer = {
 
 export type WorkerRendererOptions = {
   open(): Renderer
-  // A floor record
+  // A core record
   record(event: string, fields: Record<string, Field>): void
   // The limits the page's relay applies to a plugin's messages, sent with its start
   limits(id: string): Readonly<Record<string, number>>

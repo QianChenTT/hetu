@@ -6,7 +6,7 @@ import type { Field } from '../../lib/event-log.ts'
 import type { Landing } from './seams.ts'
 
 // Requests that wait for the human at once from one sender: each window role and the core. A plugin's own asks wait
-// within its firstUseAsks. A fixed cap and not a floor constant, so one window can't fill the places the trusted window
+// within its firstUseAsks. A fixed cap and not a limit, so one window can't fill the places the trusted window
 // and the core need
 export const MAX_PENDING = 16
 // Every request waiting at once, whoever sent it

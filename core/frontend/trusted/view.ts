@@ -4,7 +4,7 @@
 import type { HeldRequest, ListedAgent, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
-import { floorConstantNames, floorConstants, type FloorConstant } from '../../api/floor.ts'
+import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
 
 export type Bridge = {
@@ -24,7 +24,7 @@ export type Part = { text: string, label: boolean }
 // An agent's row: its label in quotes, then the rest of its line
 export type AgentRow = { label: string, line: string, change: Change | null }
 
-export type Limit = { constant: FloorConstant, floor: number, all: number | null, plugins: { plugin: string, value: number }[] }
+export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
@@ -167,9 +167,9 @@ function pluginSwitches(plugin: ListedPlugin, list: SecurityList): Switch[] {
 }
 
 function limitsOf(list: SecurityList): Limit[] {
-  return floorConstantNames.map(constant => ({
+  return limitNames.map(constant => ({
     constant,
-    floor: floorConstants[constant],
+    fixed: defaultLimits[constant],
     all: list.limits.all[constant] ?? null,
     plugins: Object.entries(list.limits.plugins)
       .filter(([, set]) => set[constant] !== undefined)
@@ -180,7 +180,7 @@ function limitsOf(list: SecurityList): Limit[] {
 
 // What the human typed for a limit as its change, or null for anything but a whole number from 1 up. The core checks it
 // again, a time past the longest timer included
-export function limitChange(constant: FloorConstant, typed: string, plugin: string | null): Change | null {
+export function limitChange(constant: LimitName, typed: string, plugin: string | null): Change | null {
   const text = typed.trim()
   if (!/^[1-9][0-9]{0,15}$/.test(text)) return null
   const value = Number(text)

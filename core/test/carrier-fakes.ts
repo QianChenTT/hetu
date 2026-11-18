@@ -1,7 +1,7 @@
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { FloorConstant } from '../api/floor.ts'
+import type { LimitName } from '../api/limits.ts'
 import { scopeMatches } from '../api/scope.ts'
 import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
@@ -22,7 +22,7 @@ export class FakeLoader implements Loader {
   plugins: Record<string, PluginInfo> = {}
   current = 1
   // Writable here, so a test can set the human's limits
-  human: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> } = { all: {}, plugins: {} }
+  human: { all: Partial<Record<LimitName, number>>, plugins: Record<string, Partial<Record<LimitName, number>>> } = { all: {}, plugins: {} }
   nothing = false
   // The labels the human revoked, none unless a test names one
   revokedLabels = new Set<string>()

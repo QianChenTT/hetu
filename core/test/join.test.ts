@@ -81,14 +81,14 @@ async function joined(options: {
   return { loader, carrier, runtime, booted, dataDir, installDir }
 }
 
-// The records the floor lane wrote to the boot's event log, in order, each with its fields
-async function floorRecords(dataDir: string): Promise<Record<string, unknown>[]> {
+// The records the core record lane wrote to the boot's event log, in order, each with its fields
+async function coreRecords(dataDir: string): Promise<Record<string, unknown>[]> {
   const text = await readFile(path.join(dataDir, 'events', 'events-1.jsonl'), 'utf8')
   return text.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
 }
 
-async function floorEvents(dataDir: string): Promise<string[]> {
-  return (await floorRecords(dataDir)).map(record => record.event as string)
+async function coreRecordEvents(dataDir: string): Promise<string[]> {
+  return (await coreRecords(dataDir)).map(record => record.event as string)
 }
 
 // A gate built on the fixtures' allow-all one, deciding with decide while it keeps the grants snapshot it was given
@@ -102,7 +102,7 @@ describe('wiring the core', () => {
     const { carrier, loader, dataDir } = await joined()
     await loader.start()
     await carrier.flush()
-    const events = await floorEvents(dataDir)
+    const events = await coreRecordEvents(dataDir)
     expect(events).toContain('install.checked')
     expect(events).toContain('plugin.started')
     expect(carrier.limit('gate', 'readyMs')).toBe(10000)
@@ -115,7 +115,7 @@ describe('wiring the core', () => {
     const { carrier, loader, dataDir } = await joined()
     await loader.start()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
     expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' })
     expect(records.at(-1)).not.toHaveProperty('log')
@@ -127,7 +127,7 @@ describe('wiring the core', () => {
     await loader.shutdown()
     await started
     await carrier.flush()
-    expect(await floorEvents(dataDir)).not.toContain('core.ready')
+    expect(await coreRecordEvents(dataDir)).not.toContain('core.ready')
   })
 
   it('hands the runtime a limit the human set once it is written, so each running half gets it', async () => {
@@ -188,7 +188,7 @@ describe('a plugin\'s life through the joined core', () => {
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: 'hello beta' })
     expect((await asked)?.result).toBe('hello beta')
     await carrier.flush()
-    const records = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'alpha.hello')
+    const records = (await coreRecords(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'alpha.hello')
     expect(records.map(record => [record.caller, record.code])).toEqual([['beta/worker#1', null]])
   })
 
@@ -264,7 +264,7 @@ describe('a plugin\'s life through the joined core', () => {
     expect(runtime.half('beta', 2).got('init')).toHaveLength(1)
   })
 
-  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real floor lane
+  // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real core record lane
   it('holds a first-party copy back until its record landed', async () => {
     let failing = true
     const { carrier, loader, dataDir } = await joined({
@@ -326,7 +326,7 @@ describe('shutdown through the joined core', () => {
     const { carrier, dataDir, loader } = await quitting()
     await loader.shutdown()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
     const policyJobs = after.filter(record => record.event === 'policy-job.state')
     expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'stopped']])
@@ -343,7 +343,7 @@ describe('shutdown through the joined core', () => {
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
     const policyJobs = after.filter(record => record.event === 'policy-job.state')
     expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'failed']])
@@ -360,7 +360,7 @@ describe('shutdown through the joined core', () => {
     await shutdown
     carrier.close()
     await carrier.flush()
-    const records = await floorRecords(dataDir)
+    const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'storage.set')).toHaveLength(2)
     expect(records.filter(record => record.event === 'audit.dropped')).toEqual([])
   })
@@ -508,7 +508,7 @@ describe('the core\'s log through the joined core', () => {
     alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: null })
     await asked
     await parts.carrier.flush()
-    const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
+    const written = (await coreRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
     const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
     const history = await way.ask('editor', 'log.segments')
@@ -686,7 +686,7 @@ describe('dot folders through the joined core', () => {
     expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
     await carrier.flush()
     // A record of either kind may stand for several calls through its count
-    const kept = (await floorRecords(dataDir)).filter(record => record.event === 'audit.call' && String(record.action).startsWith('luoshu.'))
+    const kept = (await coreRecords(dataDir)).filter(record => record.event === 'audit.call' && String(record.action).startsWith('luoshu.'))
     const shapes = (action: string, code: string | null) => {
       const found = kept.filter(record => record.action === action && record.code === code)
       const shape = (record: Record<string, unknown>) => JSON.stringify([record.caller, record.gate, Object.keys(record.scope ?? {})])
@@ -818,7 +818,7 @@ describe('the off states', () => {
     const parts = await switchedOff(['gate'])
     await read(parts)
     await parts.carrier.flush()
-    const records = await floorRecords(parts.dataDir)
+    const records = await coreRecords(parts.dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read')).toMatchObject([{ gate: 'off', code: null }])
   }, JOIN_MS)
 })

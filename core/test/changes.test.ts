@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { agentAsk, change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
 import { isSecurityControl, securityControls } from '../api/ids.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../api/floor.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../api/limits.ts'
 
 const raw = (text: string) => JSON.parse(text)
 const HASH = 'a'.repeat(64)
@@ -135,7 +135,7 @@ describe('what each kind holds', () => {
   })
 
   describe('limit.set', () => {
-    it.each(floorConstantNames)('takes the floor constant %s', constant => {
+    it.each(limitNames)('takes the limit %s', constant => {
       expect(change.safeParse({ kind: 'limit.set', constant, value: 1, plugin: null }).success).toBe(true)
     })
 
@@ -158,10 +158,10 @@ describe('what each kind holds', () => {
     })
 
     it('takes a time up to the longest timer and any other constant past it', () => {
-      for (const constant of timeConstants) {
+      for (const constant of timeLimitNames) {
         expect(change.safeParse({ kind: 'limit.set', constant, value: MAX_TIMER_MS, plugin: 'search' }).success).toBe(true)
       }
-      expect(timeConstants).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'logFailMs', 'floodMs'])
+      expect(timeLimitNames).toEqual(['callDeadlineMs', 'guardAnswerMs', 'readyMs', 'stopGraceMs', 'heartbeatMs', 'logFailMs', 'floodMs'])
       expect(change.safeParse({ kind: 'limit.set', constant: 'bytesInFlight', value: 2 ** 40, plugin: null }).success).toBe(true)
     })
   })

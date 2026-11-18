@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
@@ -730,8 +730,8 @@ describe('core.*', () => {
     expect(trustedWay.events().map(message => message.topic)).toEqual(['core.status'])
     expect(gate.asked).toEqual([])
     expect((await trustedWay.ask('trusted', 'events.unsubscribe', { topics: ['core.security'] })).ok).toBe(true)
-    // It holds the floor's credits like any window and its ack frees them
-    const credits = floorConstants.eventCredits
+    // It holds the fixed credits like any window and its ack frees them
+    const credits = defaultLimits.eventCredits
     for (let i = 0; i < credits; i++) carrier.changed()
     trustedWay.post('trusted', { v: 1, kind: 'ack', seq: credits })
     carrier.changed()
@@ -1354,7 +1354,7 @@ describe('credits', () => {
     expect(search.events()[1]).toStrictEqual({ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.outside', 'luoshu.changed'] })
   })
 
-  it('keeps credits per half and keeps a window on the floor\'s credits when the value for all is lower', async () => {
+  it('keeps credits per half and keeps a window on the fixed credits when the value for all is lower', async () => {
     const { connect, loader, search, way, edited } = setup()
     loader.human.all = { eventCredits: 2 }
     loader.human.plugins.search = { eventCredits: 1 }
@@ -1651,7 +1651,7 @@ describe('records', () => {
     ])
   })
 
-  it('counts drops in a coalesced floor record per subscriber and why', async () => {
+  it('counts drops in a coalesced core record per subscriber and why', async () => {
     const { carrier, loader, log, git, search, indexed, edited } = setup()
     loader.human.plugins.git = { eventCredits: 1 }
     await git.ask('events.subscribe', { topics: ['search.indexed'] })

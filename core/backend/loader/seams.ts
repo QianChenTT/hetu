@@ -1,11 +1,11 @@
 import type { Caller } from '../../api/envelope.ts'
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 import type { GrantRiskClassifier, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Landing, Port } from '../carrier/seams.ts'
 
-// The carrier says what became of a floor record, so the type lives with it
+// The carrier says what became of a core record, so the type lives with it
 export type { Landing }
 
 // What the loader needs from the carrier, a small interface the loader's tests fake. register, handle and end are the
@@ -19,7 +19,7 @@ export type CarrierLink = {
   end(caller: Caller, code?: 'stopped' | 'crashed'): void
   // A lifecycle message down a half's own way: init, deps or stop. Dropped when the way is gone
   send(caller: Caller, message: unknown): void
-  // A floor record into the floor lane, never blocking. The promise settles with landed once that
+  // A core record into the core record lane, never blocking. The promise settles with landed once that
   // one record is on disk. It settles at once with muted while the human turned recording off. It settles with lost
   // when the backlog dropped it, the log refused it or the lane closed with it still waiting. It never rejects. A copy,
   // an update or a restore applies only on landed or muted, so a record the log can't write yet holds the change back
@@ -34,14 +34,14 @@ export type CarrierLink = {
   // either. The loader keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
   // passes unguarded and nothing reads as down
   stopping(): void
-  // Writes what the audit queue and the floor backlog hold, waiting at most ms, and gives back how many records still
+  // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
   // wait. Record nothing's switch drains first, so its own record is the last one written
   drain(ms: number): Promise<number>
   // Recording didn't go off after a drain, so the audit writer goes on
   resume(): void
-  // A floor constant as it applies to one plugin: the human's value for it or for all, lowered by the watchdog. The
+  // A limit as it applies to one plugin: the human's value for it or for all, lowered by the watchdog. The
   // loader takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
-  limit(plugin: string, name: FloorConstant): number
+  limit(plugin: string, name: LimitName): number
 }
 
 // What a host half's module gives the core once imported: the role interfaces it holds. The carrier asks them

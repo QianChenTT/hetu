@@ -1,5 +1,5 @@
 import { VERSION, type BusSignal, type Caller } from '../../api/envelope.ts'
-import type { FloorConstant } from '../../api/floor.ts'
+import type { LimitName } from '../../api/limits.ts'
 
 type Send = (message: unknown) => void
 
@@ -15,8 +15,8 @@ export type BusParts = {
   // The gate's answer on one subscription it holds: allow, refuse, which ends it, down when the gate gave no answer or
   // ask when its item asks at first use, which both hold it back until the gate allows it
   recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask'
-  limit(plugin: string | null, name: FloorConstant): number
-  // Drops are counted for the floor lane. A change asking again made is recorded with the topics: subscriptions ended,
+  limit(plugin: string | null, name: LimitName): number
+  // Drops are counted for the core record lane. A change asking again made is recorded with the topics: subscriptions ended,
   // started once the gate allowed them, or held back to wait for the gate
   dropped(caller: Caller, why: 'credits' | 'gate-down'): void
   changed(caller: Caller, change: 'ended' | 'started' | 'waiting', topics: string[]): void

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import type { HeldRequest, ListedPlugin, SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import { describeChange } from '../api/describe.ts'
-import { floorConstantNames, floorConstants } from '../api/floor.ts'
+import { limitNames, defaultLimits } from '../api/limits.ts'
 import { connectChange } from '../backend/loader/connects.ts'
 import { choiceChange, limitChange, screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
 
@@ -148,14 +148,14 @@ describe('what the trusted window draws', () => {
     ])
   })
 
-  it('lists each limit with the floor’s value and the values set for all and for each plugin', () => {
+  it('lists each limit with the fixed value and the values set for all and for each plugin', () => {
     const drawn = screen(calm({ limits: { all: { readyMs: 20000 }, plugins: { search: { readyMs: 5000, callsInFlight: 8 } } } }))
-    expect(drawn.limits.map(limit => limit.constant)).toEqual(floorConstantNames)
+    expect(drawn.limits.map(limit => limit.constant)).toEqual(limitNames)
     expect(drawn.limits.find(limit => limit.constant === 'readyMs')).toEqual({
-      constant: 'readyMs', floor: floorConstants.readyMs, all: 20000, plugins: [{ plugin: 'search', value: 5000 }],
+      constant: 'readyMs', fixed: defaultLimits.readyMs, all: 20000, plugins: [{ plugin: 'search', value: 5000 }],
     })
     expect(drawn.limits.find(limit => limit.constant === 'callsInFlight')).toEqual({
-      constant: 'callsInFlight', floor: floorConstants.callsInFlight, all: null, plugins: [{ plugin: 'search', value: 8 }],
+      constant: 'callsInFlight', fixed: defaultLimits.callsInFlight, all: null, plugins: [{ plugin: 'search', value: 8 }],
     })
   })
 

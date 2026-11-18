@@ -1,5 +1,5 @@
 import type { Caller } from '../api/envelope.ts'
-import type { FloorConstant } from '../api/floor.ts'
+import type { LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
@@ -80,7 +80,7 @@ export class LinkToCarrier implements CarrierLink {
     this.to.resume()
   }
 
-  limit(plugin: string, name: FloorConstant): number {
+  limit(plugin: string, name: LimitName): number {
     return this.to.limit(plugin, name)
   }
 }
@@ -106,7 +106,7 @@ export function carrierOptions(
 
 // The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
 // every policy job, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
-// the carrier writes its floor records and its audit queue through and serves log.segments and log.verify from
+// the carrier writes its core records and its audit queue through and serves log.segments and log.verify from
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
   const link = new LinkToCarrier()
   const loader = new Loader({

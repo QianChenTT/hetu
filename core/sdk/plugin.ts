@@ -1,4 +1,4 @@
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import type { BindFailure, DepState } from '../api/lifecycle.ts'
 import { VERSION } from '../api/version.ts'
 import { Calls } from './calls.ts'
@@ -55,7 +55,7 @@ export type Plugin = { readonly kind: 'hetu-plugin', readonly spec: PluginSpec }
 
 type Limit = 'messagesPerSecond' | 'callsInFlight' | 'callDeadlineMs'
 
-// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the floor constants.
+// The limits the runtime knows the core holds the plugin to, which no message carries. Left out, the limits.
 // editor is the bridge the runtime connects to each port to the drawer
 export type RunOptions = { limits?: Partial<Record<Limit, number>>, editor?: Editor }
 
@@ -108,7 +108,7 @@ class Half {
     this.editor = options.editor ?? new Editor()
     this.editor.hold()
     this.ui = new Ui(this.editor)
-    const limit = (name: Limit) => options.limits?.[name] ?? floorConstants[name]
+    const limit = (name: Limit) => options.limits?.[name] ?? defaultLimits[name]
     // Every message the half sends goes through one pacing, lifecycle answers included: the Sender's, or the
     // transport's own for a worker, whose relay counts bytes as well as messages. Two in a row would let a backlog out
     // in a burst

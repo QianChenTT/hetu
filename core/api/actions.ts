@@ -3,7 +3,7 @@ import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type Capability
 import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
-import { floorConstantNames, type FloorConstant } from './floor.ts'
+import { limitNames, type LimitName } from './limits.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
@@ -154,15 +154,15 @@ const coreTable = {
   'core.views': { from: 'windows', args: nothing },
   // A single-use URL main serves one of a running plugin's frames from, out of the bytes it started with
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
-  // The frame at that URL is gone. navigated says it loaded again, which the floor records
+  // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
   // Only on sandboxed plugins that hold no guard or policy job role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
-  // Lowers one constant for one plugin. A value above the human's or the floor's own has no effect
+  // Lowers one constant for one plugin. A value above the human's or the fixed value has no effect
   'watchdog.limit': {
     from: 'watchdog',
-    args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
+    args: z.strictObject({ plugin: pluginId, constant: z.enum(limitNames), value: z.int().positive() }),
   },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as http.refused coalesced
   // by reason
@@ -390,8 +390,8 @@ export type SecurityList = {
     confirmOff: boolean
     recordNothing: boolean
   }
-  // The values the human set, for all plugins and for each one. A constant not named runs at the floor's value
-  limits: { all: Partial<Record<FloorConstant, number>>, plugins: Record<string, Partial<Record<FloorConstant, number>>> }
+  // The values the human set, for all plugins and for each one. A constant not named runs at the fixed value
+  limits: { all: Partial<Record<LimitName, number>>, plugins: Record<string, Partial<Record<LimitName, number>>> }
   // The notes folder, null for none picked
   luoshu: string | null
   requests: HeldRequest[]

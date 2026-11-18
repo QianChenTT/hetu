@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ack, busSignals, caller, event, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, signal, VERSION,
 } from '../api/envelope.ts'
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import { MAX_DEPTH, plainProblem } from '../api/plain.ts'
 
 const MiB = 1024 * 1024
@@ -175,7 +175,7 @@ describe('a request', () => {
     })
 
     it('takes args just under the 1 MiB cap and refuses them past it', () => {
-      expect(floorConstants.argumentBytes).toBe(MiB)
+      expect(defaultLimits.argumentBytes).toBe(MiB)
       expect(request.safeParse(call({ args: 'x'.repeat(MiB - 100) })).success).toBe(true)
       expect(request.safeParse(call({ args: 'x'.repeat(MiB + 1) })).success).toBe(false)
     })
@@ -248,7 +248,7 @@ describe('a reply', () => {
   })
 
   it('takes a result up to 16 MiB and refuses one past it', () => {
-    expect(floorConstants.resultBytes).toBe(16 * MiB)
+    expect(defaultLimits.resultBytes).toBe(16 * MiB)
     expect(reply.safeParse({ ...head, ok: true, result: 'x'.repeat(16 * MiB - 100) }).success).toBe(true)
     expect(reply.safeParse({ ...head, ok: true, result: 'x'.repeat(16 * MiB + 1) }).success).toBe(false)
   })

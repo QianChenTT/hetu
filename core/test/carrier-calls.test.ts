@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { delivery, token, type Caller } from '../api/envelope.ts'
 import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
-import { MAX_TIMER_MS } from '../api/floor.ts'
+import { MAX_TIMER_MS } from '../api/limits.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
 import { cleanup, code, editor, FakeGuard, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
 

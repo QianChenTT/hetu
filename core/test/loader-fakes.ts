@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
-import { floorConstants, type FloorConstant } from '../api/floor.ts'
+import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
 import type { Gate, GrantsSnapshot } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
@@ -50,7 +50,7 @@ export class FakeLink implements CarrierLink {
   stopped = 0
   // How many records drain says still wait
   waiting = 0
-  limits: Partial<Record<FloorConstant, number>> = {}
+  limits: Partial<Record<LimitName, number>> = {}
   private readonly ports = new Map<string, Port>()
   private readonly receivers = new Map<string, (message: unknown) => void>()
 
@@ -114,8 +114,8 @@ export class FakeLink implements CarrierLink {
     this.timeline.push('resume')
   }
 
-  limit(_plugin: string, name: FloorConstant): number {
-    return this.limits[name] ?? floorConstants[name]
+  limit(_plugin: string, name: LimitName): number {
+    return this.limits[name] ?? defaultLimits[name]
   }
 
   events(name: string) {
@@ -367,7 +367,7 @@ export const coreInstall = (): Record<string, Listing> => ({
   gate: { files: filesFor(hostManifest('gate')) },
 })
 
-// A real carrier over the loader, built from the options wireCore builds it from, with no floor log
+// A real carrier over the loader, built from the options wireCore builds it from, with no core record log
 export function wire(loader: Loader, link: FakeLink): Carrier {
   const carrier = new Carrier(carrierOptions(loader, { log: null }))
   link.carrier?.close()

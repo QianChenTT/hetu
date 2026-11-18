@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { capabilities, capability, isInstallOnly } from '../api/capabilities.ts'
 import { change } from '../api/changes.ts'
 import { windowRoles } from '../api/envelope.ts'
-import { floorConstantNames, floorConstants } from '../api/floor.ts'
+import { limitNames, defaultLimits } from '../api/limits.ts'
 import { scopeMatches } from '../api/scope.ts'
 import { windowGrants } from '../api/windows.ts'
 
 const MiB = 1024 * 1024
 
 // Section 3: the core decides with null-prototype tables, so a prototype bug in a host half can't flip a decision
-describe.each([['window grants', windowGrants], ['floor constants', floorConstants]])('the %s table', (_name, table) => {
+describe.each([['window grants', windowGrants], ['limits', defaultLimits]])('the %s table', (_name, table) => {
   it('has no prototype, so a key named like a member of Object finds nothing', () => {
     expect(Object.getPrototypeOf(table)).toBeNull()
     expect((table as Record<string, unknown>).constructor).toBeUndefined()
@@ -90,9 +90,9 @@ describe('window grants', () => {
   })
 })
 
-describe('floor constants', () => {
+describe('limits', () => {
   it("holds the starting values", () => {
-    expect(floorConstants).toEqual({
+    expect(defaultLimits).toEqual({
       messagesPerSecond: 1000,
       bytesPerSecond: 4 * MiB,
       callsInFlight: 64,
@@ -119,20 +119,20 @@ describe('floor constants', () => {
   })
 
   it('names every constant limit.set may change', () => {
-    expect(floorConstantNames).toEqual(Object.keys(floorConstants))
-    for (const constant of floorConstantNames) {
-      expect(change.safeParse({ kind: 'limit.set', constant, value: floorConstants[constant], plugin: null }).success).toBe(true)
+    expect(limitNames).toEqual(Object.keys(defaultLimits))
+    for (const constant of limitNames) {
+      expect(change.safeParse({ kind: 'limit.set', constant, value: defaultLimits[constant], plugin: null }).success).toBe(true)
     }
   })
 
   it('holds only positive whole numbers, which limit.set can set again', () => {
-    for (const value of Object.values(floorConstants)) {
+    for (const value of Object.values(defaultLimits)) {
       expect(Number.isSafeInteger(value) && value > 0).toBe(true)
     }
   })
 
   it('is frozen', () => {
-    expect(() => { (floorConstants as Record<string, number>).callsInFlight = 1e9 }).toThrow()
-    expect(() => (floorConstantNames as string[]).push('everything')).toThrow()
+    expect(() => { (defaultLimits as Record<string, number>).callsInFlight = 1e9 }).toThrow()
+    expect(() => (limitNames as string[]).push('everything')).toThrow()
   })
 })

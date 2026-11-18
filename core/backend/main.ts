@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortMain, protocol, screen, session, shell, type Session, utilityProcess, type WebContents } from 'electron'
 import { boot, type Booted } from './boot/boot.ts'
-import { floorConstants, type FloorConstant } from '../api/floor.ts'
+import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
 import type { Failure, Loader } from './loader/loader.ts'
@@ -112,12 +112,12 @@ async function start(): Promise<void> {
     // The carrier and the loader exist once the core is wired, before any worker starts
     let carrier: Carrier | null = null
     let loader: Loader | null = null
-    const limit = (plugin: string, name: FloorConstant) => carrier?.limit(plugin, name) ?? floorConstants[name]
+    const limit = (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name]
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
     const renderer = new WorkerRenderers(group => new WorkerRenderer({
       open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, LOCKED, group),
-      record: (event, fields) => carrier?.floor(event, fields),
+      record: (event, fields) => carrier?.coreRecord(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => loader?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
       sample: sample => carrier?.sample(sample),
@@ -205,7 +205,7 @@ async function start(): Promise<void> {
           if (call.action === 'editor.frameGone') {
             const { url, navigated } = call.args as { url: string, navigated: boolean }
             const gone = views.gone(url)
-            if (gone !== null && navigated) carrier?.floorCoalesced('frame.navigated', { plugin: gone.plugin })
+            if (gone !== null && navigated) carrier?.coreRecordCoalesced('frame.navigated', { plugin: gone.plugin })
             return null
           }
           if (call.action === 'security.open') trusted.show()

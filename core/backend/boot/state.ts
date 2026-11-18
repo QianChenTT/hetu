@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { capabilityKey, folderCapabilities, folderCapability, screenText, type Capability } from '../../api/capabilities.ts'
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
-import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
+import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
 import { firstPartyIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
@@ -53,11 +53,11 @@ function map<T extends z.ZodType<object>>(record: T) {
   return noProtoKey.pipe(record).transform(entries => table(entries))
 }
 
-// The human's value per floor constant, above the fixed value or below. A time stops at the longest delay a timer
+// The human's value per limit, above the fixed value or below. A time stops at the longest delay a timer
 // takes, as limit.set has it
-const values = map(z.partialRecord(z.enum(floorConstantNames), z.int().positive()).refine(
+const values = map(z.partialRecord(z.enum(limitNames), z.int().positive()).refine(
   entries => Object.entries(entries).every(([name, value]) =>
-    !(timeConstants as readonly string[]).includes(name) || value <= MAX_TIMER_MS),
+    !(timeLimitNames as readonly string[]).includes(name) || value <= MAX_TIMER_MS),
   `a time past ${MAX_TIMER_MS} ms`,
 ))
 const limits = z.strictObject({

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { floorConstants } from '../api/floor.ts'
+import { defaultLimits } from '../api/limits.ts'
 import { countMessage, newRate } from '../api/rate.ts'
 import { Limits } from '../backend/carrier/limits.ts'
 import type { HumanLimits, Port } from '../backend/carrier/seams.ts'
@@ -10,9 +10,9 @@ afterEach(cleanup)
 describe('limits', () => {
   const human = (limits: Partial<HumanLimits>) => new Limits(() => ({ all: {}, plugins: {}, ...limits }))
 
-  it('starts from core/api\'s floor constants', () => {
+  it('starts from core/api\'s limits', () => {
     const limits = human({})
-    expect(limits.of('search', 'callsInFlight')).toBe(floorConstants.callsInFlight)
+    expect(limits.of('search', 'callsInFlight')).toBe(defaultLimits.callsInFlight)
     expect(limits.of(null, 'messagesPerSecond')).toBe(1000)
   })
 
@@ -33,12 +33,12 @@ describe('limits', () => {
     expect(human({ plugins }).of('search', 'callsInFlight')).toBe(64)
   })
 
-  it('falls back to the floor constants when the state can not be read', () => {
+  it('falls back to the limits when the state can not be read', () => {
     const limits = new Limits(() => { throw new Error('no state') })
-    expect(limits.of('search', 'resultBytes')).toBe(floorConstants.resultBytes)
+    expect(limits.of('search', 'resultBytes')).toBe(defaultLimits.resultBytes)
   })
 
-  it('lets the watchdog lower a plugin\'s value, take a lowering back and never raise past the human\'s or the floor\'s', () => {
+  it('lets the watchdog lower a plugin\'s value, take a lowering back and never raise past the human\'s or the fixed value', () => {
     const limits = human({ plugins: { search: { callsInFlight: 100 } } })
     limits.lower('search', 'callsInFlight', 10)
     expect(limits.of('search', 'callsInFlight')).toBe(10)
@@ -51,18 +51,18 @@ describe('limits', () => {
 })
 
 // A window that lowered a value for all locked the trusted window out of every request. The values for all
-// reach windows only where they raise the floor, while the core-wide ones follow the human either way
+// reach windows only where they raise the fixed value, while the core-wide ones follow the human either way
 describe('the limits a window runs on', () => {
   const human = (all: Record<string, number>) => new Limits(() => ({ all, plugins: {} }))
 
-  it('never go below the floor for a window, so no lowered value locks the trusted window out', () => {
+  it('never go below the fixed value for a window, so no lowered value locks the trusted window out', () => {
     const limits = human({ argumentBytes: 8, bytesInFlight: 1, messagesPerSecond: 1, callDeadlineMs: 1 })
     for (const name of ['argumentBytes', 'bytesInFlight', 'messagesPerSecond', 'callDeadlineMs'] as const) {
-      expect(limits.of(null, name)).toBe(floorConstants[name])
+      expect(limits.of(null, name)).toBe(defaultLimits[name])
     }
   })
 
-  it('take a value for all that raises the floor', () => {
+  it('take a value for all that raises the fixed value', () => {
     expect(human({ argumentBytes: 4 * 1024 * 1024 }).of(null, 'argumentBytes')).toBe(4 * 1024 * 1024)
   })
 
@@ -209,16 +209,16 @@ describe('the ceiling', () => {
     expect(git.inbox.filter(message => message.kind === 'call')).toHaveLength(3)
   })
 
-  // A window runs on the floor's ceiling, which a value for all lowered by mistake can't take below
-  it('keeps a ceiling per window at the floor\'s value', async () => {
+  // A window runs on the fixed ceiling, which a value for all lowered by mistake can't take below
+  it('keeps a ceiling per window at the fixed value', async () => {
     const { carrier, connect, loader } = harness()
     loader.policyJobs.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.all = { callsInFlight: 1 }
     const git = connect(worker('git'))
     const way = windowWay(carrier, { 'editor-1': editor, 'editor-2': { kind: 'window', role: 'editor', n: 2 } })
-    for (let id = 100; id < 100 + floorConstants.callsInFlight; id++) way.post('editor-1', { v: 1, kind: 'call', id, action: 'git.log', args: {} })
-    for (let waited = 0; git.inbox.filter(message => message.kind === 'call').length < floorConstants.callsInFlight; waited++) {
+    for (let id = 100; id < 100 + defaultLimits.callsInFlight; id++) way.post('editor-1', { v: 1, kind: 'call', id, action: 'git.log', args: {} })
+    for (let waited = 0; git.inbox.filter(message => message.kind === 'call').length < defaultLimits.callsInFlight; waited++) {
       if (waited > 200) throw new Error('the calls never arrived')
       await tick(5)
     }
@@ -323,17 +323,17 @@ describe('the rate', () => {
     expect(samples).toEqual([{ kind: 'dropped', caller: worker('search'), count: 3 }])
   })
 
-  // Past the floor's flood cap too, since a window's way is never closed and a value for all can't lower its rate
+  // Past the fixed flood cap too, since a window's way is never closed and a value for all can't lower its rate
   it('drops a window\'s messages over the rate but never closes its way in', async () => {
     const clock = 1_000_000
     const { carrier, loader } = harness({ clock: () => clock })
     loader.human.all = { messagesPerSecond: 2, floodMs: 1000, floodFactor: 1 }
     const way = windowWay(carrier, { 'editor-1': editor })
-    const sent = floorConstants.messagesPerSecond * floorConstants.floodFactor + 10
+    const sent = defaultLimits.messagesPerSecond * defaultLimits.floodFactor + 10
     for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
     await tick(50)
-    expect(way.replies).toHaveLength(floorConstants.messagesPerSecond)
-    expect(way.replies.at(-1)?.id).toBe(floorConstants.messagesPerSecond)
+    expect(way.replies).toHaveLength(defaultLimits.messagesPerSecond)
+    expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
     expect(loader.crashes).toEqual([])
   })
 })

@@ -3,7 +3,7 @@ import { constants, createReadStream, watch, type BigIntStats, type FSWatcher } 
 import { link, lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink, type FileHandle } from 'node:fs/promises'
 import path from 'node:path'
 import { LIST_PAGE } from 'hetu-core/api/actions.ts'
-import { floorConstants } from 'hetu-core/api/floor.ts'
+import { defaultLimits } from 'hetu-core/api/limits.ts'
 import { isDotName } from 'hetu-core/api/scope.ts'
 import type { Call, LuoshuOpening, LuoshuRole, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/policy-jobs.ts'
 import { canonical, folderState, listedState, looked, named, type Canonical, type FolderState, type NotCanonical, type Opened } from 'hetu-core/lib/canonical.ts'
@@ -28,7 +28,7 @@ export type LuoshuOptions = {
   pageSize?: number
   // How long a path stays quiet before the watcher looks at it, as editors save a file in several writes
   settleMs?: number
-  // The largest note a read answers, the floor's resultBytes but in tests. A larger one is refused from its size, before
+  // The largest note a read answers, the fixed resultBytes but in tests. A larger one is refused from its size, before
   // main reads it
   readCap?: number
 }
@@ -86,7 +86,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const pageSize = options.pageSize ?? LIST_PAGE
   const publish = options.publish ?? (() => {})
   const settleMs = options.settleMs ?? 150
-  const readCap = options.readCap ?? floorConstants.resultBytes
+  const readCap = options.readCap ?? defaultLimits.resultBytes
   let watcher: FSWatcher | null = null
   const settling = new Map<string, ReturnType<typeof setTimeout>>()
   let opening: (LuoshuOpening & { folder: string }) | null = null

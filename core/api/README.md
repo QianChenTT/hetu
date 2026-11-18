@@ -11,7 +11,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder, and `supportsApi`: this core's major or an older one every major since only added to (`apiChanges`), with no type in the manifest added, removed or reshaped since
 - `ids.ts`: plugin ids and names, reserved ids, the policy job, provider and guard ids and the security controls, whose failure stops hetu
 - `windows.ts`: what each window holds
-- `floor.ts`: the floor constants and the longest delay a timer takes, past which no time constant may be raised
+- `limits.ts`: the limits and the longest delay a timer takes, past which no time constant may be raised
 - `actions.ts`: the core actions with who may call each and the provider actions with the capability each is checked against, each with its argument schema. `ActionArgs` and `ActionResults` type what the SDK's calls take and answer
 - `tools.ts`: the tools an agent may call through mcp, made from the provider rows' `agent` entries. `toolList` gives what `tools/list` answers and `toolFor` the action and schema for a name. The carrier refuses a call under an agent's chain to a provider action with no entry, the caller's own storage and cache aside
 - `policy-jobs.ts`: what the carrier asks and hands on: the gate, guard, provider and watchdog interfaces, `Call`, `Access`, `Decision`, `GuardCall`, the policy job and plugin states, the audit record, the grant risk classifier policy job with the `Flow` it is handed and the `ClassMove` it names on a Confirm, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the loader calls
@@ -23,6 +23,6 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `measure.ts`: `measurePlain`, apart from zod
 - `rate.ts`: the per-way message counter, the text budget and `weigh`
 - `plain.ts`: the plain data check for values the core passes on unread
-- `frozen.ts`: the frozen tables with no prototype that the core looks keys up in, apart from zod so the floor constants load without it
+- `frozen.ts`: the frozen tables with no prototype that the core looks keys up in, apart from zod so the limits load without it
 - `install.ts`: the install list the build writes, each install plugin with its path, version and hash and the bundled first-party copies marked, the version order and the signer first-party copies carry
 - `lifecycle.ts`: the lifecycle messages on a port, `init`, `deps`, `ready`, `stop` and `stopped`, with the fixed reasons a plugin hears as `lastStop`

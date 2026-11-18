@@ -223,7 +223,7 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
   const markers = await readMarkers(dataDir)
 
   let healthy = opened !== null
-  // With recording off nothing goes in, boot's floor records included. Only switches that checked out can turn it off
+  // With recording off nothing goes in, boot's core records included. Only switches that checked out can turn it off
   // and the defaults record, so a wipe or an edit is still recorded
   if (!state.switches.recordNothing) {
     for (const check of checks) {

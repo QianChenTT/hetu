@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
-import { type FloorConstant, floorConstants } from '../../api/floor.ts'
+import { type LimitName, defaultLimits } from '../../api/limits.ts'
 import { utilityIds } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
@@ -47,7 +47,7 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
-  limits?: Partial<Record<FloorConstant, number>>, drawer?: FakeDrawer,
+  limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer,
 }
 
 type Manifest = {
@@ -119,10 +119,10 @@ class Way {
 class FakeLoader implements Loader {
   readonly infos = new Map<string, PluginInfo>()
   private readonly gateState: PolicyJobState
-  private readonly all: Partial<Record<FloorConstant, number>>
+  private readonly all: Partial<Record<LimitName, number>>
   private readonly listeners = new Set<(caller: Caller, kind: string) => void>()
 
-  constructor(gateState: PolicyJobState, all: Partial<Record<FloorConstant, number>>) {
+  constructor(gateState: PolicyJobState, all: Partial<Record<LimitName, number>>) {
     this.gateState = gateState
     this.all = all
   }
@@ -216,7 +216,7 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
 // at a time, placed as the loader would place it: mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
   readonly mode: FakeMode
-  readonly floor: { event: string, fields: Record<string, Field> }[] = []
+  readonly coreRecords: { event: string, fields: Record<string, Field> }[] = []
   // Each core action that reached the part the core serves, oldest first. core.bindFailed ends the plugin under test
   // as failed with its reason and every other answers unavailable
   readonly coreCalls: CoreCall[] = []
@@ -230,7 +230,7 @@ export class FakeCore {
     busiest(): number
   }
   // The human's limits for all, which the carrier reads on each use
-  readonly limits: Partial<Record<FloorConstant, number>>
+  readonly limits: Partial<Record<LimitName, number>>
 
   private readonly manifest: Manifest
   private readonly half: 'worker' | 'host'
@@ -255,7 +255,7 @@ export class FakeCore {
   constructor(options: FakeCoreOptions) {
     this.manifest = manifestOf(options.manifest)
     this.mode = options.mode ?? 'manifest'
-    this.readyMs = options.readyMs ?? floorConstants.readyMs
+    this.readyMs = options.readyMs ?? defaultLimits.readyMs
     this.drawer = options.drawer ?? null
     this.half = 'host' in this.manifest.entries ? 'host' : 'worker'
     this.limits = { ...options.limits }
@@ -277,9 +277,9 @@ export class FakeCore {
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       watchdog: () => null,
       core: call => this.served(call),
-      // Floor records are kept and the call records are taken and dropped, so calls pass unlogged
+      // Core records are kept and the call records are taken and dropped, so calls pass unlogged
       log: {
-        append: async (event, fields = {}) => { this.floor.push({ event, fields }) },
+        append: async (event, fields = {}) => { this.coreRecords.push({ event, fields }) },
         appendMany: async () => {},
         history: async () => [],
         verify: async () => ({ ok: true }),
@@ -327,13 +327,13 @@ export class FakeCore {
     return this.launch(plugin)
   }
 
-  // Stops the plugin with the floor's grace, as the human's switch would
+  // Stops the plugin with the fixed grace, as the human's switch would
   async stop(): Promise<void> {
     const caller = this.live
     if (caller === null) return
     this.markState('stopping')
-    const stopped = this.loader.waitFor(caller, 'stopped', floorConstants.stopGraceMs)
-    this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: floorConstants.stopGraceMs })
+    const stopped = this.loader.waitFor(caller, 'stopped', defaultLimits.stopGraceMs)
+    this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: defaultLimits.stopGraceMs })
     await stopped
     this.carrier.end(caller, 'stopped')
     this.markState('stopped')
@@ -358,7 +358,7 @@ export class FakeCore {
         { type: 'luoshu.read', paths: ['**'] },
       ])
     }
-    return way.ask(action, args, floorConstants.callDeadlineMs + 1000)
+    return way.ask(action, args, defaultLimits.callDeadlineMs + 1000)
   }
 
   // Plays another plugin on its worker half: the plugin under test calls it through the real carrier, which checks
@@ -489,7 +489,7 @@ export class FakeCore {
   }
 
   private async publish(topic: 'luoshu.changed' | 'luoshu.outside', path: string): Promise<void> {
-    await this.luoshuWay.ask('events.publish', { topic, path }, floorConstants.callDeadlineMs)
+    await this.luoshuWay.ask('events.publish', { topic, path }, defaultLimits.callDeadlineMs)
   }
 }
 

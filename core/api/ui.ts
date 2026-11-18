@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { screenText } from './capabilities.ts'
 import { bridgeCall } from './editor.ts'
-import { floorConstants } from './floor.ts'
+import { defaultLimits } from './limits.ts'
 import { localName } from './ids.ts'
 import { plain, plainData } from './plain.ts'
 import { pathProblem } from './scope.ts'
@@ -485,7 +485,7 @@ export const uiNeeds: Readonly<Record<UiVerb, 'ui.view' | 'ui.layout'>> = Object
 
 const drawerCall = z.discriminatedUnion('verb', [...bridgeCall.options, ...uiCall.options])
 export type DrawerCall = z.infer<typeof drawerCall>
-const checked = plain(drawerCall, floorConstants.argumentBytes)
+const checked = plain(drawerCall, defaultLimits.argumentBytes)
 
 // A message from a plugin's port as the drawer reads it: an editor bridge call or a ui call, null for anything else
 export function parseDrawerCall(text: string): DrawerCall | null {

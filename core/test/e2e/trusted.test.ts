@@ -291,7 +291,7 @@ describe('the switches and limits', () => {
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)
-    await showing(page, 'readyMs · floor 10000')
+    await showing(page, 'readyMs · fixed 10000')
     expect(await page.locator('section.install').innerText()).toContain('On macOS, programs running as you can change hetu’s install')
     await tick(PAST_DELAY)
     await page.getByLabel('New value for readyMs').fill('20000')
@@ -299,7 +299,7 @@ describe('the switches and limits', () => {
     await showing(page, 'Set readyMs to 20000 for every plugin')
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Confirm' }).click()
-    await showing(page, 'readyMs · floor 10000 · all: 20000')
+    await showing(page, 'readyMs · fixed 10000 · all: 20000')
     expect((await new StateStore(dataDir).load()).state.switches.limits.all).toEqual({ readyMs: 20000 })
 
     await page.locator('p', { hasText: 'Confirm off for this window: off' }).getByRole('button', { name: 'Switch on' }).click()
