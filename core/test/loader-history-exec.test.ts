@@ -44,7 +44,7 @@ describe('history\'s folder', () => {
     expect(history.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir }])
   })
 
-  it('is the state\'s at ready and the new one each time luoshu.set applies, as the luoshu\'s is', async () => {
+  it('is the state\'s at ready and the new one each time luoshu.pick applies, as the luoshu\'s is', async () => {
     const history = historyRole()
     let first = ''
     const made = await harness({
@@ -58,7 +58,7 @@ describe('history\'s folder', () => {
     await made.loader.start()
     await until(() => stateOf(made.loader, 'history') === 'ready')
     const second = path.join(made.base, 'other notes')
-    await made.loader.apply({ kind: 'luoshu.set', folder: second })
+    await made.loader.apply({ kind: 'luoshu.pick', folder: second })
     expect(history.opened.map(opening => opening.folder)).toEqual([first, second])
   })
 
@@ -124,7 +124,7 @@ describe('exec\'s view of the grants', () => {
     await made.loader.apply({ kind: 'exec.anyCommand', plugin: 'git', on: true })
     expect(made.exec.seen.at(-1)!.any).toEqual(['git'])
     const folder = path.join(made.base, 'notes')
-    await made.loader.apply({ kind: 'luoshu.set', folder })
+    await made.loader.apply({ kind: 'luoshu.pick', folder })
     expect(made.exec.seen.at(-1)!.opening.folder).toBe(folder)
     expect(made.exec.seen.at(-1)!.any).toEqual(['git'])
     await made.loader.apply({ kind: 'plugin.off', plugin: 'git' })

@@ -12,7 +12,7 @@ import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
-  firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
+  firstPartyIds, guardableActions, guards as expectedGuards, corePluginIds, isReservedId, isSecurityControl, pluginId, providers,
   securityControls, policyJobIds, utilityIds,
   type GuardableAction,
 } from '../../api/ids.ts'
@@ -1442,7 +1442,7 @@ ${capabilityKey(change.capability)}`)
   private requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
     if (this.isPolicyJob(k.id) && requires.length > 0) return true
-    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(installIds, id)))
+    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(corePluginIds, id)))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
@@ -2151,7 +2151,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         }
         return
       }
-      case 'luoshu.set': {
+      case 'luoshu.pick': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
         // A luoshu not ready yet takes the folder when it is, and so does history. exec gets it with the bump

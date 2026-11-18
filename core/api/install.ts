@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { firstPartyIds, installIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
+import { firstPartyIds, corePluginIds, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain } from './plain.ts'
 import { pathProblem } from './scope.ts'
 
@@ -60,7 +60,7 @@ export const installList = plain(
   }).superRefine((list, ctx) => {
     const paths = new Set<string>()
     for (const [id, entry] of Object.entries(list.plugins)) {
-      const fits = entry.firstParty === true ? isOne(firstPartyIds, id) : isOne(installIds, id)
+      const fits = entry.firstParty === true ? isOne(firstPartyIds, id) : isOne(corePluginIds, id)
       if (!fits) ctx.addIssue({ code: 'custom', message: `${id} is not ${entry.firstParty ? 'a first-party' : 'an install'} id` })
       if (paths.has(entry.path)) ctx.addIssue({ code: 'custom', message: `a folder named twice: ${entry.path}` })
       paths.add(entry.path)

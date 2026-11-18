@@ -41,7 +41,7 @@ describe('the luoshu\'s folder', () => {
     expect(history.opened).toEqual([{ folder: null, dataDir: made.dataDir, installDir: made.installDir }])
   })
 
-  it('is the state\'s at ready and the new one each time luoshu.set applies', async () => {
+  it('is the state\'s at ready and the new one each time luoshu.pick applies', async () => {
     const luoshu = role()
     let first = ''
     const made = await harness({
@@ -55,7 +55,7 @@ describe('the luoshu\'s folder', () => {
     await made.loader.start()
     await until(() => stateOf(made.loader, 'luoshu') === 'ready')
     const second = path.join(made.base, 'other notes')
-    await made.loader.apply({ kind: 'luoshu.set', folder: second })
+    await made.loader.apply({ kind: 'luoshu.pick', folder: second })
     expect(luoshu.opened.map(opening => opening.folder)).toEqual([first, second])
   })
 

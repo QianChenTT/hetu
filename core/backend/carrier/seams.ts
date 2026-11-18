@@ -63,7 +63,7 @@ export type Asks = { raise(ask: string, access: Access): string | AskRefusal }
 // provider's or the gate's text can name paths
 export type Debug = (entry: { plugin: string | null, caller: Caller, action: string, text: string }) => void
 
-// A namespace a later part serves with its own checks: ui.* the runtime and the mount. The bus serves events.* inside
+// A namespace a later part serves with its own checks: ui.* the runtime and the drawer. The bus serves events.* inside
 // the carrier
 export type Served = (call: Call) => Promise<unknown>
 
@@ -72,7 +72,7 @@ export type Served = (call: Call) => Promise<unknown>
 export type FloorLog = { append(event: string, fields?: Record<string, Field>): Promise<void>, readonly healthy?: boolean }
 
 // The one EventLog boot opened as the carrier holds it: the floor lane appends one record at a time, the audit writer
-// appends batches and log.history and log.verify read it
+// appends batches and log.segments and log.verify read it
 export type CoreLog = FloorLog & AuditLog
 
 // What became of one floor record: on disk, not taken while the human turned recording off, or lost: dropped from a

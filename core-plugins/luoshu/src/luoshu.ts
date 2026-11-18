@@ -96,7 +96,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const resolved = new Map<string, Canonical>()
   // The to end of each move, beside its from end in resolved, and whether both ends are one file
   const moving = new Map<string, { to: Canonical, same: boolean }>()
-  // The folder each call was prepared under, so a call prepared before luoshu.set never acts on the folder after it
+  // The folder each call was prepared under, so a call prepared before luoshu.pick never acts on the folder after it
   const preparedUnder = new Map<string, Opening>()
   // The paths that stand for a name spelled with no dot that leads to a dot name, which no write lands on
   const nowhere = new WeakSet<Canonical>()

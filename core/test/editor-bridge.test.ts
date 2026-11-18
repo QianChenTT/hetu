@@ -1,11 +1,11 @@
 import { ChangeSet, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
-import { CORE_KEYS, Drawer, type Instance, type PortLike, RESERVED_KEYS } from '../frontend/mount/bridge.ts'
+import { CORE_KEYS, Drawer, type Instance, type PortLike, RESERVED_KEYS } from '../frontend/editor/bridge.ts'
 import { MARKS_PER_SECOND, MAX_MARK_SETS, MAX_MARKS, READ_CHARS_PER_SECOND } from '../api/editor.ts'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { Versions } from '../frontend/mount/versions.ts'
-import { fakeCore, settle } from './mount-fakes.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { Versions } from '../frontend/editor/versions.ts'
+import { fakeCore, settle } from './editor-fakes.ts'
 
 // write is what the core no longer answers, kept so a test shows the drawer never edits on it
 type Reach = { read?: string[], write?: string[], edit?: string[], uiRead?: string[], list?: string[], verbs?: string[] }

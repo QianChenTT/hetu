@@ -365,7 +365,7 @@ describe('the trusted page', () => {
     expect(drawn.at(-1)?.note).toBe('Type a whole number from 1 up')
   })
 
-  it('picks a folder through main’s dialog and asks for it as luoshu.set, and asks nothing when the dialog was cancelled', () => {
+  it('picks a folder through main’s dialog and asks for it as luoshu.pick, and asks nothing when the dialog was cancelled', () => {
     const { sent, page, hears } = started()
     page.pickFolder()
     expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
@@ -373,7 +373,7 @@ describe('the trusted page', () => {
     expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
     page.pickFolder()
     hears(replyTo(sent.at(-1)!, '/Users/someone/notes'))
-    expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.set', folder: '/Users/someone/notes' } } })
+    expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.pick', folder: '/Users/someone/notes' } } })
   })
 
   it('asks for a limit as a request, which waits for the Confirm', () => {

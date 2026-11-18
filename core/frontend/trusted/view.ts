@@ -271,11 +271,11 @@ export class TrustedPage {
     this.call('core.relaunch')
   }
 
-  // The OS folder dialog in main, then the folder picked asked for as luoshu.set, which waits for the Confirm. A
+  // The OS folder dialog in main, then the folder picked asked for as luoshu.pick, which waits for the Confirm. A
   // cancelled dialog asks for nothing
   pickFolder(): void {
     this.call('core.pickFolder', undefined, reply => {
-      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.set', folder: reply.result })
+      if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.pick', folder: reply.result })
       else if (reply.ok !== true) this.settle(reply)
     })
   }

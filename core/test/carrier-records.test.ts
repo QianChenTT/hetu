@@ -339,10 +339,10 @@ describe('audit records', () => {
 })
 
 describe('reading the log', () => {
-  it('serves log.history and log.verify to every window from the log the core writes', async () => {
+  it('serves log.segments and log.verify to every window from the log the core writes', async () => {
     const { carrier, log } = harness()
     const way = windowWay(carrier, { editor, trusted })
-    expect(await way.ask('editor', 'log.history')).toMatchObject({ ok: true, result: log.segments })
+    expect(await way.ask('editor', 'log.segments')).toMatchObject({ ok: true, result: log.segments })
     log.verification = { ok: false, seq: 7 }
     expect(await way.ask('trusted', 'log.verify')).toMatchObject({ ok: true, result: { ok: false, seq: 7 } })
   })
@@ -352,14 +352,14 @@ describe('reading the log', () => {
     const { connect, gate } = harness()
     gate.grants.search = [{ type: 'log.read' }]
     const search = connect(worker('search'))
-    expect(code(await search.ask('log.history'))).toBe('not-granted')
+    expect(code(await search.ask('log.segments'))).toBe('not-granted')
     expect(code(await search.ask('log.verify'))).toBe('not-granted')
   })
 
   it('answers unavailable with no log', async () => {
     const { carrier } = harness({ log: null })
     const way = windowWay(carrier, { editor })
-    expect(code(await way.ask('editor', 'log.history'))).toBe('unavailable')
+    expect(code(await way.ask('editor', 'log.segments'))).toBe('unavailable')
   })
 })
 

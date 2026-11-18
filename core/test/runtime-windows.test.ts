@@ -188,13 +188,13 @@ describe('the trusted window', () => {
       loadURL(url: string) { this.loaded.push(url); return Promise.resolve() }
     }
     const session = { trusted: true } as unknown as Session
-    openTrusted(FakeWindow as unknown as typeof BrowserWindow, session, false, { quiet: false }, 'mount-preload.js')
+    openTrusted(FakeWindow as unknown as typeof BrowserWindow, session, false, { quiet: false }, 'editor-preload.js')
     const [{ options, shown, loaded, window }] = made
     expect(loaded).toEqual([TRUSTED_URL])
     expect(TRUSTED_URL).toBe('hetu://trusted/')
     expect(options.show).toBe(false)
     expect((options.webPreferences as Record<string, unknown>).session).toBe(session)
-    expect((options.webPreferences as Record<string, unknown>).preload).toBe('mount-preload.js')
+    expect((options.webPreferences as Record<string, unknown>).preload).toBe('editor-preload.js')
     expect((options.webPreferences as Record<string, unknown>).sandbox).toBe(true)
     window.emit('ready-to-show')
     expect(shown).toEqual(['show'])

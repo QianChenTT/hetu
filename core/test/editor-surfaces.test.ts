@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_SURFACES, type UiNode } from '../api/ui.ts'
-import { Surfaces } from '../frontend/mount/surfaces.ts'
+import { Surfaces } from '../frontend/editor/surfaces.ts'
 
 const text = (id: string, value: string): UiNode => ({ kind: 'text', id, text: value })
 

@@ -25,7 +25,7 @@ import { wireCore } from './wire.ts'
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
-const mountPreload = path.join(here, 'mount-preload.js')
+const editorPreload = path.join(here, 'editor-preload.js')
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -148,7 +148,7 @@ async function start(): Promise<void> {
     // main, so a Confirm counts only once it armed
     const trusted = new TrustedWindow({
       open: () => {
-        const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), mountPreload))
+        const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), editorPreload))
         if (carrier !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', carrier)
         return window
       },
@@ -228,7 +228,7 @@ async function start(): Promise<void> {
     // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
     // load's preload listens
     const editorWindow = () => {
-      const window = openEditor(BrowserWindow, sessions.editor, LOCKED, placement(), mountPreload)
+      const window = openEditor(BrowserWindow, sessions.editor, LOCKED, placement(), editorPreload)
       const contents = window.webContents
       new WindowWay(contents as unknown as WindowContents, 'editor', wired.carrier)
       // A frame's token ends with the page that framed it

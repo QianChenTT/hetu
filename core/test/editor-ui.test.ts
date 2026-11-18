@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { CoreViewsPlugin } from '../api/actions.ts'
 import type { UiNode } from '../api/ui.ts'
-import { Drawer, NODES_PER_SECOND, type PortLike } from '../frontend/mount/bridge.ts'
-import { CoreLink } from '../frontend/mount/link.ts'
-import type { SettingsValue } from '../frontend/mount/settings.ts'
-import { fakeCore, settle } from './mount-fakes.ts'
+import { Drawer, NODES_PER_SECOND, type PortLike } from '../frontend/editor/bridge.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import type { SettingsValue } from '../frontend/editor/settings.ts'
+import { fakeCore, settle } from './editor-fakes.ts'
 
 type Reach = { read?: string[], list?: string[], uiRead?: string[], verbs?: string[] }
 

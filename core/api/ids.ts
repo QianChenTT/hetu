@@ -73,7 +73,7 @@ export function securityControls(listed: readonly string[]): string[] {
 }
 
 // Host-level and in-page plugins, which load only from the install
-export const installIds = frozen([
+export const corePluginIds = frozen([
   'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
 ] as const)
 
@@ -91,7 +91,7 @@ const reserved = new Set<string>([
   ...Object.values(providers),
   ...policyJobIds,
   ...Object.values(guards).flat(),
-  ...installIds,
+  ...corePluginIds,
   ...firstPartyIds,
 ])
 

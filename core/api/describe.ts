@@ -50,7 +50,7 @@ export function describeChange(change: Change): Described {
       return { text: `Let ${change.plugin} use ${capabilityText(change.capability)}`, notes: [] }
     case 'item.off':
       return { text: `Stop ${change.plugin} using ${capabilityText(change.capability)}`, notes: [] }
-    case 'luoshu.set':
+    case 'luoshu.pick':
       return { text: `Use ${quoted(change.folder)} as the notes folder`, notes: [] }
     case 'devMode':
       return change.on

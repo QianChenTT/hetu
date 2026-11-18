@@ -69,7 +69,7 @@ describe('the gate on and the core\'s log', () => {
     await until(async () => (await records(dataDir)).some(record =>
       record.event === 'audit.call' && record.action === 'luoshu.read' && record.code === 'unavailable' && record.gate === 'on'
       && String(record.caller).startsWith('window/editor#')))
-    const history = await ask(page, 'log.history')
+    const history = await ask(page, 'log.segments')
     expect(history.ok).toBe(true)
     expect((history.result as { segment: number }[])[0]).toMatchObject({ segment: 1 })
     expect(await ask(page, 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })

@@ -1,7 +1,7 @@
 import { ChangeSet, EditorState, Text } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { MAX_KEPT_VERSIONS, type Mark } from '../api/editor.ts'
-import { Versions } from '../frontend/mount/versions.ts'
+import { Versions } from '../frontend/editor/versions.ts'
 
 // A note typed into: each change made against the text as it is, kept in versions as the editor keeps them
 function typing(text: string) {

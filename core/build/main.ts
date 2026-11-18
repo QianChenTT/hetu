@@ -11,7 +11,7 @@ import { communitySource } from './community.ts'
 const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
 // The install plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
 const INSTALL = ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'mcp-http-handler']
-// The in-page install plugins, each a module the editor page compiles in from core/frontend/mount. The install's copy
+// The in-page install plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
 // holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
 // loader path for in-page code
 const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
@@ -23,7 +23,7 @@ const frontend = path.join(core, 'frontend')
 const NODE = 'node24.22'
 const CHROMIUM = 'chrome156'
 // The three fixed pages, each served from its folder in dist/frontend
-const PAGES = ['mount', 'trusted', 'workers']
+const PAGES = ['editor', 'trusted', 'workers']
 
 const exists = (file: string) => stat(file).then(() => true, () => false)
 
@@ -148,7 +148,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     // Its own code only: CodeMirror is the page's
     await build({
       ...shared,
-      entryPoints: [path.join(frontend, 'mount', module)],
+      entryPoints: [path.join(frontend, 'editor', module)],
       outfile: path.join(root, 'dist', 'page.js'),
       platform: 'browser',
       format: 'esm',
@@ -190,7 +190,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
 
   // The worker host page's preload and the window shell's, each beside main.js
   const preloadImports: string[] = []
-  for (const page of ['workers', 'mount']) {
+  for (const page of ['workers', 'editor']) {
     const preload = await build({
       ...shared,
       entryPoints: [path.join(frontend, page, 'preload.ts')],

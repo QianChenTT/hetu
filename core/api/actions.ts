@@ -13,7 +13,7 @@ import type { LogSegment, LogVerification, PluginState, PolicyJobState } from '.
 import type { ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
-// actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the mount, so it has no
+// actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
 // action here yet. Each provider's own step settles its list: net has none yet
 
 // A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
@@ -126,7 +126,7 @@ const coreTable = {
   'core.status': { from: 'windows', args: nothing },
   // The event log the core writes: each file's chain as history reads it and whether the open file checks out. A
   // window only, until the first-party shipper, which log.read is kept for
-  'log.history': { from: 'windows', args: nothing },
+  'log.segments': { from: 'windows', args: nothing },
   'log.verify': { from: 'windows', args: nothing },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
@@ -143,7 +143,7 @@ const coreTable = {
   'core.restart': { from: 'windows', args: target },
   'core.quit': { from: 'windows', args: nothing },
   'core.relaunch': { from: 'trusted', args: nothing },
-  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.set,
+  // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
   // which waits for the Confirm
   'core.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
@@ -437,7 +437,7 @@ export type ActionResults = {
   'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
   'core.agentConnect': { handle: string }
   'core.agentConnected': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
-  'log.history': LogSegment[]
+  'log.segments': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }
   'events.unsubscribe': null

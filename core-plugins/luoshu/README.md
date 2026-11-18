@@ -9,4 +9,4 @@ The luoshu, an install plugin whose host half serves `luoshu.read`, `luoshu.writ
 - **the watcher** is `fs.watch` with `recursive`. A path quiet for 150 ms is hetu's own write when its bytes hash as the last write hetu made there, and `luoshu.outside` otherwise. A path canonical refuses, a dot path included, publishes nothing
 - with no folder picked every call answers `unavailable`
 
-`src/luoshu.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin, the `provider` role and the `luoshu` role, whose `open` the loader calls with the folder when the plugin is ready and each time `luoshu.set` applies
+`src/luoshu.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin, the `provider` role and the `luoshu` role, whose `open` the loader calls with the folder when the plugin is ready and each time `luoshu.pick` applies

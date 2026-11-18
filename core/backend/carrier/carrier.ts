@@ -3,7 +3,7 @@ import { coreActions, ends, eventActions, LIST_PAGE, providerActions, type CoreA
 import { capabilityTypes, scopedUiTypes, type CapabilityType } from '../../api/capabilities.ts'
 import {
   ack as ackSchema, agentLabel, answer as answerSchema, caller as callerSchema, cancel as cancelSchema, kindOf, reasonCodes,
-  calleeRefusalCodes, refusalCodes, requestEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
+  calleeRefusalCodes, refusalCodes, callEnvelope, token, VERSION, type Caller, type ReasonCode, type Refusal, type RefusalCode,
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
@@ -124,7 +124,7 @@ type Shaped =
 const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
 // The core actions the trusted window may send inside its input delay, since they only read
-const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.history', 'log.verify'])
+const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.segments', 'log.verify'])
 
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
@@ -285,7 +285,7 @@ export class Carrier {
       },
     })
     this.writer?.start()
-    this.logReads = log === null ? undefined : async call => (call.action === 'log.history' ? log.history() : log.verify())
+    this.logReads = log === null ? undefined : async call => (call.action === 'log.segments' ? log.history() : log.verify())
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logHealthy = options.log?.healthy
     this.looking = setInterval(() => this.look(), 1000)
@@ -633,7 +633,7 @@ export class Carrier {
   // that names a live call delivered on this same way. A call under a parent takes the parent's onBehalf and can't set
   // its own
   private shape(way: Way, message: unknown): Shaped {
-    const parsed = requestEnvelope.safeParse(message)
+    const parsed = callEnvelope.safeParse(message)
     if (!parsed.success) {
       return { ok: false, id: readId(message), action: readAction(message), onBehalf: undefined, parent: null, no: { code: 'invalid' } }
     }
@@ -987,7 +987,7 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'editor.reach') return this.finish(pending, this.reach(args))
-    if (pending.action === 'log.history' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    if (pending.action === 'log.segments' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. Its reads answer
     const { caller } = pending

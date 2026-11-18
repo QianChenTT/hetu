@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { CoreStatus } from '../api/actions.ts'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { settle } from './mount-fakes.ts'
-import { bannerLines, noticeText, Shell, type Notice } from '../frontend/mount/shell.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { settle } from './editor-fakes.ts'
+import { bannerLines, noticeText, Shell, type Notice } from '../frontend/editor/shell.ts'
 
 const calm: CoreStatus = {
   policyJobs: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'on' },

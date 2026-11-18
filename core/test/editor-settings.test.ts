@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { Settings } from '../frontend/mount/settings.ts'
-import { fakeCore, settle } from './mount-fakes.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { Settings } from '../frontend/editor/settings.ts'
+import { fakeCore, settle } from './editor-fakes.ts'
 
 function made(stored: unknown = null) {
   const space = new Map<string, unknown>(stored === null ? [] : [['settings', stored]])

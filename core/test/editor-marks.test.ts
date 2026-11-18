@@ -2,7 +2,7 @@ import { Text } from '@codemirror/state'
 import type { Decoration, DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
-import { drawMarks } from '../frontend/mount/marks.ts'
+import { drawMarks } from '../frontend/editor/marks.ts'
 
 const doc = Text.of(['first line', 'second line'])
 

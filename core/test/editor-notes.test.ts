@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { draftKey, type Editors, type NoteNotice, Notes } from '../frontend/mount/notes.ts'
-import { type Answer, fakeCore } from './mount-fakes.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { draftKey, type Editors, type NoteNotice, Notes } from '../frontend/editor/notes.ts'
+import { type Answer, fakeCore } from './editor-fakes.ts'
 
 // The editor views as the notes see them: each instance's text, and each replace with whether it came from outside
 function fakeEditors() {

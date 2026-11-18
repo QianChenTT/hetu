@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { themeStyle } from '../frontend/mount/theme.ts'
+import { themeStyle } from '../frontend/editor/theme.ts'
 
 describe('a theme as the drawer sets it', () => {
   it('sets nothing for no theme', () => {

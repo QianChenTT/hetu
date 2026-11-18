@@ -18,7 +18,7 @@ const everyKind = [
   { kind: 'grant.narrow', plugin: 'search', capability: { type: 'luoshu.read', paths: ['notes/**'] } },
   { kind: 'item.on', plugin: 'search', capability: { type: 'ui.view' } },
   { kind: 'item.off', plugin: 'git', capability: { type: 'exec', commands: [['git', 'status']], env: [] } },
-  { kind: 'luoshu.set', folder: '/Users/han/notes' },
+  { kind: 'luoshu.pick', folder: '/Users/han/notes' },
   { kind: 'devMode', plugin: 'search', on: true },
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'skipVerification', on: false },
@@ -85,7 +85,7 @@ describe("the core's words for a change", () => {
   })
 
   it('quotes the notes folder', () => {
-    expect(describeChange(one({ kind: 'luoshu.set', folder: '/Users/han/notes' })).text).toBe('Use "/Users/han/notes" as the notes folder')
+    expect(describeChange(one({ kind: 'luoshu.pick', folder: '/Users/han/notes' })).text).toBe('Use "/Users/han/notes" as the notes folder')
   })
 
   it('names a limit for one plugin or for every plugin', () => {

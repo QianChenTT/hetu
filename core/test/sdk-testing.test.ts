@@ -12,11 +12,11 @@ import type { Call, Provider } from '../api/policy-jobs.ts'
 import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
 import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { tick } from './carrier-fakes.ts'
-import { Drawer, type Instance, type PortLike } from '../frontend/mount/bridge.ts'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { Versions } from '../frontend/mount/versions.ts'
+import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { Versions } from '../frontend/editor/versions.ts'
 import { Editor, type EditorClient } from '../sdk/editor.ts'
-import { fakeCore as mountCore } from './mount-fakes.ts'
+import { fakeCore as editorCore } from './editor-fakes.ts'
 
 const cores: FakeCore[] = []
 afterEach(async () => {
@@ -666,7 +666,7 @@ describe("the fake drawer's ranges and commands", () => {
     // hetu's drawer, the plugin's client on a port to it
     const notes: Instance[] = []
     const selections = new Map<string, { anchor: number, head: number }[]>()
-    const core = mountCore({
+    const core = editorCore({
       'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
       'editor.reach': args => {
         const { path: asked } = args as { path?: string }

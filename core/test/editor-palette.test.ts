@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { filterNames, LIST_WAIT_MS, listNames, PALETTE_PAGES } from '../frontend/mount/palette.ts'
-import { fakeCore } from './mount-fakes.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { filterNames, LIST_WAIT_MS, listNames, PALETTE_PAGES } from '../frontend/editor/palette.ts'
+import { fakeCore } from './editor-fakes.ts'
 
 // A luoshu listing a page of size names at a time, as luoshu.list answers
 function listing(names: string[], size = 3) {

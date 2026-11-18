@@ -3,7 +3,7 @@ import type { Caller } from '../../api/envelope.ts'
 import type { AuditRecord, LogSegment, LogVerification } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 
-// The EventLog's part the writer writes through and log.history and log.verify read. healthy still true after a failed
+// The EventLog's part the writer writes through and log.segments and log.verify read. healthy still true after a failed
 // append means the log refused that batch, not that the log is down
 export type AuditLog = {
   appendMany(batch: readonly { event: string, fields: Record<string, Field> }[], options?: { id?: string }): Promise<void>

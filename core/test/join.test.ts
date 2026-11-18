@@ -491,7 +491,7 @@ describe('core.status, for a window\'s banner', () => {
 })
 
 describe('the core\'s log through the joined core', () => {
-  it('writes each call as audit.call through boot\'s event log and serves log.history and log.verify to windows', async () => {
+  it('writes each call as audit.call through boot\'s event log and serves log.segments and log.verify to windows', async () => {
     const parts = await joined({
       folder: {
         alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} } } })),
@@ -511,7 +511,7 @@ describe('the core\'s log through the joined core', () => {
     const written = (await floorRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
     const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
-    const history = await way.ask('editor', 'log.history')
+    const history = await way.ask('editor', 'log.segments')
     expect(history).toMatchObject({ ok: true })
     expect((history.result as { segment: number, breaks: number[] }[]).at(-1)).toMatchObject({ breaks: [] })
     expect(await way.ask('editor', 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })

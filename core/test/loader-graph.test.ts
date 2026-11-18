@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { installIds, policyJobIds } from '../api/ids.ts'
+import { corePluginIds, policyJobIds } from '../api/ids.ts'
 import { plan, type Node, type Status } from '../backend/loader/graph.ts'
 import { bootOrder } from '../backend/loader/loader.ts'
 
@@ -83,7 +83,7 @@ describe('the requires graph', () => {
 
 describe('the boot order', () => {
   it('names every install plugin once, the policy job holders first with the gate at their head', () => {
-    expect([...bootOrder].sort()).toEqual([...installIds].sort())
+    expect([...bootOrder].sort()).toEqual([...corePluginIds].sort())
     expect(new Set(bootOrder.slice(0, policyJobIds.length))).toEqual(new Set(policyJobIds))
     expect(bootOrder[0]).toBe('gate')
   })

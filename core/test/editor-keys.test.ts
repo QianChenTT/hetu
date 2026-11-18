@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coreKeyOf, keyName, normalKey } from '../frontend/mount/keys.ts'
+import { coreKeyOf, keyName, normalKey } from '../frontend/editor/keys.ts'
 
 const press = (key: string, mods: { ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean } = {}) =>
   ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods })

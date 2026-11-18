@@ -431,7 +431,7 @@ describe('the floor', () => {
 
 // events.* is the bus's, which bus.test.ts covers
 describe('ui.*', () => {
-  it('answers unavailable until the mount serves it', async () => {
+  it('answers unavailable until the drawer serves it', async () => {
     const { connect, gate } = harness()
     const search = connect(worker('search'))
     expect(code(await search.ask('ui.view', {}))).toBe('unavailable')

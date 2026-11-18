@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreNamespaces, firstPartyIds, guardableActions, guards, installIds, isReservedId, localName, MAX_ID_LENGTH,
+  coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, policyJobIds, utilityIds,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
@@ -88,7 +88,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(installIds).toEqual([
+    expect(corePluginIds).toEqual([
       'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
     ])
   })
@@ -97,7 +97,7 @@ describe('policy jobs, providers and guards', () => {
   it('runs http alone in a utility process, an install plugin that holds no policy job, guard or provider role', () => {
     expect(utilityIds).toEqual(['mcp-http-handler'])
     for (const id of utilityIds) {
-      expect(installIds).toContain(id)
+      expect(corePluginIds).toContain(id)
       expect(policyJobIds).not.toContain(id)
       expect(Object.values(providers)).not.toContain(id)
       expect(Object.values(guards).flat()).not.toContain(id)
@@ -105,7 +105,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   it('serves every provider and fills every policy job from the install', () => {
-    for (const id of [...policyJobIds, ...Object.values(providers)]) expect(installIds).toContain(id)
+    for (const id of [...policyJobIds, ...Object.values(providers)]) expect(corePluginIds).toContain(id)
   })
 })
 
@@ -156,7 +156,7 @@ describe('the tables', () => {
     expect(() => (reservedIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (policyJobIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
-    expect(() => (installIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (corePluginIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (utilityIds as unknown as string[]).push('mine')).toThrow()
     expect(() => { (providers as Record<string, string>).luoshu = 'mine' }).toThrow()

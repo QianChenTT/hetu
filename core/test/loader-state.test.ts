@@ -186,7 +186,7 @@ describe('the human\'s switches, applied', () => {
     const made = await harness()
     await made.loader.start()
     const folder = process.platform === 'win32' ? 'C:\\notes' : '/home/han/notes'
-    await made.loader.apply({ kind: 'luoshu.set', folder })
+    await made.loader.apply({ kind: 'luoshu.pick', folder })
     expect(JSON.parse((await readFile(path.join(made.dataDir, 'state', 'luoshu.json'), 'utf8')).split('\n').slice(0, -2).join('\n')).folder).toBe(folder)
     expect(made.loader.view()).toBe(2)
   })

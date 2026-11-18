@@ -106,7 +106,7 @@ export function carrierOptions(
 
 // The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
 // every policy job, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
-// the carrier writes its floor records and its audit queue through and serves log.history and log.verify from
+// the carrier writes its floor records and its audit queue through and serves log.segments and log.verify from
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
   const link = new LinkToCarrier()
   const loader = new Loader({

@@ -3,7 +3,7 @@ import {
   agentRefusals, coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
   providerActions,
 } from '../api/actions.ts'
-import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
+import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
 import { pluginStates, policyJobStates } from '../api/policy-jobs.ts'
@@ -17,7 +17,7 @@ describe('the core actions', () => {
       'core.self': 'any',
       'core.filterReadable': 'any',
       'core.status': 'windows',
-      'log.history': 'windows',
+      'log.segments': 'windows',
       'log.verify': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
@@ -317,12 +317,12 @@ describe('the envelope beside a request', () => {
   it('leaves args to the carrier, which measures them against the caller\'s own cap', () => {
     const big = { ...call, args: 'x'.repeat(MiB + 1) }
     expect(request.safeParse(big).success).toBe(false)
-    expect(requestEnvelope.safeParse(big).success).toBe(true)
+    expect(callEnvelope.safeParse(big).success).toBe(true)
   })
 
   it('refuses in the envelope what the request refuses outside args', () => {
     for (const bad of [{ ...call, v: 2 }, { ...call, caller: { kind: 'window', role: 'trusted', n: 0 } }, { ...call, id: -1 }, { ...call, action: 'read' }]) {
-      expect(requestEnvelope.safeParse(bad).success).toBe(false)
+      expect(callEnvelope.safeParse(bad).success).toBe(false)
     }
   })
 

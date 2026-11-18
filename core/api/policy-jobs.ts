@@ -158,11 +158,11 @@ export type Opening = { readonly folder: string | null, readonly dataDir: string
 // a file. None in a core with no bin, where a remove answers unavailable
 export type LuoshuOpening = Opening & { readonly trash?: (absolute: string) => Promise<void> }
 
-// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.set applies. A throw marks
+// How the loader hands the luoshu its folder: when the plugin is ready and each time luoshu.pick applies. A throw marks
 // the luoshu failed
 export type LuoshuRole = { open(opening: LuoshuOpening): void }
 
-// How the loader hands history the notes folder: when the plugin is ready and each time luoshu.set applies. A throw
+// How the loader hands history the notes folder: when the plugin is ready and each time luoshu.pick applies. A throw
 // marks history failed
 export type HistoryRole = { open(opening: Opening): void }
 

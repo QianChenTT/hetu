@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CoreViewsPlugin } from '../api/actions.ts'
 import type { UiEvent } from '../api/ui.ts'
-import { ViewList } from '../frontend/mount/views.ts'
+import { ViewList } from '../frontend/editor/views.ts'
 
 type Told = [string, Omit<UiEvent, 'v' | 'kind'>]
 

@@ -27,7 +27,7 @@ const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.set', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
+  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
@@ -35,7 +35,7 @@ export const change = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
   // Only folder plugins have grants to change, an install plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),
-  z.strictObject({ kind: z.literal('luoshu.set'), folder }),
+  z.strictObject({ kind: z.literal('luoshu.pick'), folder }),
   // Dev mode is a list of plugins that load unhashed, exec.anyCommand a list of plugins exec runs any command for
   z.strictObject({ kind: z.literal(perPluginSwitches), plugin: pluginId, on }),
   z.strictObject({ kind: z.literal(switches), on }),
@@ -146,7 +146,7 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'plugin.restore':
     case 'grant.widen':
     case 'item.on':
-    case 'luoshu.set':
+    case 'luoshu.pick':
       return 'widens'
     case 'grant.narrow':
     case 'item.off':

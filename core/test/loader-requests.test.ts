@@ -182,9 +182,9 @@ describe('a security request', () => {
   it('records the change by kind, target and hash, never the folder', async () => {
     const made = await harness()
     await made.loader.start()
-    held(await made.loader.request({ kind: 'luoshu.set', folder: path.join(made.base, 'notes') }, editor))
+    held(await made.loader.request({ kind: 'luoshu.pick', folder: path.join(made.base, 'notes') }, editor))
     const [record] = made.link.events('security.request')
-    expect(record).toMatchObject({ kind: 'luoshu.set', target: null, window: 'editor' })
+    expect(record).toMatchObject({ kind: 'luoshu.pick', target: null, window: 'editor' })
     expect(record.hash).toMatch(/^[0-9a-f]{64}$/)
     expect(JSON.stringify(record)).not.toContain('notes')
   })
@@ -512,11 +512,11 @@ describe('the core actions the loader serves', () => {
     expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).limits.all.readyMs).toBe(20000)
   })
 
-  it('names the notes folder once luoshu.set applies', async () => {
+  it('names the notes folder once luoshu.pick applies', async () => {
     const made = await harness()
     await made.loader.start()
     const folder = path.join(made.base, 'notes')
-    await made.loader.apply({ kind: 'luoshu.set', folder })
+    await made.loader.apply({ kind: 'luoshu.pick', folder })
     expect((await made.loader.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
   })
 

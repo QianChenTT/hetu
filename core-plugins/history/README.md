@@ -18,4 +18,4 @@ History, an install plugin whose host half serves `history.commit`, `history.log
 - calls run one at a time, since the repo has one index
 - the manifest requires the luoshu, so with the luoshu off history waits and reads no note
 
-`src/history.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin, the `provider` role and the `history` role, whose `open` the loader calls with the notes folder when the plugin is ready and each time `luoshu.set` applies. `test/a11.test.ts` shows each planted program firing under plain git in the notes folder and not through history
+`src/history.ts` holds the logic and `src/host.ts` is what the loader imports: the plugin, the `provider` role and the `history` role, whose `open` the loader calls with the notes folder when the plugin is ready and each time `luoshu.pick` applies. `test/a11.test.ts` shows each planted program firing under plain git in the notes folder and not through history

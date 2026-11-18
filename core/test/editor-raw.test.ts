@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CoreLink } from '../frontend/mount/link.ts'
-import { Notes } from '../frontend/mount/notes.ts'
-import { RAW_RECENT, RawSource } from '../frontend/mount/raw.ts'
-import { fakeCore, settle } from './mount-fakes.ts'
+import { CoreLink } from '../frontend/editor/link.ts'
+import { Notes } from '../frontend/editor/notes.ts'
+import { RAW_RECENT, RawSource } from '../frontend/editor/raw.ts'
+import { fakeCore, settle } from './editor-fakes.ts'
 
 function started(files: Record<string, string>) {
   const core = fakeCore({

@@ -84,13 +84,13 @@ describe('a window\'s way in', () => {
     const app = await launch(await dataWith({}))
     // The control: the window the core made answers through the same bridge
     expect(await self(await editorPage(app))).toMatchObject({ kind: 'window', role: 'editor' })
-    const preload = path.join(repo, 'core', 'dist', 'mount-preload.js')
-    const answered = await app.evaluate(async ({ BrowserWindow, session }, mountPreload) => {
+    const preload = path.join(repo, 'core', 'dist', 'editor-preload.js')
+    const answered = await app.evaluate(async ({ BrowserWindow, session }, editorPreload) => {
       const window = new BrowserWindow({
         show: false,
         webPreferences: {
           session: session.fromPartition('hetu-editor'), sandbox: true, contextIsolation: true,
-          preload: mountPreload,
+          preload: editorPreload,
         },
       })
       await window.loadURL('hetu://editor/')

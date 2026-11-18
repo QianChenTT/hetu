@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accepts, DragGesture, fraction, splitSizes, zoneAt } from '../frontend/mount/drag.ts'
+import { accepts, DragGesture, fraction, splitSizes, zoneAt } from '../frontend/editor/drag.ts'
 
 const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height })
 

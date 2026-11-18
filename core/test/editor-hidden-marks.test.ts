@@ -1,7 +1,7 @@
 import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
-import { hiddenMarks, markdownSupport } from '../frontend/mount/hidden-marks.ts'
+import { hiddenMarks, markdownSupport } from '../frontend/editor/hidden-marks.ts'
 
 function marksOf(text: string): Mark[] {
   const state = EditorState.create({ doc: text, extensions: [markdownSupport()] })

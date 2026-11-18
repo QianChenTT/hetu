@@ -6,7 +6,7 @@ import { capabilityKey, folderCapabilities, folderCapability, screenText, type C
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from '../../api/floor.ts'
-import { firstPartyIds, installIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { firstPartyIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
@@ -21,7 +21,7 @@ export const MAX_LISTED = 256
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 
-const installId = z.enum(installIds)
+const installId = z.enum(corePluginIds)
 const firstPartyId = z.enum(firstPartyIds)
 // An id some plugin can hold: an install or first-party id, or one the reserved list leaves to community plugins. The
 // namespaces the core serves, cache included, name no plugin
