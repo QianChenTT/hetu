@@ -74,10 +74,10 @@ async function install(): Promise<string> {
   const source = await temp()
   await writeFolder(source, { 'src/host.ts': hello })
   const built = await buildHost(source, 'src/host.ts', ['fs'])
-  const root = path.join(dir, 'plugins', 'http')
-  const manifest = { id: 'http', name: 'http', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['fs'], provides: { actions: { hello: { from: ['caller'] }, hang: { from: ['caller'] }, flood: { from: ['caller'] } } } }
+  const root = path.join(dir, 'plugins', 'mcp-http-handler')
+  const manifest = { id: 'mcp-http-handler', name: 'mcp-http-handler', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['fs'], provides: { actions: { hello: { from: ['caller'] }, hang: { from: ['caller'] }, flood: { from: ['caller'] } } } }
   await writeFolder(root, { 'hetu-plugin.json': `${JSON.stringify(manifest, null, 2)}\n`, 'dist/host.js': built.text })
-  list.plugins.http = { path: 'plugins/http', version: '1.0.0', hash: hashFiles(await readFiles(root)) }
+  list.plugins['mcp-http-handler'] = { path: 'plugins/mcp-http-handler', version: '1.0.0', hash: hashFiles(await readFiles(root)) }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
   return dir
 }
@@ -89,15 +89,15 @@ async function data(more: Record<string, number> = {}, switches: Partial<Switche
   const store = new StateStore(dataDir)
   await store.writeSwitches({
     ...defaultSwitches(),
-    limits: { all: {}, plugins: { http: { heartbeatMs: 300, heartbeatMisses: 2, messagesPerSecond: 10, floodMs: 1000, ...more } } },
+    limits: { all: {}, plugins: { 'mcp-http-handler': { heartbeatMs: 300, heartbeatMisses: 2, messagesPerSecond: 10, floodMs: 1000, ...more } } },
     ...switches,
   })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': caller })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const root = path.join(dataDir, 'plugins', 'caller')
-  const granted = [{ type: 'plugin.call' as const, targets: ['http'] }]
-  await writeFolder(root, filesFor(workerManifest('caller', { requires: ['http'], capabilities: granted }), { 'worker.js': built!.text }))
+  const granted = [{ type: 'plugin.call' as const, targets: ['mcp-http-handler'] }]
+  await writeFolder(root, filesFor(workerManifest('caller', { requires: ['mcp-http-handler'], capabilities: granted }), { 'worker.js': built!.text }))
   await store.writePlugin('caller', await entryFor(root, { granted }))
   return dataDir
 }
@@ -116,7 +116,7 @@ async function started(
 }
 
 const call = <T>(worker: Worker, action: string) =>
-  worker.evaluate(`globalThis.ctx.call('http', '${action}', {})`) as Promise<T>
+  worker.evaluate(`globalThis.ctx.call('mcp-http-handler', '${action}', {})`) as Promise<T>
 
 const alive = (pid: number) => {
   try {
@@ -139,9 +139,9 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
 describe('a utility half', () => {
   it('answers a call as the core names it, the host half of http, and is told no data folder and none of main\'s environment', async () => {
     const { worker, dataDir } = await started()
-    expect(await logged(dataDir, 'plugin.started', { plugin: 'http' })).toBe(true)
+    expect(await logged(dataDir, 'plugin.started', { plugin: 'mcp-http-handler' })).toBe(true)
     const facts = await call<Facts>(worker, 'hello')
-    expect(facts.self).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
+    expect(facts.self).toEqual({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 })
     expect(facts.dataDir).toBe(null)
     expect(facts.envNames).toEqual([...Object.keys(baseEnv()), ...notFromMain].sort())
     expect(facts.envText).not.toContain(dataDir)
@@ -154,7 +154,7 @@ describe('a utility half', () => {
     const { worker, editor, dataDir } = await started()
     const { pid } = await call<Facts>(worker, 'hello')
     expect(await call<string>(worker, 'hang')).toBe('hanging')
-    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'http', reason: 'unresponsive' }))
+    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'mcp-http-handler', reason: 'unresponsive' }))
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
   })
@@ -166,18 +166,18 @@ describe('a utility half', () => {
   it('has its way closed for a flood, reads crashed and starts again on core.restart from the trusted window alone', async () => {
     const { app, worker, editor, dataDir } = await started({ floodFactor: 2 })
     const { pid } = await call<Facts>(worker, 'hello')
-    const answer = await worker.evaluate(`globalThis.ctx.call('http', 'flood', {}).then(value => ({ value }), error => ({ refused: error.code }))`)
+    const answer = await worker.evaluate(`globalThis.ctx.call('mcp-http-handler', 'flood', {}).then(value => ({ value }), error => ({ refused: error.code }))`)
     expect(answer).toHaveProperty('refused')
-    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'http', reason: 'flood' }))
+    await until(() => logged(dataDir, 'plugin.crashed', { plugin: 'mcp-http-handler', reason: 'flood' }))
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
-    expect(await ask(editor, 'core.restart', { plugin: 'http' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await ask(editor, 'core.restart', { plugin: 'mcp-http-handler' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
     expect((await ask(editor, 'security.open')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
     // Past the trusted window's input delay, inside which a request counts for nothing
     await new Promise(resolve => setTimeout(resolve, 2000))
-    expect((await ask(trusted, 'core.restart', { plugin: 'http' })).ok).toBe(true)
-    await until(async () => (await records(dataDir)).filter(record => record.event === 'plugin.started' && record.plugin === 'http').length === 2)
+    expect((await ask(trusted, 'core.restart', { plugin: 'mcp-http-handler' })).ok).toBe(true)
+    await until(async () => (await records(dataDir)).filter(record => record.event === 'plugin.started' && record.plugin === 'mcp-http-handler').length === 2)
   })
 
   // Lowered from 50 to 10 a second through the trusted window while the caller keeps 8 calls in flight for 6 s. Paced
@@ -190,7 +190,7 @@ describe('a utility half', () => {
     const trusted = await pageAt(app, 'hetu://trusted/')
     // Past the trusted window's input delay, inside which a request counts for nothing
     await new Promise(resolve => setTimeout(resolve, 2000))
-    const change = { kind: 'limit.set', constant: 'messagesPerSecond', value: 10, plugin: 'http' }
+    const change = { kind: 'limit.set', constant: 'messagesPerSecond', value: 10, plugin: 'mcp-http-handler' }
     expect(await ask(trusted, 'security.request', { change })).toMatchObject({ ok: true, result: { applied: true } })
     const load = await worker.evaluate(`(async () => {
       const end = Date.now() + 6000
@@ -199,7 +199,7 @@ describe('a utility half', () => {
       const one = async () => {
         while (Date.now() < end) {
           try {
-            await globalThis.ctx.call('http', 'hello', {})
+            await globalThis.ctx.call('mcp-http-handler', 'hello', {})
             answered++
           } catch (error) {
             refused.push(error.code)
@@ -212,7 +212,7 @@ describe('a utility half', () => {
     })()`) as { answered: number, refused: string[] }
     expect(load.refused).toEqual([])
     expect(load.answered).toBeGreaterThan(0)
-    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'http' })).toBe(false)
+    expect(await logged(dataDir, 'plugin.crashed', { plugin: 'mcp-http-handler' })).toBe(false)
     expect(alive(pid)).toBe(true)
   })
 })

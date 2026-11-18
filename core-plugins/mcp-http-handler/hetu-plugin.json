@@ -1,6 +1,6 @@
 {
-  "id": "http",
-  "name": "HTTP",
+  "id": "mcp-http-handler",
+  "name": "MCP HTTP handler",
   "version": "0.1.0",
   "api": "^3",
   "entries": { "host": "dist/host.js" },

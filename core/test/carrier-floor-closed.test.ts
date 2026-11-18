@@ -18,13 +18,13 @@ describe('the floor\'s core branch', () => {
     const seen: Call[] = []
     const { carrier, connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
     loader.slots.gate = state
-    loader.utility('http')
+    loader.utility('mcp-http-handler')
     loader.sandboxed('search')
     loader.installed('watchdog')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const replies = [
       await connect(worker('search')).ask('core.ghost'),
-      await connect(host('http')).ask('core.ghost'),
+      await connect(host('mcp-http-handler')).ask('core.ghost'),
       await hostHalf(carrier, host('watchdog')).ask('core.ghost'),
       await way.ask('editor-1', 'core.ghost'),
       await way.ask('trusted', 'core.ghost'),

@@ -26,7 +26,7 @@ class FakeParent extends EventEmitter {
 }
 
 const limits: RelayLimits = { messagesPerSecond: 200, floodFactor: 10, floodMs: 5000, bytesPerSecond: 4096, resultBytes: 1024 }
-const init = JSON.stringify({ v: 1, kind: 'init', id: 'http', incarnation: 1, api: 2, deps: {}, lastStop: null, previousVersion: null })
+const init = JSON.stringify({ v: 1, kind: 'init', id: 'mcp-http-handler', incarnation: 1, api: 2, deps: {}, lastStop: null, previousVersion: null })
 const code = Buffer.from('the bytes the loader hashed').toString('base64')
 
 function child(module: unknown = { default: definePlugin({ start() {} }) }) {

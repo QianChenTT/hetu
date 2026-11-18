@@ -49,7 +49,7 @@ export const change = z.discriminatedUnion('kind', [
     value: z.int().positive(),
     plugin: pluginId.nullable(),
   }).refine(set => !timeConstants.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
-  // Every item of one agent's grant goes at once and the label is kept as revoked until http says it ended its tokens
+  // Every item of one agent's grant goes at once and the label is kept as revoked until mcp-http-handler says it ended its tokens
   z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
@@ -111,7 +111,7 @@ export function connectLabel(connect: { client: string, number: number }): strin
   return `${connect.client}#${connect.number}`
 }
 
-// A client's connect through http's door the core raises alone from core.agentConnect, never one security.request
+// A client's connect through mcp-http-handler's door the core raises alone from core.agentConnect, never one security.request
 // carries. client is the client id, clientHost its host when it is a URL with one and null otherwise, name the one its
 // document gives or null, redirect where the client gets its answer and redirectHost that address's host. The core
 // took both hosts. number is the authorization's, which with the client id makes the label. A Confirm changes no state
@@ -185,10 +185,10 @@ export function lapseOf(change: Change): number | null {
 }
 
 // The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
-// is for an agent of the agent host that http's door named, a connect is http's to collect
+// is for an agent of the agent host that mcp-http-handler's door named, a connect is mcp-http-handler's to collect
 export function withdrawnWith(change: Change): readonly string[] {
   if (change.kind === 'agent.connect') return [agentDoor.plugin]
-  return change.kind === 'agent.ask' ? [change.plugin, 'http'] : []
+  return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
 }
 
 // What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to

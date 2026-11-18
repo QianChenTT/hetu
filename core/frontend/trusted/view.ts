@@ -45,13 +45,13 @@ export type Screen = {
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
 const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s install'
-// What the agent list holds and what it can't: the core keeps the label and the items, http the client's name and the tokens
-const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s'
+// What the agent list holds and what it can't: the core keeps the label and the items, mcp-http-handler the client's name and the tokens
+const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s'
 
 // An agent's label in quotes as data, then its items, or that it is revoked
 function agentRow(agent: ListedAgent): AgentRow {
   const label = JSON.stringify(agent.agent)
-  if (agent.revoked) return { label, line: ' · revoked, its tokens end once http hears', change: null }
+  if (agent.revoked) return { label, line: ' · revoked, its tokens end once mcp-http-handler hears', change: null }
   return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'agent.revoke', agent: agent.agent } }
 }
 

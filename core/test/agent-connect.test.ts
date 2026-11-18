@@ -23,7 +23,7 @@ const words = (over: Partial<typeof asked> | { name: string | null } = {}) => de
 
 describe('the agent.connect kind', () => {
   const connect: AgentConnect = {
-    kind: 'agent.connect', plugin: 'http', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
+    kind: 'agent.connect', plugin: 'mcp-http-handler', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
     redirectHost: 'localhost:33418', number: 3,
   }
 
@@ -38,7 +38,7 @@ describe('the agent.connect kind', () => {
     expect(changeEffect(connect)).toBe('widens')
     expect(mustType(connect)).toBeNull()
     expect(lapseOf(connect)).toBe(60_000)
-    expect(withdrawnWith(connect)).toEqual(['http'])
+    expect(withdrawnWith(connect)).toEqual(['mcp-http-handler'])
   })
 
   it('makes the label from the client id and the number in the agent label\'s form', () => {
@@ -60,7 +60,7 @@ describe('the agent.connect kind', () => {
 describe('the connect as the core builds it from what http sends', () => {
   it('takes the host of a client id that is a URL and of the redirect, with the port where one is named', () => {
     expect(built()).toEqual({
-      kind: 'agent.connect', plugin: 'http', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
+      kind: 'agent.connect', plugin: 'mcp-http-handler', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
       redirectHost: 'localhost:33418', number: 3,
     })
     expect(built({ client: 'https://Claude.AI:443/doc?x=1', redirect: 'http://[::1]:5000/cb' })).toMatchObject({ clientHost: 'claude.ai', redirectHost: '[::1]:5000' })
@@ -156,7 +156,7 @@ describe('the words of a connect', () => {
 const read: Capability = { type: 'luoshu.read', paths: ['**'] }
 const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
-const door: Caller = { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }
+const door: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
 const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 const LABEL = `${CLAUDE}#3`
@@ -170,7 +170,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const made = await harness({
     install: {
       ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true },
-      http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+      'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
@@ -198,13 +198,13 @@ describe('a connect http asks for', () => {
     const { loader, connect, list, link, first } = await started()
     const handle = await connect()
     expect(handle).toMatch(/^[A-Za-z0-9_-]{32}$/)
-    expect(loader.pending()).toEqual([{ id: first(), kind: 'agent.connect', plugin: 'http' }])
+    expect(loader.pending()).toEqual([{ id: first(), kind: 'agent.connect', plugin: 'mcp-http-handler' }])
     expect(handle).not.toBe(first())
     const shown = (await list()).requests[0]!
     expect(shown.text).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${LABEL}"`)
     expect(shown.agent).toBe(LABEL)
     expect(shown.type).toBeNull()
-    expect(link.events('security.request')).toMatchObject([{ kind: 'agent.connect', target: 'http', window: 'core' }])
+    expect(link.events('security.request')).toMatchObject([{ kind: 'agent.connect', target: 'mcp-http-handler', window: 'core' }])
   })
 
   it('makes each handle afresh and never from what http sent', async () => {

@@ -71,7 +71,7 @@ describe('what the trusted window draws', () => {
 
   // A utility half stops and restarts within a run, so a human who freed the port it failed on brings it back here
   it('offers a utility half Stop while it runs and Restart once it stopped, crashed or failed, drawing why', () => {
-    const http = (over: Partial<ListedPlugin>) => plugin({ id: 'http', from: 'install', place: 'utility', class: null, ...over })
+    const http = (over: Partial<ListedPlugin>) => plugin({ id: 'mcp-http-handler', from: 'install', place: 'utility', class: null, ...over })
     const actions = (over: Partial<ListedPlugin>) => screen(calm({ plugins: [http(over)] })).plugins[0].actions
     expect(actions({})).toEqual(['switch-off', 'stop', 'reset'])
     expect(actions({ state: 'starting' })).toEqual(['switch-off', 'stop', 'reset'])
@@ -80,7 +80,7 @@ describe('what the trusted window draws', () => {
     expect(actions({ state: 'stopped', reason: 'human' })).toEqual(['switch-off', 'restart', 'reset'])
     expect(actions({ on: false, state: 'off' })).toEqual(['switch-on', 'reset'])
     const drawn = screen(calm({ plugins: [http({ state: 'failed', reason: 'port-taken' })] }))
-    expect(drawn.plugins[0].line).toBe('http · ships with hetu · utility · failed (port-taken)')
+    expect(drawn.plugins[0].line).toBe('mcp-http-handler · ships with hetu · utility · failed (port-taken)')
   })
 
   it('lists a plugin’s items with their switches and says when one switched off is still reached through another', () => {
@@ -191,7 +191,7 @@ describe('what the trusted window draws', () => {
   it('draws a connect from the core\'s words, the label it gets apart at the heading\'s end, with Confirm and Cancel alone', () => {
     const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'
     const connect = describeChange(connectChange({ client: label.slice(0, -2), name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 })!)
-    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'http', notes: connect.notes, type: null, text: connect.text, agent: label }
+    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'mcp-http-handler', notes: connect.notes, type: null, text: connect.text, agent: label }
     const drawn = screen(calm({ requests: [held] })).request!
     expect(drawn.heading).toEqual([
       { text: 'Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent ', label: false },
@@ -203,7 +203,7 @@ describe('what the trusted window draws', () => {
 
   it('draws apart the label at a connect\'s end and not a name that reads as the label', () => {
     const connect = describeChange(connectChange({ client: 'client', name: 'client#3', redirect: 'http://127.0.0.1:5000/cb', number: 3 })!)
-    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'http', notes: [], type: null, text: connect.text, agent: 'client#3' }
+    const held: HeldRequest = { id: 'r1', kind: 'agent.connect', plugin: 'mcp-http-handler', notes: [], type: null, text: connect.text, agent: 'client#3' }
     expect(screen(calm({ requests: [held] })).request!.heading).toEqual([
       { text: 'Connect the client "client" named "client#3", which returns to "127.0.0.1:5000", as the agent ', label: false },
       { text: '"client#3"', label: true },
@@ -252,9 +252,9 @@ describe('what the trusted window draws', () => {
     expect(drawn.agents).toEqual({
       rows: [
         { label: '"client#1"', line: ' · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'agent.revoke', agent: 'client#1' } },
-        { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' · revoked, its tokens end once http hears', change: null },
+        { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' · revoked, its tokens end once mcp-http-handler hears', change: null },
       ],
-      about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are http’s to know, not this list’s',
+      about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s',
     })
     expect(screen(calm()).agents.rows).toEqual([])
   })

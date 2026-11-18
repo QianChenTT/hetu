@@ -16,8 +16,8 @@ function plugins(over: Partial<CarrierOptions> = {}) {
   const { loader, gate, connect } = parts
   loader.sandboxed('search', { query: {} })
   loader.sandboxed('mcp', { handle: {} })
-  gate.grants.http = [{ type: 'plugin.call', targets: ['mcp', 'search'] }]
-  return { ...parts, http: connect(worker('http')), mcp: connect(worker('mcp')), search: connect(worker('search')) }
+  gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp', 'search'] }]
+  return { ...parts, http: connect(worker('mcp-http-handler')), mcp: connect(worker('mcp')), search: connect(worker('search')) }
 }
 
 // What the core's writer put in the log as audit.call lines, once the queue is flushed
@@ -39,11 +39,11 @@ function answering(side: Side) {
 describe('audit records', () => {
   it('writes one audit.call line per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
     const { carrier, connect, gate, loader, log } = harness()
-    loader.utility('http')
+    loader.utility('mcp-http-handler')
     loader.sandboxed('mcp', { handle: {} })
-    gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
+    gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp'] }]
     gate.grants.mcp = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    const http = connect(host('http'))
+    const http = connect(host('mcp-http-handler'))
     const mcp = connect(worker('mcp'))
     const id = http.call('mcp.handle', { prompt: 'secret prompt' }, { onBehalf: 'agent-a#1' })
     const parent = await mcp.delivered('mcp.handle')
@@ -54,10 +54,10 @@ describe('audit records', () => {
     const records = await written(carrier, log)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
-      caller: 'mcp/worker#1', onBehalf: 'agent-a#1', root: 'http/host#1', action: 'luoshu.write',
+      caller: 'mcp/worker#1', onBehalf: 'agent-a#1', root: 'mcp-http-handler/host#1', action: 'luoshu.write',
       paths: '["notes/a.md"]', pathCount: 1, code: null, gate: 'on', count: 1,
     })
-    expect(records[1]).toMatchObject({ caller: 'http/host#1', root: 'http/host#1', action: 'mcp.handle', target: 'mcp', code: null })
+    expect(records[1]).toMatchObject({ caller: 'mcp-http-handler/host#1', root: 'mcp-http-handler/host#1', action: 'mcp.handle', target: 'mcp', code: null })
     expect(typeof records[0].ms).toBe('number')
     const text = JSON.stringify(log.records)
     for (const secret of ['secret prompt', 'secret note text', 'secret result']) expect(text).not.toContain(secret)
@@ -87,7 +87,7 @@ describe('audit records', () => {
 
   it('names onBehalf and the root of a live parent for a call refused before the ceiling took it', async () => {
     const { carrier, http, mcp, loader, log } = plugins()
-    loader.human.plugins.http = { callsInFlight: 1 }
+    loader.human.plugins['mcp-http-handler'] = { callsInFlight: 1 }
     http.call('mcp.handle', {}, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
     // The parent's label, which a call under it can't set
@@ -97,9 +97,9 @@ describe('audit records', () => {
     expect(code(await mcp.ask('core.self', undefined, under))).toBe('throttled')
     const refused = (await written(carrier, log)).filter(record => record.code !== null)
     expect(refused.map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])).toEqual([
-      ['luoshu.read', 'invalid', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
-      ['security.request', 'not-granted', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
-      ['core.self', 'throttled', 'mcp/worker#1', 'http/worker#1', 'agent-a'],
+      ['luoshu.read', 'invalid', 'mcp/worker#1', 'mcp-http-handler/worker#1', 'agent-a'],
+      ['security.request', 'not-granted', 'mcp/worker#1', 'mcp-http-handler/worker#1', 'agent-a'],
+      ['core.self', 'throttled', 'mcp/worker#1', 'mcp-http-handler/worker#1', 'agent-a'],
     ])
   })
 
@@ -299,7 +299,7 @@ describe('audit records', () => {
     await mcp.ask('core.self', undefined, { parent: parent.callId })
     await mcp.ask('core.self')
     const selves = (await written(carrier, log)).filter(record => record.action === 'core.self')
-    expect(selves.map(record => [record.root, record.count])).toEqual([['http/worker#1', 1], ['mcp/worker#1', 1]])
+    expect(selves.map(record => [record.root, record.count])).toEqual([['mcp-http-handler/worker#1', 1], ['mcp/worker#1', 1]])
   })
 
   it('keeps calls under different gate states apart', async () => {
@@ -598,8 +598,8 @@ describe('the floor lane', () => {
   // reason a second
   it('writes the refusals http reports as http.refused, at most two records a reason a second whose counts add up', async () => {
     const { carrier, connect, loader, log } = harness()
-    loader.utility('http')
-    const http = connect(host('http'))
+    loader.utility('mcp-http-handler')
+    const http = connect(host('mcp-http-handler'))
     const reasons = ['host', 'origin', 'token']
     const sent: Record<string, number> = {}
     const asked = Array.from({ length: 1000 }, (_, i) => {

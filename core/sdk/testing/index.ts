@@ -213,7 +213,7 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
 
 // A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the luoshu, storage and
 // cache in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin runs on it
-// at a time, placed as the loader would place it: http's host entry in a utility process on a port
+// at a time, placed as the loader would place it: mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
   readonly mode: FakeMode
   readonly floor: { event: string, fields: Record<string, Field> }[] = []

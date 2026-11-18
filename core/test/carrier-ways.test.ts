@@ -119,13 +119,13 @@ describe('ports bound by closure', () => {
   // Everything heard from a utility half counts as its liveness, so one held over its rate is never read as hung
   it('tells the loader it heard http\'s utility half for every message before the rate, dropped and unreadable ones too', async () => {
     const { connect, loader } = harness()
-    loader.utility('http')
-    loader.human.plugins.http = { messagesPerSecond: 2, floodFactor: 1000 }
-    const http = connect(host('http'))
+    loader.utility('mcp-http-handler')
+    loader.human.plugins['mcp-http-handler'] = { messagesPerSecond: 2, floodFactor: 1000 }
+    const http = connect(host('mcp-http-handler'))
     const posted = [{ v: 1, kind: 'pong' }, { v: 1, kind: 'pong' }, { v: 1, kind: 'pong' }, 'not an envelope', { v: 2, kind: 'pong' }, null, { v: 1, kind: 'pong' }]
     for (const message of posted) http.post(message)
     await tick(30)
-    const kinds = loader.lifecycle.filter(entry => entry.caller.kind === 'plugin' && entry.caller.id === 'http').map(entry => entry.kind)
+    const kinds = loader.lifecycle.filter(entry => entry.caller.kind === 'plugin' && entry.caller.id === 'mcp-http-handler').map(entry => entry.kind)
     expect(kinds.filter(kind => kind === 'alive')).toHaveLength(posted.length)
     // Only the two within the rate were read
     expect(kinds.filter(kind => kind === 'pong')).toHaveLength(2)
@@ -135,12 +135,12 @@ describe('ports bound by closure', () => {
 
   it('tells the loader nothing more for a worker, http\'s own worker or a host half on a handle', async () => {
     const { carrier, connect, loader } = harness()
-    loader.utility('http')
+    loader.utility('mcp-http-handler')
     loader.sandboxed('search')
     loader.installed('watchdog')
     loader.human.all = { messagesPerSecond: 2, floodFactor: 1000 }
     const watchdog = hostHalf(carrier, host('watchdog'))
-    const posts = [connect(worker('search')), connect(worker('http')), { post: watchdog.handle.post }]
+    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: watchdog.handle.post }]
     for (const half of posts) for (let i = 0; i < 4; i++) half.post({ v: 1, kind: 'pong' })
     await tick(30)
     expect(loader.lifecycle.filter(entry => entry.kind === 'alive')).toEqual([])
@@ -149,26 +149,26 @@ describe('ports bound by closure', () => {
 
   it('still closes a utility half past its flood cap as flood, though it was heard', async () => {
     const { connect, loader } = harness()
-    loader.utility('http')
-    loader.human.plugins.http = { messagesPerSecond: 2, floodFactor: 2, floodMs: 1000 }
-    const http = connect(host('http'))
+    loader.utility('mcp-http-handler')
+    loader.human.plugins['mcp-http-handler'] = { messagesPerSecond: 2, floodFactor: 2, floodMs: 1000 }
+    const http = connect(host('mcp-http-handler'))
     for (let i = 0; i < 6; i++) http.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.crashes).toEqual([{ caller: host('http'), reason: 'flood' }])
+    expect(loader.crashes).toEqual([{ caller: host('mcp-http-handler'), reason: 'flood' }])
   })
 
   it('counts and reads a utility half\'s message when the loader throws as it hears it', async () => {
     const { connect, loader } = harness()
-    loader.utility('http')
+    loader.utility('mcp-http-handler')
     loader.heard = (caller, kind) => {
       if (kind === 'alive') throw new Error('loader gone')
       loader.lifecycle.push({ caller, kind })
     }
-    const http = connect(host('http'))
-    expect((await http.ask('core.self')).result).toEqual(host('http'))
+    const http = connect(host('mcp-http-handler'))
+    expect((await http.ask('core.self')).result).toEqual(host('mcp-http-handler'))
     http.post({ v: 1, kind: 'pong' })
     await tick(30)
-    expect(loader.lifecycle).toEqual([{ caller: host('http'), kind: 'pong' }])
+    expect(loader.lifecycle).toEqual([{ caller: host('mcp-http-handler'), kind: 'pong' }])
   })
 
   it('drops a message of another version or kind unread, with no reply', async () => {

@@ -302,7 +302,7 @@ describe('size caps', () => {
 
 // The loader looks names up in these maps, so an action or frame the author never declared must find nothing
 describe('the parsed maps', () => {
-  const declared = { ...minimal, entries: { frames: { panel: 'p.html' } }, provides: { actions: { query: { from: ['http'] } } } }
+  const declared = { ...minimal, entries: { frames: { panel: 'p.html' } }, provides: { actions: { query: { from: ['mcp-http-handler'] } } } }
 
   it.each(both)('come out of the %s with no prototype', (_from, schema) => {
     const parsed = schema.parse(declared)
@@ -312,15 +312,15 @@ describe('the parsed maps', () => {
       expect(map.constructor).toBeUndefined()
       expect('hasOwnProperty' in map).toBe(false)
     }
-    expect(parsed.provides!.actions!.query).toEqual({ from: ['http'] })
+    expect(parsed.provides!.actions!.query).toEqual({ from: ['mcp-http-handler'] })
     expect(parsed.entries.frames!.panel).toBe('p.html')
   })
 
   it.each(both)('keep an action from the %s named like a member of Object as only that action', (_from, schema) => {
-    const parsed = schema.parse({ ...minimal, provides: { actions: { hasOwnProperty: { from: ['http'] }, toString: {} } } })
+    const parsed = schema.parse({ ...minimal, provides: { actions: { hasOwnProperty: { from: ['mcp-http-handler'] }, toString: {} } } })
     const actions = parsed.provides!.actions! as Record<string, unknown>
     expect(Object.keys(actions)).toEqual(['hasOwnProperty', 'toString'])
-    expect(actions.hasOwnProperty).toEqual({ from: ['http'] })
+    expect(actions.hasOwnProperty).toEqual({ from: ['mcp-http-handler'] })
     expect(actions.valueOf).toBeUndefined()
   })
 })

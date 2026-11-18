@@ -1,5 +1,5 @@
 {
-  "name": "hetu-plugin-http",
+  "name": "hetu-plugin-mcp-http-handler",
   "private": true,
   "version": "0.1.0",
   "type": "module",

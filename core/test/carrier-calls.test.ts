@@ -13,11 +13,11 @@ function plugins(over: Partial<CarrierOptions> = {}) {
   const { loader, gate, connect } = parts
   loader.sandboxed('search', { query: {} })
   loader.sandboxed('git', { log: {} })
-  loader.sandboxed('scribe', { handle: { from: ['http'] } })
-  gate.grants.http = [{ type: 'plugin.call', targets: ['scribe'] }]
+  loader.sandboxed('scribe', { handle: { from: ['mcp-http-handler'] } })
+  gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['scribe'] }]
   gate.grants.scribe = [{ type: 'plugin.call', targets: ['search', 'git'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
   gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }, { type: 'luoshu.read', paths: ['notes/**', 'private/**'] }]
-  return { ...parts, http: connect(worker('http')), scribe: connect(worker('scribe')), search: connect(worker('search')), git: connect(worker('git')) }
+  return { ...parts, http: connect(worker('mcp-http-handler')), scribe: connect(worker('scribe')), search: connect(worker('search')), git: connect(worker('git')) }
 }
 
 // The delivery a callee got for the nth call of an action
@@ -38,7 +38,7 @@ describe('plugin.call', () => {
     const id = http.call('scribe.handle', { tool: 'read' }, { onBehalf: 'https://client.example/agent-a' })
     const got = await scribe.delivered('scribe.handle')
     expect(delivery.safeParse(got).success).toBe(true)
-    expect(got).toMatchObject({ caller: worker('http'), onBehalf: 'https://client.example/agent-a', args: { tool: 'read' } })
+    expect(got).toMatchObject({ caller: worker('mcp-http-handler'), onBehalf: 'https://client.example/agent-a', args: { tool: 'read' } })
     expect(got.deadline).toBeGreaterThanOrEqual(started + 30000)
     expect(got.deadline).toBeLessThan(started + 31000)
     scribe.answer(got.callId, { ok: 1 })
@@ -204,7 +204,7 @@ describe('parent', () => {
 
   it('shrinks the deadline along parent', async () => {
     const { http, scribe, git, loader } = plugins()
-    loader.human.plugins.http = { callDeadlineMs: 5000 }
+    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
     http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     scribe.call('git.log', undefined, { parent: parent.callId })
@@ -266,7 +266,7 @@ describe('parent', () => {
   it('refuses a sub-call under a parent already past its deadline', async () => {
     let clock = 1_000_000
     const { http, scribe, git, loader } = plugins({ clock: () => clock })
-    loader.human.plugins.http = { callDeadlineMs: 5000 }
+    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 5000 }
     http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     clock += 5000
@@ -278,7 +278,7 @@ describe('parent', () => {
 describe('deadlines and cancel', () => {
   it('times a call out, cancels its sub-calls and drops their late replies', async () => {
     const { http, scribe, git, loader } = plugins()
-    loader.human.plugins.http = { callDeadlineMs: 80 }
+    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 80 }
     const id = http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     const sub = scribe.call('git.log', undefined, { parent: parent.callId })
@@ -348,7 +348,7 @@ describe('deadlines and cancel', () => {
 
   it('frees the root caller\'s ceiling once the answered call\'s sub-calls are cancelled', async () => {
     const { http, scribe, loader } = plugins()
-    loader.human.plugins.http = { callsInFlight: 2 }
+    loader.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
     const id = http.call('scribe.handle')
     const parent = await scribe.delivered('scribe.handle')
     scribe.call('git.log', undefined, { parent: parent.callId })
@@ -424,7 +424,7 @@ describe('deadlines and cancel', () => {
   // Past the longest delay a timer takes, Node would fire the timer at once
   it('holds a deadline raised past the longest timer to the longest timer', async () => {
     const { http, scribe, loader } = plugins()
-    loader.human.plugins.http = { callDeadlineMs: 30 * 24 * 3600 * 1000 }
+    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 30 * 24 * 3600 * 1000 }
     const id = http.call('scribe.handle')
     const got = await scribe.delivered('scribe.handle')
     await tick(50)

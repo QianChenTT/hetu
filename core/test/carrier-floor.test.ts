@@ -298,8 +298,8 @@ describe('the floor', () => {
   it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
     const { carrier, connect, loader, gate, log } = harness()
     loader.slots.gate = state
-    loader.utility('http')
-    const http = connect(host('http'))
+    loader.utility('mcp-http-handler')
+    const http = connect(host('mcp-http-handler'))
     expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
     expect(gate.asked).toEqual([])
     carrier.close()
@@ -311,9 +311,9 @@ describe('the floor', () => {
     const seen: Call[] = []
     const { connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
     loader.slots.gate = state
-    loader.utility('http')
-    expect(await connect(host('http')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
-    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('http'), args: { reason: 'port-taken' } }])
+    loader.utility('mcp-http-handler')
+    expect(await connect(host('mcp-http-handler')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
+    expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('mcp-http-handler'), args: { reason: 'port-taken' } }])
     expect(gate.asked).toEqual([])
   })
 
@@ -324,19 +324,19 @@ describe('the floor', () => {
     const seen: Call[] = []
     const { carrier, connect, loader, gate, log } = harness({ core: async call => { seen.push(call); return null } })
     loader.slots.gate = state
-    loader.utility('http')
+    loader.utility('mcp-http-handler')
     loader.sandboxed('search')
     loader.installed('exec')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const callers = [
       // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
       connect(worker('search')),
-      connect(worker('http')),
+      connect(worker('mcp-http-handler')),
       // Another plugin's host half, on a port and on an in-process handle
       connect(host('exec')),
       hostHalf(carrier, host('exec', 2)),
       // http's host half on a handle, which no utility half is ever given
-      hostHalf(carrier, host('http')),
+      hostHalf(carrier, host('mcp-http-handler')),
     ]
     for (const [action, args] of doorActions) {
       const refused = [
@@ -356,11 +356,11 @@ describe('the floor', () => {
   it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
     const seen: Call[] = []
     const { carrier, connect, loader, log } = harness({ core: async call => { seen.push(call); return null } })
-    loader.installed('http')
-    const placedHost = connect(host('http'))
+    loader.installed('mcp-http-handler')
+    const placedHost = connect(host('mcp-http-handler'))
     for (const [action, args] of doorActions) expect(code(await placedHost.ask(action, args))).toBe('not-granted')
-    delete loader.plugins.http
-    const unknown = connect(host('http', 2))
+    delete loader.plugins['mcp-http-handler']
+    const unknown = connect(host('mcp-http-handler', 2))
     for (const [action, args] of doorActions) expect(code(await unknown.ask(action, args))).toBe('not-granted')
     expect(seen).toEqual([])
     carrier.close()

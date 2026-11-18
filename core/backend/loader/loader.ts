@@ -202,7 +202,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
 // Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
-  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'http', 'hidden-marks',
+  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'mcp-http-handler', 'hidden-marks',
 ] as const)
 
 const FOLDER_RANK = 1000
@@ -355,7 +355,7 @@ export class Loader implements Seam {
   private readonly declinedAsks = new Set<string>()
   // Agents whose ask the human cancelled, by label, with the time from which each may ask again
   private readonly askPaused = new Map<string, number>()
-  // The connects http asks for: the one waiting, the answers not yet collected and the client ids paused
+  // The connects mcp-http-handler asks for: the one waiting, the answers not yet collected and the client ids paused
   private readonly connects: Connects
   private readonly clock: () => number
   // The pass at start has classed every entry, so the grant risk classifier coming up from here on is the human's switch-on
@@ -533,10 +533,10 @@ ${capabilityKey(change.capability)}`)
       // The carrier's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
       case 'core.agentAsk':
         return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
-      // The floor let only http's half on its utility port through
+      // The floor let only mcp-http-handler's half on its utility port through
       case 'core.agents':
         return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
-      // The floor let only http's half on its utility port through. The handle is the core's own, never an argument
+      // The floor let only mcp-http-handler's half on its utility port through. The handle is the core's own, never an argument
       case 'core.agentConnect':
         return { handle: this.connects.ask(args as ConnectAsked) }
       case 'core.agentConnected':
@@ -557,7 +557,7 @@ ${capabilityKey(change.capability)}`)
         else await this.restart(k.id, 'human')
         return null
       }
-      // The calling half alone, which the carrier has checked is http's in its utility process
+      // The calling half alone, which the carrier has checked is mcp-http-handler's in its utility process
       case 'core.bindFailed': {
         const found = this.runOf(call.caller)
         if (found === null) throw { code: 'not-found' }
@@ -954,7 +954,7 @@ ${capabilityKey(change.capability)}`)
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
     const agents = cause === 'copy' ? before?.agents : undefined
-    // A revoked label stays marked either way, until http says it ended the label's tokens
+    // A revoked label stays marked either way, until mcp-http-handler says it ended the label's tokens
     const revoked = before?.revoked
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
@@ -2178,7 +2178,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.agentGrant(change)
       case 'agent.revoke':
         return this.agentRevoke(change.agent)
-      // Hands http its yes and changes no state
+      // Hands mcp-http-handler its yes and changes no state
       case 'agent.connect':
         return this.connects.confirmed(change)
     }
@@ -2193,7 +2193,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       || this.requests.changes().some(({ change }) => change.kind === 'agent.ask' && change.agent === label)
   }
 
-  // Every item of the label goes with its ask waiting, then the label is marked revoked until http says it ended its
+  // Every item of the label goes with its ask waiting, then the label is marked revoked until mcp-http-handler says it ended its
   // tokens, on the entry or in the switches while the agent host has none. Only that label: a label another one begins
   // with keeps its own. A label that holds nothing is marked only when the core saw it ask in this run, its ask waiting
   // or the pause after a Cancel still running, so the human can turn away an agent that only asks and no window can
@@ -2250,7 +2250,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (next !== null) await this.writeSwitches(next)
   }
 
-  // For http, whether each label holds items, holds none or is revoked, after the marks of the labels http heard went.
+  // For mcp-http-handler, whether each label holds items, holds none or is revoked, after the marks of the labels mcp-http-handler heard went.
   // A mark goes only for a label marked, so a heard naming none writes nothing and stales no ask
   private agentsFor(agents: string[], heard: string[]): Promise<ActionResults['core.agents']> {
     return this.serial(async () => {

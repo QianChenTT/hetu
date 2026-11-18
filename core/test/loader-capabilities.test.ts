@@ -898,10 +898,10 @@ describe('the classes at start', () => {
   })
 
   // An install plugin whose topics the listener hears, holding capabilities at version
-  const speaker = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), http: { files: filesFor(hostManifest('http', { version, capabilities })) } })
+  const speaker = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { version, capabilities })) } })
 
   it('asks for the items an app update to an install plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
-    const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('http.done')]) })
+    const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('mcp-http-handler.done')]) })
     const first = await harness({ install: speaker('1.0.0', []), folder: listener() })
     await first.loader.start()
     await approved(first, 'listener')
@@ -910,22 +910,22 @@ describe('the classes at start', () => {
     await first.loader.shutdown()
     const made = await harness({ base: first.base, install: speaker('1.1.0', [read]), folder: listener() })
     await made.loader.start()
-    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('http.done')] })
+    expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('mcp-http-handler.done')] })
   })
 
   // The second start's install and switches, from the first start's folders
   type Next = (first: Made) => Promise<{ install: ReturnType<typeof withCapabilities>, switches?: Partial<Switches> }>
   // http's bytes changed while its list still names the hash the last start recorded
   const tampered: Next = async first => {
-    const recorded = await hashOf(path.join(first.installDir, 'plugins', 'http'))
-    return { install: { ...withCapabilities(), http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'storage' }] })), hash: recorded } } }
+    const recorded = await hashOf(path.join(first.installDir, 'plugins', 'mcp-http-handler'))
+    return { install: { ...withCapabilities(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'storage' }] })), hash: recorded } } }
   }
   it.each([
     ['a new version', async () => ({ install: speaker('1.1.0', []) })],
     ['new bytes under the same version', async () => ({ install: speaker('1.0.0', [{ type: 'storage' }]) })],
     ['an install plugin gone', async () => ({ install: withCapabilities() })],
     ['bytes that differ from the list', tampered],
-    ['dev mode on an install plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['http'] } })],
+    ['dev mode on an install plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['mcp-http-handler'] } })],
     ['skipVerification on', async () => ({ install: speaker('1.0.0', []), switches: { skipVerification: true } })],
   ] as [string, Next][])('keeps a confirmed item that asks only through its links confirmed whatever the install: %s', async (_name, next) => {
     const first = await harness({ install: speaker('1.0.0', []), folder: folder() })
@@ -1237,10 +1237,10 @@ describe('what the human confirmed, recorded in the entry', () => {
   // Five ways an item nobody confirmed read as confirmed at a start, each from an entry at class 4 or
   // null with nothing listed. A listener holds exec the human confirmed, a fetch and a subscription to an install
   // plugin's topic, which an app update makes a reader
-  const listenerGrants = [exec, fetchOne, hears('http.done')]
+  const listenerGrants = [exec, fetchOne, hears('mcp-http-handler.done')]
   const speaker = (version: string, capabilities: Capability[], extra: Partial<Listing> = {}): Listing =>
-    ({ files: filesFor(hostManifest('http', { version, capabilities, provides: { topics: ['done'] } })), ...extra })
-  const installOf = (http: Listing) => ({ ...withCapabilities(), http })
+    ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })), ...extra })
+  const installOf = (http: Listing) => ({ ...withCapabilities(), 'mcp-http-handler': http })
 
   // The first run under the install before the update: the listener at class 4 for exec, which the human confirmed
   async function confirmedExec(base: string, http = speaker('1.0.0', []), switches: Partial<Switches> = {}): Promise<void> {
@@ -1252,7 +1252,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     await closed(made)
   }
   const updated = () => installOf(speaker('1.1.0', [read]))
-  const pairAsks = { class: 4, firstUse: [fetchOne, hears('http.done')] }
+  const pairAsks = { class: 4, firstUse: [fetchOne, hears('mcp-http-handler.done')] }
 
   it('asks once the process died after the install record moved on and before the pass', async () => {
     const base = await tempBase()
@@ -1304,9 +1304,9 @@ describe('what the human confirmed, recorded in the entry', () => {
   it('asks once an install plugin ran in dev mode from bytes that read nothing and dev mode went off', async () => {
     const base = await tempBase()
     const real = speaker('1.0.0', [read])
-    const scratch = path.join(await tempBase(), 'http')
+    const scratch = path.join(await tempBase(), 'mcp-http-handler')
     await writeFolder(scratch, real.files)
-    await confirmedExec(base, speaker('1.0.0', [], { hash: await hashOf(scratch) }), { devMode: ['http'] })
+    await confirmedExec(base, speaker('1.0.0', [], { hash: await hashOf(scratch) }), { devMode: ['mcp-http-handler'] })
     const made = await harness({ base, install: installOf(real) })
     await made.loader.start()
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
@@ -1652,10 +1652,10 @@ describe('a notice owed until the human answers it', () => {
   const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
   const http = (version: string, capabilities: Capability[]): Listing =>
-    ({ files: filesFor(hostManifest('http', { version, capabilities, provides: { topics: ['done'] } })) })
-  const v1 = () => ({ ...withCapabilities(), http: http('1.0.0', []) })
-  const fetches = () => ({ ...withCapabilities(), http: http('1.1.0', [fetchOne]) })
-  const reads = () => ({ ...withCapabilities(), http: http('1.1.0', [read]) })
+    ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })) })
+  const v1 = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.0.0', []) })
+  const fetches = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [read]) })
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
@@ -1676,8 +1676,8 @@ describe('a notice owed until the human answers it', () => {
   }
 
   it.each([
-    ['out of 0', [calls('http')], 0, fetches, 'class 0, Contained', 'class 3, Network'],
-    ['into 4', [fetchOne, hears('http.done')], 3, reads, 'class 3, Network', 'class 4, Powerful'],
+    ['out of 0', [calls('mcp-http-handler')], 0, fetches, 'class 0, Contained', 'class 3, Network'],
+    ['into 4', [fetchOne, hears('mcp-http-handler.done')], 3, reads, 'class 3, Network', 'class 4, Powerful'],
   ] as [string, Capability[], number, () => ReturnType<typeof v1>, string, string][])('raises a notice for a move %s again at a restart nobody answered it in', async (_name, granted, n, second, from, to) => {
     const { base, made } = await updated(granted, n, second)
     expect(await notices(made)).toEqual([notice('p', from, to)])
@@ -1690,7 +1690,7 @@ describe('a notice owed until the human answers it', () => {
 
   it('raises it at the next start when the process died between the class written and the notice', async () => {
     const base = await tempBase()
-    const granted = [calls('http')]
+    const granted = [calls('mcp-http-handler')]
     const one = await harness({ base, install: v1(), folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) } })
     await one.loader.start()
     await closed(one)
@@ -1707,7 +1707,7 @@ describe('a notice owed until the human answers it', () => {
   })
 
   it.each(['confirm', 'cancel'] as const)('clears what is owed once the human answers with %s, so no restart raises it again', async answer => {
-    const { base, made } = await updated([calls('http')], 0, fetches)
+    const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     const [held] = (await listed(made)).requests.filter(request => request.kind === 'class.raised')
     if (answer === 'confirm') await made.loader.confirm(held!.id, {})
     else await made.loader.cancel(held!.id)
@@ -1720,18 +1720,18 @@ describe('a notice owed until the human answers it', () => {
   })
 
   it('keeps one notice per plugin from the class last shown to the one it holds now', async () => {
-    const { base, made } = await updated([calls('http')], 0, fetches)
+    const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
-    const further = await harness({ base, install: { ...withCapabilities(), http: http('1.2.0', [read, fetchOne]) } })
+    const further = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) } })
     await further.loader.start()
     expect(await notices(further)).toEqual([notice('p', 'class 0, Contained', 'class 4, Powerful')])
     expect((await stored(further, 'p')).owed).toEqual({ from: 0, cause: 'start', by: null })
   })
 
   it('owes nothing once the plugin is back where nothing alerts', async () => {
-    const { base, made } = await updated([calls('http')], 0, fetches)
+    const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
-    const back = await harness({ base, install: { ...withCapabilities(), http: http('1.2.0', []) } })
+    const back = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', []) } })
     await back.loader.start()
     expect(await stored(back, 'p')).toMatchObject({ class: 0 })
     expect((await stored(back, 'p')).owed).toBeUndefined()
@@ -1740,7 +1740,7 @@ describe('a notice owed until the human answers it', () => {
 
   it('holds a notice for each of seventeen moves at one start beside a new plugin approval, the last once a place frees', async () => {
     const base = await tempBase()
-    const granted = [calls('http')]
+    const granted = [calls('mcp-http-handler')]
     const ids = Array.from({ length: 17 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`)
     const one = await harness({
       base, install: v1(), folder: Object.fromEntries(ids.map(id => [id, worker(id, granted)])),
@@ -1783,11 +1783,11 @@ describe('a notice owed across an entry stored strict', () => {
   const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
   const http = (version: string, capabilities: Capability[]): Listing =>
-    ({ files: filesFor(hostManifest('http', { version, capabilities, provides: { topics: ['done'] } })) })
-  const v1 = () => ({ ...withCapabilities(), http: http('1.0.0', []) })
-  const fetches = () => ({ ...withCapabilities(), http: http('1.1.0', [fetchOne]) })
-  const reads = () => ({ ...withCapabilities(), http: http('1.1.0', [read]) })
-  const both = () => ({ ...withCapabilities(), http: http('1.2.0', [read, fetchOne]) })
+    ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })) })
+  const v1 = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.0.0', []) })
+  const fetches = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [read]) })
+  const both = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) })
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
@@ -1824,8 +1824,8 @@ describe('a notice owed across an entry stored strict', () => {
   }
 
   it.each([
-    ['out of 0', [calls('http')], 0, fetches, 'plugin.call', 'class 0, Contained', 'class 3, Network'],
-    ['into 4', [fetchOne, hears('http.done')], 3, reads, 'events.subscribe', 'class 3, Network', 'class 4, Powerful'],
+    ['out of 0', [calls('mcp-http-handler')], 0, fetches, 'plugin.call', 'class 0, Contained', 'class 3, Network'],
+    ['into 4', [fetchOne, hears('mcp-http-handler.done')], 3, reads, 'events.subscribe', 'class 3, Network', 'class 4, Powerful'],
   ] as [string, Capability[], number, () => ReturnType<typeof v1>, Capability['type'], string, string][])(
     'raises a notice for a move %s from the class last shown once a start after the strict one knows the class', async (_name, granted, n, second, type, from, to) => {
       const base = await seeded(granted, n)
@@ -1846,7 +1846,7 @@ describe('a notice owed across an entry stored strict', () => {
 
   it('raises it from the class last shown when the strict store came in the pass that runs once the slot is switched on', async () => {
     const base = await tempBase()
-    const granted = [calls('http')]
+    const granted = [calls('mcp-http-handler')]
     const off = await harness({
       base, install: fetches(), switches: { off: ['grant-risk-classifier'] }, behave: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) },
@@ -1866,7 +1866,7 @@ describe('a notice owed across an entry stored strict', () => {
   })
 
   it('owes nothing once a start after the strict one finds the plugin back at the class last shown', async () => {
-    const base = await seeded([calls('http')], 0)
+    const base = await seeded([calls('mcp-http-handler')], 0)
     const strict = await started(base, v1, 'plugin.call')
     expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'start', by: null } })
     await closed(strict)
@@ -1877,7 +1877,7 @@ describe('a notice owed across an entry stored strict', () => {
   })
 
   it('keeps the class last shown by a notice nobody answered through a strict store, not the class stored before it', async () => {
-    const base = await seeded([calls('http')], 0)
+    const base = await seeded([calls('mcp-http-handler')], 0)
     const moved = await started(base, fetches)
     expect(await notices(moved)).toEqual([notice('p', 'class 0, Contained', 'class 3, Network')])
     await closed(moved)
@@ -1911,14 +1911,14 @@ describe('a notice owed across an entry stored strict', () => {
   })
 
   it('measures from the class last shown once a change while the slot is off marks the entry stored strict as not classed', async () => {
-    const granted = [fetchOne, hears('http.done')]
+    const granted = [fetchOne, hears('mcp-http-handler.done')]
     const base = await seeded(granted, 3)
     const strict = await started(base, v1, 'events.subscribe')
     expect(await stored(strict, 'p')).toMatchObject({ class: null, owed: { from: 3, cause: 'start', by: null } })
     await closed(strict)
     const off = await harness({ base, install: v1(), switches: { off: ['grant-risk-classifier'] } })
     await off.loader.start()
-    await off.loader.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('http.done') })
+    await off.loader.apply({ kind: 'grant.narrow', plugin: 'p', capability: hears('mcp-http-handler.done') })
     expect(await stored(off, 'p')).toMatchObject({ class: null, unclassed: true, owed: { from: 3, cause: 'start', by: null } })
     await closed(off)
     const known = await started(base, v1)
@@ -1934,7 +1934,7 @@ describe('a notice owed across an entry stored strict', () => {
     ['written while off with the class it had kept', 3, { unclassed: true as const }, [notice('p', 'a class not known', 'class 3, Network')]],
   ] as [string, number | null, Partial<Plugin>, string[]][])('raises what it raised before for an entry %s that a strict store finds', async (_name, n, extra, expected) => {
     const base = await tempBase()
-    const granted = [calls('http')]
+    const granted = [calls('mcp-http-handler')]
     const strict = await harness({
       base, install: fetches(), behave: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n, ...extra }) },

@@ -89,13 +89,13 @@ describe('slots, providers and guards', () => {
 
   it('lists the install plugins, host-level and in-page, with CodeMirror in the drawer and no editor-core', () => {
     expect(installIds).toEqual([
-      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
     ])
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
   it('runs http alone in a utility process, an install plugin that holds no slot, guard or provider role', () => {
-    expect(utilityIds).toEqual(['http'])
+    expect(utilityIds).toEqual(['mcp-http-handler'])
     for (const id of utilityIds) {
       expect(installIds).toContain(id)
       expect(slotIds).not.toContain(id)
@@ -114,7 +114,7 @@ describe('reserved ids', () => {
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
     'gate', 'grant-risk-classifier', 'log',
-    'luoshu', 'leases', 'history', 'exec', 'net', 'http', 'hidden-marks',
+    'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]
 

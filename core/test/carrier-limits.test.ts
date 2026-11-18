@@ -173,8 +173,8 @@ describe('the ceiling', () => {
     loader.slots.gate = 'off'
     loader.sandboxed('scribe', { handle: {} })
     loader.sandboxed('git', { log: {} })
-    loader.human.plugins.http = { callsInFlight: 2 }
-    const http = connect(worker('http'))
+    loader.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
+    const http = connect(worker('mcp-http-handler'))
     const scribe = connect(worker('scribe'))
     connect(worker('git'))
     http.call('scribe.handle')

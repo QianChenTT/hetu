@@ -327,7 +327,7 @@ describe('the envelope beside a request', () => {
   })
 
   it('shapes a delivery with the caller and no parent', () => {
-    const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }, action: 'mcp.handle', args: {}, deadline: 1 }
+    const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }, action: 'mcp.handle', args: {}, deadline: 1 }
     expect(delivery.safeParse(delivered).success).toBe(true)
     expect(delivery.safeParse({ ...delivered, onBehalf: 'agent-a' }).success).toBe(true)
     expect(delivery.safeParse({ ...delivered, parent: 'p1' }).success).toBe(false)

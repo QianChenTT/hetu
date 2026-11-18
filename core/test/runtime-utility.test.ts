@@ -48,7 +48,7 @@ function fake(options: { locked?: boolean } = {}) {
     limits: () => limits,
   })
   const exits: { id: string, killed: boolean }[] = []
-  const start = (id = 'http', incarnation = 1): UtilityStart => ({
+  const start = (id = 'mcp-http-handler', incarnation = 1): UtilityStart => ({
     id, incarnation, code: Buffer.from('export default 1'), port: { the: 'port' }, exited: how => exits.push({ id, ...how }),
   })
   return { runtime, forks, exits, start }
@@ -70,7 +70,7 @@ describe('the utility runtime', () => {
     expect(args).toEqual([])
     expect({ ...options.env }).toEqual(utilityEnv())
     expect(Object.values(options.env).join('\n')).not.toContain('main only')
-    expect(options.serviceName).toBe('hetu http')
+    expect(options.serviceName).toBe('hetu mcp-http-handler')
   })
 
   // Electron forks a utility process with main's whole environment when env holds no name, and Chromium leaves a name
@@ -85,8 +85,8 @@ describe('the utility runtime', () => {
 
   it('runs it in a new empty working folder outside the data folder, one per incarnation', async () => {
     const { runtime, forks, start } = fake()
-    runtime.startUtility(start('http', 1))
-    runtime.startUtility(start('http', 2))
+    runtime.startUtility(start('mcp-http-handler', 1))
+    runtime.startUtility(start('mcp-http-handler', 2))
     const [first, second] = forks.map(entry => entry.options.cwd!)
     expect(first).not.toBe(second)
     expect(await readdir(first)).toEqual([])
@@ -116,10 +116,10 @@ describe('the utility runtime', () => {
   it('tells the loader an exit it caused as killed, even when the exit code reads 0', () => {
     const { runtime, forks, exits, start } = fake()
     runtime.startUtility(start())
-    runtime.kill('http', 1)
+    runtime.kill('mcp-http-handler', 1)
     expect(forks[0].child.kills).toBe(1)
     forks[0].child.exits(0)
-    expect(exits).toEqual([{ id: 'http', killed: true }])
+    expect(exits).toEqual([{ id: 'mcp-http-handler', killed: true }])
   })
 
   it('tells the loader an exit it didn\'t cause as not killed, whatever the exit code', () => {
@@ -127,28 +127,28 @@ describe('the utility runtime', () => {
       const { runtime, forks, exits, start } = fake()
       runtime.startUtility(start())
       forks[0].child.exits(code)
-      expect(exits).toEqual([{ id: 'http', killed: false }])
+      expect(exits).toEqual([{ id: 'mcp-http-handler', killed: false }])
     }
   })
 
   it('kills only the incarnation named, decides nothing for one already ended and tells each exit once', () => {
     const { runtime, forks, exits, start } = fake()
-    runtime.startUtility(start('http', 1))
-    runtime.startUtility(start('http', 2))
-    runtime.kill('http', 1)
+    runtime.startUtility(start('mcp-http-handler', 1))
+    runtime.startUtility(start('mcp-http-handler', 2))
+    runtime.kill('mcp-http-handler', 1)
     expect(forks.map(entry => entry.child.kills)).toEqual([1, 0])
     forks[0].child.exits(0)
     forks[0].child.exits(0)
-    runtime.kill('http', 1)
+    runtime.kill('mcp-http-handler', 1)
     runtime.kill('nobody', 1)
     expect(forks.map(entry => entry.child.kills)).toEqual([1, 0])
-    expect(exits).toEqual([{ id: 'http', killed: true }])
+    expect(exits).toEqual([{ id: 'mcp-http-handler', killed: true }])
   })
 
   it('removes its working folder once it exited when the folder is still empty, and leaves one it wrote into', async () => {
     const { runtime, forks, start } = fake()
-    runtime.startUtility(start('http', 1))
-    runtime.startUtility(start('http', 2))
+    runtime.startUtility(start('mcp-http-handler', 1))
+    runtime.startUtility(start('mcp-http-handler', 2))
     const [empty, written] = forks.map(entry => entry.options.cwd!)
     await writeFile(path.join(written, 'left.txt'), 'x')
     forks[0].child.exits(0)
@@ -172,35 +172,35 @@ describe('the utility runtime', () => {
       limits: () => current,
     })
     const start = (id: string, incarnation: number): UtilityStart => ({ id, incarnation, code: Buffer.from(''), port: {}, exited: () => {} })
-    runtime.startUtility(start('http', 1))
+    runtime.startUtility(start('mcp-http-handler', 1))
     runtime.startUtility(start('other', 1))
     current = { ...limits, messagesPerSecond: 20 }
-    runtime.limited('http')
+    runtime.limited('mcp-http-handler')
     expect(forks[0].posted.slice(1)).toEqual([{ message: { v: 1, kind: 'limits', limits: current }, transfer: [] }])
     expect(forks[1].posted).toHaveLength(1)
     // A raise goes out the same way
     current = { ...limits, messagesPerSecond: 400 }
-    runtime.limited('http')
+    runtime.limited('mcp-http-handler')
     expect(forks[0].posted.at(-1)).toEqual({ message: { v: 1, kind: 'limits', limits: current }, transfer: [] })
   })
 
   it('sends nothing to a child that exited, to a plugin with none running and survives a post that throws', () => {
     const { runtime, forks, start } = fake()
-    runtime.startUtility(start('http', 1))
+    runtime.startUtility(start('mcp-http-handler', 1))
     forks[0].child.exits(1)
-    runtime.limited('http')
+    runtime.limited('mcp-http-handler')
     runtime.limited('nobody')
     expect(forks[0].child.posted).toHaveLength(1)
-    runtime.startUtility(start('http', 2))
+    runtime.startUtility(start('mcp-http-handler', 2))
     forks[1].child.postMessage = () => {
       throw new Error('gone')
     }
-    expect(() => runtime.limited('http')).not.toThrow()
+    expect(() => runtime.limited('mcp-http-handler')).not.toThrow()
   })
 
   it('throws when the fork throws, so the loader reads start-failed', () => {
     const runtime = utilityRuntime({ fork: () => { throw new Error('no fork') }, bootstrap: 'utility.js', locked: true, limits: () => limits })
-    expect(() => runtime.startUtility({ id: 'http', incarnation: 1, code: Buffer.from(''), port: null, exited: () => {} })).toThrow('no fork')
+    expect(() => runtime.startUtility({ id: 'mcp-http-handler', incarnation: 1, code: Buffer.from(''), port: null, exited: () => {} })).toThrow('no fork')
   })
 })
 

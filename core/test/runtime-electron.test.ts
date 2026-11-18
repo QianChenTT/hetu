@@ -86,7 +86,7 @@ describe('the Electron runtime', () => {
   // bytesPerSecond is 1 here and the bucket starts full at the cap, 100 and the envelope's room
   it('counts a utility port\'s bytes against bytesPerSecond and reads what is over as unreadable, which the carrier still counts', () => {
     const { runtime, core } = channel()
-    const ends = runtime.channel('http', true)
+    const ends = runtime.channel('mcp-http-handler', true)
     const got: unknown[] = []
     const unreadable: unknown[] = []
     ends.core.on('message', value => got.push(value))
@@ -102,7 +102,7 @@ describe('the Electron runtime', () => {
 
   it('weighs a utility message by what the carrier would measure of it when that is more than its length', () => {
     const { runtime, core } = channel()
-    const ends = runtime.channel('http', true)
+    const ends = runtime.channel('mcp-http-handler', true)
     const got: unknown[] = []
     const unreadable: unknown[] = []
     ends.core.on('message', value => got.push(value))
@@ -155,9 +155,9 @@ describe('the Electron runtime', () => {
 
   it('starts and kills utility halves through the utility runtime', () => {
     const { runtime, plugin } = channel()
-    const start = { id: 'http', incarnation: 1, code: Buffer.from('// http'), port: plugin, exited: () => {} }
+    const start = { id: 'mcp-http-handler', incarnation: 1, code: Buffer.from('// http'), port: plugin, exited: () => {} }
     runtime.startUtility(start)
-    runtime.kill('http', 1)
-    expect(seen).toEqual([['startUtility', start], ['kill', 'http', 1]])
+    runtime.kill('mcp-http-handler', 1)
+    expect(seen).toEqual([['startUtility', start], ['kill', 'mcp-http-handler', 1]])
   })
 })

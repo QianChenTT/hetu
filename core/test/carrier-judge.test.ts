@@ -137,10 +137,10 @@ describe('the judge a call with power carries to its provider', () => {
     const caller = parts.connect(worker(id))
     let extra: object = { onBehalf: 'agent-a' }
     if (agent !== undefined) {
-      parts.loader.utility('http')
-      parts.loader.sandboxed('mcp', { handle: { from: ['http'] } })
-      parts.gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
-      parts.connect(host('http')).call('mcp.handle', {}, { onBehalf: agent })
+      parts.loader.utility('mcp-http-handler')
+      parts.loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
+      parts.gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp'] }]
+      parts.connect(host('mcp-http-handler')).call('mcp.handle', {}, { onBehalf: agent })
       extra = { parent: (await caller.delivered('mcp.handle')).callId }
     }
     const reply = await caller.ask('luoshu.move', { from: 'notes/a.md', to: 'notes/b.md' }, extra)

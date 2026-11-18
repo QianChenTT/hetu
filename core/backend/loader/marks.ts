@@ -1,6 +1,6 @@
 import { MAX_AGENT_ITEMS, type Plugin, type Switches } from '../boot/state.ts'
 
-// The revoked marks: each label the human revoked whose tokens http has not yet said it ended. They sit on the agent
+// The revoked marks: each label the human revoked whose tokens mcp-http-handler has not yet said it ended. They sit on the agent
 // host's entry while it has one and in the switches while it has none, so a Reset or a Remove of the host drops no
 // mark. What changes them is worked out here and the loader writes it
 
@@ -55,7 +55,7 @@ export function cleared(switches: Switches): Switches | null {
   return rest
 }
 
-// The marks of the labels http heard taken out of each place. null for a place that changes nothing, so a heard naming
+// The marks of the labels mcp-http-handler heard taken out of each place. null for a place that changes nothing, so a heard naming
 // no marked label writes nothing
 export function heardOut(entry: Plugin | null, switches: Switches, heard: readonly string[]): { entry: Plugin | null, switches: Switches | null } {
   const gone = (label: string) => heard.includes(label)

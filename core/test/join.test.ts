@@ -13,7 +13,7 @@ import type { CarrierLink } from '../backend/loader/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../../core-plugins/gate/src/gate.ts'
 import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
-import { httpPlugin } from '../../core-plugins/http/src/keeper.ts'
+import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
 import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
 import {
@@ -867,14 +867,14 @@ describe('the door through the joined core', () => {
     const parts = await joined({
       install: {
         ...coreInstall(),
-        http: { files: filesFor(hostManifest('http', { capabilities: [callMcp] })) },
-        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['http'] } } } })), firstParty: true },
+        'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [callMcp] })) },
+        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })), firstParty: true },
       },
       folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
       entries: { beta: { granted: [callMcp] } },
       behave: {
         gate: { exports: { gate } },
-        http: {
+        'mcp-http-handler': {
           utility: start => {
             const port_ = start.port as MessagePort
             run(httpPlugin({ port, token: seam }), { post: message => port_.postMessage(message), listen: next => { port_.on('message', next) } })
@@ -889,13 +889,13 @@ describe('the door through the joined core', () => {
 
   it('hands a request that passed to the first-party mcp as http\'s host half on behalf of the seam\'s client', async () => {
     const { loader, runtime, port } = await door()
-    expect(loader.plugin('http')).toMatchObject({ state: 'ready', place: 'utility' })
+    expect(loader.plugin('mcp-http-handler')).toMatchObject({ state: 'ready', place: 'utility' })
     expect(loader.plugin('mcp')).toMatchObject({ state: 'ready' })
     const mcp = runtime.half('mcp')
     const asked = post(port, 'not json {')
     await until(() => mcp.inbox.some(message => message.kind === 'call' && message.action === 'mcp.handle'), 5000)
     const delivered = mcp.inbox.find(message => message.kind === 'call' && message.action === 'mcp.handle')!
-    expect(delivered.caller).toEqual({ kind: 'plugin', id: 'http', half: 'host', incarnation: 1 })
+    expect(delivered.caller).toEqual({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 })
     expect(delivered.onBehalf).toBe('https://client.example/metadata#1')
     expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
     mcp.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: { status: 200, body: '{"jsonrpc":"2.0"}' } })

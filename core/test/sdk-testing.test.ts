@@ -754,7 +754,7 @@ describe('the fake core playing another plugin', () => {
     let mcp: StandIn | null = null
     const { ctx } = await started(callerManifest, made => {
       mcp = made.standIn('mcp', {
-        actions: { handle: { from: ['caller'] }, admin: { from: ['http'] } },
+        actions: { handle: { from: ['caller'] }, admin: { from: ['mcp-http-handler'] } },
         handle: () => { throw { code: 'invalid' } },
       })
     })
@@ -780,7 +780,7 @@ describe('the fake core playing another plugin', () => {
 
   // http runs in a utility process, so the fake core places it there on a port, as the loader does
   it('places http under test in a utility process on a port, where the floor takes its two core actions', async () => {
-    const http = { id: 'http', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
+    const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const { made, ctx } = await started(http)
     expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
     await until(() => made.floor.some(record => record.event === 'http.refused'))
@@ -788,7 +788,7 @@ describe('the fake core playing another plugin', () => {
     // The core ends the half before any answer, as the loader ends the process, so the call never settles
     void ctx.bindFailed('port-taken').catch(() => {})
     await until(() => made.coreCalls.length === 1)
-    expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
+    expect(made.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])
     expect(made.status()).toEqual({ state: 'failed', reason: 'port-taken' })
   })
 

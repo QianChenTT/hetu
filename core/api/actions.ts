@@ -51,13 +51,13 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder, http's host
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder, mcp-http-handler's host
 // half in its utility process or the agent host under a live call from that door, which names the agent. The floor
 // decides these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses
 // every caller
 export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http' | 'agent'
 
-// Why http refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
+// Why mcp-http-handler refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
 // too slow
 export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
@@ -164,27 +164,27 @@ const coreTable = {
     from: 'watchdog',
     args: z.strictObject({ plugin: pluginId, constant: z.enum(floorConstantNames), value: z.int().positive() }),
   },
-  // The refusals at the door since http's last report for one reason, which the core writes as http.refused coalesced
+  // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as http.refused coalesced
   // by reason
   'core.agentRefused': {
     from: 'http',
     args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
-  // http's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
+  // mcp-http-handler's bind on its port failed. The loader ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
   'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
   // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
   // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
   'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
-  // What http asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
-  // heard names the revoked labels whose tokens http ended, whose marks then go
+  // What mcp-http-handler asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
+  // heard names the revoked labels whose tokens mcp-http-handler ended, whose marks then go
   'core.agents': {
     from: 'http',
     args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
   },
-  // http's door asks the human to connect a client as the agent the client id and the number make. The core raises the
-  // request and answers at once with a handle it made, which http collects the answer with. Never a label or a handle
-  // from http
+  // mcp-http-handler's door asks the human to connect a client as the agent the client id and the number make. The core raises the
+  // request and answers at once with a handle it made, which mcp-http-handler collects the answer with. Never a label or a handle
+  // from mcp-http-handler
   'core.agentConnect': {
     from: 'http',
     args: z.strictObject({
@@ -375,7 +375,7 @@ export type ListedPlugin = {
 export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
 
 // One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
-// whether the human revoked it and http has yet to say it ended its tokens
+// whether the human revoked it and mcp-http-handler has yet to say it ended its tokens
 export type ListedAgent = { agent: string, items: Capability[], revoked: boolean }
 
 // What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest

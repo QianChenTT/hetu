@@ -683,13 +683,13 @@ export class Carrier {
       if (parent.depth + 1 > this.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')
     }
     // A label is an agent's only down a chain that started at the door's own call with a label, the door known by the
-    // way that call came on. The door's call is still http's own. Any other call keeps a label as text that grants
+    // way that call came on. The door's call is still mcp-http-handler's own. Any other call keeps a label as text that grants
     // nothing. A call from the door names the agent it is for in the agent label's form, so one with no label or another
     // is refused before mcp sees it
     const agent = parent?.lends
     const door = parent === null && action === agentDoor.action && this.isDoor(way)
     if (door && !agentLabel.safeParse(onBehalf).success) return refuse('invalid')
-    // A label the human revoked is refused at the door with no word from http, so a revoke holds while http's token lives
+    // A label the human revoked is refused at the door with no word from mcp-http-handler, so a revoke holds while mcp-http-handler's token lives
     if (door && this.revoked(onBehalf as string)) return refuse('not-granted')
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
@@ -760,14 +760,14 @@ export class Carrier {
     return holder && this.slot('watchdog') === 'on'
   }
 
-  // http's host half in its utility process: a way register made, so a port the loader minted, bound to plugin http's
-  // host half, with http placed utility as the loader reads it now. A worker of http matches the id, the way and the
+  // mcp-http-handler's host half in its utility process: a way register made, so a port the loader minted, bound to plugin mcp-http-handler's
+  // host half, with mcp-http-handler placed utility as the loader reads it now. A worker of mcp-http-handler matches the id, the way and the
   // place, so the half is named too. The incarnation is not compared: the loader ends every way of an incarnation in
   // release before it mints the next, so no way of an older one is left to call
   private isDoor(way: Way): boolean {
     const { caller } = way
-    const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'http' && caller.half === 'host'
-    return half && this.info('http')?.place === 'utility'
+    const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'mcp-http-handler' && caller.half === 'host'
+    return half && this.info('mcp-http-handler')?.place === 'utility'
   }
 
   // watchdog.* acts only on sandboxed plugins holding no slot or guard role
@@ -1002,7 +1002,7 @@ export class Carrier {
       } catch {}
       return this.finish(pending, { ok: true, result: null })
     }
-    // Coalesced by reason with the counts added up, so http calling at its whole rate still leaves two records a reason
+    // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
     // a second
     if (pending.action === 'core.agentRefused') {
       this.coalesced.hit('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
@@ -1060,7 +1060,7 @@ export class Carrier {
   // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
   // gate or the StateView changed, so no answer from before a narrowing stands
   // For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
-  // The door's own call names http as its caller, which reads nothing and passes the answer on to the agent, so there the
+  // The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer on to the agent, so there the
   // agent's grant stands in for the caller's
   private filterReadable(way: Way, args: unknown): Outcome {
     const live = way.delivered.get(field(args, 'call') as string)

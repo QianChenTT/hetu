@@ -26,7 +26,7 @@ const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const privateNotes: Capability = { type: 'luoshu.read', paths: ['private/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
-const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['http'] } } } }), version })
+const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), version })
 
 // One folder of notes and one install, booted as often as the proof needs: the real boot, loader, carrier, gate and
 // luoshu, http the install's utility plugin the test drives as the door and mcp the install's own copy, a worker the
@@ -48,7 +48,7 @@ async function world(
   const install = (mcpVersion: string) => writeInstall(installDir, {
     ...coreInstall(),
     luoshu: { files: filesFor(hostManifest('luoshu')) },
-    http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+    'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcpOf(mcpVersion, items), firstParty: true },
     ...(options.history === true ? { history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) } } : {}),
   })
@@ -93,7 +93,7 @@ async function world(
     await loader.start()
     await loader.settled()
     const list = async () => await loader.serve({ callId: 'list', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
-    return { loader, runtime, list, door: runtime.half('http', 1, 'utility') }
+    return { loader, runtime, list, door: runtime.half('mcp-http-handler', 1, 'utility') }
   }
   return { start, install, stored: async () => (await new StateStore(dataDir).load()).state.plugins.mcp }
 }
@@ -260,9 +260,9 @@ describe('step 5a part B, the connect, in the joined core', () => {
     // A connect waiting when http restarts is gone and can't be confirmed
     const waiting = handleOf(await ask(run.door, 'core.agentConnect', asked(4)))
     const id = run.loader.pending()[0]!.id
-    await run.loader.serve({ callId: 'restart', caller: trusted, action: 'core.restart', args: { plugin: 'http' }, deadline: Date.now() + 30_000 } as Call)
+    await run.loader.serve({ callId: 'restart', caller: trusted, action: 'core.restart', args: { plugin: 'mcp-http-handler' }, deadline: Date.now() + 30_000 } as Call)
     await run.loader.settled()
-    const door = latest(run.runtime, 'http', 'utility')
+    const door = latest(run.runtime, 'mcp-http-handler', 'utility')
     expect(run.loader.pending()).toEqual([])
     await expect(run.loader.confirm(id, {})).rejects.toMatchObject({ code: 'not-found' })
     expect(await answerOf(door, waiting)).toBe('gone')
@@ -280,7 +280,7 @@ describe('step 5a part B, the connect, in the joined core', () => {
     if (!('held' in off)) throw new Error('the gate went off at once')
     await run.loader.confirm(off.held, { typed: 'gate' })
     await run.loader.settled()
-    const now = latest(run.runtime, 'http', 'utility')
+    const now = latest(run.runtime, 'mcp-http-handler', 'utility')
     const five = handleOf(await ask(now, 'core.agentConnect', asked(5)))
     await run.loader.confirm(run.loader.pending()[0]!.id, {})
     expect(await answerOf(now, five)).toBe('yes')

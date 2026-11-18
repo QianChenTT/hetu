@@ -19,7 +19,7 @@ export const stopReasons = frozen([
   // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
   // the gate's stateChanged or the luoshu's open, a security control or the luoshu whose module gave no role, a worker
   // the relay cut off for a message that wasn't text within the cap, a utility process that exited by itself, was
-  // killed or missed its beats and http's bind on its port, taken by another program or failing otherwise
+  // killed or missed its beats and mcp-http-handler's bind on its port, taken by another program or failing otherwise
   'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role', 'malformed', 'exited', 'killed',
   'unresponsive', 'port-taken', 'bind-failed',
   // held back because a security control failed and hetu stopped

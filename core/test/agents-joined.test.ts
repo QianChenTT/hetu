@@ -36,12 +36,12 @@ async function joined(gate: 'on' | 'off') {
   // A link in inbox that leads into private. A junction, which Windows makes with no admin rights
   await symlink(path.join(folder, 'private'), path.join(folder, 'inbox', 'link'), 'junction')
   const mcpGrant: Capability[] = [everything, { type: 'plugin.call', targets: ['search'] }]
-  const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant, provides: { actions: { handle: { from: ['http'] } } } }))
+  const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }))
   const search = filesFor(workerManifest('search', { capabilities: [everything], provides: { actions: { query: {} } } }))
   await writeInstall(installDir, {
     ...coreInstall(),
     luoshu: { files: filesFor(hostManifest('luoshu')) },
-    http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+    'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcp, firstParty: true },
     search: { files: search, firstParty: true },
   })
@@ -88,7 +88,7 @@ async function joined(gate: 'on' | 'off') {
   })
   await loader.start()
   await loader.settled()
-  return { loader, runtime, folder, hooks, door: runtime.half('http', 1, 'utility'), mcp: runtime.half('mcp'), search: runtime.half('search') }
+  return { loader, runtime, folder, hooks, door: runtime.half('mcp-http-handler', 1, 'utility'), mcp: runtime.half('mcp'), search: runtime.half('search') }
 }
 
 // A folder renamed under the luoshu's watch, which can hold it open for a moment on Windows

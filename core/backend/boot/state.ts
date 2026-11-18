@@ -79,7 +79,7 @@ const switches = z.strictObject({
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
   recordNothing: z.boolean(),
-  // The labels the human revoked whose tokens http has not yet said it ended, held here while the agent host has no
+  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, held here while the agent host has no
   // entry and handed to the entry it gets next. Left out of a file with none
   revokedAgents: list(agentLabel).optional(),
 })
@@ -124,7 +124,7 @@ const plugin = z.strictObject({
   // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
   // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
   agents: agentItems.optional(),
-  // The labels the human revoked whose tokens http has not yet said it ended, each once. Only the agent host's entry
+  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, each once. Only the agent host's entry
   // holds the list. Left out of an entry with none
   revoked: z.array(agentLabel).max(MAX_AGENT_ITEMS, { abort: true }).refine(labels => new Set(labels).size === labels.length, 'a label twice').optional(),
 })

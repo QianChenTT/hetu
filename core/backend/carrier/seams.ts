@@ -43,7 +43,7 @@ export type Loader = {
   plugin(id: string): PluginInfo | null
   limits(): HumanLimits
   recordNothing(): boolean
-  // Whether the human revoked an agent's label and http has not yet said it ended its tokens, from the loader's state
+  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens, from the loader's state
   revoked(label: string): boolean
   // A way in closed under its plugin or was closed for a flood. The loader moves dependents to waiting before this
   // returns and the carrier then answers the calls the plugin held

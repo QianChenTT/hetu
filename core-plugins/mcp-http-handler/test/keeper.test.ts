@@ -71,7 +71,7 @@ async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' 
   const core = fakeCore({ manifest })
   cores.push(core)
   const mcp: StandIn = core.standIn('mcp', {
-    actions: { handle: { from: ['http'] } },
+    actions: { handle: { from: ['mcp-http-handler'] } },
     handle: options.answer ?? (call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null, args: call.args }) })),
     state: options.mcp ?? 'ready',
   })
@@ -90,7 +90,7 @@ describe('http on the fake core', () => {
     })
     expect(reply.status).toBe(200)
     expect(JSON.parse(reply.body)).toEqual({
-      caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 },
+      caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 },
       onBehalf: 'https://client.example/metadata#1',
       args: { body: 'not json {', headers: { 'mcp-session-id': 's-1' } },
     })
@@ -135,7 +135,7 @@ describe('http on the fake core', () => {
     const listens = vi.spyOn(net.Server.prototype, 'listen')
     const { core } = await started({ port })
     await until(() => core.coreCalls.length === 1)
-    expect(core.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } }])
+    expect(core.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'port-taken' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])
     expect(core.status()).toEqual({ state: 'failed', reason: 'port-taken' })
     await tick(100)
     expect(listens.mock.calls.map(([given]) => given)).toEqual([{ host: '127.0.0.1', port, exclusive: true }])

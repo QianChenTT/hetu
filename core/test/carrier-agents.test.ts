@@ -12,11 +12,11 @@ afterEach(cleanup)
 function agents(over: Partial<CarrierOptions> = {}) {
   const parts = harness(over)
   const { loader, gate, connect } = parts
-  loader.utility('http')
-  loader.sandboxed('mcp', { handle: { from: ['http'] } })
+  loader.utility('mcp-http-handler')
+  loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
   loader.sandboxed('search', { query: {} })
   loader.sandboxed('beta', { go: {} })
-  gate.grants.http = [{ type: 'plugin.call', targets: ['mcp', 'search'] }]
+  gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp', 'search'] }]
   gate.grants.mcp = [
     { type: 'plugin.call', targets: ['search', 'beta'] }, { type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] },
     { type: 'history', access: 'read', paths: ['**'] }, { type: 'storage' },
@@ -26,7 +26,7 @@ function agents(over: Partial<CarrierOptions> = {}) {
   parts.luoshu.files.set('inbox/a.md', 'a')
   return {
     ...parts,
-    door: connect(host('http')), httpWorker: connect(worker('http')), mcp: connect(worker('mcp')), search: connect(worker('search')),
+    door: connect(host('mcp-http-handler')), httpWorker: connect(worker('mcp-http-handler')), mcp: connect(worker('mcp')), search: connect(worker('search')),
     beta: connect(worker('beta')),
   }
 }
@@ -112,17 +112,17 @@ describe('an agent\'s label down a chain of calls', () => {
     const atSearch = await search.delivered('search.query')
     expect(atSearch.onBehalf).toBe('client#1')
     door.call('search.query', {}, { onBehalf: 'client#1' })
-    await search.waitFor(message => message.kind === 'call' && message.caller !== undefined && (message.caller as { id: string }).id === 'http')
+    await search.waitFor(message => message.kind === 'call' && message.caller !== undefined && (message.caller as { id: string }).id === 'mcp-http-handler')
     expect(gate.asked.filter(access => access.onBehalf === 'client#1').map(access => access.agent)).toEqual(Array(6).fill(undefined))
     // A sub-call under a call the door made to another plugin carries the label as nobody's agent
-    const fromDoor = search.inbox.find(message => message.kind === 'call' && (message.caller as { id: string }).id === 'http')!
+    const fromDoor = search.inbox.find(message => message.kind === 'call' && (message.caller as { id: string }).id === 'mcp-http-handler')!
     expect((await search.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: fromDoor.callId })).ok).toBe(true)
     expect(asked(gate, 'luoshu.read').at(-1)).toEqual({ stage: 'canonical', onBehalf: 'client#1', agent: undefined })
   })
 
   it('marks no agent under an mcp.handle from http\'s worker half or from another plugin', async () => {
     const { httpWorker, mcp, beta, loader, gate } = agents()
-    loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta'] } })
     for (const from of [httpWorker, beta]) {
       from.call('mcp.handle', {}, { onBehalf: 'client#1' })
       const got = await mcp.waitFor(message => message.kind === 'call' && message.action === 'mcp.handle' && !(message as { seen?: boolean }).seen)
@@ -209,7 +209,7 @@ describe('an agent\'s label down a chain of calls', () => {
 
   it('still delivers an mcp.handle with no label that is not the door\'s and the door\'s other calls with no label', async () => {
     const { door, httpWorker, mcp, search, loader } = agents()
-    loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta'] } })
     httpWorker.call('mcp.handle', {})
     expect((await mcp.delivered('mcp.handle')).onBehalf).toBeUndefined()
     door.call('search.query', {})
@@ -270,7 +270,7 @@ describe('mcp\'s reach into notes, history and leases', () => {
 
   it('refuses mcp\'s luoshu call under a parent from another plugin than http\'s host half', async () => {
     const { beta, mcp, search, httpWorker, loader } = agents()
-    loader.sandboxed('mcp', { handle: { from: ['http', 'beta', 'search'] } })
+    loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta', 'search'] } })
     for (const from of [beta, search, httpWorker]) {
       const id = from.call('mcp.handle', {})
       const got = await mcp.waitFor(message => message.kind === 'call' && message.action === 'mcp.handle' && !(message as { seen?: boolean }).seen)
@@ -292,7 +292,7 @@ describe('mcp\'s reach into notes, history and leases', () => {
 
   it('holds mcp\'s sub-call to the door\'s deadline, mcp\'s own longer one notwithstanding', async () => {
     const { door, mcp, search, loader, luoshu } = agents()
-    loader.human.plugins.http = { callDeadlineMs: 4000 }
+    loader.human.plugins['mcp-http-handler'] = { callDeadlineMs: 4000 }
     loader.human.plugins.mcp = { callDeadlineMs: 60000 }
     loader.human.plugins.search = { callDeadlineMs: 60000 }
     const { got, parent } = await handled(door, mcp)
@@ -324,13 +324,13 @@ describe('the door an agent\'s label comes through', () => {
 
   it('marks no agent under the same call from http\'s host half on an in-process handle, http placed utility', async () => {
     const parts = harness()
-    parts.loader.utility('http')
-    parts.loader.sandboxed('mcp', { handle: { from: ['http'] } })
-    parts.gate.grants.http = [{ type: 'plugin.call', targets: ['mcp'] }]
+    parts.loader.utility('mcp-http-handler')
+    parts.loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
+    parts.gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp'] }]
     parts.gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
     parts.luoshu.files.set('inbox/a.md', 'a')
     const mcp = parts.connect(worker('mcp'))
-    const door = hostHalf(parts.carrier, host('http'))
+    const door = hostHalf(parts.carrier, host('mcp-http-handler'))
     void door.ask('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: got.callId as string }))).toBe('not-granted')
@@ -338,31 +338,31 @@ describe('the door an agent\'s label comes through', () => {
   })
 
   it.each([
-    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('http')],
-    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('http')],
+    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('mcp-http-handler')],
+    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('mcp-http-handler')],
   ])('marks no agent under the same call from http\'s host half on its port with http placed %s', async (_place, place) => {
     const parts = agents()
     place(parts.loader)
     expect(await under(parts, label => parts.door.call('mcp.handle', {}, { onBehalf: label }))).toEqual({ code: 'not-granted', agents: [] })
     // The same half once the loader reads http placed utility again
-    parts.loader.utility('http')
+    parts.loader.utility('mcp-http-handler')
     const again = await under(parts, label => parts.door.call('mcp.handle', {}, { onBehalf: label }))
     expect(again).toEqual({ code: null, agents: ['client#1', 'client#1'] })
   })
 
   it('marks no agent under an mcp.handle the door made under a call another plugin sent it with its own label', async () => {
     const parts = agents()
-    parts.loader.plugins.http.actions = { go: {} }
-    parts.gate.grants.beta.push({ type: 'plugin.call', targets: ['http'] })
-    parts.beta.call('http.go', {}, { onBehalf: 'client#1' })
-    const atDoor = await parts.door.delivered('http.go')
+    parts.loader.plugins['mcp-http-handler'].actions = { go: {} }
+    parts.gate.grants.beta.push({ type: 'plugin.call', targets: ['mcp-http-handler'] })
+    parts.beta.call('mcp-http-handler.go', {}, { onBehalf: 'client#1' })
+    const atDoor = await parts.door.delivered('mcp-http-handler.go')
     expect(atDoor.onBehalf).toBe('client#1')
     expect(await under(parts, () => parts.door.call('mcp.handle', {}, { parent: atDoor.callId as string }))).toEqual({ code: 'not-granted', agents: [] })
   })
 
   it('marks no agent under mcp.handle from a worker of a plugin named http from the plugin folder', async () => {
     const parts = agents()
-    parts.loader.sandboxed('http')
+    parts.loader.sandboxed('mcp-http-handler')
     expect(await under(parts, label => parts.httpWorker.call('mcp.handle', {}, { onBehalf: label }))).toEqual({ code: 'not-granted', agents: [] })
   })
 })
@@ -384,7 +384,7 @@ function gated() {
   gate.stateChanged({
     n: 1, foldCase: false, execAny: [],
     plugins: table({
-      http: [{ capability: { type: 'plugin.call', targets: ['mcp'] }, off: false, firstUse: false }],
+      'mcp-http-handler': [{ capability: { type: 'plugin.call', targets: ['mcp'] }, off: false, firstUse: false }],
       mcp: [
         ...items('inbox/**', 'private/**'), { capability: { type: 'luoshu.read', paths: ['asks/**'] }, off: false, firstUse: true },
         { capability: { type: 'luoshu.read', paths: ['off/**'] }, off: true, firstUse: false },
@@ -583,7 +583,7 @@ describe('what an agent may read and list through mcp', () => {
 
   it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {
     const { mcp, beta, loader } = gated()
-    loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta'] } })
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     // What mcp and beta may both read, of which beta reads nothing
@@ -614,7 +614,7 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
   function asking() {
     const seen: Call[] = []
     const parts = agents({ core: async call => { seen.push(call); return { asked: 'waiting' } } })
-    parts.loader.sandboxed('mcp', { handle: { from: ['http', 'beta'] } })
+    parts.loader.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta'] } })
     return { ...parts, seen }
   }
 
@@ -680,7 +680,7 @@ describe('core.agents, what http asks about its agents', () => {
     expect(code(await way.ask('trusted', 'core.agents', args))).toBe('not-granted')
     expect(code(await door.ask('core.agents', { agents: ['client'] }))).toBe('invalid')
     expect(code(await door.ask('core.agents', { agents: [] }))).toBe('invalid')
-    expect(seen.map(call => call.caller)).toEqual([host('http')])
+    expect(seen.map(call => call.caller)).toEqual([host('mcp-http-handler')])
   })
 })
 
@@ -697,12 +697,12 @@ describe('core.agentConnect and core.agentConnected, the connect http asks the c
       for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
       for (const role of ['trusted', 'editor']) expect(code(await way.ask(role, action, args))).toBe('not-granted')
     }
-    expect(seen.map(call => [call.action, call.caller])).toEqual([['core.agentConnect', host('http')], ['core.agentConnected', host('http')]])
+    expect(seen.map(call => [call.action, call.caller])).toEqual([['core.agentConnect', host('mcp-http-handler')], ['core.agentConnected', host('mcp-http-handler')]])
   })
 
   it.each([
-    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('http')],
-    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('http')],
+    ['on the host', (loader: ReturnType<typeof agents>['loader']) => loader.installed('mcp-http-handler')],
+    ['in the sandbox, as a plugin named http from the plugin folder', (loader: ReturnType<typeof agents>['loader']) => loader.sandboxed('mcp-http-handler')],
   ])('refuses both from http\'s host half with http placed %s', async (_place, place) => {
     const seen: Call[] = []
     const parts = agents({ core: async call => { seen.push(call); return null } })
@@ -806,9 +806,9 @@ describe('the audit record of an agent\'s call', () => {
     await door.reply(id)
     const records = (await written(carrier, log)).map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])
     expect(records).toEqual([
-      ['luoshu.read', null, 'mcp/worker#1', 'http/host#1', 'client#1'],
-      ['luoshu.read', 'invalid', 'mcp/worker#1', 'http/host#1', 'client#1'],
-      ['mcp.handle', null, 'http/host#1', 'http/host#1', 'client#1'],
+      ['luoshu.read', null, 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
+      ['luoshu.read', 'invalid', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
+      ['mcp.handle', null, 'mcp-http-handler/host#1', 'mcp-http-handler/host#1', 'client#1'],
     ])
     expect(JSON.stringify(log.records)).not.toContain('client#2')
   })
@@ -836,7 +836,7 @@ function tabled() {
   gate.stateChanged({
     n: 1, foldCase: false, execAny: [],
     plugins: table({
-      http: held({ type: 'plugin.call', targets: ['mcp'] }),
+      'mcp-http-handler': held({ type: 'plugin.call', targets: ['mcp'] }),
       mcp: [...every, ...held({ type: 'plugin.call', targets: ['search'] })],
       search: every,
     }),
@@ -946,6 +946,6 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
     const { parent } = await handled(door, mcp, 'client#1')
     expect(code(await mcp.ask('luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }, parent))).toBe('not-granted')
     const records = (await written(carrier, log)).filter(record => record.action === 'luoshu.move')
-    expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'http/host#1', 'client#1']])
+    expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1']])
   })
 })

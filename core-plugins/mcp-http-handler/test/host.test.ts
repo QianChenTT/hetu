@@ -21,7 +21,7 @@ describe('the host half as it ships', () => {
   it('has an install manifest that asks to call mcp alone and requires nothing', async () => {
     expect(await checkManifest(root, { install: true })).toEqual([])
     const manifest = JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as Record<string, unknown>
-    expect(manifest).toMatchObject({ id: 'http', entries: { host: 'dist/host.js' } })
+    expect(manifest).toMatchObject({ id: 'mcp-http-handler', entries: { host: 'dist/host.js' } })
     expect(manifest.capabilities).toEqual([{ type: 'plugin.call', targets: ['mcp'] }])
     expect(manifest.requires).toBeUndefined()
   })

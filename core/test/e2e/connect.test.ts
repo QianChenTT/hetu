@@ -51,13 +51,13 @@ async function install(): Promise<string> {
   const source = await temp()
   await writeFolder(source, { 'src/host.ts': http })
   const built = await buildHost(source, 'src/host.ts', [])
-  const root = path.join(dir, 'plugins', 'http')
+  const root = path.join(dir, 'plugins', 'mcp-http-handler')
   const manifest = {
-    id: 'http', name: 'http', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' },
+    id: 'mcp-http-handler', name: 'mcp-http-handler', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' },
     provides: { actions: { connect: { from: ['caller'] }, collect: { from: ['caller'] } } },
   }
   await writeFolder(root, { 'hetu-plugin.json': `${JSON.stringify(manifest, null, 2)}\n`, 'dist/host.js': built.text })
-  list.plugins.http = { path: 'plugins/http', version: '1.0.0', hash: hashFiles(await readFiles(root)) }
+  list.plugins['mcp-http-handler'] = { path: 'plugins/mcp-http-handler', version: '1.0.0', hash: hashFiles(await readFiles(root)) }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
   return dir
 }
@@ -71,8 +71,8 @@ async function data(): Promise<string> {
   await writeFolder(source, { 'src/worker.ts': caller })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const root = path.join(dataDir, 'plugins', 'caller')
-  const granted = [{ type: 'plugin.call' as const, targets: ['http'] }]
-  await writeFolder(root, filesFor(workerManifest('caller', { requires: ['http'], capabilities: granted }), { 'worker.js': built!.text }))
+  const granted = [{ type: 'plugin.call' as const, targets: ['mcp-http-handler'] }]
+  await writeFolder(root, filesFor(workerManifest('caller', { requires: ['mcp-http-handler'], capabilities: granted }), { 'worker.js': built!.text }))
   await store.writePlugin('caller', await entryFor(root, { granted }))
   return dataDir
 }
@@ -92,12 +92,12 @@ async function started(): Promise<{ app: ElectronApplication, editor: Page, data
 const CLAUDE = 'https://claude.ai/oauth/claude-code-client-metadata'
 const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code', redirect: 'http://localhost:33418/callback', number })
 const through = (worker: Worker, action: string, args: unknown) =>
-  worker.evaluate(([action, args]) => (globalThis as unknown as { ctx: { call(t: string, a: string, x: unknown): Promise<unknown> } }).ctx.call('http', action, args), [action, args] as const) as Promise<Settled>
+  worker.evaluate(([action, args]) => (globalThis as unknown as { ctx: { call(t: string, a: string, x: unknown): Promise<unknown> } }).ctx.call('mcp-http-handler', action, args), [action, args] as const) as Promise<Settled>
 const connect = async (worker: Worker, args: unknown) => through(worker, 'connect', args)
 const collect = async (worker: Worker, handle: string) => (await through(worker, 'collect', { handle })).result
 
 async function trustedPage(app: ElectronApplication, editor: Page): Promise<Page> {
-  const notice = editor.getByRole('button', { name: 'A security change is waiting: agent.connect "http"' })
+  const notice = editor.getByRole('button', { name: 'A security change is waiting: agent.connect "mcp-http-handler"' })
   await notice.waitFor()
   await tick(PAST_DELAY)
   await notice.click()
@@ -149,7 +149,7 @@ describe('a connect in the trusted window', () => {
 
     await tick(PAST_DELAY)
     await confirm.click()
-    await until(() => logged(dataDir, 'security.applied', { kind: 'agent.connect', target: 'http', by: 'confirm' }))
+    await until(() => logged(dataDir, 'security.applied', { kind: 'agent.connect', target: 'mcp-http-handler', by: 'confirm' }))
     expect(await collect(worker, handle)).toEqual({ answer: 'yes' })
     expect(await collect(worker, handle)).toEqual({ answer: 'gone' })
   })
@@ -173,7 +173,7 @@ describe('a connect in the trusted window', () => {
     expect(await page.getByRole('button', { name: 'Confirm' }).isDisabled()).toBe(true)
 
     // The human restarts http from the trusted window: the waiting connect is withdrawn with it
-    expect((await ask(page, 'core.restart', { plugin: 'http' })).ok).toBe(true)
+    expect((await ask(page, 'core.restart', { plugin: 'mcp-http-handler' })).ok).toBe(true)
     await until(async () => ((await ask(editor, 'core.status')).result as { pending: unknown[] }).pending.length === 0)
     await tick(PAST_DELAY)
     expect((await ask(page, 'security.confirm', { requestId: id })).refusal?.code).toBe('not-found')

@@ -2,11 +2,11 @@ import { randomBytes } from 'node:crypto'
 import { agentConnect, connectLabel, type AgentConnect } from '../../api/changes.ts'
 import { agentDoor } from '../../api/slots.ts'
 
-// A client's connect through http's door: the change the core raises for it and the connect's state until http
-// collects the human's answer. The hosts are taken here with the URL parser http's own process uses, so the host the
-// human reads is the one http reaches
+// A client's connect through mcp-http-handler's door: the change the core raises for it and the connect's state until mcp-http-handler
+// collects the human's answer. The hosts are taken here with the URL parser mcp-http-handler's own process uses, so the host the
+// human reads is the one mcp-http-handler reaches
 
-// What http sends for a connect: the client id, the name the client's document gives or null, the redirect and the
+// What mcp-http-handler sends for a connect: the client id, the name the client's document gives or null, the redirect and the
 // number of the authorization
 export type ConnectAsked = { client: string, name: string | null, redirect: string, number: number }
 
@@ -31,7 +31,7 @@ export function connectChange(asked: ConnectAsked): AgentConnect | null {
   return agentConnect.safeParse(change).success ? change : null
 }
 
-// How long a client id the human cancelled a connect of waits before it may connect again. The most answers http has
+// How long a client id the human cancelled a connect of waits before it may connect again. The most answers mcp-http-handler has
 // yet to collect that are kept, the oldest going first
 export const AGENT_CONNECT_PAUSE_MS = 60_000
 export const MAX_CONNECT_ANSWERS = 16
@@ -50,8 +50,8 @@ export type ConnectHost = {
 }
 
 // The connect's state, in memory alone so nothing of it outlives a run of hetu: the one connect waiting with the handle
-// the core made for it, the answers http has yet to collect and the client ids paused after a Cancel. It holds no list
-// of agents and calls into no plugin, http asks
+// the core made for it, the answers mcp-http-handler has yet to collect and the client ids paused after a Cancel. It holds no list
+// of agents and calls into no plugin, mcp-http-handler asks
 export class Connects {
   private readonly host: ConnectHost
   private waiting: { handle: string, change: AgentConnect } | null = null
@@ -103,7 +103,7 @@ export class Connects {
     if (this.waiting?.change === change) this.answered('no')
   }
 
-  // http's way ended: its request went with it and no answer is handed to the next run of http
+  // mcp-http-handler's way ended: its request went with it and no answer is handed to the next run of mcp-http-handler
   ended(): void {
     this.waiting = null
     this.answers.clear()

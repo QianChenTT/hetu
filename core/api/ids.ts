@@ -74,12 +74,12 @@ export function securityControls(listed: readonly string[]): string[] {
 
 // Host-level and in-page plugins, which load only from the install
 export const installIds = frozen([
-  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'http', 'net', 'hidden-marks',
+  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
 ] as const)
 
 // Install plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
-export const utilityIds = frozen(['http'] as const)
+export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
 // the reserved first-party signer and bytes equal to the install's copy, which the loader checks

@@ -30,7 +30,7 @@ class FakePortMain extends EventEmitter implements UtilityPort {
 
 const limits: WorkerLimits = { messagesPerSecond: 1000, floodFactor: 10, floodMs: 5000, bytesPerSecond: 1000, resultBytes: 100 }
 const cap = limits.resultBytes + ENVELOPE_ROOM
-const init = JSON.stringify({ v: 1, kind: 'init', id: 'http', incarnation: 1, api: 2, deps: {}, lastStop: null, previousVersion: null })
+const init = JSON.stringify({ v: 1, kind: 'init', id: 'mcp-http-handler', incarnation: 1, api: 2, deps: {}, lastStop: null, previousVersion: null })
 
 describe('the SDK\'s utility transport', () => {
   it('starts the port, sends JSON text and reads text from main', () => {

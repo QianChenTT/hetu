@@ -28,7 +28,7 @@ export type PluginContext = Client & {
   // starting to ready included. It is handed nothing and reads has again. Never for init's own map nor once stopping
   onDeps(fn: () => void | Promise<void>): void
   // Tells the core this half's bind on its port failed, so the core ends it and the plugin reads failed with the
-  // reason. Only http's host half in its utility process may, every other caller is refused not-granted
+  // reason. Only mcp-http-handler's host half in its utility process may, every other caller is refused not-granted
   bindFailed(reason: BindFailure): Promise<void>
   // Serves <id>.<name>, an action the manifest declares under provides.actions
   provide(name: string, handler: Handler): void

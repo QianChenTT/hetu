@@ -28,7 +28,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const made = await harness({
     install: {
       ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true },
-      http: { files: filesFor(hostManifest('http', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
+      'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
@@ -100,18 +100,18 @@ describe('an agent\'s ask', () => {
 
   it('quotes each scope as a widen does, a quote in it escaped', async () => {
     const { ask, list } = await started()
-    await ask('https://claude.ai/oauth/claude-code-client-metadata#3', [{ type: 'luoshu.read', paths: ['say "yes"/**', 'a, b/**'] }, { type: 'plugin.call', targets: ['http'] }])
+    await ask('https://claude.ai/oauth/claude-code-client-metadata#3', [{ type: 'luoshu.read', paths: ['say "yes"/**', 'a, b/**'] }, { type: 'plugin.call', targets: ['mcp-http-handler'] }])
     const shown = (await list()).requests[0]
     expect(shown.text).toBe('Give the agent "https://claude.ai/oauth/claude-code-client-metadata#3" what it asks for through mcp')
-    expect(shown.notes.slice(0, 2)).toEqual(['It asks for: luoshu.read on "say \\"yes\\"/**", "a, b/**"', 'It asks for: plugin.call to "http"'])
+    expect(shown.notes.slice(0, 2)).toEqual(['It asks for: luoshu.read on "say \\"yes\\"/**", "a, b/**"', 'It asks for: plugin.call to "mcp-http-handler"'])
   })
 
   it('refuses an ask whose plugin.call names a plugin hetu doesn\'t know, then takes one that names only known ones', async () => {
     const { loader, ask, list } = await started()
-    expect(await code(ask('client#1', [inbox, { type: 'plugin.call', targets: ['http', 'press-confirm-to-finish'] }]))).toBe('not-found')
+    expect(await code(ask('client#1', [inbox, { type: 'plugin.call', targets: ['mcp-http-handler', 'press-confirm-to-finish'] }]))).toBe('not-found')
     expect(loader.pending()).toEqual([])
-    expect(await ask('client#1', [{ type: 'plugin.call', targets: ['http', 'gate'] }])).toEqual({ asked: 'waiting' })
-    expect((await list()).requests[0].notes[0]).toBe('It asks for: plugin.call to "http", "gate"')
+    expect(await ask('client#1', [{ type: 'plugin.call', targets: ['mcp-http-handler', 'gate'] }])).toEqual({ asked: 'waiting' })
+    expect((await list()).requests[0].notes[0]).toBe('It asks for: plugin.call to "mcp-http-handler", "gate"')
   })
 
   it('answers granted with no request for items the agent holds already', async () => {
@@ -269,7 +269,7 @@ describe('agents\' items across an update of mcp and a Recover', () => {
 
 describe('revoke of an agent', () => {
   const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
-  const door: Caller = { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }
+  const door: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
   const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
   const seeded = [{ agent: 'client#1', capability: inbox }, { agent: 'client#1', capability: write }, { agent: 'client#10', capability: inbox }]
 
@@ -401,7 +401,7 @@ describe('revoke of an agent', () => {
 })
 
 describe('the revoked marks at their cap and through a Reset or a Remove of mcp', () => {
-  const door: Caller = { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 }
+  const door: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
   const marks = Array.from({ length: 256 }, (_, n) => `gone#${n + 1}`)
   const agentsOf = (loader: { serve(call: Call): Promise<unknown> }, args: object) =>
     loader.serve({ callId: 'c', caller: door, action: 'core.agents', args, deadline: Date.now() + 30_000 } as Call)
@@ -575,7 +575,7 @@ describe('an agent\'s ask that lapses or is withdrawn', () => {
     expect(loader.pending()).toHaveLength(1)
   })
 
-  it.each([['mcp', mcpWorker], ['http', { kind: 'plugin', id: 'http', half: 'host', incarnation: 1 } as Caller]])('withdraws every waiting ask when %s stops, so a Confirm after it is refused', async (_id, caller) => {
+  it.each([['mcp', mcpWorker], ['mcp-http-handler', { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } as Caller]])('withdraws every waiting ask when %s stops, so a Confirm after it is refused', async (_id, caller) => {
     const { loader, ask, link, stored } = await started()
     await ask('client#1', [inbox])
     await ask('client#2', [write])

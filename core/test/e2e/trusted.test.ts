@@ -338,7 +338,7 @@ describe('the agent list', () => {
     const page = await trustedPage(app)
     await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · luoshu.read on "inbox/**"')
     const agents = page.locator('section.agents')
-    expect(await agents.innerText()).toContain('Its name and whether its token is live are http’s to know, not this list’s')
+    expect(await agents.innerText()).toContain('Its name and whether its token is live are mcp-http-handler’s to know, not this list’s')
     expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once http hears')
     expect(await agents.locator('p.agent', { hasText: '"client#2"' }).getByRole('button').count()).toBe(0)
     await tick(PAST_DELAY)
