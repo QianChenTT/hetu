@@ -621,7 +621,7 @@ describe('filterReadable', () => {
     expect(gate.reads).toHaveLength(300)
   })
 
-  it('starts over when the StateView moved or the paths changed since the throttled try', async () => {
+  it('starts over when the grants snapshot moved or the paths changed since the throttled try', async () => {
     const { clock, named, filter, gate, loader } = await timed()
     const many = named(150)
     expect(code(await filter(many))).toBe('throttled')

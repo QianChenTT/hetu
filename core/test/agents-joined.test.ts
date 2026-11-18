@@ -188,7 +188,7 @@ describe('agents through the joined core', () => {
     const after = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, after))).toBe('inbox text')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, after))).toBe('not-granted')
-    // The call made before the Confirm, still live, is judged on the StateView now too
+    // The call made before the Confirm, still live, is judged on the grants snapshot now too
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('inbox text')
   })
 
@@ -226,7 +226,7 @@ describe('agents through the joined core', () => {
   })
 
   // The luoshu resolves inbox/a.md again once inbox is renamed INBOX after prepare and asks the judge about INBOX/a.md,
-  // which the StateView keeps apart from inbox. mcp holds every path, so the agent's grant decides
+  // which the grants snapshot keeps apart from inbox. mcp holds every path, so the agent's grant decides
   const caseOnly = process.platform === 'win32' || process.platform === 'darwin'
   it.runIf(caseOnly)('judges an agent\'s read again against the agent\'s grant when its folder is renamed in case between prepare and perform', async () => {
     const { door, mcp, folder, hooks } = await joined('on')

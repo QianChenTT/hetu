@@ -833,7 +833,7 @@ describe('the classes at start', () => {
     return seen
   }
 
-  // The gate's StateView as it stood when the listener's worker was started
+  // The gate's grants snapshot as it stood when the listener's worker was started
   function atStart(made: Made, gate: Gate): () => Gate['seen'][number] | undefined {
     let view: Gate['seen'][number] | undefined
     const startWorker = made.runtime.startWorker.bind(made.runtime)

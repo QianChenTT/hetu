@@ -187,7 +187,7 @@ describe('a security control that fails while hetu runs', () => {
     const editor = await editorPage(app)
     await until(() => logged(dataDir, 'core.ready'))
     const done = exited(app)
-    // Any applied change gives the gate a new StateView, which this gate throws on
+    // Any applied change gives the gate a new grants snapshot, which this gate throws on
     expect((await ask(editor, 'security.request', { change: { kind: 'confirmOff', on: false } })).ok).toBe(true)
     expect(await done).toBe(1)
     expect(await logged(dataDir, 'core.failed', { control: 'gate', reason: 'state-changed' })).toBe(true)

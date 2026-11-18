@@ -7,8 +7,8 @@ type Send = (message: unknown) => void
 // changed, every path passes with the gate off by the human, or every path is held back while the gate is down
 export type Paths = 'ask' | 'all' | 'none'
 
-// What the carrier lends the bus. key moves whenever the gate's state, whether it can be asked or the StateView does,
-// which is when the bus asks the gate about its subscriptions again. view is the StateView number, null when unreadable
+// What the carrier lends the bus. key moves whenever the gate's state, whether it can be asked or the grants snapshot does,
+// which is when the bus asks the gate about its subscriptions again. view is the grants snapshot number, null when unreadable
 export type BusParts = {
   state(): { key: string, paths: Paths, view: number | null }
   canList(caller: Caller, path: string): boolean
@@ -34,8 +34,8 @@ type Subscription = {
   live: boolean
   // A path event may have been held back from it since the gate went down, so it reads again once the gate is up
   resync: boolean
-  // The StateView the gate last allowed it on, null when no gate has judged it: free, or taken with the gate off by the
-  // human. A gated subscription hears anything only while this is the current StateView or the gate is off
+  // The grants snapshot the gate last allowed it on, null when no gate has judged it: free, or taken with the gate off by the
+  // human. A gated subscription hears anything only while this is the current grants snapshot or the gate is off
   judged: number | null
 }
 
@@ -91,7 +91,7 @@ export class Bus {
     const subscriber = this.subscriberOf(holder)
     const standing: string[] = []
     const started: string[] = []
-    // The carrier synced the bus before judging the call, so with the gate asked the allow was on this StateView
+    // The carrier synced the bus before judging the call, so with the gate asked the allow was on this grants snapshot
     const judged = this.paths === 'ask' ? this.view : null
     for (const topic of topics) {
       const held = subscriber.topics.get(topic)
@@ -170,8 +170,8 @@ export class Bus {
 
   // Runs before anything the gate decides here, so a change the loader didn't report is still seen. While the gate is
   // down every live path subscription is marked, since a path may be held back from it. A gated subscription the gate
-  // didn't allow on the current StateView waits too, path-less events included. Only an exact allow counts, so a
-  // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the StateView
+  // didn't allow on the current grants snapshot waits too, path-less events included. Only an exact allow counts, so a
+  // narrowing made during an outage holds back what it may have taken away. Once the gate is up again, or the grants snapshot
   // moved, the bus asks about every subscription the gate holds. A refused one ends with events.ended. One the gate
   // gave no answer about, or whose item asks at first use, waits and is asked again at every sync until it is allowed
   // or refused, so a Confirm the human declined ends it. Each subscriber with a marked or newly started subscription
@@ -198,7 +198,7 @@ export class Bus {
           }
           continue
         }
-        // A retry with the key unmoved asks only about what waits, since every live one was allowed on this StateView
+        // A retry with the key unmoved asks only about what waits, since every live one was allowed on this grants snapshot
         if (!moved && held.live) continue
         const answer = held.free || paths === 'all' ? 'allow' : this.parts.recheck(subscriber.caller, topic)
         if (answer === 'refuse') {

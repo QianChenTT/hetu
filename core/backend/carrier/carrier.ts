@@ -90,7 +90,7 @@ type Pending = {
   filtering: Filtering | null
 }
 
-// The paths by their hash, the gate and StateView the answers came from, how many were asked about and the indexes kept
+// The paths by their hash, the gate and grants snapshot the answers came from, how many were asked about and the indexes kept
 type Filtering = { hash: string, gate: object, view: number | null, asked: number, kept: number[] }
 
 const hashOf = (paths: readonly string[]) => createHash('sha256').update(JSON.stringify(paths)).digest('hex')
@@ -234,7 +234,7 @@ export class Carrier {
   private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly bus: Bus
-  // The StateView number core.security last went out for
+  // The grants snapshot number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
   // Shutdown began: the loader reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
@@ -375,9 +375,9 @@ export class Carrier {
     this.paused = false
   }
 
-  // For the loader, after it changed a policy job state, a plugin state or the StateView. Once the gate's state or the
-  // StateView moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
+  // For the loader, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
+  // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
+  // core.security once a new grants snapshot applied a security change. The first grants snapshot the carrier reads is where it
   // starts, not a change
   changed(): void {
     if (this.closed || this.shutting) return
@@ -907,7 +907,7 @@ export class Carrier {
     return this.down('policy-down')
   }
 
-  // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current StateView
+  // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current grants snapshot
   // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
   // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
@@ -1058,7 +1058,7 @@ export class Carrier {
   // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
   // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
   // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
-  // gate or the StateView changed, so no answer from before a narrowing stands
+  // gate or the grants snapshot changed, so no answer from before a narrowing stands
   // For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
   // The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer on to the agent, so there the
   // agent's grant stands in for the caller's
@@ -1172,7 +1172,7 @@ export class Carrier {
     return { key: `${state} ${paths} ${view}`, paths, view }
   }
 
-  // The gate can be asked: its policy job is on, there is a holder and the StateView can be read. Otherwise every answer
+  // The gate can be asked: its policy job is on, there is a holder and the grants snapshot can be read. Otherwise every answer
   // would be policy-down, so the bus holds paths back and a subscribe stands
   private askable(): boolean {
     return this.policyJob('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
@@ -1192,7 +1192,7 @@ export class Carrier {
   }
 
   // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
-  // StateView included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
+  // grants snapshot included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
   // An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
   // waits for the Confirm. A declined ask refuses
   private recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {

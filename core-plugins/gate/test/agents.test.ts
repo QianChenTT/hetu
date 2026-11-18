@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from 'hetu-core/api/capabilities.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Access, GrantedItem, Scope, StateView } from 'hetu-core/api/policy-jobs.ts'
+import type { Access, GrantedItem, Scope, GrantsSnapshot } from 'hetu-core/api/policy-jobs.ts'
 import { createGate } from '../src/gate.ts'
 
 const mcp: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
@@ -16,7 +16,7 @@ function access(caller: Caller, agent: string | undefined, capability: Access['c
 }
 
 // mcp holds inbox and private, agent #1 inbox and secret, agent #3 private. search holds everything
-function gateWith(more: Partial<StateView> = {}) {
+function gateWith(more: Partial<GrantsSnapshot> = {}) {
   const gate = createGate()
   gate.stateChanged({
     n: 4, foldCase: false, execAny: [],

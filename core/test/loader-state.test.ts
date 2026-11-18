@@ -13,7 +13,7 @@ const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
 const exists = (file: string) => stat(file).then(() => true, () => false)
 
-describe('StateView versions', () => {
+describe('grants snapshot versions', () => {
   it('start at 1, grow by one with every applied change and reach the gate through stateChanged', async () => {
     const gate = allowAll()
     const made = await harness({ behave: { gate: { exports: { gate } } } })
@@ -272,7 +272,7 @@ describe('the human\'s switches, applied', () => {
   })
 })
 
-describe("the StateView's grants", () => {
+describe("the grants snapshot's grants", () => {
   const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
   const panel = { type: 'ui.view' as const }
   const item = (capability: object, off = false) => ({ capability, off, firstUse: false })
@@ -313,7 +313,7 @@ describe("the StateView's grants", () => {
     expect(made.gate.seen.at(-1)!.execAny).toEqual([])
   })
 
-  it("switch one item off with item.off, kept in the plugin's entry and in the next StateView, and back on with item.on", async () => {
+  it("switch one item off with item.off, kept in the plugin's entry and in the next grants snapshot, and back on with item.on", async () => {
     const made = await started()
     await made.loader.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
     expect(made.gate.seen.at(-1)!.n).toBe(2)

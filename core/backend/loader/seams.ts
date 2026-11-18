@@ -26,7 +26,7 @@ export type CarrierLink = {
   // until it lands or the loader gives up. A loader that gives up aborts signal, which takes a record still waiting
   // out of the backlog and settles it lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
-  // A policy job state, a plugin state or the StateView changed, so the carrier asks the gate about live subscriptions again
+  // A policy job state, a plugin state or the grants snapshot changed, so the carrier asks the gate about live subscriptions again
   changed(): void
   // Shutdown has begun. The six policy job states have no stopping and the carrier reads anything else as failed, so
   // shutdown says so here instead. From this call on the carrier answers stopped where it would answer policy-down,

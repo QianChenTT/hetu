@@ -294,7 +294,7 @@ describe('starting', () => {
     expect(reasonOf(loader, 'outline')).toBe('start-failed')
   })
 
-  it('pushes StateView 1 to the gate before it reads ready, and marks it failed when stateChanged throws', async () => {
+  it('pushes grants snapshot 1 to the gate before it reads ready, and marks it failed when stateChanged throws', async () => {
     const gate = allowAll()
     const { loader } = await harness({ behave: { gate: { exports: { gate } } } })
     await loader.start()

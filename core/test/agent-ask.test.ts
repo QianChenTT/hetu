@@ -181,7 +181,7 @@ describe('an agent\'s ask', () => {
 describe('the Confirm of an agent\'s ask', () => {
   const item = (capability: Capability) => ({ capability, off: false, firstUse: false })
 
-  it('adds the items to that label\'s on mcp\'s entry beside granted and hands the gate the next StateView', async () => {
+  it('adds the items to that label\'s on mcp\'s entry beside granted and hands the gate the next grants snapshot', async () => {
     const { loader, ask, stored, gate, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#10', capability: inbox }] })
     await ask('client#1', [write, inbox])
     await loader.confirm(loader.pending()[0].id, {})

@@ -2,7 +2,7 @@ import { capabilityKey, type Capability, type CapabilityType } from 'hetu-core/a
 import type { Caller } from 'hetu-core/api/envelope.ts'
 import { commandKey } from 'hetu-core/api/exec.ts'
 import { compileScopes } from 'hetu-core/api/scope.ts'
-import type { Access, Decision, Gate, GrantedItem, Scope, StateView } from 'hetu-core/api/policy-jobs.ts'
+import type { Access, Decision, Gate, GrantedItem, Scope, GrantsSnapshot } from 'hetu-core/api/policy-jobs.ts'
 import { windowGrants } from 'hetu-core/api/windows.ts'
 
 // How the gate reads each type's scope: paths through the matcher, every topic named, the target, held with no scope
@@ -32,7 +32,7 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   exec: 'command',
 })
 
-// One item as the gate matches it, compiled once per StateView. access is a history item's own
+// One item as the gate matches it, compiled once per grants snapshot. access is a history item's own
 type Compiled = { type: string, off: boolean, firstUse: boolean, key: string, access?: string, covers: (part: string) => boolean }
 
 const on = (item: Compiled) => !item.off && !item.firstUse
@@ -108,13 +108,13 @@ function judgeItems(items: readonly Compiled[], access: Access, view: number): D
   return { allow: true, view }
 }
 
-// The gate the gate plugin holds. It decides on the newest StateView and on core/api's fixed window grants, and keeps
+// The gate the gate plugin holds. It decides on the newest grants snapshot and on core/api's fixed window grants, and keeps
 // nothing else between calls
 export function createGate(): Gate {
   let held: Held | null = null
 
   function itemsOf(caller: Caller): readonly Compiled[] {
-    if (held === null) throw new Error('no StateView yet')
+    if (held === null) throw new Error('no grants snapshot yet')
     if (caller.kind === 'plugin') return held.plugins.get(caller.id) ?? []
     if (caller.kind === 'window') return held.windows.get(caller.role) ?? []
     // A content caller is reserved for #97 and holds nothing
@@ -124,7 +124,7 @@ export function createGate(): Gate {
   // An agent's items that are on, none for a label the view doesn't hold. An agent's item has no first use of its own
   // to ask about, so one switched off or asking covers nothing
   function agentItems(agent: string): readonly Compiled[] {
-    if (held === null) throw new Error('no StateView yet')
+    if (held === null) throw new Error('no grants snapshot yet')
     return (held.agents.get(agent) ?? []).filter(on)
   }
 
@@ -162,12 +162,12 @@ export function createGate(): Gate {
     },
 
     // Every item compiled once here. A throw marks the gate failed, so a view it can't read leaves it refusing
-    stateChanged(next: StateView): void {
+    stateChanged(next: GrantsSnapshot): void {
       const { n, foldCase, plugins, execAny } = next
       if (!Number.isSafeInteger(n) || typeof foldCase !== 'boolean' || typeof plugins !== 'object' || plugins === null) {
-        throw new Error('a StateView the gate can\'t read')
+        throw new Error('a grants snapshot the gate can\'t read')
       }
-      if (!Array.isArray(execAny) || !execAny.every(id => typeof id === 'string')) throw new Error('a StateView with no execAny list')
+      if (!Array.isArray(execAny) || !execAny.every(id => typeof id === 'string')) throw new Error('a grants snapshot with no execAny list')
       const any = new Set(execAny)
       const compiled = new Map<string, Compiled[]>()
       for (const [id, items] of Object.entries(plugins)) {
@@ -182,7 +182,7 @@ export function createGate(): Gate {
       // switch and lifts no agent's item
       const agents = new Map<string, Compiled[]>()
       const given: unknown = next.agents === undefined ? {} : next.agents
-      if (typeof given !== 'object' || given === null || Array.isArray(given)) throw new Error('a StateView whose agents the gate can\'t read')
+      if (typeof given !== 'object' || given === null || Array.isArray(given)) throw new Error('a grants snapshot whose agents the gate can\'t read')
       for (const [label, items] of Object.entries(given)) {
         if (!Array.isArray(items)) throw new Error('an agent with no items')
         agents.set(label, items.map(item => compile(item as GrantedItem, foldCase)))

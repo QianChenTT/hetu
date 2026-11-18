@@ -46,7 +46,7 @@ describe('the first-party reconcile', () => {
     expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'git', version: '1.0.0' }])
     expect(stateOf(made.loader, 'git')).toBe('ready')
     expect(await readdir(path.join(made.dataDir, 'staging'))).toEqual([])
-    // An applied change, so the StateView moved on
+    // An applied change, so the grants snapshot moved on
     expect(made.loader.view()).toBe(2)
   })
 

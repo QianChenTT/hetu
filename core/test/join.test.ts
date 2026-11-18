@@ -91,7 +91,7 @@ async function floorEvents(dataDir: string): Promise<string[]> {
   return (await floorRecords(dataDir)).map(record => record.event as string)
 }
 
-// A gate built on the fixtures' allow-all one, deciding with decide while it keeps the StateView it was given
+// A gate built on the fixtures' allow-all one, deciding with decide while it keeps the grants snapshot it was given
 function gateDeciding(decide: (access: Access, view: number) => unknown) {
   const gate = allowAll()
   return Object.assign(gate, { decide: (access: Access) => decide(access, gate.views.at(-1) ?? 0) })
@@ -547,7 +547,7 @@ describe('a guard down through the joined core', () => {
   })
 })
 
-// The loader's StateView into the gate plugin as it ships, for a folder plugin's calls
+// The loader's grants snapshot into the gate plugin as it ships, for a folder plugin's calls
 describe('the gate plugin on the joined core', () => {
   const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
   const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
@@ -576,12 +576,12 @@ describe('the gate plugin on the joined core', () => {
     expect((await alpha.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))?.ok).toBe(true)
   })
 
-  it('keeps an item switched off in the entry off from the first StateView', async () => {
+  it('keeps an item switched off in the entry off from the first grants snapshot', async () => {
     const { runtime } = await gated({ off: [read] })
     expect(code((await runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('switched-off')
   })
 
-  it('fails the gate when it throws on a later StateView, refusing calls with power from then on', async () => {
+  it('fails the gate when it throws on a later grants snapshot, refusing calls with power from then on', async () => {
     const gate = createGate()
     const thrown = { on: false }
     const real = gate.stateChanged.bind(gate)

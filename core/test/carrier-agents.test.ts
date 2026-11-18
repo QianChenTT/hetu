@@ -367,7 +367,7 @@ describe('the door an agent\'s label comes through', () => {
   })
 })
 
-// The real gate on one StateView: mcp holds inbox and private and asks at first use for asks, agent #1 inbox, secret
+// The real gate on one grants snapshot: mcp holds inbox and private and asks at first use for asks, agent #1 inbox, secret
 // and asks, search everything. decided holds every Access the gate was asked to decide
 function gated() {
   const real = createGate()
@@ -814,7 +814,7 @@ describe('the audit record of an agent\'s call', () => {
   })
 })
 
-// The real gate on one StateView where mcp, search and agent #1 each hold an item for every provider action the tests
+// The real gate on one grants snapshot where mcp, search and agent #1 each hold an item for every provider action the tests
 // reach, so a refusal comes from the table and never from a missing item. history, exec and leases are providers that
 // note what reached them and act on nothing
 function tabled() {

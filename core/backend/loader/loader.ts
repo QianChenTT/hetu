@@ -23,7 +23,7 @@ import { bindFailures, type BindFailure, type DepState, type Init, type StopReas
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, StateView } from '../../api/policy-jobs.ts'
+import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -1825,9 +1825,9 @@ ${capabilityKey(change.capability)}`)
     // A security control with no role to play would refuse everything while reading as up, so it fails here
     const role = roleOf[k.id]
     if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
-    // The gate has the StateView before it answers anything, the luoshu and history their folder and exec its view
+    // The gate has the grants snapshot before it answers anything, the luoshu and history their folder and exec its view
     // of the grants. A throw marks that one failed
-    if (k.id === 'gate' && k.from === 'install' && !this.pushTo(k)) return
+    if (k.id === 'gate' && k.from === 'install' && !this.pushGrantsSnapshot(k)) return
     if (k.id === 'luoshu' && k.from === 'install' && !this.openLuoshu(k)) return
     if (k.id === 'history' && k.from === 'install' && !this.openHistory(k)) return
     if (k.id === 'exec' && k.from === 'install' && !this.pushExec(k)) return
@@ -2090,7 +2090,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
-  // change raises the StateView by one. Requests reach it through the Confirm, tests and the loader's own reconcile
+  // change raises the grants snapshot by one. Requests reach it through the Confirm, tests and the loader's own reconcile
   // directly
   apply(input: Change): Promise<void> {
     return this.serial(async () => {
@@ -2371,12 +2371,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.replan()
   }
 
-  // One applied change: a new StateView pushed to the gate, exec's view of the grants renewed with it and the carrier
+  // One applied change: a new grants snapshot pushed to the gate, exec's view of the grants renewed with it and the carrier
   // told
   private bump(): void {
     this.n++
     const gate = this.known.get('gate')
-    if (gate !== undefined && gate.from === 'install' && gate.state === 'ready') this.pushTo(gate)
+    if (gate !== undefined && gate.from === 'install' && gate.state === 'ready') this.pushGrantsSnapshot(gate)
     const exec = this.known.get('exec')
     if (exec !== undefined && exec.from === 'install' && exec.state === 'ready') this.pushExec(exec)
     this.refresh()
@@ -2404,11 +2404,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the loader's own alone. A folder
-  // plugin's come from its entry in the state, which boot loaded before the gate's first StateView and before the plugin
+  // plugin's come from its entry in the state, which boot loaded before the gate's first grants snapshot and before the plugin
   // folder is scanned. An install plugin's come from its manifest, read before the host tier starts. An item the entry
   // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the
   // grant risk classifier switched off, when nothing asks. An install plugin's items never ask
-  private stateView(): StateView {
+  private grantsSnapshot(): GrantsSnapshot {
     const asks = this.classing() !== 'off'
     const plugins: Record<string, readonly GrantedItem[]> = Object.create(null)
     const items = (granted: readonly Capability[], switchedOff: readonly Capability[], asking: readonly Capability[] = []) => {
@@ -2472,13 +2472,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
   }
 
-  // What exec checks a command against on its own, read from the StateView: each plugin's exec items that are on. Exec
+  // What exec checks a command against on its own, read from the grants snapshot: each plugin's exec items that are on. Exec
   // keeps this list with the gate off, so an item the human switched off leaves it, or the command would run again
   // exactly when the gate isn't there to refuse it. With them the plugins the human let run any command and the folders
   // no command may run code from. Read-only
   private execView(): ExecView {
     const plugins: Record<string, ExecGrant[]> = Object.create(null)
-    for (const [id, items] of Object.entries(this.stateView().plugins)) {
+    for (const [id, items] of Object.entries(this.grantsSnapshot().plugins)) {
       const held: ExecGrant[] = []
       for (const { capability, off } of items) {
         if (capability.type === 'exec' && !off) held.push({ commands: capability.commands.map(command => [...command]), env: [...capability.env] })
@@ -2500,11 +2500,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     }
   }
 
-  private pushTo(gate: Known): boolean {
+  private pushGrantsSnapshot(gate: Known): boolean {
     const target = gate.live?.exports?.gate
     if (target === undefined) return true
     try {
-      target.stateChanged(this.stateView())
+      target.stateChanged(this.grantsSnapshot())
       return true
     } catch {
       this.die(gate, 'state-changed')

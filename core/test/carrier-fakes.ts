@@ -123,7 +123,7 @@ export class FakeGate implements Gate {
     return this.granted(access)
   }
 
-  // The grant table's answer on the current StateView
+  // The grant table's answer on the current grants snapshot
   granted(access: Access): Decision {
     const view = this.loader.current
     return holds(this.grantsOf(access.caller), access) ? { allow: true, view } : { allow: false, code: 'not-granted', view }

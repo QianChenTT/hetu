@@ -158,7 +158,7 @@ describe('agents\' items in the agent host\'s entry', () => {
   })
 })
 
-describe('agents\' items in the StateView', () => {
+describe('agents\' items in the grants snapshot', () => {
   afterEach(cleanup)
 
   // mcp as the install's own copy with its entry seeded as a test does and alpha a plugin of the folder

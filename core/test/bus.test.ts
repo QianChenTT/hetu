@@ -201,7 +201,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(scribe.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
   })
 
-  it('holds paths back and stands a subscribe while the StateView can\'t be read, since every call is refused then', async () => {
+  it('holds paths back and stands a subscribe while the grants snapshot can\'t be read, since every call is refused then', async () => {
     const { carrier, loader, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     loader.view = () => { throw new Error('unreadable') }
@@ -236,7 +236,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(search.events()).toEqual([])
     expect(scribe.events()).toEqual([])
     gate.decision = null
-    // No state and no StateView moved
+    // No state and no grants snapshot moved
     carrier.changed()
     await edited('notes/b.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
@@ -248,7 +248,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(log.events('fault').map(record => record.fields)).toContainEqual({ plugin: 'gate', step: 'precheck', count: 1 })
   })
 
-  it('ends a live subscription a new StateView took away though the gate threw when first asked again', async () => {
+  it('ends a live subscription a new grants snapshot took away though the gate threw when first asked again', async () => {
     const { carrier, loader, gate, scribe, git, edited, indexed } = setup()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -278,7 +278,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 })
 
 describe('asking again', () => {
-  it('ends a subscription a new StateView no longer grants with events.ended and sends it nothing more', async () => {
+  it('ends a subscription a new grants snapshot no longer grants with events.ended and sends it nothing more', async () => {
     const { carrier, loader, gate, search, scribe, edited, luoshuHalf } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
@@ -295,7 +295,7 @@ describe('asking again', () => {
     expect(signals(scribe.events(), 'events.ended')).toEqual([])
   })
 
-  it('asks the gate nothing again while neither its state nor the StateView moved', async () => {
+  it('asks the gate nothing again while neither its state nor the grants snapshot moved', async () => {
     const { carrier, gate, search } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     carrier.changed()
@@ -319,8 +319,8 @@ describe('asking again', () => {
     ])
   })
 
-  // An answer on an older StateView means the gate hasn't caught up yet, which refuses nothing
-  it('holds back a subscription the gate answers on an older StateView and starts it once the gate answers on this one', async () => {
+  // An answer on an older grants snapshot means the gate hasn't caught up yet, which refuses nothing
+  it('holds back a subscription the gate answers on an older grants snapshot and starts it once the gate answers on this one', async () => {
     const { carrier, loader, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.decision = () => ({ allow: true, view: 1 })
@@ -377,9 +377,9 @@ describe('asking again', () => {
     expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
   })
 
-  // A narrowing never asks the gate, so a StateView that moves while the gate is down holds back
+  // A narrowing never asks the gate, so a grants snapshot that moves while the gate is down holds back
   // everything the gate allowed on the old one. What it didn't touch starts again once the gate answers
-  it('holds back what the gate allowed on an older StateView when the StateView moves while the gate is down', async () => {
+  it('holds back what the gate allowed on an older grants snapshot when the grants snapshot moves while the gate is down', async () => {
     const { carrier, loader, gate, git, search, indexed, edited } = setup()
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
@@ -438,7 +438,7 @@ describe('a subscription whose first use the gate comes to ask about', () => {
     carrier.changed()
     await edited('notes/a.md')
     await settle()
-    // The Confirm applies the item, which moves the StateView
+    // The Confirm applies the item, which moves the grants snapshot
     gate.decision = null
     loader.current = 3
     carrier.changed()
@@ -470,7 +470,7 @@ describe('a subscription whose first use the gate comes to ask about', () => {
     expect(search.events().map(message => message.topic)).toEqual(['events.ended'])
   })
 
-  it('ends a waiting subscription once the human declined its Confirm, with no StateView moved', async () => {
+  it('ends a waiting subscription once the human declined its Confirm, with no grants snapshot moved', async () => {
     let declined = false
     const { carrier, loader, gate, search, edited } = setup({
       asks: { raise: () => (declined ? { code: 'not-granted', reason: 'declined' } : 'req-1') },
@@ -739,8 +739,8 @@ describe('core.*', () => {
     expect(seqs.slice(-3)).toEqual([credits, 'events.dropped', credits + 1])
   })
 
-  // The first StateView the carrier reads is where it starts, so the first changed() sends no core.security
-  it('sends core.status to the windows on every change and core.security once per new StateView, never a path', async () => {
+  // The first grants snapshot the carrier reads is where it starts, so the first changed() sends no core.security
+  it('sends core.status to the windows on every change and core.security once per new grants snapshot, never a path', async () => {
     const { carrier, loader, way } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'core.security'] })
     carrier.changed()

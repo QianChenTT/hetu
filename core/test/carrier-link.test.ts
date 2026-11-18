@@ -146,7 +146,7 @@ describe('shutdown', () => {
     const luoshu = hostHalf(carrier, host('luoshu'))
     await luoshu.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })
     await tick(30)
-    // The gate still holds during shutdown: a StateView the gate never judged search on holds its events back
+    // The gate still holds during shutdown: a grants snapshot the gate never judged search on holds its events back
     expect(search.events()).toEqual([])
     carrier.close()
     await tick()

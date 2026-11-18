@@ -8,7 +8,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { floorConstants, type FloorConstant } from '../api/floor.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
-import type { Gate, StateView } from '../api/policy-jobs.ts'
+import type { Gate, GrantsSnapshot } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
@@ -285,17 +285,17 @@ export class FakeRuntime implements Runtime {
   }
 }
 
-// A gate that allows everything and remembers each StateView it was given
-export function allowAll(): Gate & { views: number[], seen: StateView[], throws: boolean } {
+// A gate that allows everything and remembers each grants snapshot it was given
+export function allowAll(): Gate & { views: number[], seen: GrantsSnapshot[], throws: boolean } {
   const gate = {
     views: [] as number[],
-    seen: [] as StateView[],
+    seen: [] as GrantsSnapshot[],
     throws: false,
     decide: () => ({ allow: true as const, view: gate.views.at(-1) ?? 0 }),
     canRead: () => true,
     canList: () => true,
     verbs: () => [],
-    stateChanged(view: StateView) {
+    stateChanged(view: GrantsSnapshot) {
       if (gate.throws) throw new Error('bad view')
       gate.views.push(view.n)
       gate.seen.push(view)

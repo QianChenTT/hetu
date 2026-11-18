@@ -67,7 +67,7 @@ export const agentHost = 'mcp'
 // of the notes. Every other provider and every other plugin it reaches only under that call
 export const agentOwn = frozen(['storage'] as const)
 
-// view is the number of the StateView the answer was made on. ask names what a Confirm would grant, at the canonical
+// view is the number of the grants snapshot the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only
 export type Decision =
   | { allow: true, view: number }
@@ -84,7 +84,7 @@ export type GrantedItem = { readonly capability: Capability, readonly off: boole
 // volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
 // agents holds each agent's own grant by its label, the labelled items of the agent host's entry, none of which is in
 // the host's own items. A view with no agents gives every agent nothing
-export type StateView = {
+export type GrantsSnapshot = {
   readonly n: number
   readonly foldCase: boolean
   readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
@@ -100,7 +100,7 @@ export type Gate = {
   canList(caller: Caller, path: string, agent?: string): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
-  stateChanged(view: StateView): void
+  stateChanged(view: GrantsSnapshot): void
 }
 
 // The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
@@ -170,7 +170,7 @@ export type HistoryRole = { open(opening: Opening): void }
 export type ExecGrant = { readonly commands: readonly (readonly string[])[], readonly env: readonly string[] }
 
 // What exec checks a command against on its own, gate off included: each plugin's exec items, the plugins the human let
-// run any command and the folders no command may run code from. Read-only, renewed with every StateView
+// run any command and the folders no command may run code from. Read-only, renewed with every grants snapshot
 export type ExecView = {
   readonly plugins: Readonly<Record<string, readonly ExecGrant[]>>
   readonly any: readonly string[]

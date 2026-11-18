@@ -138,7 +138,7 @@ export function scopeMatches(scope: string, path: string, options: { foldCase: b
 }
 
 // Whether a path lies inside any of the scopes, each scope's grammar checked once here and not on every match, so a
-// gate can compile its grants once per StateView. A scope outside the grammar is left out and matches nothing.
+// gate can compile its grants once per grants snapshot. A scope outside the grammar is left out and matches nothing.
 // Answers as scopeMatches does against each scope in turn
 export function compileScopes(scopes: readonly string[], options: { foldCase: boolean }): (path: string) => boolean {
   const compiled = scopes.filter(scope => scopeProblem(scope) === null).map(scope => scope.split('/'))

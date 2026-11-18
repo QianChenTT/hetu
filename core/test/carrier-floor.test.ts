@@ -611,7 +611,7 @@ describe('precheck', () => {
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'decide', count: 1 }])
   })
 
-  it('refuses policy-down when the StateView number can not be read, an allow included', async () => {
+  it('refuses policy-down when the grants snapshot number can not be read, an allow included', async () => {
     const { connect, loader, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
@@ -623,14 +623,14 @@ describe('precheck', () => {
     expect(luoshu.performed).toEqual([])
   })
 
-  it('refuses policy-down when the StateView number is not a whole number', async () => {
+  it('refuses policy-down when the grants snapshot number is not a whole number', async () => {
     const { connect, loader, gate } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     loader.view = () => '1' as never
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
-  it('refuses an answer made on an older StateView as stale', async () => {
+  it('refuses an answer made on an older grants snapshot as stale', async () => {
     const { connect, loader, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')

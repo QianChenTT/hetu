@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { providerActions } from 'hetu-core/api/actions.ts'
 import { capabilityTypes, type Capability } from 'hetu-core/api/capabilities.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Access, GrantedItem, Scope, StateView } from 'hetu-core/api/policy-jobs.ts'
+import type { Access, GrantedItem, Scope, GrantsSnapshot } from 'hetu-core/api/policy-jobs.ts'
 import { createGate, scopeRules } from '../src/gate.ts'
 
 const alpha: Caller = { kind: 'plugin', id: 'alpha', half: 'worker', incarnation: 1 }
@@ -12,7 +12,7 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 0 }
 const item = (capability: Capability, more: Partial<GrantedItem> = {}): GrantedItem =>
   ({ capability, off: false, firstUse: false, ...more })
 
-function view(plugins: Record<string, GrantedItem[]>, more: Partial<StateView> = {}): StateView {
+function view(plugins: Record<string, GrantedItem[]>, more: Partial<GrantsSnapshot> = {}): GrantsSnapshot {
   return { n: 1, foldCase: false, plugins: Object.assign(Object.create(null), plugins), execAny: [], ...more }
 }
 
@@ -20,8 +20,8 @@ function access(caller: Caller, capability: Access['capability'], scope: Scope, 
   return { stage, caller, action: 'test.action', capability, scope }
 }
 
-// A gate given one StateView
-function gateOn(plugins: Record<string, GrantedItem[]>, more: Partial<StateView> = {}) {
+// A gate given one grants snapshot
+function gateOn(plugins: Record<string, GrantedItem[]>, more: Partial<GrantsSnapshot> = {}) {
   const gate = createGate()
   gate.stateChanged(view(plugins, more))
   return gate
@@ -30,7 +30,7 @@ function gateOn(plugins: Record<string, GrantedItem[]>, more: Partial<StateView>
 const notes: Capability = { type: 'luoshu.read', paths: ['notes/**'] }
 
 describe('deciding', () => {
-  it('allows a plugin a path inside an item it holds and refuses one outside, naming the StateView it decided on', () => {
+  it('allows a plugin a path inside an item it holds and refuses one outside, naming the grants snapshot it decided on', () => {
     const gate = gateOn({ alpha: [item(notes)] }, { n: 7 })
     expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toEqual({ allow: true, view: 7 })
     expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['journal/a.md'] }))).toEqual({ allow: false, code: 'not-granted', view: 7 })
@@ -174,13 +174,13 @@ describe('deciding', () => {
     expect(gate.decide(access(constructor, 'luoshu.read', { paths: ['notes/a.md'] }))).toMatchObject({ code: 'not-granted' })
   })
 
-  it('matches with case unless the StateView says the volume folds case', () => {
+  it('matches with case unless the grants snapshot says the volume folds case', () => {
     const grant = { alpha: [item({ type: 'luoshu.read', paths: ['Notes/**'] })] }
     expect(gateOn(grant).decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toMatchObject({ code: 'not-granted' })
     expect(gateOn(grant, { foldCase: true }).decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
   })
 
-  it('decides on the newest StateView it was given', () => {
+  it('decides on the newest grants snapshot it was given', () => {
     const gate = gateOn({ alpha: [item(notes)] })
     gate.stateChanged(view({ alpha: [item({ type: 'luoshu.read', paths: ['journal/**'] })] }, { n: 2 }))
     expect(gate.decide(access(alpha, 'luoshu.read', { paths: ['notes/a.md'] }))).toEqual({ allow: false, code: 'not-granted', view: 2 })
@@ -249,7 +249,7 @@ describe('ui.read', () => {
 })
 
 describe('windows', () => {
-  it('judges the editor on core/api\'s fixed grants, whatever the StateView holds, and the trusted window on none', () => {
+  it('judges the editor on core/api\'s fixed grants, whatever the grants snapshot holds, and the trusted window on none', () => {
     const gate = gateOn({ alpha: [item(notes)] })
     expect(gate.decide(access(editor, 'luoshu.write', { paths: ['notes/a.md'] }))).toMatchObject({ allow: true })
     // Windows read the log through core actions the floor decides, so the editor holds no log.read
@@ -304,7 +304,7 @@ describe('reading on another\'s behalf', () => {
   })
 })
 
-describe('the StateView', () => {
+describe('the grants snapshot', () => {
   it('throws on one it can\'t read, which marks the gate failed', () => {
     const gate = createGate()
     expect(() => gate.stateChanged({ n: 1.5, foldCase: false, plugins: {}, execAny: [] })).toThrow()
