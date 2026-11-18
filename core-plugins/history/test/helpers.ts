@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Call } from 'hetu-core/api/slots.ts'
+import type { Call } from 'hetu-core/api/policy-jobs.ts'
 import { createHistory, type History, type HistoryOptions } from '../src/history.ts'
 
 export const git: Caller = { kind: 'plugin', id: 'git', half: 'worker', incarnation: 1 }

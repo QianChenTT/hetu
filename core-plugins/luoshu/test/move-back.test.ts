@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, unlink, writeF
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { createLuoshu, type Luoshu } from '../src/luoshu.ts'
 
 // What another program does right after a move's link, and the unlinks of one path that fail and how

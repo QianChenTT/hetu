@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -140,7 +140,7 @@ describe('the floor', () => {
       ...['luoshu', 'gate', 'watchdog'].map(id => hostHalf(carrier, host(id))),
     ]
     for (const state of ['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const) {
-      loader.slots.gate = state
+      loader.policyJobs.gate = state
       for (const plugin of plugins) expect(code(await plugin.ask(action, args))).toBe('not-granted')
     }
     expect(seen).toEqual([])
@@ -202,7 +202,7 @@ describe('the floor', () => {
   it('takes security.request from any window and security.confirm only from the trusted one, with the gate failed', async () => {
     const seen: Call[] = []
     const { carrier, loader, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const change = { kind: 'plugin.on', plugin: 'search' }
     expect((await way.ask('editor-1', 'security.request', { change })).result).toEqual({ held: true })
@@ -236,7 +236,7 @@ describe('the floor', () => {
     })
     loader.sandboxed('search')
     loader.sandboxed('guarding')
-    // A slot id never names a sandboxed plugin, but the floor doesn't rely on that
+    // A policy job id never names a sandboxed plugin, but the floor doesn't rely on that
     loader.sandboxed('grant-risk-classifier')
     loader.installed('watchdog')
     const watchdog = hostHalf(carrier, host('watchdog'))
@@ -245,7 +245,7 @@ describe('the floor', () => {
     for (const plugin of ['luoshu', 'gate', 'log', 'grant-risk-classifier', 'guarding', 'ghost']) {
       expect(code(await watchdog.ask('watchdog.stop', { plugin }))).toBe('not-granted')
     }
-    // The watchdog's id on a port, or on a worker half, is not the slot's holder
+    // The watchdog's id on a port, or on a worker half, is not the policy job's holder
     expect(code(await connect(host('watchdog', 2)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(code(await hostHalf(carrier, worker('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
     expect(code(await connect(worker('search')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
@@ -265,13 +265,13 @@ describe('the floor', () => {
     expect(seen).toEqual([])
   })
 
-  // Starting, failed, absent and tampered act as off and off makes no restarts. The handle can outlive the slot,
+  // Starting, failed, absent and tampered act as off and off makes no restarts. The handle can outlive the policy job,
   // minted before start and kept through a stop grace
-  it.each(['off', 'starting', 'failed', 'absent', 'tampered'] as const)('takes no watchdog.* from the watchdog\'s handle while its slot is %s', async state => {
+  it.each(['off', 'starting', 'failed', 'absent', 'tampered'] as const)('takes no watchdog.* from the watchdog\'s handle while its policy job is %s', async state => {
     const seen: Call[] = []
     const { carrier, connect, loader } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = 'off'
-    loader.slots.watchdog = state
+    loader.policyJobs.gate = 'off'
+    loader.policyJobs.watchdog = state
     loader.sandboxed('search')
     loader.sandboxed('git', { log: {} })
     const watchdog = hostHalf(carrier, host('watchdog'))
@@ -297,7 +297,7 @@ describe('the floor', () => {
 
   it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
     const { carrier, connect, loader, gate, log } = harness()
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     loader.utility('mcp-http-handler')
     const http = connect(host('mcp-http-handler'))
     expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
@@ -310,7 +310,7 @@ describe('the floor', () => {
   it.each(['on', 'off', 'failed'] as const)('hands core.bindFailed from http\'s host half on its utility port to the loader with the gate %s, asking no gate', async state => {
     const seen: Call[] = []
     const { connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     loader.utility('mcp-http-handler')
     expect(await connect(host('mcp-http-handler')).ask('core.bindFailed', { reason: 'port-taken' })).toMatchObject({ ok: true, result: null })
     expect(seen).toMatchObject([{ action: 'core.bindFailed', caller: host('mcp-http-handler'), args: { reason: 'port-taken' } }])
@@ -323,7 +323,7 @@ describe('the floor', () => {
   it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
     const seen: Call[] = []
     const { carrier, connect, loader, gate, log } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     loader.utility('mcp-http-handler')
     loader.sandboxed('search')
     loader.installed('exec')
@@ -373,7 +373,7 @@ describe('the floor', () => {
     luoshu.files.set('notes/a.md', 'x')
     const way = windowWay(carrier, { trusted })
     for (const gate of ['on', 'off'] as const) {
-      loader.slots.gate = gate
+      loader.policyJobs.gate = gate
       expect(code(await way.ask('trusted', 'luoshu.read', { path: 'notes/a.md' }))).toBe('not-granted')
       expect(code(await way.ask('trusted', 'storage.get', { key: 'drafts' }))).toBe('not-granted')
     }
@@ -382,7 +382,7 @@ describe('the floor', () => {
 
   it('lets the free actions skip the gate, with the gate failed', async () => {
     const { connect, loader, gate } = harness()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     loader.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
@@ -442,7 +442,7 @@ describe('ui.*', () => {
     const seen: Call[] = []
     const ui = async (call: Call) => { seen.push(call); return 'mounted' }
     const { carrier, connect, loader, gate } = harness({ served: { ui } })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     const search = connect(worker('search'))
     expect((await search.ask('ui.view', { title: 'x' })).result).toBe('mounted')
     expect(seen.map(call => [call.caller, call.action, call.args])).toEqual([[worker('search'), 'ui.view', { title: 'x' }]])
@@ -455,10 +455,10 @@ describe('ui.*', () => {
   })
 })
 
-describe('the gate slot', () => {
+describe('the gate policy job', () => {
   it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
     const { carrier, connect, loader, gate, luoshu } = harness()
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     loader.sandboxed('git', { log: {} })
     const search = connect(worker('search'))
@@ -473,7 +473,7 @@ describe('the gate slot', () => {
 
   it('answers starting while the gate starts, so the SDK retries', async () => {
     const { connect, loader, gate } = harness()
-    loader.slots.gate = 'starting'
+    loader.policyJobs.gate = 'starting'
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
     expect(gate.asked).toEqual([])
   })
@@ -484,10 +484,10 @@ describe('the gate slot', () => {
   })
 
   // Read as off, the gate and every guard would pass everything
-  it('refuses policy-down when the loader can not give the slot states', async () => {
+  it('refuses policy-down when the loader can not give the policy job states', async () => {
     const { connect, loader, luoshu } = harness()
     luoshu.files.set('a.md', 'x')
-    loader.slot = () => { throw new Error('no state') }
+    loader.policyJob = () => { throw new Error('no state') }
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(code(await search.ask('luoshu.write', { path: 'a.md', text: 'y' }))).toBe('policy-down')
@@ -496,7 +496,7 @@ describe('the gate slot', () => {
 
   it.each([['on', false], ['off', true]] as const)('passes calls with power while the gate is off and recording is %s', async (_name, nothing) => {
     const { connect, loader, gate, luoshu } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.nothing = nothing
     loader.sandboxed('git', { log: {} })
     luoshu.files.set('secret/a.md', 'x')
@@ -514,7 +514,7 @@ describe('the gate slot', () => {
   it('refuses calls with power policy-down while the gate is off and the log has failed', async () => {
     let now = 0
     const { connect, loader, log, luoshu } = harness({ clock: () => now })
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
@@ -529,7 +529,7 @@ describe('the gate slot', () => {
   it('passes calls with power while the gate is off and recording is off, the log failed', async () => {
     let now = 0
     const { connect, loader, log, luoshu } = harness({ clock: () => now })
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
@@ -541,12 +541,12 @@ describe('the gate slot', () => {
 
   it('never lets recording off pass a call while the gate is failed', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     loader.nothing = true
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
   })
 
-  it('reads the gate slot again after prepare, so a gate that failed meanwhile refuses', async () => {
+  it('reads the gate policy job again after prepare, so a gate that failed meanwhile refuses', async () => {
     const { connect, loader, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
@@ -555,7 +555,7 @@ describe('the gate slot', () => {
     const search = connect(worker('search'))
     const id = search.call('luoshu.read', { path: 'a.md' })
     for (let i = 0; i < 100 && luoshu.prepared.length === 0; i++) await tick(2)
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     open()
     expect(code(await search.reply(id))).toBe('policy-down')
     expect(luoshu.performed).toEqual([])

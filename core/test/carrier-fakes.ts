@@ -3,7 +3,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { FloorConstant } from '../api/floor.ts'
 import { scopeMatches } from '../api/scope.ts'
-import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, SlotState } from '../api/slots.ts'
+import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions, HumanLimits, Loader, PluginInfo } from '../backend/carrier/seams.ts'
@@ -18,7 +18,7 @@ export type Message = Record<string, unknown>
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
 export class FakeLoader implements Loader {
-  slots: Record<string, SlotState> = { gate: 'on', watchdog: 'on', 'grant-risk-classifier': 'on' }
+  policyJobs: Record<string, PolicyJobState> = { gate: 'on', watchdog: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
   // Writable here, so a test can set the human's limits
@@ -29,8 +29,8 @@ export class FakeLoader implements Loader {
   crashes: { caller: Caller, reason: string }[] = []
   lifecycle: { caller: Caller, kind: string }[] = []
 
-  slot(id: string): SlotState {
-    return this.slots[id] ?? 'absent'
+  policyJob(id: string): PolicyJobState {
+    return this.policyJobs[id] ?? 'absent'
   }
 
   view(): number {

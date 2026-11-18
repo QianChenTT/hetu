@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { commandKey, envNameProblem, EXEC_OUTPUT_BYTES, EXEC_RUNNING } from 'hetu-core/api/exec.ts'
-import type { Call, ExecRole, ExecView, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
+import type { Call, ExecRole, ExecView, Opening, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/policy-jobs.ts'
 import { asOpened, baseEnv, findProgram, inside, runClean, throughShare, withDeclared } from 'hetu-core/lib/clean-env.ts'
 
 export type ExecOptions = {

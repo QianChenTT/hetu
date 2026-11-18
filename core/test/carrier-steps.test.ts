@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access, GuardCall } from '../api/slots.ts'
+import type { Access, GuardCall } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -124,7 +124,7 @@ describe('prepare before decide', () => {
 
   it('passes onBehalf to the provider, the gate and the guards, and the decision never changes with it', async () => {
     const { connect, gate, guards, loader, luoshu } = harness({ guardsFor: () => ['leases'] })
-    loader.slots.leases = 'on'
+    loader.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
@@ -142,7 +142,7 @@ describe('guards', () => {
     const parts = harness({ guardsFor: () => order })
     const { loader, guards, gate } = parts
     for (const id of order) {
-      loader.slots[id] = 'on'
+      loader.policyJobs[id] = 'on'
       guards[id] = new FakeGuard()
     }
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
@@ -166,7 +166,7 @@ describe('guards', () => {
 
   it('skips a guard the human switched off and asks the rest', async () => {
     const { connect, guards, loader } = setup()
-    loader.slots.leases = 'off'
+    loader.policyJobs.leases = 'off'
     expect((await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })).ok).toBe(true)
     expect(guards.leases.calls).toEqual([])
     expect(guards.second.calls).toHaveLength(1)
@@ -174,14 +174,14 @@ describe('guards', () => {
 
   it('answers starting while a guard starts', async () => {
     const { connect, loader, luoshu } = setup()
-    loader.slots.second = 'starting'
+    loader.policyJobs.second = 'starting'
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('starting')
     expect(luoshu.performed).toEqual([])
   })
 
   it.each(['failed', 'absent', 'tampered'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
     const { carrier, connect, loader, luoshu, guards } = setup()
-    loader.slots.leases = state
+    loader.policyJobs.leases = state
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     const way = windowWay(carrier, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
@@ -238,7 +238,7 @@ describe('guards', () => {
     let clock = 1_000_000
     const parts = harness({ guardsFor: () => ['leases'], clock: () => clock })
     const { connect, guards, loader, gate, luoshu } = parts
-    loader.slots.leases = 'on'
+    loader.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
@@ -258,7 +258,7 @@ describe('guards', () => {
   it('times the answer on a clock the wall clock does not move', async () => {
     let wall = Date.now()
     const { connect, guards, loader, gate } = harness({ guardsFor: () => ['leases'], now: () => wall })
-    loader.slots.leases = 'on'
+    loader.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     guards.leases.answer = () => { wall += 60000; return 'allow' }
@@ -267,7 +267,7 @@ describe('guards', () => {
 
   it('still holds every guard with the gate off', async () => {
     const { connect, loader, guards } = setup()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     guards.second.answer = () => 'deny'
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'secret/a.md', text: 'x' }))).toBe('guard-refused')
   })

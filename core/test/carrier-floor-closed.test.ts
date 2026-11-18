@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, host, hostHalf, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 // The core table with one more action whose from names no rule the floor has, as one added to the table without its
@@ -17,7 +17,7 @@ describe('the floor\'s core branch', () => {
   it.each(['on', 'off', 'failed'] as const)('refuses a core action whose from it has no rule for to every caller, with the gate %s', async state => {
     const seen: Call[] = []
     const { carrier, connect, loader, gate } = harness({ core: async call => { seen.push(call); return null } })
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     loader.utility('mcp-http-handler')
     loader.sandboxed('search')
     loader.installed('watchdog')

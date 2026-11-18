@@ -1,7 +1,7 @@
 import { createHash, type Hash } from 'node:crypto'
 import { mkdir, open, readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import type { LogSegment as Segment, LogVerification as Verification } from '../api/slots.ts'
+import type { LogSegment as Segment, LogVerification as Verification } from '../api/policy-jobs.ts'
 import { retried, syncDir, writable } from './disk.ts'
 
 // Metadata only. A caller may hand over a field that sounds like note text by mistake, so those names are refused

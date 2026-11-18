@@ -6,7 +6,7 @@ import type { Change } from '../api/changes.ts'
 import type { Caller } from '../api/envelope.ts'
 import path from 'node:path'
 import type { Plugin, Switches } from '../backend/boot/state.ts'
-import type { GrantRiskClassifier } from '../api/slots.ts'
+import type { GrantRiskClassifier } from '../api/policy-jobs.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
   workerManifest, writeFolder, type Files, type Listing, type Message,
@@ -57,7 +57,7 @@ async function approved(made: Awaited<ReturnType<typeof harness>>, id: string): 
 }
 
 describe('an approval', () => {
-  it('writes the class and the items that ask at first use from the grant risk classifier slot, and its screen under the core\'s words', async () => {
+  it('writes the class and the items that ask at first use from the grant risk classifier policy job, and its screen under the core\'s words', async () => {
     const made = await harness({ install: withCapabilities(), folder: { reader: worker('reader', [read, fetchOne, exec]) } })
     await made.loader.start()
     const request = await approved(made, 'reader')
@@ -83,10 +83,10 @@ describe('an approval', () => {
     expect(entry.firstUse).toEqual([{ type: 'plugin.call', targets: ['middle'] }])
   })
 
-  it('writes a null class and every item at first use with the slot down, and says so', async () => {
+  it('writes a null class and every item at first use with the policy job down, and says so', async () => {
     const made = await harness({ folder: { reader: worker('reader', [read, { type: 'storage' }]) } })
     await made.loader.start()
-    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
     const request = await approved(made, 'reader')
     expect(request.notes).toContain('The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use')
     const entry = (await made.store.load()).state.plugins.reader
@@ -117,12 +117,12 @@ describe('a staged update', () => {
     return { made, outcome: await made.loader.update('calc', dir) }
   }
 
-  it('loads on its own for a class 0 plugin with views while the slot is on', async () => {
+  it('loads on its own for a class 0 plugin with views while the policy job is on', async () => {
     const { outcome } = await updating({ class: 0, granted: [{ type: 'ui.view' }] }, withCapabilities(), [{ type: 'ui.view' }])
     expect(outcome).toEqual({ outcome: 'applied' })
   })
 
-  it('loads on its own for a class 0 plugin while the slot is on, its record first', async () => {
+  it('loads on its own for a class 0 plugin while the policy job is on, its record first', async () => {
     const { made, outcome } = await updating({ class: 0 })
     expect(outcome).toEqual({ outcome: 'applied' })
     expect(made.loader.pending()).toEqual([])
@@ -132,7 +132,7 @@ describe('a staged update', () => {
   it.each([
     ['a class above 0', { class: 1, granted: [read] }, withCapabilities(), [read]],
     ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, withCapabilities(), [{ type: 'storage' }]],
-    ['the slot down', { class: 0 }, coreInstall(), []],
+    ['the policy job down', { class: 0 }, coreInstall(), []],
     // A layout draws the whole window, so a new one never takes its place unasked
     ['a class 0 plugin holding ui.layout', { class: 0, granted: [{ type: 'ui.layout' }] }, withCapabilities(), [{ type: 'ui.layout' }]],
   ] as [string, object, ReturnType<typeof withCapabilities>, Capability[]][])('waits for the Confirm with %s', async (_name, entry, install, next) => {
@@ -145,7 +145,7 @@ describe('a staged update', () => {
 describe('a first-party copy', () => {
   const bundled = (files: Files) => ({ files, firstParty: true })
 
-  it('takes its class from the slot, which starts before the copy', async () => {
+  it('takes its class from the policy job, which starts before the copy', async () => {
     const made = await harness({ install: { ...withCapabilities(), git: bundled(worker('git', [read])) } })
     await made.loader.start()
     const entry = (await made.store.load()).state.plugins.git
@@ -153,7 +153,7 @@ describe('a first-party copy', () => {
     expect(entry.firstUse).toBeUndefined()
   })
 
-  it('asks at the first use of every item with the slot down', async () => {
+  it('asks at the first use of every item with the policy job down', async () => {
     const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read, { type: 'storage' }])) } })
     await made.loader.start()
     const entry = (await made.store.load()).state.plugins.git
@@ -287,7 +287,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
   const asking = (gate: ReturnType<typeof allowAll>, id: string) =>
     gate.seen.at(-1)!.plugins[id].filter(item => item.firstUse).map(item => item.capability)
 
-  // Plugin-folder plugins each stored with what it holds, its class and its list, started with the slot on unless down
+  // Plugin-folder plugins each stored with what it holds, its class and its list, started with the policy job on unless down
   async function seeded(entries: Seeded, gate = allowAll(), down = false): Promise<Made> {
     const made = await harness({
       install: down ? coreInstall() : withCapabilities(),
@@ -369,9 +369,9 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     expect(asking(gate, 'tool')).toEqual([])
   })
 
-  it('makes every item ask with the slot down, as an approval and a copy do then', async () => {
+  it('makes every item ask with the policy job down, as an approval and a copy do then', async () => {
     const made = await seeded({ tool: [[read], null, []] }, allowAll(), true)
-    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
     await made.loader.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: null, firstUse: [read, { type: 'storage' }] })
   })
@@ -447,7 +447,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
       expect(raises(await widening(made, 'tool', fetchOne))).toEqual([])
     })
 
-    it('names nothing with the slot down, whose own line stands for every class', async () => {
+    it('names nothing with the policy job down, whose own line stands for every class', async () => {
       const made = await seeded({ sync: [[fetchOne], null] }, allowAll(), true)
       const notes = await widening(made, 'sync', read)
       expect(raises(notes)).toEqual([])
@@ -535,7 +535,7 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
 })
 
 describe('the plugin list', () => {
-  // With the slot down the start classes nothing again, so each stored class stands
+  // With the policy job down the start classes nothing again, so each stored class stands
   it('shows each plugin-folder plugin\'s class, null for none known', async () => {
     const made = await harness({
       folder: { tool: worker('tool'), other: worker('other') },
@@ -549,7 +549,7 @@ describe('the plugin list', () => {
   })
 })
 
-describe('the grant risk classifier slot', () => {
+describe('the grant risk classifier policy job', () => {
   it('stops hetu when its module gives no grantRiskClassifier role', async () => {
     const made = await harness({ install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: {} } } })
     await made.loader.start()
@@ -598,7 +598,7 @@ describe('what the class rests on', () => {
     ['a class that isn’t whole', { classify: () => 1.5, firstUse: () => [], screen: () => [] }],
     ['a throw', { classify: () => { throw new Error('broken') }, firstUse: () => [], screen: () => [] }],
     ['first use that isn’t a list', { classify: () => 1, firstUse: () => 'all', screen: () => [] }],
-  ])('takes the slot as down for %s: a null class and every item at first use', async (_name, capabilities) => {
+  ])('takes the policy job as down for %s: a null class and every item at first use', async (_name, capabilities) => {
     const made = await harness({
       install: withCapabilities(),
       behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: capabilities as never } } },
@@ -940,7 +940,7 @@ describe('the classes at start', () => {
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')], confirmed: [fetchOne] })
   })
 
-  it('writes nothing when the slot is down at start, so each entry keeps its class and list', async () => {
+  it('writes nothing when the policy job is down at start, so each entry keeps its class and list', async () => {
     const made = await harness({
       folder: { ...folder(), other: worker('other', [{ type: 'storage' }]) },
       entries: { ...stale, other: root => entryFor(root, { granted: [{ type: 'storage' }], class: 4, firstUse: [{ type: 'storage' }] }) },
@@ -948,7 +948,7 @@ describe('the classes at start', () => {
     const files = { listener: await entryFile(made, 'listener'), other: await entryFile(made, 'other') }
     const seen = writes(made)
     await made.loader.start()
-    expect(made.loader.slot('grant-risk-classifier')).toBe('absent')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('absent')
     expect(seen).toEqual([])
     expect((await entryFile(made, 'listener')).equals(files.listener)).toBe(true)
     expect((await entryFile(made, 'other')).equals(files.other)).toBe(true)
@@ -966,12 +966,12 @@ describe('the classes at start', () => {
 })
 
 // One function decides every class change from its cause, whether a Confirm for it is on screen and the capabilities
-// slot's state: on, switched off by the human, or down any other way. Each row reads one plugin after the change: its
+// policy job's state: on, switched off by the human, or down any other way. Each row reads one plugin after the change: its
 // stored class, what asks, what the human confirmed, the mark of an entry written while off, the Raises lines and the
 // class lines the Confirm showed and what the gate is handed. Off passes with nothing about classes and nothing asking.
 // Down is strict: the class not known and every item asking
-describe('a class change, by its cause, its Confirm and the slot', () => {
-  type Slot = 'on' | 'off' | 'down'
+describe('a class change, by its cause, its Confirm and the policy job', () => {
+  type PolicyJobMode = 'on' | 'off' | 'down'
   type Seeded = Record<string, [Capability[], number | null, Capability[]?]>
   const hears = (...topics: string[]): Capability => ({ type: 'events.subscribe', topics })
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
@@ -983,12 +983,12 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     seeded?: Seeded
     folder?: Record<string, Capability[]>
     install?: Record<string, Listing>
-    // Items the human confirms with the slot on, before the slot takes its state
+    // Items the human confirms with the policy job on, before the policy job takes its state
     confirm?: [string, Capability][]
     // The change, none for the classing at start
     change?: Change
     staged?: Capability[]
-    // The slot takes its state at start, for the first-party copy and the pass at start
+    // The policy job takes its state at start, for the first-party copy and the pass at start
     atStart?: boolean
     subject: string
   }
@@ -1046,7 +1046,7 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
   }
   const raised = (id: string, from: string, to: string) => [`Raises ${id} from ${from} to ${to}`]
   const alerted = (id: string, from: string, to: string) => [`${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`]
-  const rows: [string, Slot, Expected][] = [
+  const rows: [string, PolicyJobMode, Expected][] = [
     ['a first approval', 'on', { class: 4, firstUse: [fetchOne], raises: [], shows: 'class' }],
     ['a first approval', 'off', { class: null, firstUse: [read, fetchOne], unclassed: true, raises: [], shows: 'nothing' }],
     ['a first approval', 'down', { class: null, firstUse: [read, fetchOne], raises: [], shows: 'down' }],
@@ -1098,8 +1098,8 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     ['the pass at start, a move down', 'down', { class: null, firstUse: [fetchOne, listens] }],
   ]
 
-  // The scenario run with the slot in its state: from start for one with no change and otherwise just before the change
-  async function run(scenario: Scenario, slot: Slot) {
+  // The scenario run with the policy job in its state: from start for one with no change and otherwise just before the change
+  async function run(scenario: Scenario, policyJob: PolicyJobMode) {
     const gate = allowAll()
     const role = breakable()
     const seeded = scenario.seeded ?? {}
@@ -1116,16 +1116,16 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
       folder.git = install.git!.files
       entries.git = async () => firstPartyEntry(hash, { granted: [read], class: 1 })
     }
-    if (slot === 'down' && scenario.atStart === true) role.broken = true
+    if (policyJob === 'down' && scenario.atStart === true) role.broken = true
     const made = await harness({
       install, folder, entries,
       behave: { gate: { exports: { gate } }, 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
-      switches: slot === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
+      switches: policyJob === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
     })
     await made.loader.start()
     for (const [id, item] of scenario.confirm ?? []) await made.loader.apply({ kind: 'item.on', plugin: id, capability: item })
-    if (scenario.atStart !== true && slot === 'off') await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
-    if (scenario.atStart !== true && slot === 'down') role.broken = true
+    if (scenario.atStart !== true && policyJob === 'off') await made.loader.apply({ kind: 'plugin.off', plugin: 'grant-risk-classifier' })
+    if (scenario.atStart !== true && policyJob === 'down') role.broken = true
     let notes: string[] | null = null
     const { change } = scenario
     if (change !== undefined) {
@@ -1155,12 +1155,12 @@ describe('a class change, by its cause, its Confirm and the slot', () => {
     }
   }
 
-  it.each(rows)('%s with the slot %s', async (name, slot, expected) => {
-    const { got, notes, gated, others, alerted: notices } = await run(scenarios[name]!, slot)
+  it.each(rows)('%s with the policy job %s', async (name, policyJob, expected) => {
+    const { got, notes, gated, others, alerted: notices } = await run(scenarios[name]!, policyJob)
     const { raises, shows, alerted: expectedNotices, ...stored } = expected
     expect(got).toEqual(stored)
     // Off: nothing asks while it is off. Otherwise the gate is handed what the entry lists
-    expect(gated).toEqual(slot === 'off' ? [] : expected.firstUse)
+    expect(gated).toEqual(policyJob === 'off' ? [] : expected.firstUse)
     if (raises !== undefined) expect(notes?.filter(line => line.startsWith('Raises')) ?? []).toEqual(raises)
     if (shows !== undefined) {
       const lines = notes ?? []
@@ -1268,7 +1268,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
   })
 
-  it('asks once the first start after an app update ran with the slot off', async () => {
+  it('asks once the first start after an app update ran with the policy job off', async () => {
     const base = await tempBase()
     await confirmedExec(base)
     const off = await harness({ base, install: updated(), switches: { off: ['grant-risk-classifier'] } })
@@ -1312,7 +1312,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     expect(shape(await stored(made, 'listener'))).toEqual(pairAsks)
   })
 
-  it('asks once an update was applied with the slot off, at the next start with it on', async () => {
+  it('asks once an update was applied with the policy job off, at the next start with it on', async () => {
     const base = await tempBase()
     const granted = [fetchOne, hears('reader.done')]
     const off = await harness({
@@ -1331,7 +1331,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     expect(shape(await stored(made, 'listener'))).toEqual({ class: 4, firstUse: granted })
   })
 
-  it('classes an entry written while off from nothing at the next start with the slot on and drops its mark', async () => {
+  it('classes an entry written while off from nothing at the next start with the policy job on and drops its mark', async () => {
     const base = await tempBase()
     const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.loader.start()
@@ -1405,7 +1405,7 @@ describe('the grant risk classifier switched off by the human', () => {
       },
     })
     await made.loader.start()
-    expect(made.loader.slot('grant-risk-classifier')).toBe('off')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('off')
     await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
     await until(() => made.loader.pending().some(request => request.kind === 'class.raised'))
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears] })
@@ -1426,7 +1426,7 @@ describe('the grant risk classifier switched off by the human', () => {
     })
     await made.loader.start()
     made.loader.crashed({ kind: 'plugin', id: 'grant-risk-classifier', half: 'host', incarnation: 1 }, 'closed')
-    expect(made.loader.slot('grant-risk-classifier')).toBe('failed')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('failed')
     const request = await approved(made, 'sync')
     expect(request.notes).toContain(DOWN)
     expect(await stored(made, 'sync')).toMatchObject({ class: null, firstUse: [read, fetchOne] })
@@ -1497,7 +1497,7 @@ describe('a move up with no Confirm on screen', () => {
     expect(await notices(made)).toEqual([])
   })
 
-  it('raises a notice for every move up a slot with no rule on alerts would show, inside 1 to 3 too', async () => {
+  it('raises a notice for every move up a policy job with no rule on alerts would show, inside 1 to 3 too', async () => {
     const role: GrantRiskClassifier = { ...createGrantRiskClassifier() }
     delete role.alerts
     const made = await harness({
@@ -1541,7 +1541,7 @@ describe('a move up with no Confirm on screen', () => {
 })
 
 // A pass over every entry leaves an entry as stored only with the grant risk classifier switched off by the human. A role
-// that fails for an entry while the slot reads on stores that entry strict: the class not known and every item asking
+// that fails for an entry while the policy job reads on stores that entry strict: the class not known and every item asking
 describe('a pass whose role fails for one entry', () => {
   type Made = Awaited<ReturnType<typeof harness>>
   const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
@@ -1570,7 +1570,7 @@ describe('a pass whose role fails for one entry', () => {
   it('stores that entry strict at start and classes the others', async () => {
     const made = await setup()
     await made.loader.start()
-    expect(made.loader.slot('grant-risk-classifier')).toBe('on')
+    expect(made.loader.policyJob('grant-risk-classifier')).toBe('on')
     const listener = await stored(made, 'listener')
     expect({ class: listener.class, firstUse: listener.firstUse }).toEqual({ class: null, firstUse: [fetchOne, hears] })
     expect(listener.unclassed).toBeUndefined()
@@ -1578,12 +1578,12 @@ describe('a pass whose role fails for one entry', () => {
     expect(made.link.events('fault')).toContainEqual({ plugin: 'grant-risk-classifier', step: 'classify' })
   })
 
-  it('stores that entry strict in the pass when the slot is switched on again', async () => {
+  it('stores that entry strict in the pass when the policy job is switched on again', async () => {
     const made = await setup({ off: ['grant-risk-classifier'] })
     await made.loader.start()
     expect((await stored(made, 'listener')).class).toBe(3)
     await made.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => made.loader.slot('grant-risk-classifier') === 'on')
+    await until(() => made.loader.policyJob('grant-risk-classifier') === 'on')
     await made.loader.settled()
     await tick(30)
     expect(await stored(made, 'listener')).toMatchObject({ class: null, firstUse: [fetchOne, hears] })
@@ -1844,7 +1844,7 @@ describe('a notice owed across an entry stored strict', () => {
       expect(await notices(known)).toEqual([notice('p', from, to)])
     })
 
-  it('raises it from the class last shown when the strict store came in the pass that runs once the slot is switched on', async () => {
+  it('raises it from the class last shown when the strict store came in the pass that runs once the policy job is switched on', async () => {
     const base = await tempBase()
     const granted = [calls('mcp-http-handler')]
     const off = await harness({
@@ -1854,7 +1854,7 @@ describe('a notice owed across an entry stored strict', () => {
     await off.loader.start()
     expect((await stored(off, 'p')).class).toBe(0)
     await off.loader.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    await until(() => off.loader.slot('grant-risk-classifier') === 'on')
+    await until(() => off.loader.policyJob('grant-risk-classifier') === 'on')
     await off.loader.settled()
     await tick(30)
     expect(await stored(off, 'p')).toMatchObject({ class: null, owed: { from: 0, cause: 'slot-on', by: null } })
@@ -1910,7 +1910,7 @@ describe('a notice owed across an entry stored strict', () => {
     expect(await notices(known)).toEqual([])
   })
 
-  it('measures from the class last shown once a change while the slot is off marks the entry stored strict as not classed', async () => {
+  it('measures from the class last shown once a change while the policy job is off marks the entry stored strict as not classed', async () => {
     const granted = [fetchOne, hears('mcp-http-handler.done')]
     const base = await seeded(granted, 3)
     const strict = await started(base, v1, 'events.subscribe')
@@ -1962,7 +1962,7 @@ describe('a notice for a plugin never classed', () => {
     made.link.carrier?.close()
   }
 
-  it('raises one at the next start with the slot on for a plugin approved while off', async () => {
+  it('raises one at the next start with the policy job on for a plugin approved while off', async () => {
     const base = await tempBase()
     const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.loader.start()
@@ -1985,7 +1985,7 @@ describe('a notice for a plugin never classed', () => {
     }
   })
 
-  it('raises none for an entry the slot down left with a class not known, which counts as 4', async () => {
+  it('raises none for an entry the policy job down left with a class not known, which counts as 4', async () => {
     const base = await tempBase()
     const down = await harness({ base, install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
     await down.loader.start()

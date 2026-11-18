@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access, AuditRecord, Call, Prepared, Provider } from '../api/slots.ts'
+import type { Access, AuditRecord, Call, Prepared, Provider } from '../api/policy-jobs.ts'
 import { auditFields } from '../backend/carrier/audit.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import { cleanup, code, editor, type FakeLog, harness, trusted, windowWay, worker } from './carrier-fakes.ts'
@@ -154,7 +154,7 @@ describe('an exec call through the carrier', () => {
 
   it('hands the call to the provider with the gate off, which keeps its own check, and records it with gate off', async () => {
     const { carrier, connect, loader, exec, asked, log } = started()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const reply = await connect(worker('git')).ask('exec.run', { command: ['curl', 'https://example.com'] })
     expect(reply.ok).toBe(true)
     expect(asked).toEqual([])

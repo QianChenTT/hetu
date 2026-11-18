@@ -6,7 +6,7 @@ import {
 import { answer, cancel, cancelled, delivery, request, requestEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
 import { measurePlain, plainProblem } from '../api/plain.ts'
-import { pluginStates, slotStates } from '../api/slots.ts'
+import { pluginStates, policyJobStates } from '../api/policy-jobs.ts'
 
 const MiB = 1024 * 1024
 const namespace = (action: string) => action.slice(0, action.indexOf('.'))
@@ -365,16 +365,16 @@ describe('measuring plain data', () => {
     expect(measurePlain({ a: new Date(0) }, 100)).toEqual({ ok: false, problem: 'not plain data', tooLarge: false })
     expect(plainProblem({ a: 'xy' }, 18)).toBe('larger than 18 bytes')
     expect(plainProblem({ a: 'xy' }, 19)).toBeNull()
-    // Past the cap on an array's slots and on a key, before any value is walked
+    // Past the cap on an array's policy jobs and on a key, before any value is walked
     expect(measurePlain(new Array(10), 50)).toMatchObject({ ok: false, tooLarge: true })
     expect(measurePlain({ ['k'.repeat(60)]: 1 }, 50)).toMatchObject({ ok: false, tooLarge: true })
   })
 })
 
 describe('the state lists', () => {
-  it('has the six slot states and the plugin lifecycle states', () => {
-    expect(slotStates).toEqual(['on', 'off', 'starting', 'failed', 'absent', 'tampered'])
+  it('has the six policy job states and the plugin lifecycle states', () => {
+    expect(policyJobStates).toEqual(['on', 'off', 'starting', 'failed', 'absent', 'tampered'])
     expect(pluginStates).toEqual(['found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed'])
-    expect(Object.isFrozen(slotStates) && Object.isFrozen(pluginStates)).toBe(true)
+    expect(Object.isFrozen(policyJobStates) && Object.isFrozen(pluginStates)).toBe(true)
   })
 })

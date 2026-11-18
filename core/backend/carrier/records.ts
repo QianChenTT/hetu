@@ -1,5 +1,5 @@
 import type { Caller } from '../../api/envelope.ts'
-import type { AuditRecord } from '../../api/slots.ts'
+import type { AuditRecord } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { FloorLog, Landing } from './seams.ts'
 

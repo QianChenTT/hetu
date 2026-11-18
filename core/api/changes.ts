@@ -4,7 +4,7 @@ import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './env
 import { floorConstantNames, MAX_TIMER_MS, timeConstants } from './floor.ts'
 import { isSecurityControl, pluginId } from './ids.ts'
 import { frozen } from './plain.ts'
-import { agentDoor, agentHost } from './slots.ts'
+import { agentDoor, agentHost } from './policy-jobs.ts'
 
 export const MAX_FOLDER_LENGTH = 4096
 

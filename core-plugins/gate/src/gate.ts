@@ -2,7 +2,7 @@ import { capabilityKey, type Capability, type CapabilityType } from 'hetu-core/a
 import type { Caller } from 'hetu-core/api/envelope.ts'
 import { commandKey } from 'hetu-core/api/exec.ts'
 import { compileScopes } from 'hetu-core/api/scope.ts'
-import type { Access, Decision, Gate, GrantedItem, Scope, StateView } from 'hetu-core/api/slots.ts'
+import type { Access, Decision, Gate, GrantedItem, Scope, StateView } from 'hetu-core/api/policy-jobs.ts'
 import { windowGrants } from 'hetu-core/api/windows.ts'
 
 // How the gate reads each type's scope: paths through the matcher, every topic named, the target, held with no scope

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { LIST_PAGE } from '../../api/actions.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
 import { isDotName } from '../../api/names.ts'
-import type { Call, Prepared, Provider, ProviderRefusal } from '../../api/slots.ts'
+import type { Call, Prepared, Provider, ProviderRefusal } from '../../api/policy-jobs.ts'
 import { quotas, spaceOf } from '../../api/storage.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would

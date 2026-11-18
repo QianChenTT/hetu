@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } fr
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { createLuoshu, type Luoshu } from '../src/luoshu.ts'
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')

@@ -46,7 +46,7 @@ describe('StateView versions', () => {
     await made.loader.start()
     gate.throws = true
     await made.loader.apply({ kind: 'confirmOff', on: true })
-    expect(made.loader.slot('gate')).toBe('failed')
+    expect(made.loader.policyJob('gate')).toBe('failed')
     expect(reasonOf(made.loader, 'gate')).toBe('state-changed')
   })
 })
@@ -66,12 +66,12 @@ describe('the human\'s switches, applied', () => {
     expect(made.runtime.order().filter(id => id === 'luoshu')).toHaveLength(1)
   })
 
-  it('off switches a slot holder off at once, which reads off and not failed', async () => {
+  it('off switches a policy job holder off at once, which reads off and not failed', async () => {
     const made = await harness()
     await made.loader.start()
     await made.loader.apply({ kind: 'plugin.off', plugin: 'gate' })
-    expect(made.loader.slot('gate')).toBe('off')
-    expect(made.link.events('slot.state')).toContainEqual({ slot: 'gate', state: 'off' })
+    expect(made.loader.policyJob('gate')).toBe('off')
+    expect(made.link.events('policy-job.state')).toContainEqual({ policyJob: 'gate', state: 'off' })
   })
 
   it('off stops a folder plugin with its dependents first and on starts both again', async () => {
@@ -161,7 +161,7 @@ describe('the human\'s switches, applied', () => {
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
     await made.loader.apply({ kind: 'plugin.approve', plugin: 'alpha' })
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
-    // No grant risk classifier slot here, so the class is unknown and every item asks at its first use
+    // No grant risk classifier policy job here, so the class is unknown and every item asks at its first use
     expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.view' }], class: null, enabled: true, firstUse: [{ type: 'ui.view' }] })
     // No provenance yet, so the approved build still needs allowUnsigned to run
     expect(reasonOf(made.loader, 'alpha')).toBe('unsigned')

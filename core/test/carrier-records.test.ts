@@ -65,7 +65,7 @@ describe('audit records', () => {
 
   it('records a refusal with its code and the gate\'s state', async () => {
     const { carrier, connect, loader, log } = harness()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })
     expect(await written(carrier, log)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
   })
@@ -107,10 +107,10 @@ describe('audit records', () => {
     let clock = 1_000_000
     const { carrier, connect, loader, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
     clock += 1000
-    loader.slots.gate = 'ON' as never
+    loader.policyJobs.gate = 'ON' as never
     await search.ask('storage.get', { key: 'k' })
     expect((await written(carrier, log)).map(record => [record.action, record.code, record.gate])).toEqual([
       ['storage.get', null, 'failed'], ['storage.get', null, 'failed'],
@@ -307,7 +307,7 @@ describe('audit records', () => {
     const { carrier, connect, loader, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
     expect((await written(carrier, log)).map(record => [record.gate, record.count])).toEqual([['on', 1], ['failed', 1]])
   })
@@ -683,7 +683,7 @@ describe('record nothing', () => {
     await search.ask('core.self')
     await carrier.flush()
     expect(log.events('audit.call')).toHaveLength(1)
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     await search.ask('core.self')
     now = 30_000
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
@@ -866,7 +866,7 @@ describe('a failing log', () => {
   // Allow all, still logged: with the gate off a call with power passes only while its record can still land
   it('refuses a call with power with the gate off once the oldest record waited 30 s unwritten', async () => {
     const { at, connect, loader } = failing()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     // Past the gate to the provider, which holds no such note
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
@@ -878,7 +878,7 @@ describe('a failing log', () => {
 
   it('lets them pass again once the records are written', async () => {
     const { at, carrier, connect, loader, log } = failing()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('luoshu.read', { path: 'notes/a.md' })
     at(30_000)
@@ -891,7 +891,7 @@ describe('a failing log', () => {
   it('starts the wait again from the oldest record still held once a batch is written', async () => {
     const { at, carrier, connect, loader, log } = failing()
     log.failing = false
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(20_000)
@@ -907,7 +907,7 @@ describe('a failing log', () => {
   // The human's switches: gate off and recording off pass calls with power unrecorded
   it('passes calls with power with the gate and recording off, however long the log has failed', async () => {
     const { at, connect, loader } = failing()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(40_000)
@@ -983,7 +983,7 @@ describe('a failing log', () => {
   it('takes the wait from logFailMs, which the human may set for all', async () => {
     const { at, connect, loader } = failing()
     loader.human.all = { logFailMs: 1000 }
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(1000)

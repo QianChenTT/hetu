@@ -5,7 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { findProgram } from 'hetu-core/lib/clean-env.ts'
-import type { Call } from 'hetu-core/api/slots.ts'
+import type { Call } from 'hetu-core/api/policy-jobs.ts'
 import { createHistory } from '../src/history.ts'
 import { ask, callOf, cleanup, commitOf, editor, git, logOf, place, started, type Place } from './helpers.ts'
 

@@ -1,7 +1,7 @@
 import { mkdir, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { ask, callOf, cleanup, commitOf, place, started } from './helpers.ts'
 
 // How many times realpath runs while counting is on, what happens once a note named here is opened and once a

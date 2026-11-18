@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Prepared } from 'hetu-core/api/slots.ts'
+import type { Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { ask, callOf, cleanup, place, started } from './helpers.ts'
 
 // Each open of a note named here is followed by the note moved away and another file put at its name, as many times

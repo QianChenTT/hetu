@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ExecResult } from 'hetu-core/api/actions.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Call, ExecGrant, ExecView } from 'hetu-core/api/slots.ts'
+import type { Call, ExecGrant, ExecView } from 'hetu-core/api/policy-jobs.ts'
 import { createExec, type Exec, type ExecOptions } from '../src/exec.ts'
 
 const node = process.execPath

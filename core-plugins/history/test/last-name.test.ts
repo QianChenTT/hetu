@@ -3,7 +3,7 @@ import { mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { ask, callOf, cleanup, commitOf, logOf, place, started, type Place } from './helpers.ts'
 
 const run = promisify(execFile)

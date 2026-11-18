@@ -11,7 +11,7 @@ import {
 afterEach(cleanup)
 
 describe('hetu as an Electron app', () => {
-  it('boots, writes core.ready with every slot\'s state and opens the editor page', async () => {
+  it('boots, writes core.ready with every policy job\'s state and opens the editor page', async () => {
     const dataDir = await temp()
     const app = await launch(dataDir)
     const window = await editorPage(app)
@@ -50,7 +50,7 @@ describe('hetu as an Electron app', () => {
     expect(stopping).toBeGreaterThan(all.findIndex(record => record.event === 'core.ready'))
     // Only the host tier's stops follow core.stopping, with the audit records Quit's flushes write. The gate stops last
     // of all
-    const after = ['plugin.stopped', 'slot.state', 'audit.call']
+    const after = ['plugin.stopped', 'policy-job.state', 'audit.call']
     expect(all.slice(stopping + 1).map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
     expect(all.filter(record => record.event === 'plugin.stopped').at(-1)).toMatchObject({ plugin: 'gate', reason: 'shutdown' })
     expect(all.filter(record => record.event !== 'audit.call').at(-1)).toMatchObject({ event: 'plugin.stopped', plugin: 'gate' })

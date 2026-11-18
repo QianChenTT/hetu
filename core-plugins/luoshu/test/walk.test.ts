@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { createLuoshu, type Luoshu } from '../src/luoshu.ts'
 
 // The walk's stat of a.md waits until the test lets it go, standing in for a large folder on a busy machine

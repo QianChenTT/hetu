@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from 'hetu-core/api/capabilities.ts'
-import type { Flow } from 'hetu-core/api/slots.ts'
+import type { Flow } from 'hetu-core/api/policy-jobs.ts'
 import { createGrantRiskClassifier } from '../src/grant-risk-classifier.ts'
 
 const caps = createGrantRiskClassifier()

@@ -4,12 +4,12 @@ import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, M
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import { floorConstantNames, type FloorConstant } from './floor.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type slotIds } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
-import type { LogSegment, LogVerification, PluginState, SlotState } from './slots.ts'
+import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
 import type { ThemeSpec } from './ui.ts'
 
 // The core actions, the bus's events.* actions and the provider actions with their argument schemas. A plugin's own
@@ -51,7 +51,7 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog slot's holder, mcp-http-handler's host
+// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog policy job's holder, mcp-http-handler's host
 // half in its utility process or the agent host under a live call from that door, which names the agent. The floor
 // decides these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses
 // every caller
@@ -156,7 +156,7 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the floor records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
-  // Only on sandboxed plugins that hold no guard or slot role
+  // Only on sandboxed plugins that hold no guard or policy job role
   'watchdog.stop': { from: 'watchdog', args: target },
   'watchdog.restart': { from: 'watchdog', args: target },
   // Lowers one constant for one plugin. A value above the human's or the floor's own has no effect
@@ -365,7 +365,7 @@ export type ListedPlugin = {
   firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
-  // The class the grant risk classifier slot gave a plugin-folder plugin, null for none known, which counts as 4, and for an
+  // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for an
   // install plugin
   class: number | null
 }
@@ -399,12 +399,12 @@ export type SecurityList = {
   stopped: StoppedMode | null
 }
 
-// What a window's banner shows: each slot's state, the plugins crashed, failed or unresponsive that nobody restarted, the
+// What a window's banner shows: each policy job's state, the plugins crashed, failed or unresponsive that nobody restarted, the
 // switches that weaken a check, whether the event log takes appends, whether a luoshu folder is picked, the in-page
 // plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
-  slots: Record<typeof slotIds[number], SlotState>
+  policyJobs: Record<typeof policyJobIds[number], PolicyJobState>
   crashed: string[]
   devMode: string[]
   allowUnsigned: number

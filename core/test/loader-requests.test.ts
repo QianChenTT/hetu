@@ -198,9 +198,9 @@ describe('typing to prove attention', () => {
     const id = held(await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, editor))
     expect(await code(made.loader.confirm(id, {}))).toBe('invalid')
     expect(await code(made.loader.confirm(id, { typed: 'Gate' }))).toBe('invalid')
-    expect(made.loader.slot('gate')).toBe('on')
+    expect(made.loader.policyJob('gate')).toBe('on')
     await made.loader.confirm(id, { typed: 'gate' })
-    expect(made.loader.slot('gate')).toBe('off')
+    expect(made.loader.policyJob('gate')).toBe('off')
   })
 
   it('confirms recording off only with log typed', async () => {
@@ -233,7 +233,7 @@ describe('confirmOff', () => {
     await made.loader.start()
     held(await made.loader.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
     held(await made.loader.request({ kind: 'recordNothing', on: true }, trusted))
-    expect(made.loader.slot('gate')).toBe('on')
+    expect(made.loader.policyJob('gate')).toBe('on')
   })
 
   it('still holds one from the trusted window while it is off', async () => {
@@ -473,7 +473,7 @@ describe('the core actions the loader serves', () => {
     const { held: id } = await made.loader.serve(call(editor, 'security.request', { change: { kind: 'plugin.off', plugin: 'gate' } })) as { held: string }
     expect(await code(made.loader.serve(call(trusted, 'security.confirm', { requestId: id })))).toBe('invalid')
     await made.loader.serve(call(trusted, 'security.confirm', { requestId: id, typed: 'gate' }))
-    expect(made.loader.slot('gate')).toBe('off')
+    expect(made.loader.policyJob('gate')).toBe('off')
   })
 
   it('lists each plugin, the switches, the requests in the core\'s words and the stopped mode for the trusted window', async () => {

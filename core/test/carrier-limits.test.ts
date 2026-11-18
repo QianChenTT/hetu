@@ -157,7 +157,7 @@ describe('the ceiling', () => {
 
   it('throttles a caller past its bytes in flight', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.plugins.search = { bytesInFlight: 1000 }
     const search = connect(worker('search'))
@@ -170,7 +170,7 @@ describe('the ceiling', () => {
 
   it('charges a sub-call to the root of its parent links as well as to its caller', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('scribe', { handle: {} })
     loader.sandboxed('git', { log: {} })
     loader.human.plugins['mcp-http-handler'] = { callsInFlight: 2 }
@@ -193,7 +193,7 @@ describe('the ceiling', () => {
 
   it('frees the bytes of a call that ended while another is still in flight', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.plugins.search = { bytesInFlight: 1000 }
     const search = connect(worker('search'))
@@ -212,7 +212,7 @@ describe('the ceiling', () => {
   // A window runs on the floor's ceiling, which a value for all lowered by mistake can't take below
   it('keeps a ceiling per window at the floor\'s value', async () => {
     const { carrier, connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.all = { callsInFlight: 1 }
     const git = connect(worker('git'))
@@ -228,7 +228,7 @@ describe('the ceiling', () => {
 
   it('keeps one ceiling across a plugin\'s halves', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('git', { log: {} })
     loader.human.plugins.search = { callsInFlight: 1 }
     const search = connect(worker('search'))
@@ -304,10 +304,10 @@ describe('the rate', () => {
     expect(search.repliesTo(id)).toEqual([])
   })
 
-  it('tells no watchdog while the slot is not on and keeps the count for later', async () => {
+  it('tells no watchdog while the policy job is not on and keeps the count for later', async () => {
     let clock = 1_000_000
     const { connect, loader, samples } = harness({ clock: () => clock })
-    loader.slots.watchdog = 'off'
+    loader.policyJobs.watchdog = 'off'
     loader.human.plugins.search = { messagesPerSecond: 1 }
     const search = connect(worker('search'))
     search.call('core.self')
@@ -315,7 +315,7 @@ describe('the rate', () => {
     search.call('core.self')
     await tick(20)
     expect(samples).toEqual([])
-    loader.slots.watchdog = 'on'
+    loader.policyJobs.watchdog = 'on'
     clock += 1000
     search.call('core.self')
     search.call('core.self')
@@ -394,7 +394,7 @@ describe('the flood cap', () => {
 describe('watchdog.limit', () => {
   it('lowers a sandboxed plugin\'s constant and never raises one', async () => {
     const { carrier, connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('search')
     loader.sandboxed('git', { log: {} })
     const watchdog = hostHalf(carrier, host('watchdog'))
@@ -422,7 +422,7 @@ describe('watchdog.limit', () => {
 })
 
 describe('samples from the runtime', () => {
-  it('hands the watchdog a worker\'s errors, its drops in the page and its cutoff, while the watchdog slot is on', () => {
+  it('hands the watchdog a worker\'s errors, its drops in the page and its cutoff, while the watchdog policy job is on', () => {
     const { carrier, loader, samples } = harness()
     carrier.sample({ kind: 'errors', caller: worker('search'), count: 2 })
     carrier.sample({ kind: 'dropped', caller: worker('search'), count: 5 })
@@ -432,7 +432,7 @@ describe('samples from the runtime', () => {
       { kind: 'dropped', caller: worker('search'), count: 5 },
       { kind: 'cutoff', caller: worker('search'), reason: 'flood' },
     ])
-    loader.slots.watchdog = 'off'
+    loader.policyJobs.watchdog = 'off'
     carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })
     expect(samples).toHaveLength(3)
   })

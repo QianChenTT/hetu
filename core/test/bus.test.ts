@@ -68,7 +68,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     await until(() => paths(search.events()).length === 1)
     expect(paths(way.events())).toEqual(['notes/a.md'])
 
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     // Subscribes made while the gate is down stand. scribe holds the grant and ghost doesn't, which nobody can tell yet
     const ghost = connect(worker('ghost'))
@@ -77,7 +77,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     await edited('notes/b.md')
     await indexed()
     // Starting again is the same outage
-    loader.slots.gate = 'starting'
+    loader.policyJobs.gate = 'starting'
     carrier.changed()
     await edited('notes/c.md')
     await indexed()
@@ -95,7 +95,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(heard(way.events(), 'core.status')).toHaveLength(2)
     expect(heard(trustedWay.events(), 'core.status')).toHaveLength(2)
 
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await edited('notes/d.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 2)
@@ -127,10 +127,10 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     const { carrier, loader, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let round = 1; round <= 2; round++) {
-      loader.slots.gate = 'failed'
+      loader.policyJobs.gate = 'failed'
       carrier.changed()
       if (round === 1) await edited('secret/x.md')
-      loader.slots.gate = 'on'
+      loader.policyJobs.gate = 'on'
       carrier.changed()
       await until(() => signals(search.events(), 'events.dropped').length === round)
     }
@@ -145,12 +145,12 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
   it.each(['absent', 'tampered'] as const)('keeps a subscribe made while the gate is %s standing', async state => {
     const { carrier, loader, scribe, edited } = setup()
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/a.md')
     await settle()
     expect(scribe.events()).toEqual([])
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await edited('notes/b.md')
     await until(() => paths(scribe.events()).length === 1)
@@ -160,9 +160,9 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   it('sees a gate that came back though the loader never said so, before the next path goes out', async () => {
     const { loader, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     await edited('notes/a.md')
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     await edited('notes/b.md')
     await until(() => paths(search.events()).length === 1)
     const events = search.events()
@@ -224,11 +224,11 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   it('holds back every subscription the gate throws on when asked again and starts them at the next sync it answers', async () => {
     const { carrier, loader, gate, search, scribe, edited, log } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.decision = () => { throw new Error('broken') }
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await edited('notes/a.md')
     await settle()
@@ -338,13 +338,13 @@ describe('asking again', () => {
 
   it('narrows when the gate is switched back on: what was taken with the gate off and isn\'t granted ends', async () => {
     const { carrier, loader, connect, edited } = setup()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('secret/a.md')
     await until(() => paths(ghost.events()).length === 1)
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await edited('secret/b.md')
     await until(() => signals(ghost.events(), 'events.ended').length === 1)
@@ -356,20 +356,20 @@ describe('asking again', () => {
   // back, path-less events included
   it('holds back what was taken with the gate off when the gate switched back on fails, until the gate judges it', async () => {
     const { carrier, loader, connect, indexed } = setup()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     await ghost.ask('events.subscribe', { topics: ['search.indexed'] })
     await indexed()
     await until(() => heard(ghost.events(), 'search.indexed').length === 1)
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await indexed()
     await settle()
     expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
     // A repeat now stands, so the plugin and the topic get one answer
     expect((await ghost.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await until(() => signals(ghost.events(), 'events.ended').length === 1)
     await indexed()
@@ -383,7 +383,7 @@ describe('asking again', () => {
     const { carrier, loader, gate, git, search, indexed, edited } = setup()
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await indexed()
     await until(() => heard(git.events(), 'search.indexed').length === 1)
@@ -394,7 +394,7 @@ describe('asking again', () => {
     await settle()
     expect(heard(git.events(), 'search.indexed')).toHaveLength(1)
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await edited('notes/a.md')
     await indexed()
@@ -539,7 +539,7 @@ describe('a path with a dot segment', () => {
   it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while the publish answers as any other', async state => {
     const { carrier, loader, gate, search, scribe, edited } = setup()
     gate.listable = () => true
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     carrier.changed()
     for (const side of [search, scribe]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     for (const path of dotted) expect((await edited(path)).ok, path).toBe(true)
@@ -557,7 +557,7 @@ describe('the gate off by the human', () => {
   async function failing() {
     let now = 0
     const parts = setup({ clock: () => now })
-    parts.loader.slots.gate = 'off'
+    parts.loader.policyJobs.gate = 'off'
     parts.log.failing = true
     await parts.scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
     return { ...parts, at: (ms: number) => { now = ms } }
@@ -565,7 +565,7 @@ describe('the gate off by the human', () => {
 
   it.each([['on', false], ['off', true]] as const)('lets any subscribe through and every path out with recording %s', async (_name, nothing) => {
     const { carrier, loader, connect, gate, edited } = setup()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.nothing = nothing
     carrier.changed()
     const ghost = connect(worker('ghost'))
@@ -613,11 +613,11 @@ describe('the gate off by the human', () => {
 
   it('starts the subscriptions that stood once the human switches a failed gate off', async () => {
     const { carrier, loader, connect, edited } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     carrier.changed()
     await edited('secret/a.md')
     await until(() => paths(ghost.events()).length === 1)
@@ -627,7 +627,7 @@ describe('the gate off by the human', () => {
   // The floor keeps identity, not limits, so its rules stay with the gate off
   it('still keeps core.* to windows and a plugin to its own declared topics', async () => {
     const { carrier, loader, search, scribe } = setup()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     carrier.changed()
     expect(code(await scribe.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
     expect(code(await scribe.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }))).toBe('not-granted')
@@ -638,7 +638,7 @@ describe('the gate off by the human', () => {
 describe('owned topics', () => {
   it.each(['on', 'off', 'failed'] as const)('lets a plugin publish only the topics its manifest declared, with the gate %s', async state => {
     const { loader, connect, gate, search, scribe, way, trustedWay, luoshuHalf } = setup()
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     // Its own declared topic from any of its halves
     expect((await search.ask('events.publish', { topic: 'search.indexed' })).ok).toBe(true)
@@ -678,12 +678,12 @@ describe('owned topics', () => {
 
   it('resyncs a plugin\'s own subscription made while the gate was down, though a window\'s core.* needs none', async () => {
     const { carrier, connect, loader, way } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     expect((await panel.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status'] })
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await until(() => signals(panel.events(), 'events.dropped').length === 1)
     expect(signals(panel.events(), 'events.dropped')).toEqual([['search.indexed']])
@@ -692,7 +692,7 @@ describe('owned topics', () => {
 
   it('lets a plugin hear its own topics for free and never asks the gate about them', async () => {
     const { connect, gate, loader, search } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     expect((await panel.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     await search.ask('events.publish', { topic: 'search.indexed' })
@@ -706,12 +706,12 @@ describe('core.*', () => {
     const { carrier, loader, gate, search, luoshuHalf } = setup()
     gate.grants.search.push({ type: 'events.subscribe', topics: ['core.status'] })
     for (const state of ['on', 'off', 'failed'] as const) {
-      loader.slots.gate = state
+      loader.policyJobs.gate = state
       expect(code(await search.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
       expect(code(await search.ask('events.subscribe', { topics: ['luoshu.changed', 'core.security'] }))).toBe('not-granted')
       expect(code(await luoshuHalf.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
     }
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await settle()
     expect(search.events()).toEqual([])
@@ -721,7 +721,7 @@ describe('core.*', () => {
   // core.* reaches the trusted window by subscription, so the floor lets it subscribe to the core topics only
   it('lets the trusted window hear the core topics and nothing else, with the gate failed', async () => {
     const { carrier, loader, trustedWay, gate } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect((await trustedWay.ask('trusted', 'events.subscribe', { topics: ['core.status', 'core.security'] })).result).toEqual({ standing: [] })
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['luoshu.changed'] }))).toBe('not-granted')
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['core.status', 'luoshu.changed'] }))).toBe('not-granted')
@@ -768,7 +768,7 @@ describe('core.*', () => {
 
   it('lets the editor hear core.status with the gate down while its luoshu topics stand', async () => {
     const { carrier, loader, way } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect((await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     carrier.changed()
     expect(way.events().map(message => message.topic)).toEqual(['core.status'])
@@ -790,7 +790,7 @@ describe('subscribing', () => {
   it('keeps a live subscription live when it is repeated while the gate is down', async () => {
     const { loader, git, indexed } = setup()
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     await indexed()
     await until(() => heard(git.events(), 'search.indexed').length === 1)
@@ -798,10 +798,10 @@ describe('subscribing', () => {
 
   it('starts a standing subscription with events.dropped when a repeat finds the gate up', async () => {
     const { carrier, loader, scribe, edited } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     // The bus sees the gate again before it judges the repeat, so the subscription starts once
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('notes/a.md')
@@ -812,7 +812,7 @@ describe('subscribing', () => {
   // Nothing moved for the bus to ask again, so only the repeat's own judgement can start it
   it('starts a standing subscription with events.dropped when a repeat is allowed after the gate could not answer about it', async () => {
     const { carrier, loader, gate, scribe, edited } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     let throws = true
@@ -820,7 +820,7 @@ describe('subscribing', () => {
       if (throws) throw new Error('broken')
       return gate.granted(access)
     }
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await settle()
     expect(scribe.events()).toEqual([])
@@ -895,7 +895,7 @@ describe('subscribing', () => {
     await search.ask('events.unsubscribe', { topics: ['luoshu.outside'] })
     expect((await search.ask('events.subscribe', { topics: ['git.a'] })).ok).toBe(true)
     // Standing ones count
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await panel.ask('events.unsubscribe', { topics: ['git.a', 'git.b'] })
     expect((await panel.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })).result).toEqual({ standing: ['luoshu.changed', 'luoshu.outside'] })
@@ -998,11 +998,11 @@ describe('unsubscribing', () => {
 
   it('never starts a standing subscription it took back', async () => {
     const { carrier, loader, scribe } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await settle()
     expect(scribe.events()).toEqual([])
@@ -1104,7 +1104,7 @@ describe('read scope', () => {
   it('gives a standing subscription nothing, path-less events included', async () => {
     const { carrier, loader, gate, connect, indexed } = setup()
     gate.grants.ghost = [{ type: 'events.subscribe', topics: ['search.indexed'] }]
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     await ghost.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -1136,9 +1136,9 @@ describe('what a subscriber receives', () => {
   it('shapes its signals with no seq and the subscriber\'s own topics', async () => {
     const { carrier, loader, search } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await until(() => search.events().length === 1)
     expect(search.events()).toStrictEqual([{ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed'] }])
@@ -1313,9 +1313,9 @@ describe('credits', () => {
     await edited('notes/a.md')
     await edited('notes/b.md')
     await until(() => search.events().length === 1)
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     await settle()
     expect(search.events()).toHaveLength(1)
@@ -1557,7 +1557,7 @@ describe('records', () => {
     const { carrier, loader, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     const before = (await written(carrier, log)).length
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     const ghost = connect(worker('ghost'))
@@ -1576,7 +1576,7 @@ describe('records', () => {
     gate.grants.git = []
     loader.current = 2
     carrier.changed()
-    loader.slots.gate = 'on'
+    loader.policyJobs.gate = 'on'
     carrier.changed()
     carrier.close()
     await tick()
@@ -1601,7 +1601,7 @@ describe('records', () => {
 
   it('coalesces a half\'s events.waiting per second whatever topics each subscribe names', async () => {
     const { carrier, loader, log, connect } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     // Each subscribe names another set, which made each its own record with its own fsync
@@ -1618,7 +1618,7 @@ describe('records', () => {
 
   it('keeps the joined record of a half\'s events.waiting within the topics text cap', async () => {
     const { carrier, loader, log, connect } = setup()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     carrier.changed()
     const ghost = connect(worker('ghost'))
     const long = (i: number) => `p${String(i).padStart(2, '0')}${'x'.repeat(60)}.${'y'.repeat(60)}`
@@ -1657,7 +1657,7 @@ describe('records', () => {
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let i = 0; i < 4; i++) await indexed()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     await edited('notes/a.md')
     await edited('notes/b.md')
     carrier.close()

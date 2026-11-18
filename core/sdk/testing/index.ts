@@ -6,7 +6,7 @@ import { type FloorConstant, floorConstants } from '../../api/floor.ts'
 import { utilityIds } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
-import type { Call, PluginState, SlotState } from '../../api/slots.ts'
+import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
 import type { HumanLimits, Loader, PluginInfo } from '../../backend/carrier/seams.ts'
@@ -118,18 +118,18 @@ class Way {
 // What the carrier asks of the loader, for one plugin under test and the plugins the fake core plays
 class FakeLoader implements Loader {
   readonly infos = new Map<string, PluginInfo>()
-  private readonly gateSlot: SlotState
+  private readonly gateState: PolicyJobState
   private readonly all: Partial<Record<FloorConstant, number>>
   private readonly listeners = new Set<(caller: Caller, kind: string) => void>()
 
-  constructor(gateSlot: SlotState, all: Partial<Record<FloorConstant, number>>) {
-    this.gateSlot = gateSlot
+  constructor(gateState: PolicyJobState, all: Partial<Record<FloorConstant, number>>) {
+    this.gateState = gateState
     this.all = all
   }
 
-  // The grant risk classifier and watchdog slots read off, as with the human's switch
-  slot(id: string): SlotState {
-    if (id === 'gate') return this.gateSlot
+  // The grant risk classifier and watchdog policy jobs read off, as with the human's switch
+  policyJob(id: string): PolicyJobState {
+    if (id === 'gate') return this.gateState
     return id === 'grant-risk-classifier' || id === 'watchdog' ? 'off' : 'absent'
   }
 

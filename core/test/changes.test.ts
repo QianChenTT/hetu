@@ -241,7 +241,7 @@ describe('whether a change widens', () => {
 })
 
 describe('the security controls', () => {
-  it('are the slot holders and the guards core/api expects, which the log is not', () => {
+  it('are the policy job holders and the guards core/api expects, which the log is not', () => {
     for (const id of ['gate', 'grant-risk-classifier', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
     for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
   })

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Call, Prepared } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { createLuoshu, type Luoshu } from '../src/luoshu.ts'
 
 // What another program does to the disk right after an open or right before a link of the name given, as many times

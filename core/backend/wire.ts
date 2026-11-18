@@ -85,7 +85,7 @@ export class LinkToCarrier implements CarrierLink {
   }
 }
 
-// What the carrier asks the loader for: every slot, guard and provider from the loader's roles and the watchdog's core
+// What the carrier asks the loader for: every policy job, guard and provider from the loader's roles and the watchdog's core
 // actions from its serve. wireCore and the loader's tests both build the carrier from it, so the tests run the wiring
 // that ships
 export function carrierOptions(
@@ -105,7 +105,7 @@ export function carrierOptions(
 }
 
 // The core joined in its order: the link, then the loader holding it, then the carrier asking the loader for
-// every slot, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
+// every policy job, guard and provider, then the link pointed at the carrier. The log is the one EventLog boot opened, which
 // the carrier writes its floor records and its audit queue through and serves log.history and log.verify from
 export function wireCore(options: WireOptions): { loader: Loader, carrier: Carrier } {
   const link = new LinkToCarrier()

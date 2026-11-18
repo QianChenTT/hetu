@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
-import type { Opening } from '../api/slots.ts'
+import type { Opening } from '../api/policy-jobs.ts'
 import { cleanup, coreInstall, filesFor, harness, hostManifest, reasonOf, stateOf, until } from './loader-fakes.ts'
 
 afterEach(cleanup)

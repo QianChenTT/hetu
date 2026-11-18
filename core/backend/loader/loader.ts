@@ -13,7 +13,7 @@ import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
 import { floorConstants, MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
   firstPartyIds, guardableActions, guards as expectedGuards, installIds, isReservedId, isSecurityControl, pluginId, providers,
-  securityControls, slotIds, utilityIds,
+  securityControls, policyJobIds, utilityIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import {
@@ -23,8 +23,8 @@ import { bindFailures, type BindFailure, type DepState, type Init, type StopReas
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen, table } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, SlotState, StateView } from '../../api/slots.ts'
-import { agentDoor, agentHost } from '../../api/slots.ts'
+import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, StateView } from '../../api/policy-jobs.ts'
+import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
@@ -156,7 +156,7 @@ type Pending = { readonly id: string, readonly granted: readonly Capability[] | 
 // switched on again. Stationary: the pass at start, which finds what changed while hetu was not running
 type Cause = ClassRaised['cause'] | 'moved'
 
-// The grant risk classifier slot as classing reads it: on with its role ready, off once the human switched it off, down any
+// The grant risk classifier policy job as classing reads it: on with its role ready, off once the human switched it off, down any
 // other way
 type Classing = 'on' | 'off' | 'down'
 
@@ -177,7 +177,7 @@ type ClassChange = {
 // What a class change comes to: the entry stored, null once the plugin goes, whether its class, first-use list,
 // confirmed record or mark differ from the entry before, the move shown on the Confirm on screen, the move a notice of
 // its own names with no Confirm on screen, the items that start to ask, whether the entry rises and so is written before
-// the change that causes it and the slot's state it was decided under
+// the change that causes it and the policy job's state it was decided under
 type Decided = {
   readonly id: string
   readonly entry: Plugin | null
@@ -186,12 +186,12 @@ type Decided = {
   readonly raised: ClassMove | null
   readonly asks: readonly Capability[]
   readonly rises: boolean
-  readonly slot: Classing
+  readonly policyJob: Classing
 }
 
-// Whether a pass over every entry leaves each as stored: only with the slot switched off by the human, or absent from an
+// Whether a pass over every entry leaves each as stored: only with the policy job switched off by the human, or absent from an
 // install that doesn't name it, as in tests and dev. A role that fails or any other state classes an entry strictly
-const standsInPass = (state: SlotState) => state === 'off' || state === 'absent'
+const standsInPass = (state: PolicyJobState) => state === 'off' || state === 'absent'
 
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
@@ -199,7 +199,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
   return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
 }
 
-// Section 6's order for install plugins: the slot holders, then the providers, then the guard and the rest. A
+// Section 6's order for install plugins: the policy job holders, then the providers, then the guard and the rest. A
 // requirement still starts before its dependent
 export const bootOrder = frozen([
   'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'mcp-http-handler', 'hidden-marks',
@@ -326,7 +326,7 @@ export class Loader implements Seam {
   private readonly versions = new Map<string, string>()
   // The last incarnation minted per plugin, kept when a plugin is known again so no number repeats in a run
   private readonly minted = new Map<string, number>()
-  private readonly lastSlots = new Map<string, SlotState>()
+  private readonly lastPolicyJobs = new Map<string, PolicyJobState>()
   private readonly waiters: (() => void)[] = []
   // Marker writes and removals under way, which shutdown waits for, so none is cut off when the process ends
   private readonly markerWork = new Set<Promise<void>>()
@@ -428,11 +428,11 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the carrier's seam
 
-  // An install plugin's slot or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
+  // An install plugin's policy job or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
   // is tampered and every other way of not being ready is failed, so nothing reads as off that the human didn't switch
-  // off. Before the install list is read every slot is starting, as every action with power answers starting while the
+  // off. Before the install list is read every policy job is starting, as every action with power answers starting while the
   // core starts
-  slot(id: string): SlotState {
+  policyJob(id: string): PolicyJobState {
     if (this.listResult === 'unread') return 'starting'
     if (this.listResult === 'absent') return 'absent'
     if (this.listResult === 'invalid') return 'tampered'
@@ -513,7 +513,7 @@ ${capabilityKey(change.capability)}`)
   // ---- what else the core asks of the loader
 
   // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
-  // has checked that the caller is a window, or holds the watchdog slot and names a sandboxed plugin holding no slot or
+  // has checked that the caller is a window, or holds the watchdog policy job and names a sandboxed plugin holding no policy job or
   // guard role
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
@@ -715,9 +715,9 @@ ${capabilityKey(change.capability)}`)
 
   // ---- classes
 
-  // The grant risk classifier slot's role while the slot is on and its plugin ready, null otherwise
+  // The grant risk classifier policy job's role while the policy job is on and its plugin ready, null otherwise
   private grantRiskClassifier(): GrantRiskClassifier | null {
-    return this.slot('grant-risk-classifier') === 'on' ? this.role('grant-risk-classifier', 'grantRiskClassifier') : null
+    return this.policyJob('grant-risk-classifier') === 'on' ? this.role('grant-risk-classifier', 'grantRiskClassifier') : null
   }
 
   // What a plugin holds: a plugin-folder plugin's entry, an install plugin's manifest
@@ -799,61 +799,61 @@ ${capabilityKey(change.capability)}`)
     return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
   }
 
-  // The grant risk classifier slot as classing reads it: on while its plugin is ready with its role, off only once the human
+  // The grant risk classifier policy job as classing reads it: on while its plugin is ready with its role, off only once the human
   // switched it off and down for anything else, a failed, absent or tampered plugin included
   private classing(): Classing {
-    const state = this.slot('grant-risk-classifier')
+    const state = this.policyJob('grant-risk-classifier')
     if (state === 'off') return 'off'
     return this.grantRiskClassifier() !== null ? 'on' : 'down'
   }
 
-  // The one function every class change goes through, whatever causes it. With the slot on the policy classes the
+  // The one function every class change goes through, whatever causes it. With the policy job on the policy classes the
   // plugin under the state the change asks for and an item asks unless the entry records the human confirmed it. With
-  // the slot switched off by the human the change passes: the class stays the last one classed, the entry is marked as
-  // not classed and lists every item not confirmed, which the gate is handed only once the slot is on again. Down any
+  // the policy job switched off by the human the change passes: the class stays the last one classed, the entry is marked as
+  // not classed and lists every item not confirmed, which the gate is handed only once the policy job is on again. Down any
   // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
-  // stored only with the slot switched off or absent from the install. With the slot on a move goes on the Confirm on screen. With none on screen it gets a
+  // stored only with the policy job switched off or absent from the install. With the policy job on a move goes on the Confirm on screen. With none on screen it gets a
   // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
   // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
   private decide(change: ClassChange): Decided {
     const { id, before, after, cause, confirm, pending, notice } = change
-    let slot = this.classing()
-    if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, slot }
+    let policyJob = this.classing()
+    if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, policyJob }
     const held = new Set(after.granted.map(capabilityKey))
     // New code that applied with no Confirm on screen inherits no confirmation the old code was given
     const carried = cause === 'update' && !confirm ? [] : before?.confirmed ?? []
     const confirmed = carried.filter(item => held.has(capabilityKey(item)))
     const known = new Set(confirmed.map(capabilityKey))
-    const classed = slot === 'on' ? this.classed(id, after.granted, pending) : null
-    if (classed === null && slot === 'on') slot = 'down'
-    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.slot('grant-risk-classifier'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, slot }
-    const n = classed !== null ? classed.class : slot === 'off' ? before?.class ?? null : null
+    const classed = policyJob === 'on' ? this.classed(id, after.granted, pending) : null
+    if (classed === null && policyJob === 'on') policyJob = 'down'
+    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.policyJob('grant-risk-classifier'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, policyJob }
+    const n = classed !== null ? classed.class : policyJob === 'off' ? before?.class ?? null : null
     const asking = classed !== null
       ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))
-      : after.granted.filter(item => slot === 'down' || !known.has(capabilityKey(item)))
+      : after.granted.filter(item => policyJob === 'down' || !known.has(capabilityKey(item)))
     const next: Plugin = { ...after, class: n }
     delete next.firstUse
     delete next.confirmed
     delete next.unclassed
     if (asking.length > 0) next.firstUse = asking
     if (confirmed.length > 0) next.confirmed = confirmed
-    if (slot === 'off' || (slot === 'down' && after.unclassed === true)) next.unclassed = true
+    if (policyJob === 'off' || (policyJob === 'down' && after.unclassed === true)) next.unclassed = true
     const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
     const asks = asking.filter(item => !listed.has(capabilityKey(item)))
-    // A plugin never classed, approved while the slot was off or approved now, moves from a class not known. For its
+    // A plugin never classed, approved while the policy job was off or approved now, moves from a class not known. For its
     // notice that class counts as 0, since nothing showed the human any class, or as the class last shown when its mark
     // holds one. Everywhere else it counts as 4
     const unknown = before === null ? cause === 'approve' : before.class === null && before.unclassed === true
-    const moving: ClassMove | null = slot === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
+    const moving: ClassMove | null = policyJob === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
     const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: before?.owed?.from ?? 0 } : moving) ? moving : null
     // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer.
     // An entry stored strict with no Confirm on screen keeps the class it held in the mark as the class last shown, so a
     // move up made while the class is not known is measured from it once the class is known again and a plugin back there
     // owes nothing. An entry marked as not classed held no class the human was shown
     const was = before?.owed
-    const forgets = slot === 'down' && !confirm && was === undefined && before !== null && before.class !== null && before.unclassed !== true
+    const forgets = policyJob === 'down' && !confirm && was === undefined && before !== null && before.class !== null && before.unclassed !== true
     const owed = forgets ? { from: before.class, cause: notice.cause, by: notice.by }
-      : slot !== 'on' ? was
+      : policyJob !== 'on' ? was
       : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
         : was !== undefined && n !== null && this.alerts({ id, from: was.from ?? 0, to: n }) ? was : undefined
     delete next.owed
@@ -861,24 +861,24 @@ ${capabilityKey(change.capability)}`)
     const changed = before === null || n !== before.class || !sameItems(asking, before.firstUse) || !sameItems(confirmed, before.confirmed)
       || next.unclassed !== before.unclassed || JSON.stringify(owed) !== JSON.stringify(before.owed)
     return {
-      id, entry: next, changed, asks, slot,
+      id, entry: next, changed, asks, policyJob,
       rises: asks.length > 0 || (next.unclassed === true && before?.unclassed !== true) || (n ?? 4) > (before?.class ?? 4),
       move: confirm ? moving : null,
       raised,
     }
   }
 
-  // Whether a move made with no Confirm on screen alerts, as the policy says, or for a slot that doesn't say, whether it
-  // would show the move on a Confirm. A slot that fails alerts
+  // Whether a move made with no Confirm on screen alerts, as the policy says, or for a policy job that doesn't say, whether it
+  // would show the move on a Confirm. A policy job that fails alerts
   private alerts(move: ClassMove): boolean {
-    const slot = this.grantRiskClassifier()
-    if (slot === null) return false
+    const policyJob = this.grantRiskClassifier()
+    if (policyJob === null) return false
     try {
-      if (typeof slot.alerts === 'function') {
-        const answer = slot.alerts(move)
+      if (typeof policyJob.alerts === 'function') {
+        const answer = policyJob.alerts(move)
         if (typeof answer === 'boolean') return answer
       } else {
-        const lines = typeof slot.moves === 'function' ? slot.moves([move]) : []
+        const lines = typeof policyJob.moves === 'function' ? policyJob.moves([move]) : []
         if (Array.isArray(lines)) return lines.length > 0
       }
     } catch {}
@@ -899,7 +899,7 @@ ${capabilityKey(change.capability)}`)
     for (const id of ids) {
       const entry = this.state.plugins[id]
       const owed = entry?.owed
-      // A class not known while the slot is down: the notice held stays as it was until the class is known again
+      // A class not known while the policy job is down: the notice held stays as it was until the class is known again
       if (owed !== undefined && entry!.class === null) continue
       const notice: ClassRaised | null = owed === undefined
         ? null : { kind: 'class.raised', plugin: id, from: owed.from, to: entry!.class!, cause: owed.cause, by: owed.by }
@@ -1004,43 +1004,43 @@ ${capabilityKey(change.capability)}`)
   }
 
   // The lines a request's Confirm shows for the classes its change moves, the changed plugin's own first, each as the
-  // slot words it. A slot without moves shows none
+  // policy job words it. A policy job without moves shows none
   private shown(change: { own: Decided, others: readonly Decided[] }): string[] {
     const moves = [change.own, ...change.others].flatMap(decided => (decided.move === null ? [] : [decided.move]))
-    const slot = this.grantRiskClassifier()
-    if (moves.length === 0 || slot === null || typeof slot.moves !== 'function') return []
+    const policyJob = this.grantRiskClassifier()
+    if (moves.length === 0 || policyJob === null || typeof policyJob.moves !== 'function') return []
     try {
-      const lines = slot.moves(moves)
+      const lines = policyJob.moves(moves)
       if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
     } catch {}
     this.note('fault', { plugin: 'grant-risk-classifier', step: 'moves' })
     return []
   }
 
-  // A plugin's class and the items that ask at first use, from the slot. Null with the slot down or a role that fails
+  // A plugin's class and the items that ask at first use, from the policy job. Null with the policy job down or a role that fails
   private classed(id: string, granted: readonly Capability[], pending?: Pending): { class: number, firstUse: Capability[] } | null {
-    const slot = this.grantRiskClassifier()
-    if (slot === null) return null
+    const policyJob = this.grantRiskClassifier()
+    if (policyJob === null) return null
     try {
       const reachable = this.reachable(id, granted, pending)
       const flow = this.flow(id, granted, pending)
-      const n = slot.classify(granted, reachable, flow)
-      const asking = slot.firstUse(granted, reachable, flow)
+      const n = policyJob.classify(granted, reachable, flow)
+      const asking = policyJob.firstUse(granted, reachable, flow)
       if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
     } catch {}
     this.note('fault', { plugin: 'grant-risk-classifier', step: 'classify' })
     return null
   }
 
-  // The slot's lines under the core's words, or with the slot down what that means. Nothing with the slot switched off
+  // The policy job's lines under the core's words, or with the policy job down what that means. Nothing with the policy job switched off
   // by the human, who chose to see nothing about classes
   private screen(id: string, granted: readonly Capability[]): string[] {
     if (this.classing() === 'off') return []
-    const slot = this.grantRiskClassifier()
-    if (slot !== null) {
+    const policyJob = this.grantRiskClassifier()
+    if (policyJob !== null) {
       try {
         const connected = this.connected(id, granted)
-        const lines = slot.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
+        const lines = policyJob.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
         if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
       } catch {}
       this.note('fault', { plugin: 'grant-risk-classifier', step: 'screen' })
@@ -1053,7 +1053,7 @@ ${capabilityKey(change.capability)}`)
     const down = new Set(['crashed', 'failed', 'unresponsive'])
     const { switches } = this.state
     return {
-      slots: Object.fromEntries(slotIds.map(id => [id, this.slot(id)])) as CoreStatus['slots'],
+      policyJobs: Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])) as CoreStatus['policyJobs'],
       crashed: this.list().filter(row => down.has(row.state)).map(row => row.id),
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
@@ -1088,7 +1088,7 @@ ${capabilityKey(change.capability)}`)
 
   // In boot's order: the install checked and its host tier started, the first-party reconcile, every plugin-folder
   // entry classed again, the plugin folder scanned and the sandboxed tier started in graph order. core.ready closes it
-  // with every slot's state, unless a shutdown began on the way
+  // with every policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
@@ -1108,7 +1108,7 @@ ${capabilityKey(change.capability)}`)
     await this.scan()
     this.replan()
     await this.settled()
-    if (!this.closing) this.note('core.ready', Object.fromEntries(slotIds.map(id => [id, this.slot(id)])))
+    if (!this.closing) this.note('core.ready', Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])))
   }
 
   // The stopped mode hetu is in, null while it runs
@@ -1424,25 +1424,25 @@ ${capabilityKey(change.capability)}`)
     return this.dev(id) || this.state.switches.skipVerification
   }
 
-  private isSlot(id: string): boolean {
-    return isOne(slotIds, id)
+  private isPolicyJob(id: string): boolean {
+    return isOne(policyJobIds, id)
   }
 
   private expected(): string[] {
     const guards = guardableActions.flatMap(action => this.guardsFor(action))
-    return [...new Set([...slotIds, ...guards])]
+    return [...new Set([...policyJobIds, ...guards])]
   }
 
-  // Slot holders, providers and guards fill roles only a host half can hold
+  // Policy job holders, providers and guards fill roles only a host half can hold
   private needsHost(id: string): boolean {
-    return this.isSlot(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
+    return this.isPolicyJob(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
 
-  // Slot holders require nothing and can't be required. Install plugins require only install plugins
+  // Policy job holders require nothing and can't be required. Install plugins require only install plugins
   private requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
-    if (this.isSlot(k.id) && requires.length > 0) return true
-    return requires.some(id => this.isSlot(id) || (k.from === 'install' && !isOne(installIds, id)))
+    if (this.isPolicyJob(k.id) && requires.length > 0) return true
+    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(installIds, id)))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
@@ -1588,17 +1588,17 @@ ${capabilityKey(change.capability)}`)
     return 'removed'
   }
 
-  // Tells the carrier, records each slot that changed and sends deps to every plugin whose own requirements changed
+  // Tells the carrier, records each policy job that changed and sends deps to every plugin whose own requirements changed
   private refresh(): void {
     for (const id of this.expected()) {
-      const now = this.slot(id)
-      if (this.lastSlots.get(id) === now) continue
-      this.lastSlots.set(id, now)
-      // A slot reads failed to the carrier once its stop for shutdown began, so nothing passes unguarded. It didn't
+      const now = this.policyJob(id)
+      if (this.lastPolicyJobs.get(id) === now) continue
+      this.lastPolicyJobs.set(id, now)
+      // A policy job reads failed to the carrier once its stop for shutdown began, so nothing passes unguarded. It didn't
       // fail, so its record says stopped. One that failed before its own stop began is recorded failed
       const state = this.known.get(id)?.state
       const stopped = this.closing && now === 'failed' && (state === 'stopping' || state === 'stopped')
-      this.note('slot.state', { slot: id, state: stopped ? 'stopped' : now })
+      this.note('policy-job.state', { policyJob: id, state: stopped ? 'stopped' : now })
     }
     try {
       this.link.changed()
@@ -2660,13 +2660,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    // Only a class 0 update loads on its own, and only while the slot can say so, with no grant asked for that the
+    // Only a class 0 update loads on its own, and only while the policy job can say so, with no grant asked for that the
     // entry doesn't hold and none that always asks. Its record lands first as any update's does
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
     const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
     const now = this.decide({ id, before: k.entry, after: k.entry, cause: 'update', confirm: false, notice: { cause: 'update', by: id } })
-    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.slot === 'on' && now.entry?.class === 0) {
+    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.policyJob === 'on' && now.entry?.class === 0) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }

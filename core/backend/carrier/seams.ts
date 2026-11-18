@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { FloorConstant } from '../../api/floor.ts'
 import type { GuardableAction } from '../../api/ids.ts'
-import type { Access, Call, Gate, Guard, PluginState, Provider, SlotState, Watchdog } from '../../api/slots.ts'
+import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { AuditLog } from './audit.ts'
 
@@ -35,8 +35,8 @@ export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values
 
 // What the loader owns: lifecycle, the state and the StateView it pushes to the gate
 export type Loader = {
-  // The state of the install plugin holding a slot or a guard role
-  slot(id: string): SlotState
+  // The state of the install plugin holding a policy job or a guard role
+  policyJob(id: string): PolicyJobState
   // The number of the newest StateView pushed to the gate
   view(): number
   // null for no such plugin
@@ -81,7 +81,7 @@ export type Landing = 'landed' | 'muted' | 'lost'
 
 export type CarrierOptions = {
   loader: Loader
-  // The holder's interface while the slot or role is on, else null
+  // The holder's interface while the policy job or role is on, else null
   gate: () => Gate | null
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null

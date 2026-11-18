@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Prepared } from 'hetu-core/api/slots.ts'
+import type { Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { createLuoshu } from '../src/luoshu.ts'
 
 // Each runs once: the next time the luoshu makes a folder, just before or just after it, the next time it opens a

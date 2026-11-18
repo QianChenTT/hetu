@@ -25,7 +25,7 @@ const wrongHash = 'b'.repeat(64)
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 
 describe('the start order', () => {
-  it('starts the slot holders, then the providers, then the guard, then sandboxed plugins in graph order', async () => {
+  it('starts the policy job holders, then the providers, then the guard, then sandboxed plugins in graph order', async () => {
     const { loader, runtime } = await harness({
       install: Object.fromEntries(['gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'leases'].map(id => [id, host(id)])),
       folder: {
@@ -139,31 +139,31 @@ describe('install plugins', () => {
   it('stops hetu when the tampered one is a security control, before the rest start', async () => {
     const { loader, runtime } = await harness({ install: { ...twoHosts(), gate: { ...host('gate'), hash: wrongHash } } })
     await loader.start()
-    expect(loader.slot('gate')).toBe('tampered')
+    expect(loader.policyJob('gate')).toBe('tampered')
     expect(reasonOf(loader, 'gate')).toBe('tampered')
     expect(loader.stopped()).toMatchObject({ control: 'gate', why: 'tampered' })
     expect(runtime.order()).toEqual([])
   })
 
-  it('reads a slot absent when the install holds no plugin for it', async () => {
+  it('reads a policy job absent when the install holds no plugin for it', async () => {
     const { loader } = await harness()
     await loader.start()
-    expect(loader.slot('watchdog')).toBe('absent')
-    expect(loader.slot('grant-risk-classifier')).toBe('absent')
-    expect(loader.slot('gate')).toBe('on')
+    expect(loader.policyJob('watchdog')).toBe('absent')
+    expect(loader.policyJob('grant-risk-classifier')).toBe('absent')
+    expect(loader.policyJob('gate')).toBe('on')
   })
 
-  it('reads every slot starting before the install is read, absent with no list and tampered with a bad one', async () => {
+  it('reads every policy job starting before the install is read, absent with no list and tampered with a bad one', async () => {
     const before = await harness()
-    expect(before.loader.slot('gate')).toBe('starting')
+    expect(before.loader.policyJob('gate')).toBe('starting')
     const none = await harness({ install: null })
     await none.loader.start()
-    expect(none.loader.slot('gate')).toBe('absent')
+    expect(none.loader.policyJob('gate')).toBe('absent')
     expect(none.link.events('install.checked')).toEqual([{ result: 'absent' }])
     const bad = await harness()
     await writeFile(path.join(bad.installDir, INSTALL_LIST), '{"format":1,"plugins":{},"plugins":{}}')
     await bad.loader.start()
-    expect(bad.loader.slot('gate')).toBe('tampered')
+    expect(bad.loader.policyJob('gate')).toBe('tampered')
     expect(bad.runtime.order()).toEqual([])
   })
 
@@ -175,7 +175,7 @@ describe('install plugins', () => {
     const made = await harness({ loader: { listDir: base } })
     await made.loader.start()
     expect(made.link.events('install.checked')).toEqual([{ result: 'absent' }])
-    expect(made.loader.slot('gate')).toBe('absent')
+    expect(made.loader.policyJob('gate')).toBe('absent')
     const moved = path.join(await tempBase(), 'list')
     await mkdir(moved, { recursive: true })
     const listed = await harness({ before: async ({ installDir }) => {
@@ -184,7 +184,7 @@ describe('install plugins', () => {
     }, loader: { listDir: moved } })
     await listed.loader.start()
     expect(listed.link.events('install.checked')).toEqual([{ result: 'ok' }])
-    expect(listed.loader.slot('gate')).toBe('on')
+    expect(listed.loader.policyJob('gate')).toBe('on')
   })
 
   it('switched off by the human, reads off and starts nothing, even when its check failed too', async () => {
@@ -193,7 +193,7 @@ describe('install plugins', () => {
       switches: { off: ['gate'] },
     })
     await loader.start()
-    expect(loader.slot('gate')).toBe('off')
+    expect(loader.policyJob('gate')).toBe('off')
     expect(stateOf(loader, 'gate')).toBe('off')
     expect(runtime.order()).toEqual(['storage'])
     // The failed check is still recorded, it never reads as the switch-off
@@ -206,7 +206,7 @@ describe('install plugins', () => {
       switches: { devMode: ['gate'] },
     })
     await loader.start()
-    expect(loader.slot('gate')).toBe('on')
+    expect(loader.policyJob('gate')).toBe('on')
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'dev' })
     // The code still came from the install. Another plugin's failed check still holds
     expect(runtime.started.find(start => start.id === 'gate')?.half).toBe('host')
@@ -221,13 +221,13 @@ describe('install plugins', () => {
       switches: { skipVerification: true },
     })
     await loader.start()
-    expect(loader.slot('gate')).toBe('on')
+    expect(loader.policyJob('gate')).toBe('on')
     expect(link.events('plugin.checked')).toContainEqual({ plugin: 'gate', from: 'install', result: 'skipped' })
     expect(reasonOf(loader, 'outline')).toBe('unsigned')
     expect(reasonOf(loader, 'luoshu')).toBe('invalid')
   })
 
-  it('refuses a slot, provider or guard id with no host half, place', async () => {
+  it('refuses a policy job, provider or guard id with no host half, place', async () => {
     const { loader } = await harness({
       install: { ...coreInstall(), luoshu: { files: filesFor(workerManifest('luoshu')) } },
       loader: { guardsFor: () => ['leases'] },
@@ -236,15 +236,15 @@ describe('install plugins', () => {
     expect(reasonOf(loader, 'luoshu')).toBe('place')
   })
 
-  // A slot holder refused this way is a security control that failed, so hetu stops
-  it('refuses a slot holder that requires anything', async () => {
+  // A policy job holder refused this way is a security control that failed, so hetu stops
+  it('refuses a policy job holder that requires anything', async () => {
     const { loader } = await harness({ install: { ...coreInstall(), gate: host('gate', { requires: ['storage'] }), storage: host('storage') } })
     await loader.start()
     expect(reasonOf(loader, 'gate')).toBe('requires')
     expect(loader.stopped()).toMatchObject({ control: 'gate', why: 'failed', reason: 'requires' })
   })
 
-  it('refuses a plugin that requires a slot holder and an install plugin that requires a folder plugin', async () => {
+  it('refuses a plugin that requires a policy job holder and an install plugin that requires a folder plugin', async () => {
     const { loader } = await harness({
       install: { ...coreInstall(), storage: host('storage'), luoshu: host('luoshu', { requires: ['outline'] }) },
       folder: { outline: filesFor(workerManifest('outline', { requires: ['gate'] })) },
@@ -306,7 +306,7 @@ describe('starting', () => {
     broken.throws = true
     const other = await harness({ behave: { gate: { exports: { gate: broken } } } })
     await other.loader.start()
-    expect(other.loader.slot('gate')).toBe('failed')
+    expect(other.loader.policyJob('gate')).toBe('failed')
     expect(reasonOf(other.loader, 'gate')).toBe('state-changed')
     expect(other.loader.role('gate', 'gate')).toBe(null)
   })
@@ -343,7 +343,7 @@ describe('start markers', () => {
       expect(booted.markers).toEqual(['gate'])
       const next = await harness({ base: path.join(made.base, 'second'), markers: booted.markers, install: twoHosts() })
       await next.loader.start()
-      expect(next.loader.slot('gate')).toBe('failed')
+      expect(next.loader.policyJob('gate')).toBe('failed')
       expect(reasonOf(next.loader, 'gate')).toBe('marker')
       // The gate is a security control, so its marker stops hetu before the rest start
       expect(next.loader.stopped()).toMatchObject({ control: 'gate', reason: 'marker' })

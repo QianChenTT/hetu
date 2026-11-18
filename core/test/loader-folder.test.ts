@@ -133,14 +133,14 @@ describe('reserved ids in the plugin folder', () => {
     // The install's own plugin of that id, if there is one, is untouched
     if (id === 'gate') {
       expect(made.loader.plugin('gate')?.place).toBe('host')
-      expect(made.loader.slot('gate')).toBe('on')
+      expect(made.loader.policyJob('gate')).toBe('on')
     }
   })
 
   it('refuses an entry for an install id with no folder, so it never stands in for the install\'s', async () => {
     const made = await harness({ entries: { gate: firstPartyEntry('d'.repeat(64), { signer: 'sigstore:someone' }) } })
     await made.loader.start()
-    expect(made.loader.slot('gate')).toBe('on')
+    expect(made.loader.policyJob('gate')).toBe('on')
     expect(made.loader.list().filter(row => row.id === 'gate').map(row => row.from).sort()).toEqual(['folder', 'install'])
   })
 

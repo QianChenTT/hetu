@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { agentConnect, connectLabel, type AgentConnect } from '../../api/changes.ts'
-import { agentDoor } from '../../api/slots.ts'
+import { agentDoor } from '../../api/policy-jobs.ts'
 
 // A client's connect through mcp-http-handler's door: the change the core raises for it and the connect's state until mcp-http-handler
 // collects the human's answer. The hosts are taken here with the URL parser mcp-http-handler's own process uses, so the host the

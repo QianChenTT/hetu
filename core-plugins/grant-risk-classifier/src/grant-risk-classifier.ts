@@ -1,5 +1,5 @@
 import { capabilityKey, type Capability } from 'hetu-core/api/capabilities.ts'
-import { classNames, type GrantRiskClassifier, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/slots.ts'
+import { classNames, type GrantRiskClassifier, type ClassMove, type Flow, type ScreenSubject } from 'hetu-core/api/policy-jobs.ts'
 import { capabilityText } from 'hetu-core/api/trusted.ts'
 
 // A scope stays inside one place when its first part is a plain folder or note name. One with a wildcard there, **

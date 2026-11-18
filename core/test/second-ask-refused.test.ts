@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call, GuardCall, Prepared } from '../api/slots.ts'
+import type { Call, GuardCall, Prepared } from '../api/policy-jobs.ts'
 import { createHistory } from '../../core-plugins/history/src/history.ts'
 import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
 import { cleanup, FakeGuard, harness, worker } from './carrier-fakes.ts'
@@ -17,8 +17,8 @@ afterEach(async () => {
 type Case = {
   grants?: string[]
   guard?: (call: GuardCall) => 'allow' | 'deny'
-  // What changes in the gate's slot between the first judgement and the second ask
-  slot?: 'off' | 'failed' | 'starting' | 'absent' | 'tampered'
+  // What changes in the gate's policy job between the first judgement and the second ask
+  policyJob?: 'off' | 'failed' | 'starting' | 'absent' | 'tampered'
 }
 
 // The real carrier and the real luoshu with a fake gate and guard. Another program renames the folder plain to Plain
@@ -34,7 +34,7 @@ async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: strin
   luoshu.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
   const parts = harness({ guardsFor: () => (given.guard ? ['leases'] : []) })
   if (given.guard) {
-    parts.loader.slots.leases = 'on'
+    parts.loader.policyJobs.leases = 'on'
     parts.guards.leases = new FakeGuard()
     parts.guards.leases.answer = given.guard
   }
@@ -45,7 +45,7 @@ async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: strin
     release: luoshu.provider.release,
     perform: async (call: Call, prepared: Prepared) => {
       await rename(path.join(folder, 'plain'), path.join(folder, 'Plain'))
-      if (given.slot !== undefined) parts.loader.slots.gate = given.slot
+      if (given.policyJob !== undefined) parts.loader.policyJobs.gate = given.policyJob
       return luoshu.provider.perform(call, prepared)
     },
   }
@@ -83,14 +83,14 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     ['absent', 'policy-down'],
     ['tampered', 'policy-down'],
     ['starting', 'starting'],
-  ] as const)('answers %s gate on the second ask with %s and records it', async (slot, code) => {
-    const { reply, records } = await renamedFolder('luoshu.read', 'b.md', { slot })
+  ] as const)('answers %s gate on the second ask with %s and records it', async (policyJob, code) => {
+    const { reply, records } = await renamedFolder('luoshu.read', 'b.md', { policyJob })
     expect(refusal(reply)).toBe(code)
     expect(records).toMatchObject([{ paths: '["Plain/b.md"]', code }])
   })
 
   it('lets the call on when the human switched the gate off before the second ask, as the first judgement would', async () => {
-    const { reply, records } = await renamedFolder('luoshu.read', 'b.md', { slot: 'off' })
+    const { reply, records } = await renamedFolder('luoshu.read', 'b.md', { policyJob: 'off' })
     expect(reply).toMatchObject({ ok: true, result: { text: 'note b', path: 'Plain/b.md' } })
     expect(records).toMatchObject([{ paths: '["Plain/b.md"]', code: null }])
   })
@@ -137,7 +137,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     ['the gate refuses the other case', undefined, 'not-granted'],
     ['the gate failed', 'failed', 'policy-down'],
     ['the gate is starting', 'starting', 'starting'],
-  ] as const)('passes the judge\'s code on when %s', async (_name, slot, code) => {
+  ] as const)('passes the judge\'s code on when %s', async (_name, policyJob, code) => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-second-ask-')))
     bases.push(base)
     const folder = path.join(base, 'notes')
@@ -154,7 +154,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
       release: history.provider.release,
       perform: async (call: Call, prepared: Prepared) => {
         await writeFile(path.join(folder, 'box', 'N.md'), 'OTHER NOTE')
-        if (slot !== undefined) parts.loader.slots.gate = slot
+        if (policyJob !== undefined) parts.loader.policyJobs.gate = policyJob
         return history.provider.perform(call, prepared)
       },
     }

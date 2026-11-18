@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ExecView, Opening } from '../api/slots.ts'
+import type { ExecView, Opening } from '../api/policy-jobs.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest } from './loader-fakes.ts'
 

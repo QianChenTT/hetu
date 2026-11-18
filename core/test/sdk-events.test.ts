@@ -77,7 +77,7 @@ describe('events through the SDK', () => {
 
   it('reports the topics the bus keeps standing', async () => {
     const { ctx, loader } = await listening()
-    loader.slots.gate = 'starting'
+    loader.policyJobs.gate = 'starting'
     const subscription = await ctx.events.on('luoshu.changed', () => {})
     expect(subscription.standing).toEqual(['luoshu.changed'])
   })

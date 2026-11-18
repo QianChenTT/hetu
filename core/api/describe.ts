@@ -1,6 +1,6 @@
 import { connectLabel, type Change, type ClassRaised } from './changes.ts'
 import { isSecurityControl } from './ids.ts'
-import { classNames } from './slots.ts'
+import { classNames } from './policy-jobs.ts'
 import { capabilityText } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. The id of

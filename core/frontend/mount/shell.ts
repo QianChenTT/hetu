@@ -4,12 +4,12 @@ import type { CoreStatus, PendingRequest } from '../../api/actions.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import type { CoreLink } from './link.ts'
 
-// What the banner says: the state files that failed their check, each slot not on, the plugins down, each switch that
+// What the banner says: the state files that failed their check, each policy job not on, the plugins down, each switch that
 // weakens a check and a luoshu not picked. Nothing while all is well
 export function bannerLines(status: CoreStatus): string[] {
   const lines: string[] = []
   if (status.suspect.length > 0) lines.push(`state files that failed their check at start: ${status.suspect.join(', ')}`)
-  for (const [slot, state] of Object.entries(status.slots)) if (state !== 'on') lines.push(`${slot}: ${state}`)
+  for (const [policyJob, state] of Object.entries(status.policyJobs)) if (state !== 'on') lines.push(`${policyJob}: ${state}`)
   if (status.crashed.length > 0) lines.push(`down: ${status.crashed.join(', ')}`)
   if (status.devMode.length > 0) lines.push(`dev mode: ${status.devMode.join(', ')}`)
   if (status.allowUnsigned > 0) lines.push(`unsigned builds allowed: ${status.allowUnsigned}`)

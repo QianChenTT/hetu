@@ -134,11 +134,11 @@ export type ScreenSubject = {
 // and the one the change gives it, null for a class not known
 export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
 
-// The grant risk classifier slot. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
+// The grant risk classifier policy job. A plugin's class from 0 to 4, the items that ask at first use and the screen. The loader asks
 // it at every class change, the changed plugin's and every other plugin's whose links the change moves. A throw counts
-// as the slot down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
-// classes the change moves, which a slot without it shows none of. alerts says whether a move made with no Confirm on
-// screen raises a notice of its own, which a slot without it decides by whether moves shows the move
+// as the policy job down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
+// classes the change moves, which a policy job without it shows none of. alerts says whether a move made with no Confirm on
+// screen raises a notice of its own, which a policy job without it decides by whether moves shows the move
 export type GrantRiskClassifier = {
   classify(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number
   firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[]
@@ -200,10 +200,10 @@ export type Provider = {
   release?(call: Call, prepared: Prepared): void
 }
 
-// A slot or guard role as the carrier applies it: on, off by the human, starting, failed (crashed, timed out,
+// A policy job or guard role as the carrier applies it: on, off by the human, starting, failed (crashed, timed out,
 // unresponsive or held by its marker), absent from the install or tampered
-export const slotStates = frozen(['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const)
-export type SlotState = typeof slotStates[number]
+export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const)
+export type PolicyJobState = typeof policyJobStates[number]
 
 // A plugin's lifecycle state, which the loader owns
 export const pluginStates = frozen([
@@ -233,7 +233,7 @@ export type AuditRecord = {
   scope?: Scope
   code: RefusalCode | null
   ms: number
-  gate: SlotState
+  gate: PolicyJobState
   count: number
 }
 

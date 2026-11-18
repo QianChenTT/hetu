@@ -56,7 +56,7 @@ describe('plugin.call', () => {
     await tick()
     expect(deliveries(scribe, 'scribe.handle')).toHaveLength(2)
     // A window is never in from, even with the gate off
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const way = windowWay(carrier, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'scribe.handle'))).toBe('not-granted')
   })
@@ -176,7 +176,7 @@ describe('plugin.call', () => {
   // A loader whose actions is not an object throws outside every step's own try
   it('answers failed at once for a call that threw in flight', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.plugins.git = { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: null as never, topics: [] }
     connect(worker('git'))
     const started = Date.now()
@@ -215,7 +215,7 @@ describe('parent', () => {
 
   it('stops at a depth of 4', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const chain = ['p1', 'p2', 'p3', 'p4', 'p5']
     for (const id of chain) loader.sandboxed(id, { go: {} })
     const sides = chain.map(id => connect(worker(id)))
@@ -234,7 +234,7 @@ describe('parent', () => {
 
   it('holds a plugin to its own lower depth', async () => {
     const { connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('p1', { go: {} })
     loader.sandboxed('p2', { go: {} })
     loader.human.plugins.p1 = { parentDepth: 1 }
@@ -454,7 +454,7 @@ describe('deadlines and cancel', () => {
       }
     }],
     ['a guard', (parts: ReturnType<typeof harness>, late: () => void) => {
-      parts.loader.slots.leases = 'on'
+      parts.loader.policyJobs.leases = 'on'
       parts.loader.human.plugins.leases = { guardAnswerMs: 10000 }
       parts.guards.leases = new FakeGuard()
       parts.guards.leases.answer = () => {
@@ -467,7 +467,7 @@ describe('deadlines and cancel', () => {
     const parts = harness({ clock: () => clock, guardsFor: () => ['leases'] })
     const { connect, gate, luoshu, loader } = parts
     gate.grants.search = [{ type: 'luoshu.write', paths: ['**'] }]
-    loader.slots.leases = 'off'
+    loader.policyJobs.leases = 'off'
     loader.human.plugins.search = { callDeadlineMs: 5000 }
     slow(parts, () => { clock += 5000 })
     expect(code(await connect(worker('search')).ask('luoshu.write', { path: 'a.md', text: 'x' }))).toBe('timeout')
@@ -531,11 +531,11 @@ describe('filterReadable', () => {
 
   it('gives back every path with the gate off and refuses policy-down while it starts or is failed', async () => {
     const { search, got, loader, gate } = await incoming()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     const paths = ['notes/a.md', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
     for (const state of ['starting', 'failed', 'absent'] as const) {
-      loader.slots.gate = state
+      loader.policyJobs.gate = state
       expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('policy-down')
     }
     expect(gate.reads).toEqual([])
@@ -548,7 +548,7 @@ describe('filterReadable', () => {
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
     expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
   })
 
@@ -699,9 +699,9 @@ describe('a listing', () => {
 
   it('lets every name with no dot segment through with the gate off by the human and answers policy-down while the gate is down', async () => {
     const { search, loader } = listing()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
   })
 
@@ -710,7 +710,7 @@ describe('a listing', () => {
     const { search, loader, gate, luoshu } = listing()
     for (const path of ['notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json']) luoshu.files.set(path, 'x')
     gate.listable = () => true
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
     expect(gate.lists.filter(asked => asked.path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.')))).toEqual([])
     luoshu.perform_ = () => ({ paths: ['notes/.hidden.md'], next: null })
@@ -768,7 +768,7 @@ describe('calls a provider holds', () => {
 describe('a crash', () => {
   it('lets the loader move dependents to waiting before any call the plugin held is answered', async () => {
     const { carrier, connect, loader } = harness()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     loader.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
     const way = windowWay(carrier, { 'editor-1': editor })
@@ -842,11 +842,11 @@ describe('editor.reach', () => {
 
   it('answers every reach with the gate off and policy-down while it starts, is failed or absent', async () => {
     const { way, loader } = made()
-    loader.slots.gate = 'off'
+    loader.policyJobs.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
       .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['starting', 'failed', 'absent'] as const) {
-      loader.slots.gate = state
+      loader.policyJobs.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
     }
   })
@@ -857,7 +857,7 @@ describe('editor.reach', () => {
     gate.readable = () => true
     gate.listable = () => true
     gate.decision = () => ({ allow: true, view: loader.current })
-    loader.slots.gate = state
+    loader.policyJobs.gate = state
     for (const path of ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/edit/.config/x.md', '\u200c.obsidian/app.json']) {
       expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })).result, path).toMatchObject({ read: false, edit: false, uiRead: false, list: false })
     }
@@ -869,7 +869,7 @@ describe('editor.reach', () => {
     let now = 0
     const parts = harness({ clock: () => now })
     const way = windowWay(parts.carrier, { editor })
-    parts.loader.slots.gate = 'off'
+    parts.loader.policyJobs.gate = 'off'
     parts.log.failing = true
     const search = parts.connect(worker('search'))
     await search.ask('storage.get', { key: 'index' })

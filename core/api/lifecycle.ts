@@ -10,7 +10,7 @@ import { frozen } from './plain.ts'
 export const stopReasons = frozen([
   // its check: files gone, a manifest outside the schema or naming another id, an api range outside this core, bytes
   // that don't match, a null signer allowUnsigned doesn't name, the first-party signer on another id, a reserved id, a
-  // requires list it may not have, a slot, provider or guard id with no host half, a requires cycle, a state entry that
+  // requires list it may not have, a policy job, provider or guard id with no host half, a requires cycle, a state entry that
   // failed its check or is in a newer format
   'missing', 'invalid', 'install-only', 'id', 'api', 'tampered', 'unsigned', 'signer', 'reserved-id', 'requires',
   'place', 'cycle', 'entry', 'newer',

@@ -1,7 +1,7 @@
 import { mkdir, rename, rmdir, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Prepared } from 'hetu-core/api/slots.ts'
+import type { Prepared } from 'hetu-core/api/policy-jobs.ts'
 import { callOf, cleanup, commitOf, logOf, place, started } from './helpers.ts'
 
 const junctions: string[] = []

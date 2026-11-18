@@ -7,16 +7,16 @@ import {
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type FloorConstant } from '../../api/floor.ts'
 import {
-  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, slotIds,
+  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, policyJobIds,
   type GuardableAction,
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
-  agentDoor, agentHost, agentOwn, pluginStates, slotStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
-  type Sample, type Scope, type SlotState,
-} from '../../api/slots.ts'
+  agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
+  type Sample, type Scope, type PolicyJobState,
+} from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
@@ -80,7 +80,7 @@ type Pending = {
   timer: ReturnType<typeof setTimeout> | null
   done: boolean
   started: number
-  gate: SlotState
+  gate: PolicyJobState
   scope: Scope | undefined
   // The paths of a second ask the gate or a guard refused after the last one let on, which a call that ends refused
   // records in place of scope
@@ -215,7 +215,7 @@ function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
 }
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
-// Policy comes from the slots it asks: the gate decides and the carrier enforces
+// Policy comes from the policy jobs it asks: the gate decides and the carrier enforces
 export class Carrier {
   private readonly options: CarrierOptions
   private readonly now: () => number
@@ -237,7 +237,7 @@ export class Carrier {
   // The StateView number core.security last went out for
   private announced: number | null | undefined = undefined
   private closed = false
-  // Shutdown began: the loader reports what it stops as failed, so a slot, guard or provider that is down answers stopped
+  // Shutdown began: the loader reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   private shutting = false
   // The once a second look, and the log's health it last saw
   private readonly looking: ReturnType<typeof setInterval>
@@ -307,7 +307,7 @@ export class Carrier {
     })
   }
 
-  // For the loader, before it records core.stopping. The six slot states have no stopping, so from here a slot, guard
+  // For the loader, before it records core.stopping. The six policy job states have no stopping, so from here a policy job, guard
   // or provider that is down, for whatever reason, answers stopped where it would answer policy-down, guard-down or
   // unavailable. A gate that throws or a guard that answers late still answers as a fault. The bus keeps applying the
   // gate to the end, since a publish or a subscribe asks again first. It records no change to the subscriptions it
@@ -333,9 +333,9 @@ export class Carrier {
   }
 
   // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
-  // hears it while its slot is on. The page counts a second's worth before it reports
+  // hears it while its policy job is on. The page counts a second's worth before it reports
   sample(sample: Sample): void {
-    if (this.closed || this.slot('watchdog') !== 'on') return
+    if (this.closed || this.policyJob('watchdog') !== 'on') return
     const watchdog = this.holder(() => this.options.watchdog())
     if (watchdog === null) return
     try {
@@ -375,7 +375,7 @@ export class Carrier {
     this.paused = false
   }
 
-  // For the loader, after it changed a slot state, a plugin state or the StateView. Once the gate's state or the
+  // For the loader, after it changed a policy job state, a plugin state or the StateView. Once the gate's state or the
   // StateView moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
   // core.security once a new StateView applied a security change. The first StateView the carrier reads is where it
   // starts, not a change
@@ -562,7 +562,7 @@ export class Carrier {
   private dropped(way: Way): void {
     way.rate.dropped++
     const now = this.clock()
-    if (now - way.rate.toldAt < 1000 || this.slot('watchdog') !== 'on') return
+    if (now - way.rate.toldAt < 1000 || this.policyJob('watchdog') !== 'on') return
     const watchdog = this.holder(() => this.options.watchdog())
     if (watchdog === null) return
     const count = way.rate.dropped
@@ -752,12 +752,12 @@ export class Carrier {
     return { kind: 'power', capability: 'plugin.call', scope: frozen({ target: target.target }) }
   }
 
-  // The watchdog slot's holder is the install's watchdog, whose host half has an in-process handle. It holds the slot
-  // only while the slot is on: starting, failed, absent and tampered act as off and off makes no restarts. The handle
+  // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
+  // only while the policy job is on: starting, failed, absent and tampered act as off and off makes no restarts. The handle
   // can outlive that, minted before start and kept through a stop grace
   private isWatchdog(way: Way): boolean {
     const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
-    return holder && this.slot('watchdog') === 'on'
+    return holder && this.policyJob('watchdog') === 'on'
   }
 
   // mcp-http-handler's host half in its utility process: a way register made, so a port the loader minted, bound to plugin mcp-http-handler's
@@ -770,9 +770,9 @@ export class Carrier {
     return half && this.info('mcp-http-handler')?.place === 'utility'
   }
 
-  // watchdog.* acts only on sandboxed plugins holding no slot or guard role
+  // watchdog.* acts only on sandboxed plugins holding no policy job or guard role
   private watchable(plugin: unknown): boolean {
-    if (typeof plugin !== 'string' || isOne(slotIds, plugin)) return false
+    if (typeof plugin !== 'string' || isOne(policyJobIds, plugin)) return false
     if (guardableActions.some(action => this.guardsFor(action).includes(plugin))) return false
     return this.info(plugin)?.place === 'sandboxed'
   }
@@ -853,7 +853,7 @@ export class Carrier {
       timer: null,
       done: false,
       started,
-      gate: this.slot('gate'),
+      gate: this.policyJob('gate'),
       // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
       // no path. A plugin call's target is already the plugin's id
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
@@ -892,14 +892,14 @@ export class Carrier {
     return this.deliver(pending, target, args, kind)
   }
 
-  // The gate slot's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
+  // The gate policy job's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
   // call with power passes while its record can still land and passes unrecorded once the human turned recording off.
   // A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
   // that is down. Once shutdown began a call for an agent answers stopped whatever the gate's state, so the door's call
   // during a shutdown answers the same with the gate on as with it off
   private gateOpen(agent?: string): 'decide' | 'pass' | RefusalCode {
     if (agent !== undefined && this.shutting) return 'stopped'
-    const gate = this.slot('gate')
+    const gate = this.policyJob('gate')
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
     if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
@@ -911,7 +911,7 @@ export class Carrier {
   // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
   // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
   private judge(pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-    if (stage === 'raw') pending.gate = this.slot('gate')
+    if (stage === 'raw') pending.gate = this.policyJob('gate')
     return this.decideFor(pending, stage, capability, scope, prompt)
   }
 
@@ -1018,7 +1018,7 @@ export class Carrier {
   private reach(args: unknown): Outcome {
     const plugin = field(args, 'plugin') as string
     const path = field(args, 'path') as string | undefined
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     if (state === 'off') {
       const open = this.gateOpen()
       if (open !== 'pass') return no(open as RefusalCode)
@@ -1072,7 +1072,7 @@ export class Carrier {
       const open = this.gateOpen(agent)
       if (open !== 'decide') return no(open as RefusalCode)
     }
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
     const gate = state === 'on' ? this.holder(() => this.options.gate()) : null
     if (gate === null) return no(this.down('policy-down'))
@@ -1130,7 +1130,7 @@ export class Carrier {
     this.bus.sync()
     if (!this.bus.fits(way, topics, this.limits.of(way.plugin, 'topicsPerHalf'))) return this.finish(pending, no('invalid', 'too-large'))
     const gated = kind.kind === 'power' ? kind.scope.topics ?? [] : []
-    const down = gated.length > 0 && this.slot('gate') !== 'off' && !this.askable()
+    const down = gated.length > 0 && this.policyJob('gate') !== 'off' && !this.askable()
     if (kind.kind === 'power' && !down) {
       for (const stage of ['raw', 'canonical'] as const) {
         const refused = this.judge(pending, stage, kind.capability, kind.scope)
@@ -1166,16 +1166,16 @@ export class Carrier {
   // asks again whenever it moves. canList is true with the gate off by the human whatever the log, since deliveries
   // are never logged, as filterReadable passes every path then. A gate that can't be asked is down
   private busState(): { key: string, paths: Paths, view: number | null } {
-    const state = this.slot('gate')
+    const state = this.policyJob('gate')
     const view = this.view()
     const paths: Paths = state === 'off' ? 'all' : this.askable() ? 'ask' : 'none'
     return { key: `${state} ${paths} ${view}`, paths, view }
   }
 
-  // The gate can be asked: its slot is on, there is a holder and the StateView can be read. Otherwise every answer
+  // The gate can be asked: its policy job is on, there is a holder and the StateView can be read. Otherwise every answer
   // would be policy-down, so the bus holds paths back and a subscribe stands
   private askable(): boolean {
-    return this.slot('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
+    return this.policyJob('gate') === 'on' && this.holder(() => this.options.gate()) !== null && this.view() !== null
   }
 
   // canList on every delivery of a path and on each name a listing found: only an exact true counts and a throw is a no
@@ -1327,7 +1327,7 @@ export class Carrier {
   private guard(pending: Pending, prepared: Prepared): RefusalCode | null {
     if (!isOne(guardableActions, pending.action)) return null
     for (const id of this.guardsFor(pending.action)) {
-      const state = this.slot(id)
+      const state = this.policyJob(id)
       if (state === 'off') continue
       if (state === 'starting') return 'starting'
       const guard = state === 'on' ? this.holder(() => this.options.guards(id)) : null
@@ -1442,7 +1442,7 @@ export class Carrier {
   // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
   // the caller's second as filterReadable's does
   private lister(pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
-    const off = this.slot('gate') === 'off'
+    const off = this.policyJob('gate') === 'off'
     const gate = off ? null : this.holder(() => this.options.gate())
     const { agent } = pending
     let threw = false
@@ -1488,7 +1488,7 @@ export class Carrier {
   // Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second,
   // so a flood of listings costs main at most one listing past the budget each second
   private listingRefused(pending: Pending): RefusalCode | null {
-    if (this.slot('gate') === 'off') return null
+    if (this.policyJob('gate') === 'off') return null
     if (!this.askable()) return this.down('policy-down')
     return this.secondOf(pending.way.principal).spent >= this.limits.of(pending.way.plugin, 'filterMsPerSecond') ? 'throttled' : null
   }
@@ -1561,7 +1561,7 @@ export class Carrier {
     this.recordCall({
       at: started, caller: way.caller, ...(about.onBehalf !== undefined ? { onBehalf: about.onBehalf } : {}),
       root: about.parent?.root.caller ?? way.caller, action: about.action, code: refused.code, ms: this.now() - started,
-      gate: this.slot('gate'),
+      gate: this.policyJob('gate'),
     }, true)
   }
 
@@ -1630,12 +1630,12 @@ export class Carrier {
     } catch {}
   }
 
-  // The seams are later parts of the core and a throw there must not open anything: a slot that can't be read is
+  // The seams are later parts of the core and a throw there must not open anything: a policy job that can't be read is
   // failed, a plugin that can't be read is absent
-  private slot(id: string): SlotState {
+  private policyJob(id: string): PolicyJobState {
     try {
-      const state = this.options.loader.slot(id)
-      return isOne(slotStates, state) ? state : 'failed'
+      const state = this.options.loader.policyJob(id)
+      return isOne(policyJobStates, state) ? state : 'failed'
     } catch {
       return 'failed'
     }

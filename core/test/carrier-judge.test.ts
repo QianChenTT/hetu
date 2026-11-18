@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import type { Access, Call, GuardCall, Prepared } from '../api/slots.ts'
+import type { Access, Call, GuardCall, Prepared } from '../api/policy-jobs.ts'
 import { cleanup, FakeGuard, harness, host, worker } from './carrier-fakes.ts'
 
 // The provider table with luoshu.move marked as a tool, so an agent's move under the door reaches the second ask. A move
@@ -67,7 +67,7 @@ describe('the judge a call with power carries to its provider', () => {
 
   it('asks the guards on the new paths and answers their refusal', async () => {
     const guarded = harness({ guardsFor: () => ['leases'] })
-    guarded.loader.slots.leases = 'on'
+    guarded.loader.policyJobs.leases = 'on'
     guarded.guards.leases = new FakeGuard()
     guarded.guards.leases.answer = (call: GuardCall) => (call.scope.paths?.[0] === 'other/a.md' ? 'deny' : 'allow')
     guarded.gate.grants.scribe = [{ type: 'luoshu.write', paths: ['**'] }]
@@ -123,7 +123,7 @@ describe('the judge a call with power carries to its provider', () => {
   ] as const)('asks the gate and the guards the same things on the second ask as on the first, with only the paths changed, for %s', async (_name, id, agent) => {
     const parts = harness({ guardsFor: () => ['leases', 'second'] })
     for (const guard of ['leases', 'second']) {
-      parts.loader.slots[guard] = 'on'
+      parts.loader.policyJobs[guard] = 'on'
       parts.guards[guard] = new FakeGuard()
     }
     parts.gate.grants[id] = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]

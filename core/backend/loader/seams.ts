@@ -1,6 +1,6 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { FloorConstant } from '../../api/floor.ts'
-import type { GrantRiskClassifier, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/slots.ts'
+import type { GrantRiskClassifier, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Landing, Port } from '../carrier/seams.ts'
@@ -26,11 +26,11 @@ export type CarrierLink = {
   // until it lands or the loader gives up. A loader that gives up aborts signal, which takes a record still waiting
   // out of the backlog and settles it lost
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
-  // A slot state, a plugin state or the StateView changed, so the carrier asks the gate about live subscriptions again
+  // A policy job state, a plugin state or the StateView changed, so the carrier asks the gate about live subscriptions again
   changed(): void
-  // Shutdown has begun. The six slot states have no stopping and the carrier reads anything else as failed, so
+  // Shutdown has begun. The six policy job states have no stopping and the carrier reads anything else as failed, so
   // shutdown says so here instead. From this call on the carrier answers stopped where it would answer policy-down,
-  // guard-down or unavailable for a slot, a guard or a provider that is down. It writes no slot change as a failure
+  // guard-down or unavailable for a policy job, a guard or a provider that is down. It writes no policy job change as a failure
   // either. The loader keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
   // passes unguarded and nothing reads as down
   stopping(): void

@@ -1,5 +1,5 @@
 import type { BrowserWindow, MessagePortMain, Session } from 'electron'
-import type { Sample } from '../../api/slots.ts'
+import type { Sample } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { firstPartyIds } from '../../api/ids.ts'
 import type { WorkerStart } from '../loader/seams.ts'

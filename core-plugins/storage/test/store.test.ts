@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Caller } from 'hetu-core/api/envelope.ts'
 import { quotas } from 'hetu-core/api/storage.ts'
-import type { Call } from 'hetu-core/api/slots.ts'
+import type { Call } from 'hetu-core/api/policy-jobs.ts'
 import { createStorage, fileOf, type Storage } from '../src/store.ts'
 
 const plugin = (id: string): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation: 1 })

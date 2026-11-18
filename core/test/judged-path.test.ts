@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Call, Prepared } from '../api/slots.ts'
+import type { Call, Prepared } from '../api/policy-jobs.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'

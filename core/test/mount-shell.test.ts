@@ -5,7 +5,7 @@ import { settle } from './mount-fakes.ts'
 import { bannerLines, noticeText, Shell, type Notice } from '../frontend/mount/shell.ts'
 
 const calm: CoreStatus = {
-  slots: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'on' },
+  policyJobs: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'on' },
   crashed: [],
   devMode: [],
   allowUnsigned: 0,
@@ -20,13 +20,13 @@ const calm: CoreStatus = {
 }
 
 describe('the banner', () => {
-  it('says nothing while every slot is on and nothing is weakened', () => {
+  it('says nothing while every policy job is on and nothing is weakened', () => {
     expect(bannerLines(calm)).toEqual([])
   })
 
-  it('names each slot not on, the plugins down, each switch that weakens a check and a luoshu not picked', () => {
+  it('names each policy job not on, the plugins down, each switch that weakens a check and a luoshu not picked', () => {
     expect(bannerLines({
-      slots: { gate: 'off', 'grant-risk-classifier': 'on', watchdog: 'absent' },
+      policyJobs: { gate: 'off', 'grant-risk-classifier': 'on', watchdog: 'absent' },
       crashed: ['git', 'search'],
       devMode: ['notes'],
       allowUnsigned: 2,

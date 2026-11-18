@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
-import type { AuditRecord, LogSegment, LogVerification } from '../../api/slots.ts'
+import type { AuditRecord, LogSegment, LogVerification } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 
 // The EventLog's part the writer writes through and log.history and log.verify read. healthy still true after a failed

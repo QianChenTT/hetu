@@ -6,7 +6,7 @@ import {
 } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Call } from '../api/slots.ts'
+import type { Call } from '../api/policy-jobs.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { connectChange, Connects, type ConnectAsked } from '../backend/loader/connects.ts'
 import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './loader-fakes.ts'

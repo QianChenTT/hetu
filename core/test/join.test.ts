@@ -6,7 +6,7 @@ import type { MessagePort } from 'node:worker_threads'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Access } from '../api/slots.ts'
+import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/loader/seams.ts'
@@ -111,7 +111,7 @@ describe('wiring the core', () => {
     expect(asLink).toBe(carrier)
   })
 
-  it('ends its start with core.ready, which holds every slot\'s state', async () => {
+  it('ends its start with core.ready, which holds every policy job\'s state', async () => {
     const { carrier, loader, dataDir } = await joined()
     await loader.start()
     await carrier.flush()
@@ -315,38 +315,38 @@ describe('shutdown through the joined core', () => {
     const alpha = runtime.half('alpha')
     const shutdown = loader.shutdown()
     await until(() => alpha.got('stop').length === 1)
-    expect(loader.slot('gate')).toBe('on')
+    expect(loader.policyJob('gate')).toBe('on')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'last words' }))?.ok).toBe(true)
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     expect([...storage.values.values()]).toContain('last words')
   })
 
-  it('records no slot as failed when shutdown stops it', async () => {
+  it('records no policy job as failed when shutdown stops it', async () => {
     const { carrier, dataDir, loader } = await quitting()
     await loader.shutdown()
     await carrier.flush()
     const records = await floorRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
-    const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'stopped']])
+    const policyJobs = after.filter(record => record.event === 'policy-job.state')
+    expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'stopped']])
   })
 
-  it('records a host slot that fails during shutdown, before its own stop, as failed', async () => {
+  it('records a host policy job that fails during shutdown, before its own stop, as failed', async () => {
     const { carrier, dataDir, loader, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     const shutdown = loader.shutdown()
     await until(() => alpha.got('stop').length === 1)
     // What the carrier tells the loader when a host half floods its way
     loader.crashed({ kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 }, 'flood')
-    await until(() => loader.slot('gate') === 'failed')
+    await until(() => loader.policyJob('gate') === 'failed')
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
     await carrier.flush()
     const records = await floorRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
-    const slots = after.filter(record => record.event === 'slot.state')
-    expect(slots.map(record => [record.slot, record.state])).toEqual([['gate', 'failed']])
+    const policyJobs = after.filter(record => record.event === 'policy-job.state')
+    expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'failed']])
   })
 
   it('keeps the audit queue through shutdown and writes it on the flush after close', async () => {
@@ -427,14 +427,14 @@ describe('what wireCore hands the carrier', () => {
 describe('core.status, for a window\'s banner', () => {
   const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
 
-  it('answers a window with the slots, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
+  it('answers a window with the policy jobs, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
     const { carrier, loader, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await loader.start()
     const way = windowWay(carrier, { editor })
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
-      slots: { gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' },
+      policyJobs: { gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' },
       crashed: [],
       devMode: [],
       allowUnsigned: 0,
@@ -518,7 +518,7 @@ describe('the core\'s log through the joined core', () => {
   })
 })
 
-// The guard's slot states end to end wait for #77, since core/api expects no guard on any action yet. Through the
+// The guard's policy job states end to end wait for #77, since core/api expects no guard on any action yet. Through the
 // shipping wiring here, with the guards the loader and the carrier both expect
 describe('a guard down through the joined core', () => {
   const leases: Listing = { files: filesFor(hostManifest('leases')) }
@@ -602,7 +602,7 @@ describe('the gate plugin on the joined core', () => {
     expect((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     thrown.on = true
     await parts.loader.apply({ kind: 'confirmOff', on: true })
-    expect(parts.loader.slot('gate')).toBe('failed')
+    expect(parts.loader.policyJob('gate')).toBe('failed')
     expect(reasonOf(parts.loader, 'gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
   })

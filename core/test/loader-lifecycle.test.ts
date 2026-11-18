@@ -318,7 +318,7 @@ describe('restarts', () => {
     expect(stateOf(made.loader, 'alpha')).toBe('stopped')
   })
 
-  it('has the watchdog holding its slot hear how many messages a plugin sent over its rate', async () => {
+  it('has the watchdog holding its policy job hear how many messages a plugin sent over its rate', async () => {
     const samples: unknown[] = []
     const made = await harness({
       ...plugins(),
@@ -327,7 +327,7 @@ describe('restarts', () => {
       behave: { gate: { exports: { gate: allowAll() } }, watchdog: { exports: { watchdog: { sample: sample => { samples.push(sample) } } } } },
     })
     await made.loader.start()
-    expect(made.loader.slot('watchdog')).toBe('on')
+    expect(made.loader.policyJob('watchdog')).toBe('on')
     await made.loader.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 2, plugin: 'mapper' })
     const half = made.runtime.half('mapper')
     for (let i = 0; i < 6; i++) half.send({ v: 1, kind: 'call', id: 500 + i, action: 'core.self', args: {} })
@@ -391,8 +391,8 @@ describe('shutdown', () => {
     expect(lines[1]).toBe('record core.stopping')
     expect(lines.filter(line => line.startsWith('stop '))).toEqual(['stop beta', 'stop alpha', 'stop luoshu', 'stop storage', 'stop gate'])
     for (const row of made.loader.list()) expect(row).toMatchObject({ state: 'stopped', reason: 'shutdown' })
-    // A guard or a slot stopped for shutdown reads failed to the loader's own seam, which the carrier answers stopped
-    expect(made.loader.slot('gate')).toBe('failed')
+    // A guard or a policy job stopped for shutdown reads failed to the loader's own seam, which the carrier answers stopped
+    expect(made.loader.policyJob('gate')).toBe('failed')
     expect(made.link.stopped).toBe(1)
   })
 

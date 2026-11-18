@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { providerActions } from 'hetu-core/api/actions.ts'
 import { capabilityTypes, type Capability } from 'hetu-core/api/capabilities.ts'
 import type { Caller } from 'hetu-core/api/envelope.ts'
-import type { Access, GrantedItem, Scope, StateView } from 'hetu-core/api/slots.ts'
+import type { Access, GrantedItem, Scope, StateView } from 'hetu-core/api/policy-jobs.ts'
 import { createGate, scopeRules } from '../src/gate.ts'
 
 const alpha: Caller = { kind: 'plugin', id: 'alpha', half: 'worker', incarnation: 1 }

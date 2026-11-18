@@ -140,11 +140,11 @@ describe('a remove', () => {
   })
 })
 
-// A guard in the guard slot that refuses anything touching locked/x.md, as a lease holder's would
+// A guard in the guard policy job that refuses anything touching locked/x.md, as a lease holder's would
 describe('the guards over a move and a remove', () => {
   const guarded = () => {
     const parts = harness({ guardsFor: () => ['leases'] })
-    parts.loader.slots.leases = 'on'
+    parts.loader.policyJobs.leases = 'on'
     parts.guards.leases = new FakeGuard()
     parts.guards.leases.answer = call => (call.scope.paths?.includes('locked/x.md') ? 'deny' : 'allow')
     parts.gate.grants.sorter = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]

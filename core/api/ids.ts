@@ -32,8 +32,8 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy slots the carrier asks, each held by the install plugin of the same id. The log is the core's own
-export const slotIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
+// The policy jobs the carrier asks, each held by the install plugin of the same id. The log is the core's own
+export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
 
 // The plugin that serves each provider namespace
 export const providers = table({
@@ -59,17 +59,17 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The security controls: the slot holders and every guard core/api expects. One that is on and fails stops hetu. The
+// The security controls: the policy job holders and every guard core/api expects. One that is on and fails stops hetu. The
 // log is the core's own and the providers serve powers without limiting anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
-  return (slotIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+  return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
 }
 
 // The security controls an install holds, in the order they start. A control the install list doesn't name isn't
 // part of the build
 export function securityControls(listed: readonly string[]): string[] {
   const named = new Set(listed)
-  return [...slotIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
+  return [...policyJobIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
 }
 
 // Host-level and in-page plugins, which load only from the install
@@ -89,7 +89,7 @@ const reserved = new Set<string>([
   ...coreNamespaces,
   ...Object.keys(providers),
   ...Object.values(providers),
-  ...slotIds,
+  ...policyJobIds,
   ...Object.values(guards).flat(),
   ...installIds,
   ...firstPartyIds,

@@ -73,14 +73,14 @@ describe('the carrier as the loader\'s link', () => {
   })
 })
 
-// The loader reports a slot or guard stopping for shutdown as failed, so nothing passes unguarded. Once the loader says
+// The loader reports a policy job or guard stopping for shutdown as failed, so nothing passes unguarded. Once the loader says
 // shutdown began, what is down answers stopped rather than reading as a failure
 describe('shutdown', () => {
   // A call with power, a guarded write and a read from a provider, each meeting what shutdown takes down
   function setup() {
     const parts = harness({ guardsFor: () => ['leases'] })
     const { connect, gate, guards, loader } = parts
-    loader.slots.leases = 'on'
+    loader.policyJobs.leases = 'on'
     guards.leases = new FakeGuard()
     gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
@@ -90,14 +90,14 @@ describe('shutdown', () => {
   it('answers stopped for a call with power once shutdown began and the gate reads failed', async () => {
     const { carrier, loader, search } = setup()
     carrier.stopping()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('stopped')
   })
 
   it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {
     const { carrier, loader, scribe, luoshu } = setup()
     carrier.stopping()
-    loader.slots.leases = 'failed'
+    loader.policyJobs.leases = 'failed'
     expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('stopped')
     expect(luoshu.performed).toEqual([])
   })
@@ -111,11 +111,11 @@ describe('shutdown', () => {
 
   it('answers policy-down, guard-down and unavailable for the same calls before shutdown', async () => {
     const { loader, scribe, providers, search } = setup()
-    loader.slots.leases = 'failed'
+    loader.policyJobs.leases = 'failed'
     expect(code(await scribe.ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     delete (providers as Record<string, unknown>).luoshu
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('unavailable')
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
   })
 
@@ -140,7 +140,7 @@ describe('shutdown', () => {
     gate.grants.search.push({ type: 'events.subscribe', topics: ['luoshu.changed'] })
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     carrier.stopping()
-    loader.slots.gate = 'failed'
+    loader.policyJobs.gate = 'failed'
     loader.current = 2
     carrier.changed()
     const luoshu = hostHalf(carrier, host('luoshu'))

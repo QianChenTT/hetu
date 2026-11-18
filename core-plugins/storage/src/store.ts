@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { quotas as fixedQuotas, spaceOf } from 'hetu-core/api/storage.ts'
-import type { Call, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/slots.ts'
+import type { Call, Prepared, Provider, ProviderRefusal } from 'hetu-core/api/policy-jobs.ts'
 import { retried } from 'hetu-core/lib/disk.ts'
 import { checkHash, replaceFile, withHash } from 'hetu-core/lib/hashed-file.ts'
 
