@@ -12,9 +12,8 @@ import { capabilityText, INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { agentLabel, VERSION, type Caller } from '../../api/envelope.ts'
 import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  firstPartyIds, guardableActions, guards as expectedGuards, corePluginIds, isReservedId, isSecurityControl, pluginId, providers,
-  securityControls, policyJobIds, utilityIds,
-  type GuardableAction,
+  coreModuleIds, corePluginIds, firstPartyIds, guardableActions, guards as expectedGuards, isReservedId, isSecurityControl, pluginId,
+  policyJobIds, providers, utilityIds, type CoreModuleId, type GuardableAction,
 } from '../../api/ids.ts'
 import {
   FIRST_PARTY_SIGNER, INSTALL_LIST, installList, isNewer, MAX_INSTALL_LIST_BYTES, type InstallList, type Listed,
@@ -30,42 +29,42 @@ import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import { agentItems, type FileResult, type Plugin, type SecurityState, type StateStore, type Switches } from '../boot/state.ts'
 import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/seams.ts'
+import type { CoreModules } from '../modules.ts'
 import {
-  clear, clearFailedOnce, folders, readFailedOnce, readInstalled, removeMarker, stage, swapIn, writeFailedOnce, writeInstalled,
-  writeMarker, type Installed,
+  clear, clearFailedOnce, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled, type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
-import type { CarrierLink, HostExports, Runtime } from './seams.ts'
+import type { CarrierLink, Runtime } from './seams.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
 export type PluginsManagerOptions = {
-  // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore,
-  // the data folder and the start markers it found
-  booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir' | 'markers'>
+  // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore and
+  // the data folder
+  booted: Pick<Booted, 'state' | 'checks' | 'removedKnown' | 'store' | 'dataDir'>
   installDir: string
   // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
   // packaged build does inside app.asar
   listDir?: string
   link: CarrierLink
   runtime: Runtime
+  // The core's own modules, which the plugins manager starts, hands each change and switches as the human does
+  modules: CoreModules
   // The rules the install list's paths follow, the platform the install is on
   platform?: string
   // The guards expected on an action. Defaults to core/api's list, which is empty until #77
   guardsFor?: (action: GuardableAction) => readonly string[]
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
-  // A security control failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the
-  // trusted window once the plugins manager stopped in the stopped mode
+  // The log failed while hetu ran: the runtime quits with an error and starts hetu again, or opens only the trusted
+  // window once the plugins manager stopped in the stopped mode
   onFailure?: (failure: Failure) => void
   // How long a request must be first in line before its Confirm counts. The input delay unless a test names another
   confirmDelayMs?: number
   // How long a Confirm waits for its record to land, 10 s unless a test names another
   confirmRecordMs?: number
-  // The OS's bin the runtime gives, handed to the luoshu alone
-  trash?: (absolute: string) => Promise<void>
   // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
   // the plugin's limits as they are now to its running halves
   limited?: (plugin: string) => void
@@ -74,16 +73,10 @@ export type PluginsManagerOptions = {
   clock?: () => number
 }
 
-// What the runtime does about a security control that failed while hetu ran
+// What the runtime does about the log failing while hetu ran
 export type Failure =
   | { action: 'relaunch', control: string, reason: string }
   | { action: 'stopped', mode: StoppedMode }
-
-// The role export each security control's module must give. The grant risk classifier gets its own at step 17 and the guards theirs
-// with #77
-const roleOf: Readonly<Record<string, keyof HostExports>> = Object.freeze({
-  gate: 'gate', 'grant-risk-classifier': 'grantRiskClassifier', watchdog: 'watchdog', luoshu: 'luoshu', history: 'history', exec: 'exec',
-})
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -105,12 +98,10 @@ type HalfName = 'host' | 'worker'
 type Held = { kind: 'held', state: 'crashed' | 'failed' | 'stopped', reason: string }
 type Run = { caller: Caller, ready: boolean, stopped: boolean }
 
-// One incarnation. exports are the roles a host half's module gave. A planned stop keeps why and who stopped with it
+// One incarnation. A planned stop keeps why and who stopped with it
 type Live = {
   readonly n: number
   readonly halves: Map<HalfName, Run>
-  exports: HostExports | null
-  imported: boolean
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
   stop: { done: Promise<void>, end: () => void, reason: string } | null
@@ -120,13 +111,10 @@ type Live = {
   with: string[]
   over: boolean
   deps: string
-  // A host half's start marker is on disk and no removal has started
-  marked: boolean
 }
 
 // A plugin the plugins manager knows. read holds the bytes that run. held is what happened in this run that only a restart
-// clears. ran is a host half that started in this run, which can't start again until Restart hetu. updated is the
-// version an app update replaced, until its record lands
+// clears. updated is the version an app update replaced, until its record lands
 type Known = {
   readonly id: string
   readonly from: 'install' | 'folder'
@@ -140,7 +128,6 @@ type Known = {
   held: Held | null
   live: Live | null
   incarnations: number
-  ran: boolean
   lastStop: string | null
   previousVersion: string | null
   updated: string | null
@@ -189,26 +176,20 @@ type Decided = {
   readonly policyJob: Classing
 }
 
-// Whether a pass over every entry leaves each as stored: only with the policy job switched off by the human, or absent from an
-// install that doesn't name it, as in tests and dev. A role that fails or any other state classes an entry strictly
-const standsInPass = (state: PolicyJobState) => state === 'off' || state === 'absent'
-
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
   const keys = new Set(others.map(capabilityKey))
   return items.length === others.length && items.every(item => keys.has(capabilityKey(item)))
 }
 
-// Section 6's order for core plugins: the policy job holders, then the providers, then the guard and the rest. A
-// requirement still starts before its dependent
-export const bootOrder = frozen([
-  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'history', 'exec', 'net', 'leases', 'mcp-http-handler', 'hidden-marks',
-] as const)
+// The order core plugins start in, each after the core modules. A requirement still starts before its dependent
+export const bootOrder = frozen(['watchdog', 'net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
 
 const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at
 const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const isOne = (list: readonly string[], value: string) => list.includes(value)
+const isModule = (id: string): id is CoreModuleId => isOne(coreModuleIds, id)
 const refused = (reason: string): Status => ({ kind: 'refused', reason })
 
 const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
@@ -257,26 +238,6 @@ function placeOf(id: string, read: Read, from: 'install' | 'folder'): PluginInfo
   return 'sandboxed'
 }
 
-// Messages for a host half before its module listens, kept in order
-function mailbox() {
-  const kept: unknown[] = []
-  let listener: ((message: unknown) => void) | null = null
-  return {
-    put(message: unknown): void {
-      if (listener === null) kept.push(message)
-      else listener(message)
-    },
-    listen(next: (message: unknown) => void): void {
-      listener = next
-      for (const message of kept.splice(0)) {
-        try {
-          next(message)
-        } catch {}
-      }
-    },
-  }
-}
-
 function toggled<T>(list: readonly T[], item: T, on: boolean): T[] {
   const rest = list.filter(entry => entry !== item)
   return on ? [...rest, item] : rest
@@ -301,11 +262,13 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
 }
 
 // The plugins manager: what may run, where, when and as whom. It checks every plugin's bytes once before they run, places each
-// by where its code came from, resolves the requires graph, mints every port and handle and owns every lifecycle state.
-// It runs no plugin code itself and decides no grant
+// by where its code came from, resolves the requires graph, mints every port and owns every lifecycle state. It starts
+// the core modules, hands them each change and switches them as the human does. It runs no plugin code itself and
+// decides no grant
 export class PluginsManager implements Seam {
   private readonly link: CarrierLink
   private readonly runtime: Runtime
+  private readonly modules: CoreModules
   private readonly store: StateStore
   private readonly dataDir: string
   private readonly installDir: string
@@ -313,7 +276,6 @@ export class PluginsManager implements Seam {
   private readonly platform: string
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
   private readonly logWrites: () => boolean
-  private readonly markers: Set<string>
   private readonly entryChecks = new Map<string, FileResult>()
   // The kinds of state file that failed their check at boot, for the banner
   private readonly suspect: StateKind[]
@@ -328,7 +290,7 @@ export class PluginsManager implements Seam {
   private readonly minted = new Map<string, number>()
   private readonly lastPolicyJobs = new Map<string, PolicyJobState>()
   private readonly waiters: (() => void)[] = []
-  // Marker writes and removals under way, which shutdown waits for, so none is cut off when the process ends
+  // Restart marker writes under way, which shutdown waits for, so none is cut off when the process ends
   private readonly markerWork = new Set<Promise<void>>()
   private state: SecurityState
   private removedKnown: boolean
@@ -343,12 +305,12 @@ export class PluginsManager implements Seam {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
   private readonly onFailure: PluginsManagerOptions['onFailure']
-  private readonly trash: PluginsManagerOptions['trash']
   private readonly limited: PluginsManagerOptions['limited']
-  // controls while only the security controls may start, all once they are up, stopped once one failed
-  private phase: 'controls' | 'all' | 'stopped' = 'controls'
+  // starting until the install list is read and the core modules started, all from then on, stopped once the install
+  // list or the log failed
+  private phase: 'starting' | 'all' | 'stopped' = 'starting'
   private stoppedMode: StoppedMode | null = null
-  // The control the run before restarted for, from the restart marker
+  // What the run before restarted for, from the restart marker
   private failedBefore: string | null = null
   private failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
@@ -358,13 +320,14 @@ export class PluginsManager implements Seam {
   // The connects mcp-http-handler asks for: the one waiting, the answers not yet collected and the client ids paused
   private readonly connects: Connects
   private readonly clock: () => number
-  // The pass at start has classed every entry, so the grant risk classifier coming up from here on is the human's switch-on
+  // The pass at start has classed every entry, so the grant risk classifier switched on from here on classes them again
   private classedAtStart = false
 
   constructor(options: PluginsManagerOptions) {
     const { booted } = options
     this.link = options.link
     this.runtime = options.runtime
+    this.modules = options.modules
     this.store = booted.store
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
@@ -373,10 +336,8 @@ export class PluginsManager implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
-    this.trash = options.trash
     this.limited = options.limited
     this.clock = options.clock ?? (() => performance.now())
-    this.markers = new Set(booted.markers)
     this.state = booted.state
     this.removedKnown = booted.removedKnown
     for (const check of booted.checks) {
@@ -428,22 +389,11 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the carrier's seam
 
-  // A core plugin's policy job or guard role. A switch-off is off whatever the plugin's check said, a failed hash check
-  // is tampered and every other way of not being ready is failed, so nothing reads as off that the human didn't switch
-  // off. Before the install list is read every policy job is starting, as every action with power answers starting while the
-  // core starts
+  // A policy job or guard role: the gate and the grant risk classifier as their core modules read, off only by the
+  // human's switch and failed while the module's last start or push threw. Nothing that runs holds the watchdog policy
+  // job or a guard role, so each is absent
   policyJob(id: string): PolicyJobState {
-    if (this.listResult === 'unread') return 'starting'
-    if (this.listResult === 'absent') return 'absent'
-    if (this.listResult === 'invalid') return 'tampered'
-    const k = this.known.get(id)
-    if (k === undefined || k.from !== 'install') return 'absent'
-    if (isOne(this.state.switches.off, id)) return 'off'
-    const status = this.status(k)
-    if (status.kind === 'refused' && (status.reason === 'tampered' || status.reason === 'missing')) return 'tampered'
-    if (k.state === 'ready') return 'on'
-    if (k.state === 'starting' || (k.state === 'found' && this.verdictOf(k).kind === 'start')) return 'starting'
-    return 'failed'
+    return id === 'gate' || id === 'grant-risk-classifier' ? this.modules.state(id) : 'absent'
   }
 
   view(): number {
@@ -598,10 +548,18 @@ ${capabilityKey(change.capability)}`)
     return k.held?.state === 'stopped' && k.held.reason === 'human'
   }
 
-  // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words
+  // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core
+  // modules are rows of their own, each with its switch and no items
   private securityList(): SecurityList {
     const { switches } = this.state
-    const plugins: ListedPlugin[] = this.list().map(row => {
+    const modules: ListedPlugin[] = coreModuleIds.map(id => {
+      const state = this.modules.state(id)
+      return {
+        id, from: 'core', place: 'core', state: state === 'on' ? 'ready' : state, reason: state === 'on' ? null : this.modules.reason(id),
+        security: isSecurityControl(id), firstParty: false, on: !isOne(switches.off, id), items: [], class: null,
+      }
+    })
+    const listed: ListedPlugin[] = this.list().map(row => {
       const k = this.known.get(row.id)
       const entry = row.from === 'folder' ? k?.entry ?? null : null
       const off = new Set((entry?.off ?? []).map(capabilityKey))
@@ -617,6 +575,7 @@ ${capabilityKey(change.capability)}`)
         class: entry?.class ?? null,
       }
     })
+    const plugins = [...modules, ...listed].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.from < b.from ? -1 : 1))
     const requests: HeldRequest[] = this.requests.changes().map(({ id, change }) => {
       const { text, notes } = describeChange(change)
       return {
@@ -697,11 +656,11 @@ ${capabilityKey(change.capability)}`)
     return []
   }
 
-  // A plugin's storage or cache space cleared through the storage plugin while it runs, in the space's turn after the
-  // calls already queued on it, so a set a stopping plugin queued can't land after the clear. With storage down nothing
-  // is queued and the folder goes directly
+  // A plugin's storage or cache space cleared through storage while it is on, in the space's turn after the calls
+  // already queued on it, so a set a stopping plugin queued can't land after the clear. With storage off or failed
+  // nothing is queued and the folder goes directly
   private async clearSpace(kind: 'storage' | 'cache', id: string): Promise<void> {
-    const role = this.role('storage', 'storage')
+    const role = this.modules.storage()
     if (role !== null) {
       try {
         await role.clear(kind, id)
@@ -715,9 +674,9 @@ ${capabilityKey(change.capability)}`)
 
   // ---- classes
 
-  // The grant risk classifier policy job's role while the policy job is on and its plugin ready, null otherwise
+  // The grant risk classifier while its module is on, null otherwise
   private grantRiskClassifier(): GrantRiskClassifier | null {
-    return this.policyJob('grant-risk-classifier') === 'on' ? this.role('grant-risk-classifier', 'grantRiskClassifier') : null
+    return this.modules.grantRiskClassifier()
   }
 
   // What a plugin holds: a plugin-folder plugin's entry, a core plugin's manifest
@@ -799,8 +758,8 @@ ${capabilityKey(change.capability)}`)
     return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
   }
 
-  // The grant risk classifier policy job as classing reads it: on while its plugin is ready with its role, off only once the human
-  // switched it off and down for anything else, a failed, absent or tampered plugin included
+  // The grant risk classifier policy job as classing reads it: on while its module is, off only once the human switched
+  // it off and down for anything else, a failed module included
   private classing(): Classing {
     const state = this.policyJob('grant-risk-classifier')
     if (state === 'off') return 'off'
@@ -812,7 +771,7 @@ ${capabilityKey(change.capability)}`)
   // the policy job switched off by the human the change passes: the class stays the last one classed, the entry is marked as
   // not classed and lists every item not confirmed, which the gate is handed only once the policy job is on again. Down any
   // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
-  // stored only with the policy job switched off or absent from the install. With the policy job on a move goes on the Confirm on screen. With none on screen it gets a
+  // stored only with the policy job switched off. With the policy job on a move goes on the Confirm on screen. With none on screen it gets a
   // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
   // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
   private decide(change: ClassChange): Decided {
@@ -826,7 +785,7 @@ ${capabilityKey(change.capability)}`)
     const known = new Set(confirmed.map(capabilityKey))
     const classed = policyJob === 'on' ? this.classed(id, after.granted, pending) : null
     if (classed === null && policyJob === 'on') policyJob = 'down'
-    if ((cause === 'start' || cause === 'slot-on') && standsInPass(this.policyJob('grant-risk-classifier'))) return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, policyJob }
+    if ((cause === 'start' || cause === 'slot-on') && this.policyJob('grant-risk-classifier') === 'off') return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, policyJob }
     const n = classed !== null ? classed.class : policyJob === 'off' ? before?.class ?? null : null
     const asking = classed !== null
       ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))
@@ -1054,7 +1013,9 @@ ${capabilityKey(change.capability)}`)
     const { switches } = this.state
     return {
       policyJobs: Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])) as CoreStatus['policyJobs'],
-      crashed: this.list().filter(row => down.has(row.state)).map(row => row.id),
+      crashed: [
+        ...coreModuleIds.filter(id => this.modules.state(id) === 'failed'), ...this.list().filter(row => down.has(row.state)).map(row => row.id),
+      ],
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
@@ -1068,14 +1029,6 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // A host half's role interface, only while its plugin is ready. The carrier's gate, guards, providers and watchdog
-  // seams read it through here once the join wires them
-  role<R extends keyof HostExports>(id: string, name: R): NonNullable<HostExports[R]> | null {
-    const k = this.known.get(id)
-    if (k === undefined || k.from !== 'install' || k.state !== 'ready' || k.live === null) return null
-    return k.live.exports?.[name] ?? null
-  }
-
   list(): Listing[] {
     const rows: Listing[] = [...this.known.values()].map(k => ({
       id: k.id, from: k.from, place: k.place, state: k.state, reason: k.reason, incarnation: k.live?.n ?? k.incarnations,
@@ -1086,17 +1039,22 @@ ${capabilityKey(change.capability)}`)
 
   // ---- boot
 
-  // In boot's order: the install checked and its host tier started, the first-party reconcile, every plugin-folder
-  // entry classed again, the plugin folder scanned and the sandboxed tier started in graph order. core.ready closes it
-  // with every policy job's state, unless a shutdown began on the way
+  // In boot's order: the install checked, the core modules started, the install's plugins started, the first-party
+  // reconcile, every plugin-folder entry classed again, the plugin folder scanned and its plugins started in graph
+  // order. core.ready closes it with every policy job's state, unless a shutdown began on the way
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
-    // The security controls start alone first. One that is on and fails stops hetu before anything else runs
-    this.replan()
-    await this.settled()
-    const failed = this.controlFailure()
-    if (failed !== null) return this.enterStopped(failed)
+    await this.modules.start(this.state.switches.off, {
+      grants: () => this.grantsSnapshot(),
+      exec: () => this.execView(),
+      folder: () => this.state.luoshu?.folder ?? null,
+      fault: (id, step) => this.note('fault', { plugin: id, step }),
+    })
+    // An install list that can't be read counts as tampered, since it ships inside hetu's own files
+    if (this.listResult === 'invalid') {
+      return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
+    }
     this.phase = 'all'
     this.replan()
     await this.settled()
@@ -1116,22 +1074,6 @@ ${capabilityKey(change.capability)}`)
     return this.stoppedMode
   }
 
-  // The first security control the install names that is on and not ready once the controls started: tampered, absent
-  // from the install while the list names it, or failed. An install list that can't be read counts as tampered, since
-  // it ships inside hetu's own files. One the human switched off is no failure
-  private controlFailure(): StoppedMode | null {
-    const again = (_control: string) => this.failedBefore !== null
-    if (this.listResult === 'invalid') return { control: 'install', why: 'tampered', reason: null, again: again('install') }
-    for (const id of securityControls(Object.keys(this.install?.plugins ?? {}))) {
-      const k = this.known.get(id)
-      if (k === undefined || isOne(this.state.switches.off, id) || k.state === 'ready') continue
-      const refusedFor = (reason: string) => k.state === 'refused' && k.reason === reason
-      const why = refusedFor('tampered') ? 'tampered' : refusedFor('missing') ? 'absent' : 'failed'
-      return { control: id, why, reason: k.reason, again: again(id) }
-    }
-    return null
-  }
-
   // The stopped mode: every plugin stops and none starts. Only the trusted window opens, with the human's three choices
   private async enterStopped(mode: StoppedMode): Promise<void> {
     this.stoppedMode = mode
@@ -1141,12 +1083,11 @@ ${capabilityKey(change.capability)}`)
     await this.pumped()
   }
 
-  // A security control or the core's log failed while hetu ran. The first time, the restart marker goes down and the
-  // runtime quits with an error to start hetu again. When the run before already restarted for a failure, of this
-  // control or another, hetu stops in the stopped mode instead, so two controls failing in turns can't restart it
-  // forever. A marker that can't be written stops it too, since nothing would then bound the restarts. One failure is
-  // enough, the ones after it change nothing. Answers whether it took the failure, so a failure told while hetu starts
-  // or stops can be told again
+  // The core's log failed while hetu ran. The first time, the restart marker goes down and the runtime quits with an
+  // error to start hetu again. When the run before already restarted for a failure, hetu stops in the stopped mode
+  // instead, so a log failing again and again can't restart it forever. A marker that can't be written stops it too,
+  // since nothing would then bound the restarts. One failure is enough, the ones after it change nothing. Answers
+  // whether it took the failure, so a failure told while hetu starts or stops can be told again
   controlFailed(control: string, reason: string): boolean {
     if (this.closing || this.phase !== 'all' || this.failing) return false
     this.failing = true
@@ -1159,7 +1100,7 @@ ${capabilityKey(change.capability)}`)
       stop(true)
       return true
     }
-    // Shutdown and a clean Quit wait for the write like any marker's, so neither can cut it off or clear it first
+    // Shutdown and a clean Quit wait for the write, so neither can cut it off or clear it first
     const work = writeFailedOnce(this.dataDir, control).then(() => true, () => false)
     const tracked = work.then(() => {})
     this.markerWork.add(tracked)
@@ -1191,8 +1132,9 @@ ${capabilityKey(change.capability)}`)
     })
   }
 
-  // Shutdown after the windows: sandboxed plugins in reverse graph order, then host plugins in reverse with the gate
-  // last. The carrier hears it first, so nothing stopped for shutdown reads as down
+  // Shutdown after the windows: every plugin in reverse graph order, then the core modules end what they run. The gate
+  // and the grant risk classifier answer to the end. The carrier hears it first, so nothing stopped for shutdown reads
+  // as down
   async shutdown(): Promise<void> {
     if (!this.closing) {
       this.closing = true
@@ -1203,6 +1145,7 @@ ${capabilityKey(change.capability)}`)
       this.replan()
     }
     await this.pumped()
+    this.modules.close()
     while (this.markerWork.size > 0) await Promise.all(this.markerWork)
   }
 
@@ -1251,14 +1194,6 @@ ${capabilityKey(change.capability)}`)
       if (last !== undefined && k.listed !== null && (last.version !== k.listed.version || last.hash !== k.listed.hash)) {
         k.updated = last.version
       }
-    }
-    // A host half whose start marker an earlier boot left froze main at start, so it is held failed until the human
-    // switches it off and on again or restarts hetu once the marker is gone
-    for (const id of this.markers) {
-      const k = this.known.get(id)
-      if (k === undefined || k.from !== 'install' || k.place !== 'host') continue
-      k.held = { kind: 'held', state: 'failed', reason: 'marker' }
-      this.note('plugin.failed', { plugin: id, incarnation: 0, reason: 'marker' })
     }
   }
 
@@ -1397,7 +1332,7 @@ ${capabilityKey(change.capability)}`)
   private know(id: string, from: 'install' | 'folder', root: string, read: Read, listed: Listed | null, entry: Plugin | null): Known {
     const k: Known = {
       id, from, root, listed, entry, read, place: placeOf(id, read, from), state: 'found', reason: null, held: null,
-      live: null, incarnations: 0, ran: false, lastStop: null, previousVersion: this.versions.get(id) ?? null,
+      live: null, incarnations: 0, lastStop: null, previousVersion: this.versions.get(id) ?? null,
       updated: null,
     }
     this.known.set(id, k)
@@ -1433,16 +1368,16 @@ ${capabilityKey(change.capability)}`)
     return [...new Set([...policyJobIds, ...guards])]
   }
 
-  // Policy job holders, providers and guards fill roles only a host half can hold
+  // Policy job holders, providers and guards fill roles only a host half in main could hold, and the core runs none
   private needsHost(id: string): boolean {
     return this.isPolicyJob(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
 
-  // Policy job holders require nothing and can't be required. Core plugins require only core plugins
+  // Policy job holders require nothing and can't be required. Core plugins require only core plugins and core modules
   private requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
     if (this.isPolicyJob(k.id) && requires.length > 0) return true
-    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(corePluginIds, id)))
+    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
@@ -1451,8 +1386,7 @@ ${capabilityKey(change.capability)}`)
     return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k)
   }
 
-  // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder. A host
-  // half still starts once per run, so its live reload is Restart hetu
+  // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder
   private installStatus(k: Known): Status {
     const listed = k.listed!
     if (isOne(this.state.switches.off, k.id)) return { kind: 'off' }
@@ -1462,9 +1396,10 @@ ${capabilityKey(change.capability)}`)
     if (k.read.problem !== null) return refused(k.read.problem)
     const manifest = k.read.manifest!
     if (!loose && manifest.version !== listed.version) return refused('invalid')
-    if (this.needsHost(k.id) && manifest.entries.host === undefined) return refused('place')
-    // Runs only as its host entry in a utility process, never as a worker in its place
-    if (isOne(utilityIds, k.id) && manifest.entries.host === undefined) return refused('place')
+    if (this.needsHost(k.id)) return refused('place')
+    // A host entry runs only in a utility process, for the ids core/api places there, and those run only as it, never
+    // as a worker in its place
+    if ((manifest.entries.host !== undefined) !== isOne(utilityIds, k.id)) return refused('place')
     if (this.requiresProblem(k)) return refused('requires')
     return k.held ?? ok
   }
@@ -1504,6 +1439,18 @@ ${capabilityKey(change.capability)}`)
     return k.held ?? ok
   }
 
+  private moduleStatus(id: CoreModuleId): Status {
+    const state = this.modules.state(id)
+    if (state === 'on') return ok
+    if (state === 'off') return { kind: 'off' }
+    return { kind: 'held', state: 'failed', reason: this.modules.reason(id) ?? 'start-failed' }
+  }
+
+  // Whether a requirement can serve: a core module while on, a plugin once ready
+  private serves(id: string): boolean {
+    return isModule(id) ? this.modules.state(id) === 'on' : this.known.get(id)?.state === 'ready'
+  }
+
   private rank(k: Known): number {
     if (k.from === 'folder') return FOLDER_RANK
     const at = (bootOrder as readonly string[]).indexOf(k.id)
@@ -1522,11 +1469,13 @@ ${capabilityKey(change.capability)}`)
   // ---- the plan and its states
 
   // Judges every plugin, resolves the graph and sets each state. Synchronous, so a crash has moved every dependent to
-  // waiting before the carrier answers a call. The stops and starts it calls for follow in the pump
+  // waiting before the carrier answers a call. The stops and starts it calls for follow in the pump. Each core module is
+  // a node too, ok while on, so a plugin requiring one runs only while it is
   private replan(): void {
-    const nodes: Node[] = [...this.known.values()].map(k => ({
-      id: k.id, status: this.status(k), requires: k.read.manifest?.requires ?? [], rank: this.rank(k),
-    }))
+    const nodes: Node[] = [
+      ...coreModuleIds.map(id => ({ id, status: this.moduleStatus(id), requires: [], rank: -1 })),
+      ...[...this.known.values()].map(k => ({ id: k.id, status: this.status(k), requires: k.read.manifest?.requires ?? [], rank: this.rank(k) })),
+    ]
     this.planned = plan(nodes)
     for (const k of this.known.values()) this.show(k)
     this.refresh()
@@ -1538,7 +1487,7 @@ ${capabilityKey(change.capability)}`)
   private show(k: Known): void {
     if (k.live !== null && this.runs(k)) return
     // Shutdown stops one plugin at a time in reverse graph order, so each keeps its state until its own stop begins.
-    // A host half serves its roles until then and a plugin in its stop grace can still save
+    // A plugin in its stop grace can still save
     if (this.closing && k.live !== null && k.live.stop === null) return
     const verdict = this.verdictOf(k)
     const shown = k.live === null ? this.final(k, verdict) : verdict.kind === 'waiting'
@@ -1566,7 +1515,7 @@ ${capabilityKey(change.capability)}`)
     if (this.phase === 'stopped' && verdict.kind === 'start') return { state: 'stopped', reason: 'control-failed' }
     switch (verdict.kind) {
       case 'start':
-        return k.place === 'host' && k.ran ? { state: 'stopped', reason: 'restart-hetu' } : { state: 'found', reason: null }
+        return { state: 'found', reason: null }
       case 'found':
         return { state: 'found', reason: 'new' }
       case 'off':
@@ -1594,11 +1543,7 @@ ${capabilityKey(change.capability)}`)
       const now = this.policyJob(id)
       if (this.lastPolicyJobs.get(id) === now) continue
       this.lastPolicyJobs.set(id, now)
-      // A policy job reads failed to the carrier once its stop for shutdown began, so nothing passes unguarded. It didn't
-      // fail, so its record says stopped. One that failed before its own stop began is recorded failed
-      const state = this.known.get(id)?.state
-      const stopped = this.closing && now === 'failed' && (state === 'stopping' || state === 'stopped')
-      this.note('policy-job.state', { policyJob: id, state: stopped ? 'stopped' : now })
+      this.note('policy-job.state', { policyJob: id, state: now })
     }
     try {
       this.link.changed()
@@ -1607,12 +1552,16 @@ ${capabilityKey(change.capability)}`)
     this.checkIdle()
   }
 
-  // A plugin's own requires and plugin.call targets, as it may know them
+  // A plugin's own requires and plugin.call targets, as it may know them. A core module is ready while on
   private depsOf(k: Known): Record<string, DepState> {
     const granted = k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
     const targets = granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
     const deps: Record<string, DepState> = {}
     for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) {
+      if (isModule(id)) {
+        deps[id] = this.modules.state(id) === 'on' ? 'ready' : 'unavailable'
+        continue
+      }
       const other = this.known.get(id)
       const coming = other !== undefined && (other.state === 'starting' || (other.state === 'found' && this.verdictOf(other).kind === 'start'))
       deps[id] = other?.state === 'ready' ? 'ready' : coming ? 'starting' : 'unavailable'
@@ -1672,29 +1621,18 @@ ${capabilityKey(change.capability)}`)
     while (this.pumping !== null) await this.pumping
   }
 
-  // One host half at a time in order. Sandboxed plugins start only once the host tier has settled
+  // In graph order, each once its requirements serve
   private startAll(): void {
     if (this.closing) return
     for (const id of this.planned.order) {
       const k = this.known.get(id)
-      if (k === undefined || !this.startable(k)) continue
-      if (k.place === 'host' ? this.hostStarting() : this.hostPending()) continue
-      this.begin(k)
+      if (k !== undefined && this.startable(k)) this.begin(k)
     }
   }
 
   private startable(k: Known): boolean {
-    if (k.live !== null || !this.runs(k) || (k.place === 'host' && k.ran)) return false
-    if (this.phase === 'controls' && !(k.from === 'install' && isSecurityControl(k.id))) return false
-    return (k.read.manifest?.requires ?? []).every(id => this.known.get(id)?.state === 'ready')
-  }
-
-  private hostStarting(): boolean {
-    return [...this.known.values()].some(k => k.place === 'host' && k.state === 'starting')
-  }
-
-  private hostPending(): boolean {
-    return [...this.known.values()].some(k => k.place === 'host' && (k.state === 'starting' || this.startable(k)))
+    if (k.live !== null || !this.runs(k)) return false
+    return (k.read.manifest?.requires ?? []).every(id => this.serves(id))
   }
 
   // ---- starting
@@ -1703,14 +1641,10 @@ ${capabilityKey(change.capability)}`)
     const n = (this.minted.get(k.id) ?? 0) + 1
     this.minted.set(k.id, n)
     k.incarnations = n
-    const live: Live = {
-      n, halves: new Map(), exports: null, imported: false, readyTimer: null, stopTimer: null, stop: null, beat: null,
-      with: [], over: false, deps: '', marked: false,
-    }
+    const live: Live = { n, halves: new Map(), readyTimer: null, stopTimer: null, stop: null, beat: null, with: [], over: false, deps: '' }
     k.live = live
     k.state = 'starting'
     k.reason = null
-    if (k.place === 'host') k.ran = true
     this.refresh()
     void this.launch(k, live)
   }
@@ -1719,18 +1653,6 @@ ${capabilityKey(change.capability)}`)
     try {
       if (k.updated !== null) await this.applyInstalled(k)
       if (live.over) return
-      // Written before start and removed at ready, so a host half that freezes main here is held failed next boot. One
-      // whose start ended before its module ran couldn't have frozen anything, so its marker goes
-      if (k.place === 'host') {
-        // The marker counts as on disk once its write settled, so a stop that came during the write leaves its removal
-        // to here
-        await this.tracked((async () => {
-          await writeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' }))
-          live.marked = true
-          if (live.over) await this.unmark(k, live)
-        })())
-        if (live.over) return
-      }
       this.mint(k, live)
     } catch {
       if (!live.over) this.die(k, 'start-failed')
@@ -1749,8 +1671,8 @@ ${capabilityKey(change.capability)}`)
     await this.saveInstalled()
   }
 
-  // Mints each half's port or handle and registers it with the carrier in the same step, starts the half from the
-  // verified bytes and sends init down its way. ready must come within readyMs
+  // Mints each half's port and registers it with the carrier in the same step, starts the half from the verified bytes
+  // and sends init down its way. ready must come within readyMs
   private mint(k: Known, live: Live): void {
     const manifest = k.read.manifest!
     const { host, worker } = manifest.entries
@@ -1767,27 +1689,8 @@ ${capabilityKey(change.capability)}`)
       const { core, plugin } = this.runtime.channel(k.id, true)
       this.link.register(core, run.caller)
       live.halves.set('host', run)
-      live.imported = true
       const code = k.read.files.find(file => file.path === host)!.bytes
       this.runtime.startUtility({ id: k.id, incarnation: live.n, code, port: plugin, exited: how => this.exited(k, live, how.killed) })
-    } else if (host !== undefined) {
-      const run: Run = { caller: caller('host'), ready: false, stopped: false }
-      const box = mailbox()
-      const way = this.link.handle(run.caller, message => box.put(message))
-      live.halves.set('host', run)
-      const started = this.runtime.startHost({
-        id: k.id, incarnation: live.n, root: k.root, files: k.read.files, entry: host, link: { post: way.post, listen: box.listen },
-      })
-      Promise.resolve(started).then(exports => {
-        if (live.over) return
-        live.exports = exports ?? {}
-        live.imported = true
-        this.readied(k, live)
-      }, () => {
-        if (!live.over) this.die(k, 'start-failed')
-      })
-    } else {
-      live.imported = true
     }
 
     if (worker !== undefined) {
@@ -1807,42 +1710,23 @@ ${capabilityKey(change.capability)}`)
       v: VERSION, kind: 'init', id: k.id, incarnation: live.n, api: API_VERSION, deps, lastStop: k.lastStop,
       previousVersion: k.previousVersion,
     }
-    // An install host half runs in main with Node, so the data folder is no secret from it: storage keeps its spaces
-    // there and later host plugins their working folders. A worker and a utility half never hear it
-    for (const [half, run] of live.halves) {
-      const own = half === 'host' && k.place === 'host' && k.from === 'install' ? { ...init, dataDir: this.dataDir } : init
-      this.link.send(run.caller, own)
-    }
+    for (const run of live.halves.values()) this.link.send(run.caller, init)
     // A plugin with no half to start, frames or a page only, is ready once checked
     this.readied(k, live)
   }
 
   private readied(k: Known, live: Live): void {
     if (live.over || k.live !== live || k.state !== 'starting') return
-    if (!live.imported || [...live.halves.values()].some(run => !run.ready)) return
+    if ([...live.halves.values()].some(run => !run.ready)) return
     if (live.readyTimer !== null) clearTimeout(live.readyTimer)
     live.readyTimer = null
-    // A security control with no role to play would refuse everything while reading as up, so it fails here
-    const role = roleOf[k.id]
-    if (k.from === 'install' && role !== undefined && live.exports?.[role] === undefined) return this.die(k, 'no-role')
-    // The gate has the grants snapshot before it answers anything, the luoshu and history their folder and exec its view
-    // of the grants. A throw marks that one failed
-    if (k.id === 'gate' && k.from === 'install' && !this.pushGrantsSnapshot(k)) return
-    if (k.id === 'luoshu' && k.from === 'install' && !this.openLuoshu(k)) return
-    if (k.id === 'history' && k.from === 'install' && !this.openHistory(k)) return
-    if (k.id === 'exec' && k.from === 'install' && !this.pushExec(k)) return
     k.state = 'ready'
     k.reason = null
     k.previousVersion = null
     this.versions.delete(k.id)
     this.note('plugin.started', { plugin: k.id, incarnation: live.n })
     this.beat(k, live)
-    void this.unmark(k, live)
     this.replan()
-    // The grant risk classifier up again in the run, which only the human's switch-on brings: every entry is classed at once
-    if (k.id === 'grant-risk-classifier' && k.from === 'install' && this.classedAtStart) {
-      void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
-    }
   }
 
   // ---- stopping
@@ -1887,12 +1771,11 @@ ${capabilityKey(change.capability)}`)
     return out.sort()
   }
 
-  // A planned stop ran in a main that wasn't frozen, so a start it ended before ready leaves no marker
+  // A planned stop ended, each half having answered stopped or the grace having run out
   private finished(k: Known, live: Live): void {
     if (live.over) return
     const stop = live.stop
     const reason = stop?.reason ?? this.stopReason(k)
-    void this.unmark(k, live)
     this.retire(k, live)
     k.lastStop = reason
     this.note('plugin.stopped', { plugin: k.id, incarnation: live.n, reason, with: live.with.join(',') })
@@ -1901,20 +1784,19 @@ ${capabilityKey(change.capability)}`)
     stop?.end()
   }
 
-  // A crash, a failed host half or a utility half whose bind failed, which crashed nothing. The states change first,
-  // every dependent waiting, then the ways end, so no call is answered before the dependents moved
+  // A crash or a utility half whose bind failed, which crashed nothing. The states change first, every dependent
+  // waiting, then the ways end, so no call is answered before the dependents moved
   private die(k: Known, reason: StopReason): void {
     const live = k.live
     if (live === null || live.over) return
     if (live.stop !== null) return this.finished(k, live)
     this.retire(k, live)
-    const state = k.place === 'host' || isOne(bindFailures, reason) ? 'failed' : 'crashed'
+    const state = isOne(bindFailures, reason) ? 'failed' : 'crashed'
     k.held = { kind: 'held', state, reason }
     k.lastStop = reason
     this.note(`plugin.${state}`, { plugin: k.id, incarnation: live.n, reason })
     this.replan()
     this.release(k, live, 'crashed')
-    if (k.from === 'install' && isSecurityControl(k.id)) this.controlFailed(k.id, reason)
   }
 
   // A utility process ended. During a planned stop that is the stop ending. Otherwise it crashed, killed when the
@@ -1930,8 +1812,7 @@ ${capabilityKey(change.capability)}`)
   // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
   // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
   // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
-  // heard from a utility half answers a beat, a message dropped for its rate included. Host halves in main
-  // get none, a host half that hangs holds main itself
+  // heard from a utility half answers a beat, a message dropped for its rate included
   private beat(k: Known, live: Live): void {
     const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
     if (pinged === undefined) return
@@ -1998,11 +1879,10 @@ ${capabilityKey(change.capability)}`)
   }
 
   // A new incarnation from the bytes already verified. A running one stops first with its dependents, which start again
-  // once it is ready. Only a sandboxed plugin or a utility half restarts within a run
+  // once it is ready
   async restart(id: string, by: 'watchdog' | 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
-    if (k.place === 'host') throw { code: 'not-granted' }
     if (this.closing) throw { code: 'stopped' }
     if (k.live !== null) await this.stop(id, by)
     k.held = null
@@ -2154,11 +2034,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'luoshu.pick': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
-        // A luoshu not ready yet takes the folder when it is, and so does history. exec gets it with the bump
-        const luoshu = this.known.get('luoshu')
-        if (luoshu?.from === 'install' && luoshu.state === 'ready') this.openLuoshu(luoshu)
-        const history = this.known.get('history')
-        if (history?.from === 'install' && history.state === 'ready') this.openHistory(history)
+        // The luoshu and history take the folder now, exec with the bump. One that is off takes it once switched on
+        this.modules.picked()
         return this.bump()
       }
       case 'item.on':
@@ -2328,16 +2205,14 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await this.stoppedWhile(k, () => this.clearSpace('storage', id))
   }
 
-  // Recover's reset: storage, cache and start marker cleared. A folder plugin's entry goes, so it waits for approval
-  // again with the code it has. A core plugin waits for Restart hetu, since a host half starts once per run and
-  // the reset may follow a start that froze main
+  // Recover's reset: storage and cache cleared. A folder plugin's entry goes, so it waits for approval again with the
+  // code it has. A core plugin waits for Restart hetu. A core module has no reset, its switch is the way out
   private async reset(id: string, confirm: boolean): Promise<void> {
+    if (isModule(id)) throw new Error(`${id} is a core module`)
     const k = this.known.get(id)
     if (k === undefined) throw new Error(`no plugin ${id}`)
     await this.stoppedWhile(k, async () => {
       for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id)
-      await removeMarker(this.dataDir, id)
-      this.markers.delete(id)
       // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
       const { limits } = this.state.switches
       if (Object.hasOwn(limits.plugins, id)) {
@@ -2375,10 +2250,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // told
   private bump(): void {
     this.n++
-    const gate = this.known.get('gate')
-    if (gate !== undefined && gate.from === 'install' && gate.state === 'ready') this.pushGrantsSnapshot(gate)
-    const exec = this.known.get('exec')
-    if (exec !== undefined && exec.from === 'install' && exec.state === 'ready') this.pushExec(exec)
+    this.modules.bumped()
     this.refresh()
   }
 
@@ -2405,7 +2277,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // Each plugin's grants as the gate judges them, copied so freezing them leaves the plugins manager's own alone. A folder
   // plugin's come from its entry in the state, which boot loaded before the gate's first grants snapshot and before the plugin
-  // folder is scanned. A core plugin's come from its manifest, read before the host tier starts. An item the entry
+  // folder is scanned. A core plugin's come from its manifest, read before any plugin starts. An item the entry
   // switched off is off. An item in the entry's firstUse list asks at its first use, except while the human has the
   // grant risk classifier switched off, when nothing asks. A core plugin's items never ask
   private grantsSnapshot(): GrantsSnapshot {
@@ -2442,34 +2314,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], agents })
   }
 
-  // The folder in the state and hetu's own folders, which the luoshu refuses to reach into
+  // The folder in the state and hetu's own folders, which no command exec runs may take code from
   private opening(): Opening {
     return { folder: this.state.luoshu?.folder ?? null, dataDir: this.dataDir, installDir: this.installDir }
-  }
-
-  private openLuoshu(luoshu: Known): boolean {
-    const target = luoshu.live?.exports?.luoshu
-    if (target === undefined) return true
-    try {
-      target.open(this.trash === undefined ? this.opening() : { ...this.opening(), trash: this.trash })
-      return true
-    } catch {
-      this.die(luoshu, 'state-changed')
-      return false
-    }
-  }
-
-  // History reads the notes it commits from the same folder
-  private openHistory(history: Known): boolean {
-    const target = history.live?.exports?.history
-    if (target === undefined) return true
-    try {
-      target.open(this.opening())
-      return true
-    } catch {
-      this.die(history, 'state-changed')
-      return false
-    }
   }
 
   // What exec checks a command against on its own, read from the grants snapshot: each plugin's exec items that are on. Exec
@@ -2488,30 +2335,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return frozen({ plugins, any: [...this.state.switches.execAnyCommand], opening: this.opening() })
   }
 
-  private pushExec(exec: Known): boolean {
-    const target = exec.live?.exports?.exec
-    if (target === undefined) return true
-    try {
-      target.stateChanged(this.execView())
-      return true
-    } catch {
-      this.die(exec, 'state-changed')
-      return false
-    }
-  }
-
-  private pushGrantsSnapshot(gate: Known): boolean {
-    const target = gate.live?.exports?.gate
-    if (target === undefined) return true
-    try {
-      target.stateChanged(this.grantsSnapshot())
-      return true
-    } catch {
-      this.die(gate, 'state-changed')
-      return false
-    }
-  }
-
   private putEntry(id: string, entry: Plugin): void {
     this.state.plugins[id] = entry
     this.entryChecks.set(id, 'ok')
@@ -2519,19 +2342,23 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k !== undefined) k.entry = entry
   }
 
+  // A core module's switch is written, then the module is closed or started again with it, so the grants snapshot and
+  // the plan that follow read it as the switch says. The grant risk classifier switched on again in the run classes
+  // every entry at once
   private async switchPlugin(id: string, on: boolean): Promise<void> {
-    const k = this.known.get(id)
-    if (k === undefined) throw new Error(`no plugin ${id}`)
-    if (k.from === 'install') {
-      await this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
-      // A switch-off is the way out of a start marker, so the half starts fresh once switched on again
-      if (!on && k.held?.reason === 'marker') {
-        await removeMarker(this.dataDir, id).catch(() => {})
-        k.held = null
-        this.replan()
-      }
+    if (isModule(id)) {
+      const next = { ...this.state.switches, off: toggled(this.state.switches.off, id, !on) }
+      await this.store.writeSwitches(next)
+      this.state = { ...this.state, switches: next }
+      await this.modules.apply(next.off)
+      if (on && id === 'grant-risk-classifier' && this.classedAtStart) await this.classAll('slot-on')
+      this.bump()
+      this.replan()
       return
     }
+    const k = this.known.get(id)
+    if (k === undefined) throw new Error(`no plugin ${id}`)
+    if (k.from === 'install') return this.writeSwitches({ ...this.state.switches, off: toggled(this.state.switches.off, id, !on) })
     if (k.entry === null) throw new Error(`no entry for ${id}`)
     const entry = { ...k.entry, enabled: on }
     await this.store.writePlugin(id, entry)
@@ -2772,20 +2599,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     } finally {
       if (timer !== null) clearTimeout(timer)
     }
-  }
-
-  // Removes a host half's start marker once per incarnation, tracked until it settles
-  private unmark(k: Known, live: Live): Promise<void> {
-    if (!live.marked) return Promise.resolve()
-    live.marked = false
-    return this.tracked(removeMarker(this.dataDir, k.id).catch(() => this.note('fault', { plugin: k.id, step: 'marker' })))
-  }
-
-  // Marker work shutdown waits for. The work never rejects
-  private tracked(work: Promise<void>): Promise<void> {
-    this.markerWork.add(work)
-    void work.finally(() => this.markerWork.delete(work))
-    return work
   }
 
   private note(event: string, fields: Record<string, string | number | boolean | null>): void {

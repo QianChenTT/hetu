@@ -1,6 +1,5 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
-import type { GrantRiskClassifier, ExecRole, Gate, Guard, HistoryRole, LuoshuRole, Provider, StorageRole, Watchdog } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Landing, Port } from '../carrier/seams.ts'
@@ -8,13 +7,11 @@ import type { Landing, Port } from '../carrier/seams.ts'
 // The carrier says what became of a core record, so the type lives with it
 export type { Landing }
 
-// What the plugins manager needs from the carrier, a small interface the plugins manager's tests fake. register, handle and end are the
+// What the plugins manager needs from the carrier, a small interface the plugins manager's tests fake. register and end are the
 // carrier's own. The join builds send, record, changed, stopping and limit in the carrier
 export type CarrierLink = {
   // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port
   register(port: Port, caller: Caller): void
-  // A host half's in-process way in, bound like a port
-  handle(caller: Caller, receive: (message: unknown) => void): { post: (message: unknown) => void }
   // Ends a way: a planned stop or a revoked incarnation. Its calls answer code and nothing more arrives from it
   end(caller: Caller, code?: 'stopped' | 'crashed'): void
   // A lifecycle message down a half's own way: init, deps or stop. Dropped when the way is gone
@@ -28,11 +25,10 @@ export type CarrierLink = {
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
   // A policy job state, a plugin state or the grants snapshot changed, so the carrier asks the gate about live subscriptions again
   changed(): void
-  // Shutdown has begun. The six policy job states have no stopping and the carrier reads anything else as failed, so
-  // shutdown says so here instead. From this call on the carrier answers stopped where it would answer policy-down,
-  // guard-down or unavailable for a policy job, a guard or a provider that is down. It writes no policy job change as a failure
-  // either. The plugins manager keeps reporting the six states, a guard stopping or stopped for shutdown as failed, so nothing
-  // passes unguarded and nothing reads as down
+  // Shutdown has begun. The policy job states have no stopping, so shutdown says so here instead. From this call on the
+  // carrier answers stopped where it would answer policy-down, guard-down or unavailable for a policy job, a guard or a
+  // provider that is down, a provider the core modules closed included. It writes no policy job change as a failure
+  // either
   stopping(): void
   // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
   // wait. Record nothing's switch drains first, so its own record is the last one written
@@ -43,23 +39,6 @@ export type CarrierLink = {
   // plugins manager takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
   limit(plugin: string, name: LimitName): number
 }
-
-// What a host half's module gives the core once imported: the role interfaces it holds. The carrier asks them
-// through the plugins manager, which hands one on only while its plugin is ready
-export type HostExports = {
-  gate?: Gate
-  guard?: Guard
-  provider?: Provider
-  watchdog?: Watchdog
-  luoshu?: LuoshuRole
-  grantRiskClassifier?: GrantRiskClassifier
-  storage?: StorageRole
-  history?: HistoryRole
-  exec?: ExecRole
-}
-
-// A host half's end of its in-process way. Messages the carrier sends before listen are kept for it
-export type HostLink = { post(message: unknown): void, listen(listener: (message: unknown) => void): void }
 
 // drawer says the plugin holds a ui item, so the runtime gives its worker a port to each editor page as well
 // files and frames come only with drawer: the bytes the plugins manager checked, which serve the plugin's frames and icons
@@ -72,7 +51,6 @@ export type WorkerStart = {
   files?: readonly PluginFile[]
   frames?: Readonly<Record<string, string>>
 }
-export type HostStart = { id: string, incarnation: number, root: string, files: readonly PluginFile[], entry: string, link: HostLink }
 
 // A host entry that runs in a utility process: its verified bytes and the plugin's end of a new channel. exited is how
 // the runtime tells the plugins manager the process ended, with killed true when the runtime itself ended it. The exit code is
@@ -88,10 +66,6 @@ export type Runtime = {
   // Starts a worker from the verified bytes. The worker host page gets { id, incarnation, code } and the port. A throw
   // means it couldn't start
   startWorker(start: WorkerStart): void
-  // Imports a host half from the verified files and starts it on its link. Resolves with the roles the module holds. A
-  // throw or a rejection marks the half failed. root is where the files came from, for the import hook the Electron
-  // runtime picks
-  startHost(start: HostStart): Promise<HostExports>
   // Ends a worker with terminate(). Ending one already dead decides nothing
   terminate(id: string, incarnation: number): void
   // Forks a utility process that imports the verified bytes and runs the plugin on the port. A throw means it couldn't

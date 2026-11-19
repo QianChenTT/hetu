@@ -12,7 +12,6 @@ import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-
 export const folders = {
   plugins: (dataDir: string, id: string) => path.join(dataDir, 'plugins', id),
   staging: (dataDir: string) => path.join(dataDir, 'staging'),
-  marker: (dataDir: string, id: string) => path.join(dataDir, 'starting', id),
   failedOnce: (dataDir: string) => path.join(dataDir, 'failed-once'),
   cache: (dataDir: string, id: string) => path.join(dataDir, 'cache', id),
   storage: (dataDir: string, id: string) => path.join(dataDir, 'storage', id),
@@ -82,23 +81,9 @@ export async function clear(dir: string): Promise<void> {
   await retried(() => rm(dir, { recursive: true, force: true }))
 }
 
-// A host half's start marker. Written and synced before its start, so a host half that freezes main at start is held
-// failed at the next boot even after a force quit. Empty: it can only hold a plugin down, so it needs no hash
-export async function writeMarker(dataDir: string, id: string): Promise<void> {
-  const file = folders.marker(dataDir, id)
-  await mkdir(path.dirname(file), { recursive: true })
-  const handle = await open(file, 'w')
-  try {
-    await handle.sync()
-  } finally {
-    await handle.close()
-  }
-  await syncDir(path.dirname(file))
-}
-
-// The security control that failed while hetu ran, written before hetu quits to start again. A run that finds it and
-// meets a failure of any control stops in the stopped mode instead of restarting a second time. Like a start
-// marker it can only hold hetu stopped, so it needs no hash. Only a clean Quit or the human's choice clears it
+// What failed while hetu ran, the log, written before hetu quits to start again. A run that finds it and meets a
+// failure again stops in the stopped mode instead of restarting a second time. It can only hold hetu stopped, so it
+// needs no hash. Only a clean Quit or the human's choice clears it
 export async function readFailedOnce(dataDir: string): Promise<string | null> {
   try {
     const id = (await readFile(folders.failedOnce(dataDir), 'utf8')).trim()
@@ -114,12 +99,6 @@ export async function writeFailedOnce(dataDir: string, id: string): Promise<void
 
 export async function clearFailedOnce(dataDir: string): Promise<void> {
   await retried(() => rm(folders.failedOnce(dataDir), { force: true }))
-}
-
-export async function removeMarker(dataDir: string, id: string): Promise<void> {
-  const file = folders.marker(dataDir, id)
-  await retried(() => rm(file, { force: true }))
-  await syncDir(path.dirname(file))
 }
 
 const installedFile = z.strictObject({

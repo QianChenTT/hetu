@@ -93,6 +93,12 @@ export class CoreModules {
     return this.startFailed.has(id) || this.pushFailed.has(id) ? 'failed' : 'on'
   }
 
+  // Why a module reads as it does, null while on: its switch, a start that threw or a push that threw
+  reason(id: CoreModuleId): 'off' | 'start-failed' | 'state-changed' | null {
+    if (this.off.has(id)) return 'off'
+    return this.startFailed.has(id) ? 'start-failed' : this.pushFailed.has(id) ? 'state-changed' : null
+  }
+
   // Serving once started, while on and until shutdown closed it. The gate and the grant risk classifier answer until
   // the end
   private serving(id: CoreModuleId): boolean {
