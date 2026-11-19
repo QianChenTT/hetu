@@ -12,11 +12,13 @@ afterEach(cleanup)
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
 
-// alpha with beta requiring it, both running
+// alpha with beta requiring it, both running. The grant risk classifier is switched off, so each keeps the class 1 its
+// entry holds
 async function running(extra: Parameters<typeof harness>[0] = {}) {
   const made = await harness({
     folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },
     entries: { alpha: signed(), beta: signed() },
+    switches: { off: ['grant-risk-classifier'] },
     ...extra,
   })
   await made.pluginsManager.start()
