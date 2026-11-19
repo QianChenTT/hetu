@@ -1,0 +1,869 @@
+{
+  "about": "The clones jscpd finds in shipped code, checked by scripts/check-copies.ts. A person judges each: the same meaning becomes one definition, a different meaning stays here with judged saying why. \"not yet\" is the baseline of 2026-11-19, not judged. The key is files and hash, at only says where it sat at the last --update",
+  "clones": [
+    {
+      "files": [
+        "core-plugins/layout/src/worker.ts",
+        "core-plugins/layout/src/worker.ts"
+      ],
+      "hash": "3fdcca0406eae1c9",
+      "at": [
+        "core-plugins/layout/src/worker.ts:153-157",
+        "core-plugins/layout/src/worker.ts:169-173"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/actions.ts",
+        "core/api/actions.ts"
+      ],
+      "hash": "2d669aaca08081fa",
+      "at": [
+        "core/api/actions.ts:23-28",
+        "core/api/actions.ts:226-230"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/actions.ts",
+        "core/api/install.ts"
+      ],
+      "hash": "4c1b178707f8a9dc",
+      "at": [
+        "core/api/actions.ts:22-28",
+        "core/api/install.ts:35-43"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/actions.ts",
+        "core/api/ui.ts"
+      ],
+      "hash": "520ef06e7ef258b5",
+      "at": [
+        "core/api/actions.ts:22-28",
+        "core/api/ui.ts:233-237"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/actions.ts",
+        "core/api/ui.ts"
+      ],
+      "hash": "a880eea111d22e16",
+      "at": [
+        "core/api/actions.ts:23-28",
+        "core/api/ui.ts:230-233"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/editor.ts",
+        "core/api/ui.ts"
+      ],
+      "hash": "71b052d622096ade",
+      "at": [
+        "core/api/editor.ts:105-116",
+        "core/api/ui.ts:491-506"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/install.ts",
+        "core/api/manifest.ts"
+      ],
+      "hash": "5d9d206721bbfe46",
+      "at": [
+        "core/api/install.ts:19-24",
+        "core/api/manifest.ts:70-71"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/install.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "bbcb827062805cf9",
+      "at": [
+        "core/api/install.ts:51-56",
+        "core/backend/plugins-manager/plugins-manager.ts:193-194"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/scope.ts",
+        "core/api/scope.ts"
+      ],
+      "hash": "24175bc590c00278",
+      "at": [
+        "core/api/scope.ts:83-87",
+        "core/api/scope.ts:108-112"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/scope.ts",
+        "core/api/scope.ts"
+      ],
+      "hash": "31d36a9eb691ce63",
+      "at": [
+        "core/api/scope.ts:94-101",
+        "core/api/scope.ts:119-126"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/boot.ts",
+        "core/backend/boot/state.ts"
+      ],
+      "hash": "45618560e67450f5",
+      "at": [
+        "core/backend/boot/boot.ts:61-65",
+        "core/backend/boot/state.ts:184-187"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/boot.ts",
+        "core/backend/providers/storage/store.ts"
+      ],
+      "hash": "45618560e67450f5",
+      "at": [
+        "core/backend/boot/boot.ts:61-65",
+        "core/backend/providers/storage/store.ts:82-85"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/boot.ts",
+        "core/lib/event-log.ts"
+      ],
+      "hash": "01b5576902e6b567",
+      "at": [
+        "core/backend/boot/boot.ts:95-99",
+        "core/lib/event-log.ts:401-406"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/boot.ts",
+        "core/lib/event-log.ts"
+      ],
+      "hash": "40393d23592acfa8",
+      "at": [
+        "core/backend/boot/boot.ts:94-98",
+        "core/lib/event-log.ts:401-404"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "5d309f3c66d9cbdb",
+      "at": [
+        "core/backend/boot/state.ts:265-270",
+        "core/backend/plugins-manager/plugins-manager.ts:2005-2010"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "70d4e08a14265d00",
+      "at": [
+        "core/backend/boot/state.ts:43-48",
+        "core/backend/plugins-manager/plugins-manager.ts:249-253"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "153d478ed3c86d72",
+      "at": [
+        "core/backend/boot/state.ts:184-189",
+        "core/backend/providers/luoshu/luoshu.ts:236-241"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "43513a3215c8eb80",
+      "at": [
+        "core/backend/boot/state.ts:185-192",
+        "core/backend/providers/luoshu/luoshu.ts:237-244"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/lib/event-log.ts"
+      ],
+      "hash": "2b6df8a1e9515d7f",
+      "at": [
+        "core/backend/boot/state.ts:265-273",
+        "core/lib/event-log.ts:250-258"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/boot/state.ts",
+        "core/lib/event-log.ts"
+      ],
+      "hash": "985d3fdd0da0c26f",
+      "at": [
+        "core/backend/boot/state.ts:269-276",
+        "core/lib/event-log.ts:254-262"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/carrier/carrier.ts",
+        "core/backend/carrier/carrier.ts"
+      ],
+      "hash": "4a3d0ae395a16b5e",
+      "at": [
+        "core/backend/carrier/carrier.ts:893-897",
+        "core/backend/carrier/carrier.ts:1144-1147"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/carrier/carrier.ts",
+        "core/backend/wire.ts"
+      ],
+      "hash": "a5d9fd3fe76fa030",
+      "at": [
+        "core/backend/carrier/carrier.ts:481-487",
+        "core/backend/wire.ts:67-71"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/main.ts",
+        "core/backend/main.ts"
+      ],
+      "hash": "494dec7a20534f86",
+      "at": [
+        "core/backend/main.ts:42-47",
+        "core/backend/main.ts:49-58"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/main.ts",
+        "core/backend/runtime/quit.ts"
+      ],
+      "hash": "6e477077e603efc7",
+      "at": [
+        "core/backend/main.ts:28-33",
+        "core/backend/runtime/quit.ts:11-20"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/modules/header.ts",
+        "core/backend/modules/modules.ts"
+      ],
+      "hash": "a2134a155f1d9ec0",
+      "at": [
+        "core/backend/modules/header.ts:2-12",
+        "core/backend/modules/modules.ts:3-7"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/marks.ts",
+        "core/backend/plugins-manager/marks.ts"
+      ],
+      "hash": "2c3f1abf7b369c58",
+      "at": [
+        "core/backend/plugins-manager/marks.ts:33-38",
+        "core/backend/plugins-manager/marks.ts:40-45"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "17dbea35030c637d",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:1282-1289",
+        "core/backend/plugins-manager/plugins-manager.ts:2412-2419"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "250543b0714139e9",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:1414-1421",
+        "core/backend/plugins-manager/plugins-manager.ts:1449-1453"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "64c06c4eb1d29f22",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:2216-2220",
+        "core/backend/plugins-manager/plugins-manager.ts:2568-2572"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "7d4841ea4bba5f2a",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:2253-2257",
+        "core/backend/plugins-manager/plugins-manager.ts:2434-2438"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "91353fb6522643e5",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:2216-2220",
+        "core/backend/plugins-manager/plugins-manager.ts:2476-2480"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/requests.ts"
+      ],
+      "hash": "5829b7eb8b548c42",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:1930-1935",
+        "core/backend/plugins-manager/requests.ts:180-188"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/requests.ts",
+        "core/backend/plugins-manager/requests.ts"
+      ],
+      "hash": "0945904caf56f734",
+      "at": [
+        "core/backend/plugins-manager/requests.ts:187-191",
+        "core/backend/plugins-manager/requests.ts:224-228"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/requests.ts",
+        "core/backend/plugins-manager/requests.ts"
+      ],
+      "hash": "53ae8bfbeb5ba176",
+      "at": [
+        "core/backend/plugins-manager/requests.ts:174-178",
+        "core/backend/plugins-manager/requests.ts:218-224"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/exec/exec.ts",
+        "core/backend/providers/history/history.ts"
+      ],
+      "hash": "53ef9d2c8148efc5",
+      "at": [
+        "core/backend/providers/exec/exec.ts:215-223",
+        "core/backend/providers/history/history.ts:416-424"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/exec/exec.ts",
+        "core/backend/providers/history/history.ts"
+      ],
+      "hash": "ac66a44ef05a4bd9",
+      "at": [
+        "core/backend/providers/exec/exec.ts:146-150",
+        "core/backend/providers/history/history.ts:362-366"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/exec/exec.ts",
+        "core/backend/providers/history/history.ts"
+      ],
+      "hash": "b8ffacd3a37a55e5",
+      "at": [
+        "core/backend/providers/exec/exec.ts:229-234",
+        "core/backend/providers/history/history.ts:428-433"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/exec/exec.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "83275fddcab29df0",
+      "at": [
+        "core/backend/providers/exec/exec.ts:174-178",
+        "core/backend/providers/luoshu/luoshu.ts:662-666"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/history/history.ts",
+        "core/backend/providers/history/history.ts"
+      ],
+      "hash": "0950428060ffbe31",
+      "at": [
+        "core/backend/providers/history/history.ts:236-240",
+        "core/backend/providers/history/history.ts:323-326"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/history/history.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "415b8671d8093b4d",
+      "at": [
+        "core/backend/providers/history/history.ts:33-39",
+        "core/backend/providers/luoshu/luoshu.ts:52-59"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/luoshu/luoshu.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "188cc128a293af6f",
+      "at": [
+        "core/backend/providers/luoshu/luoshu.ts:140-144",
+        "core/backend/providers/luoshu/luoshu.ts:361-363"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/luoshu/luoshu.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "7dc3eb14eb95aa9a",
+      "at": [
+        "core/backend/providers/luoshu/luoshu.ts:384-397",
+        "core/backend/providers/luoshu/luoshu.ts:438-447"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/luoshu/luoshu.ts",
+        "core/lib/canonical.ts"
+      ],
+      "hash": "15dc1334c925a1d2",
+      "at": [
+        "core/backend/providers/luoshu/luoshu.ts:354-361",
+        "core/lib/canonical.ts:196-201"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/luoshu/luoshu.ts",
+        "core/lib/clean-env.ts"
+      ],
+      "hash": "32644c2af2a75255",
+      "at": [
+        "core/backend/providers/luoshu/luoshu.ts:62-66",
+        "core/lib/clean-env.ts:95-99"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/luoshu/luoshu.ts",
+        "core/lib/hashed-file.ts"
+      ],
+      "hash": "1aeafa0b77c82646",
+      "at": [
+        "core/backend/providers/luoshu/luoshu.ts:277-284",
+        "core/lib/hashed-file.ts:41-48"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/providers/storage/store.ts",
+        "core/lib/event-log.ts"
+      ],
+      "hash": "d2126f632b2aa031",
+      "at": [
+        "core/backend/providers/storage/store.ts:148-152",
+        "core/lib/event-log.ts:502-506"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/sessions.ts",
+        "core/backend/runtime/views.ts"
+      ],
+      "hash": "0b8315d1dd9b51ad",
+      "at": [
+        "core/backend/runtime/sessions.ts:22-33",
+        "core/backend/runtime/views.ts:10-21"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/trusted.ts",
+        "core/frontend/editor/frames.ts"
+      ],
+      "hash": "527132e7298837da",
+      "at": [
+        "core/backend/runtime/trusted.ts:18-22",
+        "core/frontend/editor/frames.ts:44-48"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/windows.ts",
+        "core/backend/runtime/windows.ts"
+      ],
+      "hash": "0aafe74dc29d4973",
+      "at": [
+        "core/backend/runtime/windows.ts:68-76",
+        "core/backend/runtime/windows.ts:92-100"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/workers.ts",
+        "core/backend/runtime/workers.ts"
+      ],
+      "hash": "21cb365801b17a76",
+      "at": [
+        "core/backend/runtime/workers.ts:87-93",
+        "core/backend/runtime/workers.ts:276-280"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/workers.ts",
+        "core/backend/runtime/workers.ts"
+      ],
+      "hash": "f122eef8b0be1ced",
+      "at": [
+        "core/backend/runtime/workers.ts:114-118",
+        "core/backend/runtime/workers.ts:183-188"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/workers.ts",
+        "core/frontend/editor/link.ts"
+      ],
+      "hash": "8e4b47b52690d37c",
+      "at": [
+        "core/backend/runtime/workers.ts:152-157",
+        "core/frontend/editor/link.ts:50-55"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/workers.ts",
+        "core/frontend/trusted/view.ts"
+      ],
+      "hash": "b022e44ca73c107d",
+      "at": [
+        "core/backend/runtime/workers.ts:152-157",
+        "core/frontend/trusted/view.ts:309-314"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/bridge.ts",
+        "core/frontend/editor/ui-port.ts"
+      ],
+      "hash": "2abc02e8002dc975",
+      "at": [
+        "core/frontend/editor/bridge.ts:83-91",
+        "core/frontend/editor/ui-port.ts:11-20"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/bridge.ts",
+        "core/frontend/workers/host.ts"
+      ],
+      "hash": "0953fee2c67b3e3a",
+      "at": [
+        "core/frontend/editor/bridge.ts:34-40",
+        "core/frontend/workers/host.ts:10-16"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/bridge.ts",
+        "core/sdk/worker.ts"
+      ],
+      "hash": "0d4694217fb12d3c",
+      "at": [
+        "core/frontend/editor/bridge.ts:39-44",
+        "core/sdk/worker.ts:10-15"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/draw.ts",
+        "core/frontend/editor/draw.ts"
+      ],
+      "hash": "705a7de275f7eefc",
+      "at": [
+        "core/frontend/editor/draw.ts:138-142",
+        "core/frontend/editor/draw.ts:151-155"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/link.ts",
+        "core/frontend/trusted/view.ts"
+      ],
+      "hash": "accb4916cb40abcd",
+      "at": [
+        "core/frontend/editor/link.ts:5-10",
+        "core/frontend/trusted/view.ts:10-15"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/link.ts",
+        "core/sdk/editor.ts"
+      ],
+      "hash": "3f113f71e5ec0a2f",
+      "at": [
+        "core/frontend/editor/link.ts:61-67",
+        "core/sdk/editor.ts:157-161"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/menu.ts",
+        "core/frontend/editor/page.ts"
+      ],
+      "hash": "57275e794bfc4997",
+      "at": [
+        "core/frontend/editor/menu.ts:49-55",
+        "core/frontend/editor/page.ts:37-43"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/page.ts",
+        "core/frontend/workers/page.ts"
+      ],
+      "hash": "2bd770ef0f36c627",
+      "at": [
+        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/workers/page.ts:19-25"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/page.ts",
+        "core/frontend/workers/preload.ts"
+      ],
+      "hash": "5e1bc8266ba8a937",
+      "at": [
+        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/workers/preload.ts:10-14"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/ui-port.ts",
+        "core/frontend/editor/ui-port.ts"
+      ],
+      "hash": "4749791dba1131dd",
+      "at": [
+        "core/frontend/editor/ui-port.ts:149-153",
+        "core/frontend/editor/ui-port.ts:157-161"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/editor/views.ts",
+        "core/frontend/editor/views.ts"
+      ],
+      "hash": "146f308439435338",
+      "at": [
+        "core/frontend/editor/views.ts:95-99",
+        "core/frontend/editor/views.ts:103-107"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/trusted/view.ts",
+        "core/sdk/editor.ts"
+      ],
+      "hash": "2981d94d33dbe4d6",
+      "at": [
+        "core/frontend/trusted/view.ts:309-314",
+        "core/sdk/editor.ts:146-151"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/workers/host.ts",
+        "core/frontend/workers/host.ts"
+      ],
+      "hash": "144ffd3793984edf",
+      "at": [
+        "core/frontend/workers/host.ts:183-188",
+        "core/frontend/workers/host.ts:199-204"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/workers/host.ts",
+        "core/frontend/workers/host.ts"
+      ],
+      "hash": "497f1b4e69dfceab",
+      "at": [
+        "core/frontend/workers/host.ts:190-194",
+        "core/frontend/workers/host.ts:206-210"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/frontend/workers/host.ts",
+        "core/frontend/workers/host.ts"
+      ],
+      "hash": "4c616fda96d7997f",
+      "at": [
+        "core/frontend/workers/host.ts:113-117",
+        "core/frontend/workers/host.ts:140-142"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/lib/clean-env.ts",
+        "core/lib/clean-env.ts"
+      ],
+      "hash": "9080bf3d5e3d1911",
+      "at": [
+        "core/lib/clean-env.ts:141-145",
+        "core/lib/clean-env.ts:150-154"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/lib/event-log.ts",
+        "core/lib/hashed-file.ts"
+      ],
+      "hash": "1f339b06e6271d8a",
+      "at": [
+        "core/lib/event-log.ts:49-53",
+        "core/lib/hashed-file.ts:8-12"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/sdk/events.ts",
+        "core/sdk/serving.ts"
+      ],
+      "hash": "4a28854dca26f7f0",
+      "at": [
+        "core/sdk/events.ts:59-63",
+        "core/sdk/serving.ts:33-37"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/sdk/plugin.ts",
+        "core/sdk/transport.ts"
+      ],
+      "hash": "2d0d1c973c8b1292",
+      "at": [
+        "core/sdk/plugin.ts:77-82",
+        "core/sdk/transport.ts:49-54"
+      ],
+      "judged": "not yet"
+    }
+  ]
+}

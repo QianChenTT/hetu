@@ -51,6 +51,10 @@ jobs:
           Write-Output "short name: $short"
       - name: run tests
         run: npm test
+      # Every block of 4 lines or more repeated in shipped code, found by jscpd, must be in core/test/copies-allowed.json
+      # for a person to judge. jscpd is a prebuilt binary npm picks per system, with no install script
+      - name: check copies
+        run: npm run check:copies
 
   # The built app on both systems, driven by Playwright
   e2e:
