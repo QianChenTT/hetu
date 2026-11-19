@@ -7,11 +7,15 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
-import type { Gate, GrantsSnapshot } from '../api/policy-jobs.ts'
+import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
 import { CoreModules, type CoreModulesOptions } from '../backend/modules.ts'
+import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
+import type { Exec } from '../backend/providers/exec/exec.ts'
+import type { History } from '../backend/providers/history/history.ts'
+import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
 import type { CarrierLink, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/plugins-manager/seams.ts'
 import { carrierOptions } from '../backend/wire.ts'
@@ -248,6 +252,97 @@ export class FakeRuntime implements Runtime {
   exit(id: string, incarnation: number, killed: boolean): void {
     this.utilityStarts.find(start => start.id === id && start.incarnation === incarnation)!.exited({ killed })
   }
+}
+
+// A provider that serves nothing, for a core module's fake
+const servesNothing = (): Provider => ({ prepare: async () => ({ scope: {} }), perform: async () => null })
+
+// A luoshu that keeps each opening it was handed and how often it was closed. Its open throws while throws holds
+export function fakeLuoshu(): Luoshu & { opened: Opening[], closed: number, throws: boolean } {
+  const made = {
+    opened: [] as Opening[],
+    closed: 0,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      open(opening: Opening) {
+        made.opened.push(opening)
+        if (made.throws) throw new Error('no folder to open')
+      },
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+// History or exec as the core holds it, keeping what it was handed, how often it started and closed. start throws
+// while fails holds and the push while throws holds
+export function fakeHistory(): History & { opened: Opening[], started: number, closed: number, fails: boolean, throws: boolean } {
+  const made = {
+    opened: [] as Opening[],
+    started: 0,
+    closed: 0,
+    fails: false,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      open(opening: Opening) {
+        made.opened.push(opening)
+        if (made.throws) throw new Error('no folder to open')
+      },
+    },
+    async start() {
+      made.started++
+      if (made.fails) throw new Error('no git')
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+export function fakeExec(): Exec & { views: ExecView[], started: number, closed: number, fails: boolean, throws: boolean } {
+  const made = {
+    views: [] as ExecView[],
+    started: 0,
+    closed: 0,
+    fails: false,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      stateChanged(view: ExecView) {
+        made.views.push(view)
+        if (made.throws) throw new Error('bad view')
+      },
+    },
+    async start() {
+      made.started++
+      if (made.fails) throw new Error('no folder')
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+// The real grant risk classifier, each of whose calls throws while throws holds, as a classifier that fails per call
+export function throwingClassifier(): GrantRiskClassifier & { throws: boolean } {
+  const real = createGrantRiskClassifier()
+  const made = { throws: true } as GrantRiskClassifier & { throws: boolean }
+  for (const name of Object.keys(real) as (keyof GrantRiskClassifier)[]) {
+    const own = real[name] as (...args: unknown[]) => unknown
+    Object.assign(made, {
+      [name]: (...args: unknown[]) => {
+        if (made.throws) throw new Error('the policy threw')
+        return own.apply(real, args)
+      },
+    })
+  }
+  return made
 }
 
 // A gate that allows everything and remembers each grants snapshot it was given
