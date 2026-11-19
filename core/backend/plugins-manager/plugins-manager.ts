@@ -2351,7 +2351,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       await this.store.writeSwitches(next)
       this.state = { ...this.state, switches: next }
       await this.modules.apply(next.off)
-      if (on && id === 'grant-risk-classifier' && this.classedAtStart) await this.classAll('slot-on')
+      // The gate hears the switch at once, so with the classifier on again every item not yet classed asks from the
+      // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier started
+      this.bump()
+      if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
+        void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
+      }
       this.bump()
       this.replan()
       return

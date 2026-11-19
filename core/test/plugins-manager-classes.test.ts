@@ -1376,8 +1376,6 @@ describe('the grant risk classifier switched off by the human', () => {
     await approved(made, 'sync')
     expect(flags(gate, 'sync')).toEqual([])
     await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
-    // probe: the switch-on now classes every entry before the gate hears of it, so the gate keeps the snapshot from
-    // while off, where nothing asks, until the pass ends and never holds the one where every item asks
     expect(flags(gate, 'sync')).toEqual([read, fetchOne])
     await until(() => flags(gate, 'sync').length === 1)
     expect(flags(gate, 'sync')).toEqual([fetchOne])
