@@ -110,14 +110,19 @@ describe('an install list that doesn\'t check out', () => {
 })
 
 describe('a prompt a plugin\'s call raises', () => {
-  // asker's plugin.call to target asks at its first use. asker calls target.hello as soon as it is ready
+  // asker's plugin.call to target asks at its first use, since asker reads notes and target has network, the pair the
+  // grant risk classifier makes ask. Both hold class 4 already, so the pass at start raises no notice of a move.
+  // asker calls target.hello as soon as it is ready
   const workers = {
-    target: { code: lifecycle(), manifest: { provides: { actions: { hello: {} } } } },
+    target: { code: lifecycle(), manifest: { provides: { actions: { hello: {} } } }, entry: { granted: [{ type: 'net.fetch', hosts: ['example.com'] }], class: 4 } },
     // It requires target, so it starts once target is ready to be called
     asker: {
       manifest: { requires: ['target'] },
       code: lifecycle('send({ v: 1, kind: \'call\', id: 1, action: \'target.hello\', args: {} })'),
-      entry: { granted: [{ type: 'plugin.call', targets: ['target'] }], firstUse: [{ type: 'plugin.call', targets: ['target'] }] },
+      entry: {
+        granted: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'plugin.call', targets: ['target'] }],
+        firstUse: [{ type: 'plugin.call', targets: ['target'] }], class: 4,
+      },
     },
   } satisfies Record<string, Worker>
 
