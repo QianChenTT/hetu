@@ -30,17 +30,20 @@ afterEach(async () => {
 
 const snapshot = (n = 1): GrantsSnapshot => ({ n, foldCase: false, plugins: Object.create(null), execAny: [] })
 
-// What the plugins manager hands, with every fault kept
-function handing(folder: string | null = null) {
+// What the plugins manager hands, with every fault and every change of state kept
+function handing(folder: string | null = null, readyMs = 10000) {
   const faults: string[] = []
+  const changes: string[] = []
   let n = 1
   const handed: Handed = {
     grants: () => snapshot(n),
     exec: (): ExecView => ({ plugins: Object.create(null), any: [], opening: { folder, dataDir, installDir } }),
     folder: () => folder,
+    readyMs: () => readyMs,
     fault: (id, step) => faults.push(`${id} ${step}`),
+    changed: (id, change, reason) => changes.push(reason === null ? `${id} ${change}` : `${id} ${change} ${reason}`),
   }
-  return { handed, faults, next: () => n++ }
+  return { handed, faults, changes, next: () => n++ }
 }
 
 let n = 0
@@ -260,17 +263,192 @@ describe('the core modules', () => {
     expect(opened).toEqual([{ folder: notes, dataDir, installDir, trash }])
   })
 
-  it('close what runs at shutdown and serve no provider after, while the gate and the classifier answer to the end', async () => {
+  it('close what runs at shutdown in the reverse of the start and serve no provider after, while the gate and the classifier answer to the end', async () => {
     const { options, seen } = fakes()
     const modules = made(options)
-    await modules.start([], handing().handed)
+    const { handed, changes } = handing()
+    await modules.start([], handed)
     seen.length = 0
+    changes.length = 0
     modules.close()
-    expect(seen).toEqual(['luoshu.close', 'history.close', 'exec.close'])
+    expect(seen).toEqual(['exec.close', 'history.close', 'luoshu.close'])
+    expect(changes).toEqual(['exec stopped shutdown', 'history stopped shutdown', 'luoshu stopped shutdown', 'storage stopped shutdown'])
+    expect(modules.state('storage')).toBe('stopped')
     expect(modules.provider('storage')).toBeNull()
     expect(modules.provider('luoshu')).toBeNull()
     expect(modules.gate()).toBe(options.gate)
     expect(modules.grantRiskClassifier()).not.toBeNull()
+    expect(modules.state('gate')).toBe('on')
+  })
+
+  it('read starting before start, so the gate is no holder and reads as starting and not as on', () => {
+    const modules = made(fakes().options)
+    for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) {
+      expect(modules.state(id)).toBe('starting')
+      expect(modules.reason(id)).toBeNull()
+    }
+    expect(modules.gate()).toBeNull()
+  })
+
+  it('tell each module that started and each that failed at start, and nothing for one switched off', async () => {
+    const { options, throws } = fakes()
+    throws.add('exec.start')
+    const modules = made(options)
+    const { handed, changes } = handing()
+    await modules.start(['history'], handed)
+    expect(changes).toEqual([
+      'gate started', 'grant-risk-classifier started', 'storage started', 'luoshu started', 'exec failed start-failed',
+    ])
+  })
+
+  it('tell a module switched off as stopped, switched on as started and one whose push went through again as recovered', async () => {
+    const { options, throws } = fakes()
+    const modules = made(options)
+    const { handed, changes } = handing()
+    await modules.start([], handed)
+    changes.length = 0
+    await modules.apply(['exec'])
+    await modules.apply([])
+    throws.add('gate.stateChanged')
+    expect(modules.bumped()).toBe(true)
+    // A second push that throws changes nothing more
+    expect(modules.bumped()).toBe(false)
+    throws.delete('gate.stateChanged')
+    expect(modules.bumped()).toBe(true)
+    expect(modules.bumped()).toBe(false)
+    expect(changes).toEqual(['exec stopped off', 'exec started', 'gate failed state-changed', 'gate recovered'])
+  })
+
+  it('answer from picked whether the luoshu or history changed state, so the plugins manager can plan again', async () => {
+    const { options, throws } = fakes()
+    const modules = made(options)
+    const { handed, changes } = handing()
+    await modules.start([], handed)
+    changes.length = 0
+    throws.add('luoshu.open')
+    expect(modules.picked()).toBe(true)
+    expect(modules.provider('history')).toBeNull()
+    throws.delete('luoshu.open')
+    expect(modules.picked()).toBe(true)
+    expect(modules.picked()).toBe(false)
+    expect(modules.provider('history')).toBe(options.history!.provider)
+    expect(changes).toEqual(['luoshu failed state-changed', 'luoshu recovered'])
+  })
+
+  describe('a start that runs past readyMs', () => {
+    it('marks the module failed with start-failed, gives the rest their start and serves nothing from it', async () => {
+      const { options, seen } = fakes()
+      options.exec!.start = () => new Promise(() => {})
+      const modules = made(options)
+      const { handed, faults, changes } = handing(null, 50)
+      await modules.start([], handed)
+      expect(modules.state('exec')).toBe('failed')
+      expect(modules.reason('exec')).toBe('start-failed')
+      expect(modules.provider('exec')).toBeNull()
+      expect(faults).toEqual(['exec start-timeout'])
+      expect(changes).toContain('exec failed start-failed')
+      expect(modules.state('history')).toBe('on')
+      expect(seen).toContain('gate.stateChanged')
+    })
+
+    it('holds a switch on for at most readyMs and leaves the module failed', async () => {
+      const { options } = fakes()
+      let hang = false
+      const start = options.history!.start
+      options.history!.start = dir => (hang ? new Promise(() => {}) : start(dir))
+      const modules = made(options)
+      const { handed } = handing(null, 50)
+      await modules.start(['history'], handed)
+      hang = true
+      const began = Date.now()
+      await modules.apply([])
+      expect(Date.now() - began).toBeLessThan(5000)
+      expect(modules.state('history')).toBe('failed')
+      expect(modules.reason('history')).toBe('start-failed')
+    })
+
+    it('reads starting while the start runs and serves nothing until it is done', async () => {
+      const { options } = fakes()
+      let finish = () => {}
+      options.exec!.start = () => new Promise<void>(resolve => {
+        finish = resolve
+      })
+      const modules = made(options)
+      const { handed } = handing()
+      await modules.start(['exec'], handed)
+      const on = modules.apply([])
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(modules.state('exec')).toBe('starting')
+      expect(modules.provider('exec')).toBeNull()
+      finish()
+      await on
+      expect(modules.state('exec')).toBe('on')
+    })
+
+    it('closes what a late start opened, unless a later start began meanwhile', async () => {
+      const { options, seen } = fakes()
+      let finish = () => {}
+      options.exec!.start = () => new Promise<void>(resolve => {
+        finish = resolve
+      })
+      const modules = made(options)
+      await modules.start([], handing(null, 20).handed)
+      expect(modules.state('exec')).toBe('failed')
+      seen.length = 0
+      finish()
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(seen).toEqual(['exec.close'])
+      expect(modules.state('exec')).toBe('failed')
+    })
+  })
+
+  describe('the stopped mode', () => {
+    it('closes every module in the reverse of its start, the gate last, and serves nothing after, the gate and the classifier included', async () => {
+      const { options, seen } = fakes()
+      const modules = made(options)
+      const { handed, changes } = handing()
+      await modules.start(['storage'], handed)
+      seen.length = 0
+      changes.length = 0
+      modules.stop(['storage'])
+      expect(seen).toEqual(['exec.close', 'history.close', 'luoshu.close'])
+      expect(changes).toEqual([
+        'exec stopped stopped-mode', 'history stopped stopped-mode', 'luoshu stopped stopped-mode',
+        'grant-risk-classifier stopped stopped-mode', 'gate stopped stopped-mode',
+      ])
+      expect(modules.gate()).toBeNull()
+      expect(modules.grantRiskClassifier()).toBeNull()
+      for (const namespace of ['storage', 'luoshu', 'history', 'exec']) expect(modules.provider(namespace)).toBeNull()
+      expect(modules.state('gate')).toBe('stopped')
+      expect(modules.reason('gate')).toBe('stopped-mode')
+      expect(modules.state('storage')).toBe('off')
+    })
+
+    it('hands nothing more and starts nothing after, whatever the switches or a push', async () => {
+      const { options, seen } = fakes()
+      const modules = made(options)
+      await modules.start(['exec'], handing().handed)
+      modules.stop(['exec'])
+      seen.length = 0
+      modules.bumped()
+      modules.picked()
+      await modules.apply([])
+      modules.close()
+      expect(seen).toEqual([])
+      expect(modules.state('exec')).toBe('stopped')
+    })
+
+    it('before start leaves every module unstarted and tells nothing', async () => {
+      const { options, seen } = fakes()
+      const modules = made(options)
+      modules.stop([])
+      const { handed, changes } = handing()
+      await modules.start([], handed)
+      expect(seen).toEqual([])
+      expect(changes).toEqual([])
+      expect(modules.gate()).toBeNull()
+      expect(modules.state('gate')).toBe('stopped')
+    })
   })
 
   it('pass on only luoshu\'s two topics', async () => {

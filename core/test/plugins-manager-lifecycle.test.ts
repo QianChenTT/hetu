@@ -349,7 +349,7 @@ describe('the heartbeat', () => {
 })
 
 describe('shutdown', () => {
-  it('tells the carrier first, then stops plugins in reverse graph order and ends the core modules last, the gate answering to the end', async () => {
+  it('tells the carrier first, then stops plugins in reverse graph order and ends the core modules last in the reverse of their start, the gate answering to the end', async () => {
     const modules = { luoshu: fakeLuoshu(), history: fakeHistory(), exec: fakeExec() }
     const made = await harness({
       folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },
@@ -369,7 +369,7 @@ describe('shutdown', () => {
     expect(lines[0]).toBe('stopping')
     expect(lines[1]).toBe('record core.stopping')
     expect(lines.filter(line => line.startsWith('stop ') || line.startsWith('close '))).toEqual([
-      'stop beta', 'stop alpha', 'close luoshu', 'close history', 'close exec',
+      'stop beta', 'stop alpha', 'close exec', 'close history', 'close luoshu',
     ])
     for (const row of made.pluginsManager.list()) expect(row).toMatchObject({ state: 'stopped', reason: 'shutdown' })
     expect(made.pluginsManager.policyJob('gate')).toBe('on')

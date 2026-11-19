@@ -200,9 +200,9 @@ export type Provider = {
   release?(call: Call, prepared: Prepared): void
 }
 
-// A policy job or guard role as the carrier applies it: on, off by the human, failed (its module's last start or push
-// threw) or absent, held by nothing that runs
-export const policyJobStates = frozen(['on', 'off', 'failed', 'absent'] as const)
+// A policy job or guard role as the carrier applies it: on, off by the human, starting until its module is started,
+// failed (its module's last push threw, or the stopped mode closed it) or absent, held by nothing that runs
+export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent'] as const)
 export type PolicyJobState = typeof policyJobStates[number]
 
 // A plugin's lifecycle state, which the plugins manager owns

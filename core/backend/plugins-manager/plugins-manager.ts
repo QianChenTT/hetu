@@ -29,7 +29,7 @@ import { parseStrict } from '../../lib/hashed-file.ts'
 import { firstPartyPath, type Booted } from '../boot/boot.ts'
 import { agentItems, type FileResult, type Plugin, type SecurityState, type StateStore, type Switches } from '../boot/state.ts'
 import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/seams.ts'
-import type { CoreModules } from '../modules.ts'
+import { moduleRequires, type CoreModules } from '../modules.ts'
 import {
   clear, clearFailedOnce, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled, type Installed,
 } from './folders.ts'
@@ -389,11 +389,13 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the carrier's seam
 
-  // A policy job or guard role: the gate and the grant risk classifier as their core modules read, off only by the
-  // human's switch and failed while the module's last start or push threw. Nothing that runs holds the watchdog policy
-  // job or a guard role, so each is absent
+  // A policy job or guard role: the gate and the grant risk classifier as their core modules read, starting until the
+  // modules are started, off only by the human's switch and failed while the module's last push threw or once the
+  // stopped mode closed it. Nothing that runs holds the watchdog policy job or a guard role, so each is absent
   policyJob(id: string): PolicyJobState {
-    return id === 'gate' || id === 'grant-risk-classifier' ? this.modules.state(id) : 'absent'
+    if (id !== 'gate' && id !== 'grant-risk-classifier') return 'absent'
+    const state = this.modules.state(id)
+    return state === 'stopped' ? 'failed' : state
   }
 
   view(): number {
@@ -553,9 +555,9 @@ ${capabilityKey(change.capability)}`)
   private securityList(): SecurityList {
     const { switches } = this.state
     const modules: ListedPlugin[] = coreModuleIds.map(id => {
-      const state = this.modules.state(id)
+      const { state, reason } = this.moduleRow(id)
       return {
-        id, from: 'core', place: 'core', state: state === 'on' ? 'ready' : state, reason: state === 'on' ? null : this.modules.reason(id),
+        id, from: 'core', place: 'core', state, reason,
         security: isSecurityControl(id), firstParty: false, on: !isOne(switches.off, id), items: [], class: null,
       }
     })
@@ -1045,16 +1047,19 @@ ${capabilityKey(change.capability)}`)
   async start(): Promise<void> {
     await this.readInstall()
     this.failedBefore = await readFailedOnce(this.dataDir)
+    // An install list that can't be read counts as tampered, since it ships inside hetu's own files. The core modules
+    // start only once it passed
+    if (this.listResult === 'invalid') {
+      return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
+    }
     await this.modules.start(this.state.switches.off, {
       grants: () => this.grantsSnapshot(),
       exec: () => this.execView(),
       folder: () => this.state.luoshu?.folder ?? null,
+      readyMs: id => this.limitOf(id, 'readyMs'),
       fault: (id, step) => this.note('fault', { plugin: id, step }),
+      changed: (id, change, reason) => this.note('module.state', { module: id, state: change, reason }),
     })
-    // An install list that can't be read counts as tampered, since it ships inside hetu's own files
-    if (this.listResult === 'invalid') {
-      return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
-    }
     this.phase = 'all'
     this.replan()
     await this.settled()
@@ -1074,13 +1079,17 @@ ${capabilityKey(change.capability)}`)
     return this.stoppedMode
   }
 
-  // The stopped mode: every plugin stops and none starts. Only the trusted window opens, with the human's three choices
+  // The stopped mode: every plugin stops and none starts, then the core modules close in the reverse of their start, the
+  // gate last, so nothing acts while nothing can be recorded. Only the trusted window opens, with the human's three
+  // choices
   private async enterStopped(mode: StoppedMode): Promise<void> {
     this.stoppedMode = mode
     this.phase = 'stopped'
     this.note('core.stopped', { control: mode.control, why: mode.why, reason: mode.reason, again: mode.again })
     this.replan()
     await this.pumped()
+    this.modules.stop(this.state.switches.off)
+    this.replan()
   }
 
   // The core's log failed while hetu ran. The first time, the restart marker goes down and the runtime quits with an
@@ -1443,12 +1452,28 @@ ${capabilityKey(change.capability)}`)
     const state = this.modules.state(id)
     if (state === 'on') return ok
     if (state === 'off') return { kind: 'off' }
-    return { kind: 'held', state: 'failed', reason: this.modules.reason(id) ?? 'start-failed' }
+    if (state === 'failed') return { kind: 'held', state: 'failed', reason: this.modules.reason(id) ?? 'start-failed' }
+    return { kind: 'held', state: 'stopped', reason: this.modules.reason(id) ?? 'starting' }
   }
 
-  // Whether a requirement can serve: a core module while on, a plugin once ready
+  // Whether a core module serves as the graph reads it: on, with what it requires serving too. History waits on the
+  // luoshu. Before the first plan only its own state counts
+  private moduleServes(id: CoreModuleId): boolean {
+    const verdict = this.planned.verdicts.get(id)
+    return this.modules.state(id) === 'on' && (verdict === undefined || verdict.kind === 'start')
+  }
+
+  // A core module's row as the graph reads it: waiting while a module it requires can't serve, else its own state
+  private moduleRow(id: CoreModuleId): { state: PluginState, reason: string | null } {
+    const state = this.modules.state(id)
+    const verdict = this.planned.verdicts.get(id)
+    if (state === 'on' && verdict?.kind === 'waiting') return { state: 'waiting', reason: verdict.reason }
+    return { state: state === 'on' ? 'ready' : state, reason: state === 'on' ? null : this.modules.reason(id) }
+  }
+
+  // Whether a requirement can serve: a core module while it serves, a plugin once ready
   private serves(id: string): boolean {
-    return isModule(id) ? this.modules.state(id) === 'on' : this.known.get(id)?.state === 'ready'
+    return isModule(id) ? this.moduleServes(id) : this.known.get(id)?.state === 'ready'
   }
 
   private rank(k: Known): number {
@@ -1473,7 +1498,7 @@ ${capabilityKey(change.capability)}`)
   // a node too, ok while on, so a plugin requiring one runs only while it is
   private replan(): void {
     const nodes: Node[] = [
-      ...coreModuleIds.map(id => ({ id, status: this.moduleStatus(id), requires: [], rank: -1 })),
+      ...coreModuleIds.map(id => ({ id, status: this.moduleStatus(id), requires: moduleRequires[id], rank: -1 })),
       ...[...this.known.values()].map(k => ({ id: k.id, status: this.status(k), requires: k.read.manifest?.requires ?? [], rank: this.rank(k) })),
     ]
     this.planned = plan(nodes)
@@ -1559,7 +1584,7 @@ ${capabilityKey(change.capability)}`)
     const deps: Record<string, DepState> = {}
     for (const id of [...new Set([...(k.read.manifest?.requires ?? []), ...targets])].sort()) {
       if (isModule(id)) {
-        deps[id] = this.modules.state(id) === 'on' ? 'ready' : 'unavailable'
+        deps[id] = this.moduleServes(id) ? 'ready' : this.modules.state(id) === 'starting' ? 'starting' : 'unavailable'
         continue
       }
       const other = this.known.get(id)
@@ -2034,9 +2059,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       case 'luoshu.pick': {
         await this.store.writeLuoshu({ folder: change.folder })
         this.state = { ...this.state, luoshu: { folder: change.folder } }
-        // The luoshu and history take the folder now, exec with the bump. One that is off takes it once switched on
-        this.modules.picked()
-        return this.bump()
+        // The luoshu and history take the folder now, exec with the bump. One that is off takes it once switched on. A
+        // module that failed or recovered on the folder moves what requires it
+        return this.bump(this.modules.picked())
       }
       case 'item.on':
       case 'item.off':
@@ -2247,11 +2272,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // One applied change: a new grants snapshot pushed to the gate, exec's view of the grants renewed with it and the carrier
-  // told
-  private bump(): void {
+  // told. When a core module failed or recovered on the way, with this push or one just before it, the plan is made
+  // again so what requires it waits or starts
+  private bump(moved = false): void {
     this.n++
-    this.modules.bumped()
-    this.refresh()
+    const changed = this.modules.bumped() || moved
+    if (changed) this.replan()
+    else this.refresh()
   }
 
   // One item a folder plugin was granted switched on or off. A core plugin's grants are its manifest, so it has
@@ -2352,12 +2379,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       this.state = { ...this.state, switches: next }
       await this.modules.apply(next.off)
       // The gate hears the switch at once, so with the classifier on again every item not yet classed asks from the
-      // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier started
+      // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier started.
+      // One bump, so the grants snapshot grows by one for the change
       this.bump()
       if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
         void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
       }
-      this.bump()
       this.replan()
       return
     }

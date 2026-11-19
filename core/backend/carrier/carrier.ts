@@ -762,7 +762,7 @@ export class Carrier {
   }
 
   // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
-  // only while the policy job is on: failed and absent act as off and off makes no restarts. The handle
+  // only while the policy job is on: starting, failed and absent act as off and off makes no restarts. The handle
   // can outlive that, minted before start and kept through a stop grace
   private isWatchdog(way: Way): boolean {
     const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
@@ -909,6 +909,7 @@ export class Carrier {
     if (agent !== undefined && this.shutting) return 'stopped'
     const gate = this.policyJob('gate')
     if (gate === 'on') return 'decide'
+    if (gate === 'starting') return 'starting'
     if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
     if (this.muted() || !this.logFailing()) return 'pass'
     return this.down('policy-down')
@@ -1021,7 +1022,7 @@ export class Carrier {
   // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
   // anything about the note: read it, write it, list its name and the ui items it holds, from the gate with the plugin as the caller at
   // the canonical stage. A write whose item still asks at first use counts as none, since the bridge raises no prompt.
-  // Everything with the gate off while a record can still land, policy-down while it is down, as for any call
+  // Everything with the gate off while a record can still land, policy-down while it starts or is down, as for any call
   private reach(args: unknown): Outcome {
     const plugin = field(args, 'plugin') as string
     const path = field(args, 'path') as string | undefined
@@ -1059,7 +1060,7 @@ export class Carrier {
   }
 
   // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-  // read too, every path with the gate off and policy-down while the gate is failed. Never one with a dot
+  // read too, every path with the gate off and policy-down while the gate is starting or failed. Never one with a dot
   // segment, which the gate isn't asked about. One message asks the
   // gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
   // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
@@ -1209,7 +1210,7 @@ export class Carrier {
       const refused = this.decideFor(asker, stage, 'events.subscribe', scope)
       if (refused === null) continue
       if (refused.code === 'needs-confirm' || refused.code === 'throttled') return 'ask'
-      const none = refused.code === 'policy-down' || refused.code === 'stale'
+      const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'
       return none ? 'down' : 'refuse'
     }
     return 'allow'

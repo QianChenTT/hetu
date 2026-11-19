@@ -372,8 +372,8 @@ describe('measuring plain data', () => {
 })
 
 describe('the state lists', () => {
-  it('has the four policy job states and the plugin lifecycle states', () => {
-    expect(policyJobStates).toEqual(['on', 'off', 'failed', 'absent'])
+  it('has the five policy job states and the plugin lifecycle states', () => {
+    expect(policyJobStates).toEqual(['on', 'off', 'starting', 'failed', 'absent'])
     expect(pluginStates).toEqual(['found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed'])
     expect(Object.isFrozen(policyJobStates) && Object.isFrozen(pluginStates)).toBe(true)
   })
