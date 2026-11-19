@@ -12,6 +12,7 @@ import {
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
+import { pathProblem } from '../../api/scope.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
   agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
@@ -349,11 +350,12 @@ export class Carrier {
     if (!this.closed) this.bus.emit('core.quitting')
   }
 
-  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path, and one with a dot segment
-  // reaches no subscriber whatever the gate's state. The module names its own topics, so no manifest is read. No call
-  // carries it, so it makes no audit record of an events.publish
+  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path events.publish's shape
+  // refuses reaches nobody, as no call checks it, and one with a dot segment reaches no subscriber whatever the gate's
+  // state. The module names its own topics, so no manifest is read. No call carries it, so it makes no audit record of
+  // an events.publish
   publishCore(owner: string, topic: string, path: string): void {
-    if (this.closed || dotted(path)) return
+    if (this.closed || pathProblem(path) !== null || dotted(path)) return
     this.bus.publish(`${owner}.${topic}`, path)
   }
 
