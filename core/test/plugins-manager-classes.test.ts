@@ -8,8 +8,8 @@ import path from 'node:path'
 import type { Plugin, Switches } from '../backend/boot/state.ts'
 import type { GrantRiskClassifier } from '../api/policy-jobs.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
-  workerManifest, writeFolder, type Files, type Listing, type Message,
+  allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, throwingClassifier,
+  tick, until, workerManifest, writeFolder, type Files, type Listing, type Message,
 } from './plugins-manager-fakes.ts'
 import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
@@ -23,7 +23,8 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 
 const worker = (id: string, capabilities: Capability[] = []): Files => filesFor(workerManifest(id, { capabilities }))
-const withCapabilities = () => ({ ...coreInstall(), 'grant-risk-classifier': { files: filesFor(hostManifest('grant-risk-classifier')) } })
+// The grant risk classifier down: the core holds one each of whose calls throws, so no class is known
+const down = () => ({ grantRiskClassifier: throwingClassifier() })
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: `c${Math.random()}`, caller, action, args, deadline: Date.now() + 30_000 })
 
 async function listed(made: Awaited<ReturnType<typeof harness>>): Promise<SecurityList> {
@@ -58,7 +59,7 @@ async function approved(made: Awaited<ReturnType<typeof harness>>, id: string): 
 
 describe('an approval', () => {
   it('writes the class and the items that ask at first use from the grant risk classifier policy job, and its screen under the core\'s words', async () => {
-    const made = await harness({ install: withCapabilities(), folder: { reader: worker('reader', [read, fetchOne, exec]) } })
+    const made = await harness({ install: coreInstall(), folder: { reader: worker('reader', [read, fetchOne, exec]) } })
     await made.pluginsManager.start()
     const request = await approved(made, 'reader')
     expect(request.notes).toContain('Class 4, Powerful: it can read notes and reach the network, so it could send notes out')
@@ -69,7 +70,7 @@ describe('an approval', () => {
 
   it('counts what a plugin reaches through plugin.call, followed in turn, and names a network plugin\'s readers', async () => {
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { sender: worker('sender', [fetchOne]), middle: worker('middle'), notes: worker('notes', [read, { type: 'plugin.call', targets: ['middle'] }]) },
       entries: {
         sender: root => entryFor(root, { granted: [fetchOne], class: 3 }),
@@ -84,9 +85,10 @@ describe('an approval', () => {
   })
 
   it('writes a null class and every item at first use with the policy job down, and says so', async () => {
-    const made = await harness({ folder: { reader: worker('reader', [read, { type: 'storage' }]) } })
+    const made = await harness({ folder: { reader: worker('reader', [read, { type: 'storage' }]) }, modules: down() })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
+    // A classifier whose calls throw still reads on, each call answered as with the policy job down
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('on')
     const request = await approved(made, 'reader')
     expect(request.notes).toContain('The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use')
     const entry = (await made.store.load()).state.plugins.reader
@@ -98,7 +100,7 @@ describe('an approval', () => {
 describe('a network plugin’s approval', () => {
   it('names the plugins that read and can reach it', async () => {
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { sync: worker('sync', [fetchOne]), notes: worker('notes') },
       entries: { notes: root => entryFor(root, { granted: [read, { type: 'plugin.call', targets: ['sync'] }], class: 1 }) },
     })
@@ -109,8 +111,10 @@ describe('a network plugin’s approval', () => {
 })
 
 describe('a staged update', () => {
-  async function updating(entry: object, install = withCapabilities(), next: Capability[] = []) {
-    const made = await harness({ install, folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) } })
+  async function updating(entry: object, broken = false, next: Capability[] = []) {
+    const made = await harness({
+      ...(broken ? { modules: down() } : {}), folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) },
+    })
     await made.pluginsManager.start()
     const dir = path.join(made.dataDir, 'staging', 'calc-next')
     await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: next })))
@@ -118,7 +122,7 @@ describe('a staged update', () => {
   }
 
   it('loads on its own for a class 0 plugin with views while the policy job is on', async () => {
-    const { outcome } = await updating({ class: 0, granted: [{ type: 'ui.view' }] }, withCapabilities(), [{ type: 'ui.view' }])
+    const { outcome } = await updating({ class: 0, granted: [{ type: 'ui.view' }] }, false, [{ type: 'ui.view' }])
     expect(outcome).toEqual({ outcome: 'applied' })
   })
 
@@ -130,13 +134,13 @@ describe('a staged update', () => {
   })
 
   it.each([
-    ['a class above 0', { class: 1, granted: [read] }, withCapabilities(), [read]],
-    ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, withCapabilities(), [{ type: 'storage' }]],
-    ['the policy job down', { class: 0 }, coreInstall(), []],
+    ['a class above 0', { class: 1, granted: [read] }, false, [read]],
+    ['a class 0 plugin asking for a grant it doesn’t hold', { class: 0 }, false, [{ type: 'storage' }]],
+    ['the policy job down', { class: 0 }, true, []],
     // A layout draws the whole window, so a new one never takes its place unasked
-    ['a class 0 plugin holding ui.layout', { class: 0, granted: [{ type: 'ui.layout' }] }, withCapabilities(), [{ type: 'ui.layout' }]],
-  ] as [string, object, ReturnType<typeof withCapabilities>, Capability[]][])('waits for the Confirm with %s', async (_name, entry, install, next) => {
-    const { made, outcome } = await updating(entry, install, next)
+    ['a class 0 plugin holding ui.layout', { class: 0, granted: [{ type: 'ui.layout' }] }, false, [{ type: 'ui.layout' }]],
+  ] as [string, object, boolean, Capability[]][])('waits for the Confirm with %s', async (_name, entry, broken, next) => {
+    const { made, outcome } = await updating(entry, broken, next)
     expect(outcome).toMatchObject({ outcome: 'confirm' })
     expect(made.pluginsManager.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'calc' }])
   })
@@ -146,7 +150,7 @@ describe('a first-party copy', () => {
   const bundled = (files: Files) => ({ files, firstParty: true })
 
   it('takes its class from the policy job, which starts before the copy', async () => {
-    const made = await harness({ install: { ...withCapabilities(), git: bundled(worker('git', [read])) } })
+    const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read])) } })
     await made.pluginsManager.start()
     const entry = (await made.store.load()).state.plugins.git
     expect(entry.class).toBe(1)
@@ -154,7 +158,7 @@ describe('a first-party copy', () => {
   })
 
   it('asks at the first use of every item with the policy job down', async () => {
-    const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read, { type: 'storage' }])) } })
+    const made = await harness({ install: { ...coreInstall(), git: bundled(worker('git', [read, { type: 'storage' }])) }, modules: down() })
     await made.pluginsManager.start()
     const entry = (await made.store.load()).state.plugins.git
     expect(entry.class).toBeNull()
@@ -166,7 +170,7 @@ describe('the plugins connected through plugin.call', () => {
   it('count both ways, so a reader and a network plugin sharing a callee are class 4, the callee too', async () => {
     const bridge = { type: 'plugin.call', targets: ['bridge'] } as Capability
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { reader: worker('reader'), sender: worker('sender', [fetchOne, bridge]), bridge: worker('bridge', [{ type: 'storage' }]) },
       entries: {
         reader: root => entryFor(root, { granted: [read, bridge], class: 1 }),
@@ -192,7 +196,7 @@ describe('a subscription to another plugin\'s topics', () => {
   // What id's approval writes and shows, every other plugin approved before it with what it holds, beside a luoshu
   async function approval(plugins: Record<string, Capability[]>, id: string) {
     const made = await harness({
-      install: { ...withCapabilities(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
+      install: coreInstall(),
       folder: Object.fromEntries(Object.entries(plugins).map(([other, granted]) => [other, worker(other, granted)])),
       entries: Object.fromEntries(Object.entries(plugins).filter(([other]) => other !== id)
         .map(([other, granted]) => [other, (root: string) => entryFor(root, { granted, class: 0 })])),
@@ -261,7 +265,7 @@ describe('a subscription to another plugin\'s topics', () => {
 
 describe('a widened or narrowed grant', () => {
   it('adds an item that asks at first use, takes it off when the grant goes, and keeps the class in step', async () => {
-    const made = await harness({ install: withCapabilities(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) } })
+    const made = await harness({ install: coreInstall(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: exec })
     let entry = (await made.store.load()).state.plugins.tool
@@ -288,10 +292,9 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     gate.seen.at(-1)!.plugins[id].filter(item => item.firstUse).map(item => item.capability)
 
   // Plugin-folder plugins each stored with what it holds, its class and its list, started with the policy job on unless down
-  async function seeded(entries: Seeded, gate = allowAll(), down = false): Promise<Made> {
+  async function seeded(entries: Seeded, gate = allowAll(), broken = false): Promise<Made> {
     const made = await harness({
-      install: down ? coreInstall() : withCapabilities(),
-      behave: { gate: { exports: { gate } } },
+      modules: { gate, ...(broken ? down() : {}) },
       folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n, firstUse]]) =>
         [id, (root: string) => entryFor(root, { granted, class: n, ...(firstUse === undefined ? {} : { firstUse }) })])),
@@ -303,7 +306,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
   // The entry an approval of granted writes for id beside the other plugins as stored
   async function approvalOf(others: Seeded, id: string, granted: Capability[]) {
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { ...Object.fromEntries(Object.keys(others).map(other => [other, worker(other)])), [id]: worker(id, granted) },
       entries: Object.fromEntries(Object.entries(others).map(([other, [held, n]]) => [other, (root: string) => entryFor(root, { granted: held, class: n })])),
     })
@@ -371,7 +374,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
 
   it('makes every item ask with the policy job down, as an approval and a copy do then', async () => {
     const made = await seeded({ tool: [[read], null, []] }, allowAll(), true)
-    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('on')
     await made.pluginsManager.apply({ kind: 'grant.widen', plugin: 'tool', capability: { type: 'storage' } })
     expect(shape(await stored(made, 'tool'))).toEqual({ class: null, firstUse: [read, { type: 'storage' }] })
   })
@@ -402,7 +405,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     // tool stored with what it holds and a class the start can't correct, since its entry can't be written then
     async function stuck(granted: Capability[], n: number | null): Promise<Made> {
       const made = await harness({
-        install: withCapabilities(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted, class: n }) },
+        install: coreInstall(), folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted, class: n }) },
       })
       const write = made.store.writePlugin.bind(made.store)
       made.store.writePlugin = async (id, entry) => (id === 'tool' ? Promise.reject(new Error('disk full')) : write(id, entry))
@@ -462,7 +465,7 @@ describe('a widened or narrowed grant\'s own first-use list', () => {
     })
 
     it('names no own move on a first approval, which has no class before it', async () => {
-      const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync', [read, fetchOne]) } })
+      const made = await harness({ install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
       await made.pluginsManager.start()
       const request = await approved(made, 'sync')
       expect(raises(request.notes)).toEqual([])
@@ -480,8 +483,8 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
 
   async function moved() {
     const made = await harness({
-      install: withCapabilities(),
-      behave: { gate: { exports: { gate: createGate() } } },
+      install: coreInstall(),
+      modules: { gate: createGate() },
       folder: {
         listener: worker('listener', [fetchOne, hears]),
         reader: filesFor(workerManifest('reader', { capabilities: [read], provides: { topics: ['done'] } })),
@@ -535,9 +538,10 @@ describe('a live subscription its plugin\'s move into class 4 makes ask', () => 
 })
 
 describe('the plugin list', () => {
-  // With the policy job down the start classes nothing again, so each stored class stands
+  // With the policy job switched off the start classes nothing again, so each stored class stands
   it('shows each plugin-folder plugin\'s class, null for none known', async () => {
     const made = await harness({
+      switches: { off: ['grant-risk-classifier'] },
       folder: { tool: worker('tool'), other: worker('other') },
       entries: { tool: root => entryFor(root, { class: 2 }), other: root => entryFor(root, { class: null }) },
     })
@@ -549,20 +553,11 @@ describe('the plugin list', () => {
   })
 })
 
-describe('the grant risk classifier policy job', () => {
-  it('stops hetu when its module gives no grantRiskClassifier role', async () => {
-    const made = await harness({ install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: {} } } })
-    await made.pluginsManager.start()
-    await until(() => stateOf(made.pluginsManager, 'grant-risk-classifier') === 'failed')
-    expect(reasonOf(made.pluginsManager, 'grant-risk-classifier')).toBe('no-role')
-  })
-})
-
 describe('what the class rests on', () => {
   it('reads the class again before a class 0 update loads on its own, so one now connected to more waits for the Confirm', async () => {
     const call: Capability = { type: 'plugin.call', targets: ['runner'] }
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { calc: worker('calc'), runner: worker('runner') },
       entries: {
         calc: root => entryFor(root, { granted: [call], class: 0 }),
@@ -578,7 +573,7 @@ describe('what the class rests on', () => {
   it('reads the class again when an update applies', async () => {
     const call: Capability = { type: 'plugin.call', targets: ['runner'] }
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { calc: worker('calc'), runner: worker('runner') },
       entries: {
         calc: root => entryFor(root, { granted: [call], class: 1 }),
@@ -600,8 +595,8 @@ describe('what the class rests on', () => {
     ['first use that isn’t a list', { classify: () => 1, firstUse: () => 'all', screen: () => [] }],
   ])('takes the policy job as down for %s: a null class and every item at first use', async (_name, capabilities) => {
     const made = await harness({
-      install: withCapabilities(),
-      behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: capabilities as never } } },
+      install: coreInstall(),
+      modules: { grantRiskClassifier: capabilities as never },
       folder: { reader: worker('reader', [read]) },
     })
     await made.pluginsManager.start()
@@ -616,7 +611,7 @@ describe('a new copy of a first-party plugin', () => {
   const bundled = (files: Files) => ({ files, firstParty: true })
 
   async function copied(base: string | undefined, capabilities: Capability[], version: string) {
-    const made = await harness({ ...(base === undefined ? {} : { base }), install: { ...withCapabilities(), git: bundled(filesFor(workerManifest('git', { version, capabilities }))) } })
+    const made = await harness({ ...(base === undefined ? {} : { base }), install: { ...coreInstall(), git: bundled(filesFor(workerManifest('git', { version, capabilities }))) } })
     await made.pluginsManager.start()
     return made
   }
@@ -671,7 +666,7 @@ describe('a class another plugin\'s change moves', () => {
   // Two plugins calling each other's way along a chain, each with what it holds and its stored class
   async function plugins(entries: Record<string, [Capability[], number]>): Promise<Made> {
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
     })
@@ -682,8 +677,8 @@ describe('a class another plugin\'s change moves', () => {
   // A network plugin hearing a reader's topic, approved while the reader isn't installed, beside the reader's folder
   async function listening(gate = allowAll()): Promise<Made> {
     const made = await harness({
-      install: withCapabilities(),
-      behave: { gate: { exports: { gate } } },
+      install: coreInstall(),
+      modules: { gate },
       folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]) },
     })
     await made.pluginsManager.start()
@@ -767,7 +762,7 @@ describe('a class another plugin\'s change moves', () => {
 
   it('leaves the entry of a plugin whose links didn\'t change byte for byte, even one whose stored class is out of date', async () => {
     const made = await harness({
-      install: withCapabilities(),
+      install: coreInstall(),
       folder: { listener: worker('listener', [fetchOne, hears('reader.done')]), reader: worker('reader', [read]), lone: worker('lone') },
       entries: { lone: root => entryFor(root, { granted: [read, calls('far')], class: 2, firstUse: [read] }) },
     })
@@ -796,7 +791,7 @@ describe('a class another plugin\'s change moves', () => {
 
   it('replaces the class and the list with no Confirm on screen, for a first-party copy at start', async () => {
     const made = await harness({
-      install: { ...withCapabilities(), git: { files: worker('git', [fetchOne]), firstParty: true } },
+      install: { ...coreInstall(), git: { files: worker('git', [fetchOne]), firstParty: true } },
       folder: { notes: worker('notes') },
       entries: { notes: root => entryFor(root, { granted: [read, calls('git')], class: 1 }) },
     })
@@ -846,7 +841,7 @@ describe('the classes at start', () => {
 
   // A first start that approves the listener and then the reader, so both entries are right
   async function approvedBoth(): Promise<Made> {
-    const made = await harness({ install: withCapabilities(), folder: folder() })
+    const made = await harness({ install: coreInstall(), folder: folder() })
     await made.pluginsManager.start()
     await approved(made, 'listener')
     await approved(made, 'reader')
@@ -855,7 +850,7 @@ describe('the classes at start', () => {
 
   it('raises a stale network listener to 4 with its fetch and subscription asking before it starts, on a first start', async () => {
     const gate = allowAll()
-    const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
+    const made = await harness({ install: coreInstall(), modules: { gate }, folder: folder(), entries: stale })
     const seen = atStart(made, gate)
     await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
@@ -865,10 +860,10 @@ describe('the classes at start', () => {
   })
 
   it('raises a stale network listener to 4 with its fetch and subscription asking on a start whose install the last start recorded', async () => {
-    const first = await harness({ install: withCapabilities(), folder: folder() })
+    const first = await harness({ install: coreInstall(), folder: folder() })
     await first.pluginsManager.start()
     await first.pluginsManager.shutdown()
-    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder(), entries: stale })
+    const made = await harness({ base: first.base, install: coreInstall(), folder: folder(), entries: stale })
     await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [fetchOne, hears('reader.done')] })
   })
@@ -877,7 +872,7 @@ describe('the classes at start', () => {
     const first = await approvedBoth()
     await first.pluginsManager.shutdown()
     const before = { listener: await entryFile(first, 'listener'), reader: await entryFile(first, 'reader') }
-    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
+    const made = await harness({ base: first.base, install: coreInstall(), folder: folder() })
     const seen = writes(made)
     await made.pluginsManager.start()
     expect(seen).toEqual([])
@@ -891,14 +886,14 @@ describe('the classes at start', () => {
     expect((await stored(first, 'listener')).firstUse).toEqual([hears('reader.done')])
     await first.pluginsManager.shutdown()
     const before = await entryFile(first, 'listener')
-    const made = await harness({ base: first.base, install: withCapabilities(), folder: folder() })
+    const made = await harness({ base: first.base, install: coreInstall(), folder: folder() })
     await made.pluginsManager.start()
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')] })
     expect((await entryFile(made, 'listener')).equals(before)).toBe(true)
   })
 
   // A core plugin whose topics the listener hears, holding capabilities at version
-  const speaker = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { version, capabilities })) } })
+  const speaker = (version: string, capabilities: Capability[]) => ({ ...coreInstall(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { version, capabilities })) } })
 
   it('asks for the items an app update to a core plugin makes ask in an entry already at 4, while one that asks with no links stays confirmed', async () => {
     const listener = () => ({ listener: worker('listener', [fetchOne, exec, hears('mcp-http-handler.done')]) })
@@ -914,16 +909,16 @@ describe('the classes at start', () => {
   })
 
   // The second start's install and switches, from the first start's folders
-  type Next = (first: Made) => Promise<{ install: ReturnType<typeof withCapabilities>, switches?: Partial<Switches> }>
+  type Next = (first: Made) => Promise<{ install: ReturnType<typeof coreInstall>, switches?: Partial<Switches> }>
   // http's bytes changed while its list still names the hash the last start recorded
   const tampered: Next = async first => {
     const recorded = await hashOf(path.join(first.installDir, 'plugins', 'mcp-http-handler'))
-    return { install: { ...withCapabilities(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'storage' }] })), hash: recorded } } }
+    return { install: { ...coreInstall(), 'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'storage' }] })), hash: recorded } } }
   }
   it.each([
     ['a new version', async () => ({ install: speaker('1.1.0', []) })],
     ['new bytes under the same version', async () => ({ install: speaker('1.0.0', [{ type: 'storage' }]) })],
-    ['a core plugin gone', async () => ({ install: withCapabilities() })],
+    ['a core plugin gone', async () => ({ install: coreInstall() })],
     ['bytes that differ from the list', tampered],
     ['dev mode on a core plugin', async () => ({ install: speaker('1.0.0', []), switches: { devMode: ['mcp-http-handler'] } })],
     ['skipVerification on', async () => ({ install: speaker('1.0.0', []), switches: { skipVerification: true } })],
@@ -940,15 +935,16 @@ describe('the classes at start', () => {
     expect(await stored(made, 'listener')).toMatchObject({ class: 4, firstUse: [hears('reader.done')], confirmed: [fetchOne] })
   })
 
-  it('writes nothing when the policy job is down at start, so each entry keeps its class and list', async () => {
+  it('writes nothing when the policy job is switched off at start, so each entry keeps its class and list', async () => {
     const made = await harness({
+      switches: { off: ['grant-risk-classifier'] },
       folder: { ...folder(), other: worker('other', [{ type: 'storage' }]) },
       entries: { ...stale, other: root => entryFor(root, { granted: [{ type: 'storage' }], class: 4, firstUse: [{ type: 'storage' }] }) },
     })
     const files = { listener: await entryFile(made, 'listener'), other: await entryFile(made, 'other') }
     const seen = writes(made)
     await made.pluginsManager.start()
-    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('absent')
+    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
     expect(seen).toEqual([])
     expect((await entryFile(made, 'listener')).equals(files.listener)).toBe(true)
     expect((await entryFile(made, 'other')).equals(files.other)).toBe(true)
@@ -956,7 +952,7 @@ describe('the classes at start', () => {
 
   it('asks for a raised item in the run when its entry can\'t be written and still starts', async () => {
     const gate = allowAll()
-    const made = await harness({ install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: folder(), entries: stale })
+    const made = await harness({ install: coreInstall(), modules: { gate }, folder: folder(), entries: stale })
     made.store.writePlugin = async () => Promise.reject(new Error('disk full'))
     await made.pluginsManager.start()
     expect(made.link.events('fault')).toContainEqual({ plugin: 'listener', step: 'reclass' })
@@ -1106,7 +1102,7 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
     const ids = [...new Set([...Object.keys(seeded), ...Object.keys(scenario.folder ?? {})])]
     const entries: Record<string, (root: string) => Promise<Plugin>> = Object.fromEntries(Object.entries(seeded).map(([id, [granted, n, firstUse]]) =>
       [id, (root: string) => entryFor(root, { granted, class: n, ...(firstUse === undefined ? {} : { firstUse }) })]))
-    const install: Record<string, Listing> = { ...withCapabilities(), ...scenario.install }
+    const install: Record<string, Listing> = { ...coreInstall(), ...scenario.install }
     const folder: Record<string, Files> = Object.fromEntries(ids.map(id => [id, worker(id, scenario.folder?.[id] ?? seeded[id]?.[0] ?? [])]))
     // A narrowed git: its entry holds read alone at class 1 while the install's copy asks for read and fetch
     if (scenario.change?.kind === 'plugin.restore') {
@@ -1119,7 +1115,7 @@ describe('a class change, by its cause, its Confirm and the policy job', () => {
     if (policyJob === 'down' && scenario.atStart === true) role.broken = true
     const made = await harness({
       install, folder, entries,
-      behave: { gate: { exports: { gate } }, 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
+      modules: { gate, grantRiskClassifier: role },
       switches: policyJob === 'off' && scenario.atStart === true ? { off: ['grant-risk-classifier'] } : {},
     })
     await made.pluginsManager.start()
@@ -1187,7 +1183,7 @@ describe('what the human confirmed, recorded in the entry', () => {
   }
 
   it('records an item the human lets the plugin use once it asks and takes it off the list', async () => {
-    const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync', [read, fetchOne]) } })
+    const made = await harness({ install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
     await made.pluginsManager.start()
     await approved(made, 'sync')
     await made.pluginsManager.apply({ kind: 'item.on', plugin: 'sync', capability: fetchOne })
@@ -1197,7 +1193,7 @@ describe('what the human confirmed, recorded in the entry', () => {
 
   it('confirms nothing for an item switched on that wasn\'t asking', async () => {
     const made = await harness({
-      install: withCapabilities(), folder: { tool: worker('tool') },
+      install: coreInstall(), folder: { tool: worker('tool') },
       entries: { tool: root => entryFor(root, { granted: [read], class: 1, off: [read] }) },
     })
     await made.pluginsManager.start()
@@ -1207,7 +1203,7 @@ describe('what the human confirmed, recorded in the entry', () => {
 
   it('makes every item of an entry with no record ask once more, since it has confirmed nothing', async () => {
     const made = await harness({
-      install: withCapabilities(), folder: { sync: worker('sync') },
+      install: coreInstall(), folder: { sync: worker('sync') },
       entries: { sync: root => entryFor(root, { granted: [read, fetchOne], class: 4 }) },
     })
     await made.pluginsManager.start()
@@ -1217,7 +1213,7 @@ describe('what the human confirmed, recorded in the entry', () => {
   // A copy's new version names the same type with another scope: a new item, which asks
   it('counts two items as one only when type and scope are the same, so a confirmed fetch whose hosts change asks again', async () => {
     const wider: Capability = { type: 'net.fetch', hosts: ['example.com', 'example.org'] }
-    const bundled = (version: string, capabilities: Capability[]) => ({ ...withCapabilities(), git: { files: filesFor(workerManifest('git', { version, capabilities })), firstParty: true } })
+    const bundled = (version: string, capabilities: Capability[]) => ({ ...coreInstall(), git: { files: filesFor(workerManifest('git', { version, capabilities })), firstParty: true } })
     const first = await harness({ install: bundled('1.0.0', [read, fetchOne]) })
     await first.pluginsManager.start()
     await first.pluginsManager.apply({ kind: 'item.on', plugin: 'git', capability: fetchOne })
@@ -1240,7 +1236,7 @@ describe('what the human confirmed, recorded in the entry', () => {
   const listenerGrants = [exec, fetchOne, hears('mcp-http-handler.done')]
   const speaker = (version: string, capabilities: Capability[], extra: Partial<Listing> = {}): Listing =>
     ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })), ...extra })
-  const installOf = (http: Listing) => ({ ...withCapabilities(), 'mcp-http-handler': http })
+  const installOf = (http: Listing) => ({ ...coreInstall(), 'mcp-http-handler': http })
 
   // The first run under the install before the update: the listener at class 4 for exec, which the human confirmed
   async function confirmedExec(base: string, http = speaker('1.0.0', []), switches: Partial<Switches> = {}): Promise<void> {
@@ -1282,7 +1278,7 @@ describe('what the human confirmed, recorded in the entry', () => {
   it('asks for an item new rules make ask on its own in an entry already at 4, keeping the confirmed one', async () => {
     const base = await tempBase()
     const granted = [exec, commit]
-    const first = await harness({ base, install: withCapabilities(), folder: { tool: worker('tool', granted) } })
+    const first = await harness({ base, install: coreInstall(), folder: { tool: worker('tool', granted) } })
     await first.pluginsManager.start()
     await approved(first, 'tool')
     await first.pluginsManager.apply({ kind: 'item.on', plugin: 'tool', capability: exec })
@@ -1294,8 +1290,7 @@ describe('what the human confirmed, recorded in the entry', () => {
       firstUse: (held, reachable, flow) => [...real.firstUse(held, reachable, flow), ...held.filter(item => item.type === 'history')],
     }
     const made = await harness({
-      base, install: { ...coreInstall(), 'grant-risk-classifier': { files: filesFor(hostManifest('grant-risk-classifier', { version: '1.1.0' })) } },
-      behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: stricter } } },
+      base, modules: { grantRiskClassifier: stricter },
     })
     await made.pluginsManager.start()
     expect(await stored(made, 'tool')).toMatchObject({ class: 4, firstUse: [commit], confirmed: [exec] })
@@ -1316,7 +1311,7 @@ describe('what the human confirmed, recorded in the entry', () => {
     const base = await tempBase()
     const granted = [fetchOne, hears('reader.done')]
     const off = await harness({
-      base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
+      base, install: coreInstall(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]) },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
@@ -1326,19 +1321,19 @@ describe('what the human confirmed, recorded in the entry', () => {
     await off.pluginsManager.update('listener', dir)
     await off.pluginsManager.apply({ kind: 'plugin.update', plugin: 'listener' })
     await closed(off)
-    const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
+    const made = await harness({ base, install: coreInstall(), switches: { off: [] } })
     await made.pluginsManager.start()
     expect(shape(await stored(made, 'listener'))).toEqual({ class: 4, firstUse: granted })
   })
 
   it('classes an entry written while off from nothing at the next start with the policy job on and drops its mark', async () => {
     const base = await tempBase()
-    const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
+    const off = await harness({ base, install: coreInstall(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.pluginsManager.start()
     await approved(off, 'sync')
     expect(await stored(off, 'sync')).toMatchObject({ class: null, unclassed: true })
     await closed(off)
-    const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
+    const made = await harness({ base, install: coreInstall(), switches: { off: [] } })
     await made.pluginsManager.start()
     const entry = await stored(made, 'sync')
     expect(shape(entry)).toEqual({ class: 4, firstUse: [fetchOne] })
@@ -1356,7 +1351,7 @@ describe('the grant risk classifier switched off by the human', () => {
   async function asking(): Promise<{ made: Made, gate: ReturnType<typeof allowAll> }> {
     const gate = allowAll()
     const made = await harness({
-      install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: { sync: worker('sync', [read, fetchOne]) },
+      install: coreInstall(), modules: { gate }, folder: { sync: worker('sync', [read, fetchOne]) },
     })
     await made.pluginsManager.start()
     await approved(made, 'sync')
@@ -1375,12 +1370,14 @@ describe('the grant risk classifier switched off by the human', () => {
   it('makes every item an entry written while off doesn\'t name as confirmed ask once it is switched on, until the pass that follows classes it', async () => {
     const gate = allowAll()
     const made = await harness({
-      install: withCapabilities(), behave: { gate: { exports: { gate } } }, switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) },
+      install: coreInstall(), modules: { gate }, switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) },
     })
     await made.pluginsManager.start()
     await approved(made, 'sync')
     expect(flags(gate, 'sync')).toEqual([])
     await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'grant-risk-classifier' })
+    // probe: the switch-on now classes every entry before the gate hears of it, so the gate keeps the snapshot from
+    // while off, where nothing asks, until the pass ends and never holds the one where every item asks
     expect(flags(gate, 'sync')).toEqual([read, fetchOne])
     await until(() => flags(gate, 'sync').length === 1)
     expect(flags(gate, 'sync')).toEqual([fetchOne])
@@ -1395,7 +1392,7 @@ describe('the grant risk classifier switched off by the human', () => {
   it('classes every entry once it is switched on again in the run and raises a notice for each move up that alerts', async () => {
     const hears: Capability = { type: 'events.subscribe', topics: ['reader.done'] }
     const made = await harness({
-      install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
+      install: coreInstall(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener'), reader: worker('reader'), tool: worker('tool'), sender: worker('sender') },
       entries: {
         listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
@@ -1418,15 +1415,16 @@ describe('the grant risk classifier switched off by the human', () => {
     ])
   })
 
-  it('keeps a grant risk classifier that crashed strict, its class not known and every item asking, before hetu quits', async () => {
+  it('keeps an entry strict while the grant risk classifier throws, its class not known and every item asking, stopping nothing', async () => {
     const gate = allowAll()
+    const role = breakable()
     const made = await harness({
-      install: withCapabilities(), behave: { gate: { exports: { gate } } }, folder: { sync: worker('sync', [read, fetchOne]) },
+      install: coreInstall(), modules: { gate, grantRiskClassifier: role }, folder: { sync: worker('sync', [read, fetchOne]) },
       pluginsManager: { onFailure: () => {} },
     })
     await made.pluginsManager.start()
-    made.pluginsManager.crashed({ kind: 'plugin', id: 'grant-risk-classifier', half: 'host', incarnation: 1 }, 'closed')
-    expect(made.pluginsManager.policyJob('grant-risk-classifier')).toBe('failed')
+    role.broken = true
+    expect(made.pluginsManager.stopped()).toBe(null)
     const request = await approved(made, 'sync')
     expect(request.notes).toContain(DOWN)
     expect(await stored(made, 'sync')).toMatchObject({ class: null, firstUse: [read, fetchOne] })
@@ -1436,7 +1434,7 @@ describe('the grant risk classifier switched off by the human', () => {
 
   it('drops the mark at start from an entry written while off whose class and list come out as stored', async () => {
     const made = await harness({
-      install: withCapabilities(), folder: { tool: worker('tool') },
+      install: coreInstall(), folder: { tool: worker('tool') },
       entries: { tool: root => entryFor(root, { granted: [exec], class: 4, firstUse: [exec], unclassed: true }) },
     })
     await made.pluginsManager.start()
@@ -1463,7 +1461,7 @@ describe('a move up with no Confirm on screen', () => {
 
   async function confirmOff(entries: Record<string, [Capability[], number]>): Promise<Made> {
     const made = await harness({
-      install: withCapabilities(), switches: { confirmOff: true },
+      install: coreInstall(), switches: { confirmOff: true },
       folder: Object.fromEntries(Object.keys(entries).map(id => [id, worker(id)])),
       entries: Object.fromEntries(Object.entries(entries).map(([id, [granted, n]]) => [id, (root: string) => entryFor(root, { granted, class: n })])),
     })
@@ -1501,7 +1499,7 @@ describe('a move up with no Confirm on screen', () => {
     const role: GrantRiskClassifier = { ...createGrantRiskClassifier() }
     delete role.alerts
     const made = await harness({
-      install: withCapabilities(), switches: { confirmOff: true }, behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
+      install: coreInstall(), switches: { confirmOff: true }, modules: { grantRiskClassifier: role },
       folder: { tool: worker('tool') }, entries: { tool: root => entryFor(root, { granted: [read], class: 1 }) },
     })
     await made.pluginsManager.start()
@@ -1510,7 +1508,7 @@ describe('a move up with no Confirm on screen', () => {
   })
 
   it('raises nothing for the same widen through the Confirm, which shows the move', async () => {
-    const made = await harness({ install: withCapabilities(), folder: { sync: worker('sync') }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) } })
+    const made = await harness({ install: coreInstall(), folder: { sync: worker('sync') }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) } })
     await made.pluginsManager.start()
     await made.pluginsManager.request({ kind: 'grant.widen', plugin: 'sync', capability: read }, trusted)
     const [held] = (await listed(made)).requests
@@ -1559,7 +1557,7 @@ describe('a pass whose role fails for one entry', () => {
     }
   }
   const setup = (switches: Partial<Switches> = {}) => harness({
-    install: withCapabilities(), switches, behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: failingFor() } } },
+    install: coreInstall(), switches, modules: { grantRiskClassifier: failingFor() },
     folder: { listener: worker('listener'), reader: worker('reader') },
     entries: {
       listener: root => entryFor(root, { granted: [fetchOne, hears], class: 3 }),
@@ -1605,7 +1603,7 @@ describe('an update applied with no Confirm', () => {
 
   it('empties the record of a class 0 plugin whose update applied alone, so its items ask once the network comes back', async () => {
     const made = await harness({
-      install: withCapabilities(), folder: { mid: worker('mid'), reader: worker('reader'), relay: worker('relay') },
+      install: coreInstall(), folder: { mid: worker('mid'), reader: worker('reader'), relay: worker('relay') },
       entries: {
         mid: root => entryFor(root, { granted: [hears, calls], class: 4 }),
         reader: root => entryFor(root, { granted: [read], class: 4 }),
@@ -1627,7 +1625,7 @@ describe('an update applied with no Confirm', () => {
   it('empties the record when the update applies Confirm-off and keeps it through a Confirm', async () => {
     for (const confirmOff of [true, false]) {
       const made = await harness({
-        install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool') },
+        install: coreInstall(), switches: { confirmOff }, folder: { tool: worker('tool') },
         entries: { tool: root => entryFor(root, { granted: [read, fetchOne], class: 4 }) },
       })
       await made.pluginsManager.start()
@@ -1653,9 +1651,9 @@ describe('a notice owed until the human answers it', () => {
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
   const http = (version: string, capabilities: Capability[]): Listing =>
     ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })) })
-  const v1 = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.0.0', []) })
-  const fetches = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
-  const reads = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [read]) })
+  const v1 = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.0.0', []) })
+  const fetches = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.1.0', [read]) })
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
@@ -1722,7 +1720,7 @@ describe('a notice owed until the human answers it', () => {
   it('keeps one notice per plugin from the class last shown to the one it holds now', async () => {
     const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
-    const further = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) } })
+    const further = await harness({ base, install: { ...coreInstall(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) } })
     await further.pluginsManager.start()
     expect(await notices(further)).toEqual([notice('p', 'class 0, Contained', 'class 4, Powerful')])
     expect((await stored(further, 'p')).owed).toEqual({ from: 0, cause: 'start', by: null })
@@ -1731,7 +1729,7 @@ describe('a notice owed until the human answers it', () => {
   it('owes nothing once the plugin is back where nothing alerts', async () => {
     const { base, made } = await updated([calls('mcp-http-handler')], 0, fetches)
     await closed(made)
-    const back = await harness({ base, install: { ...withCapabilities(), 'mcp-http-handler': http('1.2.0', []) } })
+    const back = await harness({ base, install: { ...coreInstall(), 'mcp-http-handler': http('1.2.0', []) } })
     await back.pluginsManager.start()
     expect(await stored(back, 'p')).toMatchObject({ class: 0 })
     expect((await stored(back, 'p')).owed).toBeUndefined()
@@ -1765,7 +1763,7 @@ describe('a notice owed until the human answers it', () => {
     const granted = [fetchOne, hears('reader.done')]
     const extra = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`new${i}`, worker(`new${i}`)]))
     const made = await harness({
-      install: withCapabilities(), switches: { off: ['grant-risk-classifier'] },
+      install: coreInstall(), switches: { off: ['grant-risk-classifier'] },
       folder: { listener: worker('listener', granted), reader: worker('reader', [read]), ...extra },
       entries: { listener: root => entryFor(root, { granted, class: 3 }), reader: root => entryFor(root, { granted: [read], class: 1 }) },
     })
@@ -1784,10 +1782,10 @@ describe('a notice owed across an entry stored strict', () => {
   const calls = (...targets: string[]): Capability => ({ type: 'plugin.call', targets })
   const http = (version: string, capabilities: Capability[]): Listing =>
     ({ files: filesFor(hostManifest('mcp-http-handler', { version, capabilities, provides: { topics: ['done'] } })) })
-  const v1 = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.0.0', []) })
-  const fetches = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
-  const reads = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.1.0', [read]) })
-  const both = () => ({ ...withCapabilities(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) })
+  const v1 = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.0.0', []) })
+  const fetches = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.1.0', [fetchOne]) })
+  const reads = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.1.0', [read]) })
+  const both = () => ({ ...coreInstall(), 'mcp-http-handler': http('1.2.0', [read, fetchOne]) })
   const stored = async (made: Made, id: string) => (await made.store.load()).state.plugins[id]!
   const notices = async (made: Made) => (await listed(made)).requests.filter(held => held.kind === 'class.raised').map(held => held.text)
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
@@ -1802,7 +1800,7 @@ describe('a notice owed across an entry stored strict', () => {
       },
     }
   }
-  const failing = (type: Capability['type']) => ({ 'grant-risk-classifier': { exports: { grantRiskClassifier: failingFor(type) } } })
+  const failing = (type: Capability['type']) => ({ grantRiskClassifier: failingFor(type) })
   async function closed(made: Made): Promise<void> {
     await made.pluginsManager.shutdown().catch(() => {})
     made.carrier.close()
@@ -1810,7 +1808,7 @@ describe('a notice owed across an entry stored strict', () => {
   }
   // A start on the same data, the role failing for that type when one is named
   async function started(base: string, install: () => ReturnType<typeof v1>, type?: Capability['type']): Promise<Made> {
-    const made = await harness({ base, install: install(), ...(type === undefined ? {} : { behave: failing(type) }) })
+    const made = await harness({ base, install: install(), ...(type === undefined ? {} : { modules: failing(type) }) })
     await made.pluginsManager.start()
     return made
   }
@@ -1848,7 +1846,7 @@ describe('a notice owed across an entry stored strict', () => {
     const base = await tempBase()
     const granted = [calls('mcp-http-handler')]
     const off = await harness({
-      base, install: fetches(), switches: { off: ['grant-risk-classifier'] }, behave: failing('plugin.call'),
+      base, install: fetches(), switches: { off: ['grant-risk-classifier'] }, modules: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: 0 }) },
     })
     await off.pluginsManager.start()
@@ -1892,7 +1890,7 @@ describe('a notice owed across an entry stored strict', () => {
     const role = breakable()
     const base = await tempBase()
     const made = await harness({
-      base, install: withCapabilities(), behave: { 'grant-risk-classifier': { exports: { grantRiskClassifier: role } } },
+      base, install: coreInstall(), modules: { grantRiskClassifier: role },
       folder: { sync: worker('sync', [fetchOne]) }, entries: { sync: root => entryFor(root, { granted: [fetchOne], class: 3 }) },
     })
     await made.pluginsManager.start()
@@ -1904,7 +1902,7 @@ describe('a notice owed across an entry stored strict', () => {
     expect(await stored(made, 'sync')).toMatchObject({ class: null })
     expect((await stored(made, 'sync')).owed).toBeUndefined()
     await closed(made)
-    const known = await harness({ base, install: withCapabilities() })
+    const known = await harness({ base, install: coreInstall() })
     await known.pluginsManager.start()
     expect(await stored(known, 'sync')).toMatchObject({ class: 4 })
     expect(await notices(known)).toEqual([])
@@ -1936,7 +1934,7 @@ describe('a notice owed across an entry stored strict', () => {
     const base = await tempBase()
     const granted = [calls('mcp-http-handler')]
     const strict = await harness({
-      base, install: fetches(), behave: failing('plugin.call'),
+      base, install: fetches(), modules: failing('plugin.call'),
       folder: { p: worker('p', granted) }, entries: { p: root => entryFor(root, { granted, class: n, ...extra }) },
     })
     await strict.pluginsManager.start()
@@ -1964,18 +1962,18 @@ describe('a notice for a plugin never classed', () => {
 
   it('raises one at the next start with the policy job on for a plugin approved while off', async () => {
     const base = await tempBase()
-    const off = await harness({ base, install: withCapabilities(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
+    const off = await harness({ base, install: coreInstall(), switches: { off: ['grant-risk-classifier'] }, folder: { sync: worker('sync', [read, fetchOne]) } })
     await off.pluginsManager.start()
     await approved(off, 'sync')
     await closed(off)
-    const made = await harness({ base, install: withCapabilities(), switches: { off: [] } })
+    const made = await harness({ base, install: coreInstall(), switches: { off: [] } })
     await made.pluginsManager.start()
     expect(await notices(made)).toEqual([['sync', fromNothing('sync', 'class 4, Powerful'), 'Why: the classing at start, which found what changed while hetu was not running']])
   })
 
   it('raises one for a plugin approved Confirm-off, even below 4, and none for one approved through its Confirm', async () => {
     for (const confirmOff of [true, false]) {
-      const made = await harness({ install: withCapabilities(), switches: { confirmOff }, folder: { tool: worker('tool', [read]) } })
+      const made = await harness({ install: coreInstall(), switches: { confirmOff }, folder: { tool: worker('tool', [read]) } })
       await made.pluginsManager.start()
       const answer = await made.pluginsManager.request({ kind: 'plugin.approve', plugin: 'tool' }, trusted)
       if (!confirmOff) await made.pluginsManager.confirm((answer as { held: string }).held, {})
@@ -1987,12 +1985,12 @@ describe('a notice for a plugin never classed', () => {
 
   it('raises none for an entry the policy job down left with a class not known, which counts as 4', async () => {
     const base = await tempBase()
-    const down = await harness({ base, install: coreInstall(), folder: { sync: worker('sync', [read, fetchOne]) } })
+    const down = await harness({ base, folder: { sync: worker('sync', [read, fetchOne]) }, modules: { grantRiskClassifier: throwingClassifier() } })
     await down.pluginsManager.start()
     await approved(down, 'sync')
     expect((await down.store.load()).state.plugins.sync).toMatchObject({ class: null })
     await closed(down)
-    const made = await harness({ base, install: withCapabilities() })
+    const made = await harness({ base, install: coreInstall() })
     await made.pluginsManager.start()
     expect((await made.store.load()).state.plugins.sync).toMatchObject({ class: 4 })
     expect(await notices(made)).toEqual([])
