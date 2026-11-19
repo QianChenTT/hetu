@@ -24,13 +24,6 @@ class FakePortMain extends EventEmitter {
 }
 
 let seen: unknown[][] = []
-let frozen = 0
-const hosts = {
-  freeze: () => {
-    frozen++
-  },
-  importer: async () => ({ default: { kind: 'hetu-plugin', spec: { start() {} } }, provider: { prepare: async () => ({ scope: {} }), perform: async () => ({}) } }),
-}
 
 function channel() {
   seen = []
@@ -38,7 +31,7 @@ function channel() {
   const utility = { startUtility: (start: unknown) => void seen.push(['startUtility', start]), kill: (id: string, n: number) => void seen.push(['kill', id, n]) }
   const core = new FakePortMain()
   const plugin = new FakePortMain()
-  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1), hosts, utility)
+  const runtime = electronRuntime(() => ({ port1: core as unknown as MessagePortMain, port2: plugin as unknown as MessagePortMain }), workers, (_plugin, name) => (name === 'resultBytes' ? 100 : 1), utility)
   return { runtime, core, plugin }
 }
 
@@ -139,18 +132,13 @@ describe('the Electron runtime', () => {
     expect(closed).toBe(1)
   })
 
-  it('starts and ends workers through the hidden renderer and loads a host half from its verified bytes', async () => {
+  it('starts and ends workers through the hidden renderer and loads no host half in main', () => {
     const { runtime, plugin } = channel()
     const start = { id: 'search', incarnation: 1, code: Buffer.from('// search'), port: plugin, drawer: false }
     runtime.startWorker(start)
     runtime.terminate('search', 1)
     expect(seen).toEqual([['start', start], ['terminate', 'search', 1]])
-    frozen = 0
-    const host = { id: 'luoshu', incarnation: 1, root: '', files: [{ path: 'host.js', bytes: Buffer.from('') }], entry: 'host.js', link: { post() {}, listen() {} } }
-    expect(Object.keys(await runtime.startHost(host))).toEqual(['provider'])
-    await runtime.startHost({ ...host, id: 'gate' })
-    // The built-ins freeze once, before the first host half
-    expect(frozen).toBe(1)
+    expect('startHost' in runtime).toBe(false)
   })
 
   it('starts and kills utility halves through the utility runtime', () => {

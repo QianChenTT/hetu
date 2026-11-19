@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { corePluginIds, policyJobIds } from '../api/ids.ts'
+import { coreModuleIds, corePluginIds } from '../api/ids.ts'
 import { plan, type Node, type Status } from '../backend/plugins-manager/graph.ts'
 import { bootOrder } from '../backend/plugins-manager/plugins-manager.ts'
 
@@ -82,15 +82,8 @@ describe('the requires graph', () => {
 })
 
 describe('the boot order', () => {
-  it('names every core plugin once, the policy job holders first with the gate at their head', () => {
+  it('names every core plugin once and no core module, which start before any plugin', () => {
     expect([...bootOrder].sort()).toEqual([...corePluginIds].sort())
-    expect(new Set(bootOrder.slice(0, policyJobIds.length))).toEqual(new Set(policyJobIds))
-    expect(bootOrder[0]).toBe('gate')
-  })
-
-  it('starts the providers before leases, the guard', () => {
-    for (const provider of ['storage', 'luoshu', 'history', 'exec']) {
-      expect(bootOrder.indexOf(provider as never)).toBeLessThan(bootOrder.indexOf('leases'))
-    }
+    for (const id of coreModuleIds) expect(bootOrder).not.toContain(id)
   })
 })
