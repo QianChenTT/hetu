@@ -9,8 +9,10 @@ import { communitySource } from './community.ts'
 // The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
 // or the community package npm installed at the commit package.json pins
 const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
-// The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names
-const INSTALL = ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'mcp-http-handler']
+// The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
+// utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
+// main.js
+const INSTALL = ['mcp-http-handler']
 // The in-page core plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
 // holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
 // plugins manager path for in-page code
@@ -115,7 +117,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     target: NODE,
   })
   // The core plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the plugins manager checks
-  // before it starts the host half
+  // before it starts the host half in its utility process
   const plugins: Record<string, unknown> = {}
   for (const id of INSTALL) {
     const source = path.join(core, '..', 'core-plugins', id)
