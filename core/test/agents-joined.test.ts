@@ -8,6 +8,7 @@ import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
+import { luoshuModule } from './modules-fakes.ts'
 import {
   coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,
@@ -40,7 +41,6 @@ async function joined(gate: 'on' | 'off') {
   const search = filesFor(workerManifest('search', { capabilities: [everything], provides: { actions: { query: {} } } }))
   await writeInstall(installDir, {
     ...coreInstall(),
-    luoshu: { files: filesFor(hostManifest('luoshu')) },
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcp, firstParty: true },
     search: { files: search, firstParty: true },
@@ -75,8 +75,8 @@ async function joined(gate: 'on' | 'off') {
     },
   }
   const runtime = new FakeRuntime()
-  runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider, luoshu: luoshu.role } } }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})

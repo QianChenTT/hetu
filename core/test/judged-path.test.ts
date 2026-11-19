@@ -7,7 +7,8 @@ import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.
 import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message } from './plugins-manager-fakes.ts'
+import { luoshuModule } from './modules-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, type Message } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -43,9 +44,10 @@ async function world(granted: Record<string, string[]>) {
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } })
+  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  // The grant risk classifier off, so no item of a class 4 plugin asks at first use and the path alone is judged
+  await store.writeSwitches({ ...defaultSwitches(), off: ['grant-risk-classifier'] })
   for (const [id, paths] of Object.entries(granted)) {
     const items = grants(...paths)
     const root = path.join(dataDir, 'plugins', id)
@@ -86,8 +88,8 @@ async function world(granted: Record<string, string[]>) {
       }
     },
   }
-  runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider, luoshu: luoshu.role } } }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
+  const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   const junctions: string[] = []
   open.push(async () => {
     luoshu.close()
