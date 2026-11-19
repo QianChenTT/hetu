@@ -85,7 +85,7 @@ export class CoreModules {
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
   private readonly pushFailed = new Set<CoreModuleId>()
-  // The modules whose start runs now, and each module's latest start, so a start that ran out of time and finishes late
+  // The modules whose start runs now and each module's latest start, so a start that ran out of time and finishes late
   // can tell it was not the latest
   private readonly beginning = new Set<CoreModuleId>()
   private readonly attempts = new Map<CoreModuleId, number>()
@@ -194,7 +194,7 @@ export class CoreModules {
   }
 
   // The human's switches as they now stand. A module switched off is closed where it has a close and its lookups answer
-  // null. One switched on again is started again where it has a start, given readyMs, and handed what it needs
+  // null. One switched on again is started again where it has a start (given readyMs) and handed what it needs
   async apply(off: readonly string[]): Promise<void> {
     const was = this.off
     this.off = new Set(off)
@@ -254,7 +254,7 @@ export class CoreModules {
     return { folder: this.handed?.folder() ?? null, dataDir: this.dataDir, installDir: this.installDir }
   }
 
-  // A start that throws or runs past readyMs marks the module failed until a start goes through, and hetu runs on
+  // A start that throws or runs past readyMs marks the module failed until a start goes through. hetu runs on
   // without it. History with no git to run is one, exec looking for a program on a path that stalls another. A start
   // that ran out of time and finishes late is closed again, unless a later start began meanwhile
   private async begin(id: CoreModuleId): Promise<void> {
@@ -347,7 +347,7 @@ export class CoreModules {
     return new Map(coreModuleIds.map(id => [id, this.state(id)]))
   }
 
-  // Tells each change of a module's state since before, among ids. Starting is no change of its own, and a module that
+  // Tells each change of a module's state since before, among ids. Starting is no change of its own. A module that
   // goes from starting to off or stopped never ran. Answers whether any changed
   private tell(before: ReadonlyMap<CoreModuleId, ModuleState>, why: string | null, ids: readonly CoreModuleId[] = coreModuleIds): boolean {
     let any = false

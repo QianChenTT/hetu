@@ -20,7 +20,7 @@ const rows = async (made: Awaited<ReturnType<typeof harness>>) => ((await made.p
 const changes = (made: Awaited<ReturnType<typeof harness>>) => made.link.events('module.state')
 
 describe('a core module\'s start', () => {
-  it('runs past readyMs as failed with start-failed, and hetu opens without it with every plugin started', async () => {
+  it('runs past readyMs as failed with start-failed while hetu opens without it, every plugin started', async () => {
     const exec = fakeExec()
     exec.start = () => new Promise(() => {})
     const made = await harness({ ...needing('alpha', 'luoshu'), modules: { exec }, limits: { readyMs: 50 } })
@@ -92,7 +92,7 @@ describe('what requires a core module', () => {
     await until(() => stateOf(made.pluginsManager, 'runner') === 'ready')
   })
 
-  it('lists history waiting on the luoshu while the luoshu is off, and a plugin requiring history waits too', async () => {
+  it('lists history waiting on the luoshu while the luoshu is off, a plugin requiring history waiting too', async () => {
     const made = await harness({ ...needing('timeline', 'history'), modules: { history: fakeHistory() }, switches: { off: ['luoshu'] } })
     await made.pluginsManager.start()
     expect((await rows(made)).find(row => row.id === 'history')).toMatchObject({ state: 'waiting', reason: 'dependency:luoshu:off', on: true })

@@ -111,7 +111,7 @@ describe('an install list that doesn\'t check out', () => {
 })
 
 // The core's log is the one security control left whose failure stops hetu. Its folder swapped for a file makes every
-// write fail, and logFailMs lowered makes it count as failed soon
+// write fail. logFailMs lowered makes it count as failed soon
 describe('the core\'s log failing while hetu runs', () => {
   const folder = (dataDir: string) => path.join(dataDir, 'events')
   async function breakLog(dataDir: string): Promise<void> {
@@ -265,7 +265,7 @@ describe('the switches and limits', () => {
     await showing(page, 'Type a whole number from 1 up')
   })
 
-  it('switches the gate off only once the human typed its id and confirmed after the delay, and the banner says so', async () => {
+  it('switches the gate off only once the human typed its id and confirmed after the delay, the banner saying so', async () => {
     const dataDir = await data()
     const app = await start(dataDir, await install())
     const editor = await editorPage(app)

@@ -290,7 +290,7 @@ describe('the core modules', () => {
     expect(modules.gate()).toBeNull()
   })
 
-  it('tell each module that started and each that failed at start, and nothing for one switched off', async () => {
+  it('tell each module that started and each that failed at start but nothing for one switched off', async () => {
     const { options, throws } = fakes()
     throws.add('exec.start')
     const modules = made(options)
@@ -452,7 +452,7 @@ describe('the core modules', () => {
   })
 
   describe('the stopped mode', () => {
-    it('closes every module in the reverse of its start, the gate last, and serves nothing after, the gate and the classifier included', async () => {
+    it('closes every module in the reverse of its start with the gate last and serves nothing after, the gate and the classifier included', async () => {
       const { options, seen } = fakes()
       const modules = made(options)
       const { handed, changes } = handing()
