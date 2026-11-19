@@ -1,5 +1,5 @@
 import { API_VERSION } from '../api/manifest.ts'
-import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
+import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

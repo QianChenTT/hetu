@@ -6,8 +6,8 @@ import type { Call, Prepared } from '../api/policy-jobs.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../core-plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../backend/policy/gate/gate.ts'
+import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
   coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,

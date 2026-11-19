@@ -9,9 +9,9 @@ import { toolFor, toolList } from '../api/tools.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../../core-plugins/gate/src/gate.ts'
-import { createHistory } from '../../core-plugins/history/src/history.ts'
-import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../backend/policy/gate/gate.ts'
+import { createHistory } from '../backend/providers/history/history.ts'
+import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
   coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,

@@ -11,8 +11,8 @@ import {
   allowAll, cleanup, coreInstall, entryFor, filesFor, firstPartyEntry, harness, hashOf, hostManifest, reasonOf, stateOf, tempBase, tick, until,
   workerManifest, writeFolder, type Files, type Listing, type Message,
 } from './plugins-manager-fakes.ts'
-import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
-import { createGate } from '../../core-plugins/gate/src/gate.ts'
+import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
+import { createGate } from '../backend/policy/gate/gate.ts'
 
 afterEach(cleanup)
 
