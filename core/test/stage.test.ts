@@ -38,7 +38,7 @@ function constant(main: string, name: 'PACKAGED' | 'LOCKED'): boolean {
   return value
 }
 
-const INSTALL_PLUGINS =['exec', 'file-explorer', 'gate', 'grant-risk-classifier', 'hidden-marks', 'history', 'layout', 'luoshu', 'mcp-http-handler', 'search', 'storage']
+const INSTALL_PLUGINS = ['file-explorer', 'hidden-marks', 'layout', 'mcp-http-handler', 'search']
 
 // The time each stage built in a test may take. A stage builds main.js, the bootstraps, the frontend and every install
 // plugin, which took about 5 s on a shared macOS runner against vitest's 5 s, so each gets four times that

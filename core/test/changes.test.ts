@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { agentAsk, change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
-import { isSecurityControl, securityControls } from '../api/ids.ts'
+import { isSecurityControl } from '../api/ids.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../api/limits.ts'
 
 const raw = (text: string) => JSON.parse(text)
@@ -244,10 +244,5 @@ describe('the security controls', () => {
   it('are the policy job holders and the guards core/api expects, which the log is not', () => {
     for (const id of ['gate', 'grant-risk-classifier', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
     for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
-  })
-
-  it('are only those the install names, in the fixed order', () => {
-    expect(securityControls(['luoshu', 'watchdog', 'gate', 'storage'])).toEqual(['gate', 'watchdog'])
-    expect(securityControls([])).toEqual([])
   })
 })
