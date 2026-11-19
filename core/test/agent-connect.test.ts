@@ -169,12 +169,12 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
   const made = await harness({
     install: {
-      ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true },
+      ...coreInstall(), mcp: { files: mcp, firstParty: true },
       'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
-    behave: { gate: { exports: { gate } } },
+    modules: { gate },
     pluginsManager: { clock: () => clock.now, confirmDelayMs: delayMs },
   })
   await made.pluginsManager.start()

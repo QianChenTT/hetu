@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_LABEL_LENGTH } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest,
+  allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, workerManifest,
 } from './plugins-manager-fakes.ts'
 
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex')
@@ -166,13 +166,13 @@ describe('agents\' items in the grants snapshot', () => {
     const gate = allowAll()
     const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
     const made = await harness({
-      install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true } },
+      install: { ...coreInstall(), mcp: { files: mcp, firstParty: true } },
       folder: { mcp, alpha: filesFor(workerManifest('alpha', { capabilities: [read] })) },
       entries: {
         mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, agents, ...over }),
         alpha: async root => ({ ...firstPartyEntry(await hashOf(root), { granted: [read], class: 1 }), signer: 'sigstore:someone' }),
       },
-      behave: { gate: { exports: { gate } } },
+      modules: { gate },
     })
     await made.pluginsManager.start()
     return { ...made, gate }
