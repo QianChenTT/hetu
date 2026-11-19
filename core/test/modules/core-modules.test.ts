@@ -121,6 +121,8 @@ describe('the core modules', () => {
     const modules = made(options)
     await modules.start(['gate', 'storage', 'luoshu', 'grant-risk-classifier'], handing().handed)
     expect(modules.state('gate')).toBe('off')
+    expect(modules.reason('gate')).toBe('off')
+    expect(modules.reason('exec')).toBeNull()
     expect(modules.gate()).toBeNull()
     expect(modules.grantRiskClassifier()).toBeNull()
     expect(modules.provider('storage')).toBeNull()
@@ -163,6 +165,7 @@ describe('the core modules', () => {
     const { handed, faults } = handing()
     await modules.start([], handed)
     expect(modules.state('history')).toBe('failed')
+    expect(modules.reason('history')).toBe('start-failed')
     expect(modules.provider('history')).toBeNull()
     expect(faults).toEqual(['history start'])
     // The rest started and serve
@@ -182,6 +185,7 @@ describe('the core modules', () => {
     const { handed, faults } = handing()
     await modules.start([], handed)
     expect(modules.state('gate')).toBe('failed')
+    expect(modules.reason('gate')).toBe('state-changed')
     expect(modules.gate()).toBeNull()
     expect(faults).toEqual(['gate stateChanged'])
     // Exec is pushed beside it and stays on

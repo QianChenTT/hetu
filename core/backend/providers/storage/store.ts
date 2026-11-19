@@ -26,7 +26,7 @@ const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason
 
 export type Storage = Provider & {
   readonly quotas: Quotas
-  // The data folder the plugins manager hands an install host half. Calls before it answer unavailable
+  // The data folder the core modules open storage on at start. Calls before it answer unavailable
   open(dataDir: string): void
   // Removes a space in its turn, after every call already queued on it, for the plugins manager's clears
   clear(kind: Kind, space: string): Promise<void>
