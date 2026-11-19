@@ -1,9 +1,10 @@
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
+import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -106,6 +107,45 @@ describe('an install list that doesn\'t check out', () => {
     const done = exited(app)
     await page.getByRole('button', { name: 'Quit' }).click()
     expect(await done).toBe(0)
+  })
+})
+
+// The core's log is the one security control left whose failure stops hetu. Its folder swapped for a file makes every
+// write fail, and logFailMs lowered makes it count as failed soon
+describe('the core\'s log failing while hetu runs', () => {
+  const folder = (dataDir: string) => path.join(dataDir, 'events')
+  async function breakLog(dataDir: string): Promise<void> {
+    await rename(folder(dataDir), `${folder(dataDir)}-away`)
+    await writeFile(folder(dataDir), '')
+  }
+  async function mendLog(dataDir: string): Promise<void> {
+    await rm(folder(dataDir), { force: true })
+    await rename(`${folder(dataDir)}-away`, folder(dataDir))
+  }
+  const readied = async (dataDir: string) => (await records(dataDir)).filter(record => record.event === 'core.ready').length
+
+  it('quits with an error to start again, then stops in the stopped mode when it fails in the next run', async () => {
+    const dataDir = await data({ switches: { limits: { all: { logFailMs: 1000 }, plugins: {} } } })
+    const installDir = await install()
+    const app = await start(dataDir, installDir)
+    const editor = await editorPage(app)
+    await until(async () => await readied(dataDir) === 1)
+    const done = exited(app)
+    await breakLog(dataDir)
+    // An applied change writes a record that can't land
+    await ask(editor, 'security.request', { change: { kind: 'confirmOff', on: false } })
+    expect(await done).toBe(1)
+    expect(await readFile(path.join(dataDir, 'failed-once'), 'utf8')).toBe('log')
+    await mendLog(dataDir)
+
+    const again = await start(dataDir, installDir)
+    const second = await editorPage(again)
+    await until(async () => await readied(dataDir) === 2)
+    await breakLog(dataDir)
+    await ask(second, 'security.request', { change: { kind: 'confirmOff', on: false } })
+    const page = await trustedPage(again)
+    await showing(page, 'hetu already started again once after a failure')
+    await until(async () => (await visibleWindows(again)).length === 1)
   })
 })
 
@@ -223,6 +263,31 @@ describe('the switches and limits', () => {
     await page.getByLabel('New value for readyMs').fill('ten')
     await page.locator('.limit', { hasText: 'readyMs ·' }).getByRole('button', { name: 'Set' }).click()
     await showing(page, 'Type a whole number from 1 up')
+  })
+
+  it('switches the gate off only once the human typed its id and confirmed after the delay, and the banner says so', async () => {
+    const dataDir = await data()
+    const app = await start(dataDir, await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    await showing(page, 'gate · ships with hetu')
+    await tick(PAST_DELAY)
+    await page.locator('.plugin', { hasText: 'gate · ships with hetu' }).getByRole('button', { name: 'Switch off' }).click()
+    await showing(page, 'Switch gate off')
+    const confirm = page.getByRole('button', { name: 'Confirm' })
+    await tick(PAST_DELAY)
+    expect(await confirm.isDisabled()).toBe(true)
+    await page.getByLabel('Type gate to confirm').fill('gat')
+    expect(await confirm.isDisabled()).toBe(true)
+    await page.getByLabel('Type gate to confirm').fill('gate')
+    expect(await confirm.isDisabled()).toBe(false)
+    await confirm.click()
+    await until(() => logged(dataDir, 'security.confirm', { kind: 'plugin.off', target: 'gate' }))
+    // The record lands before the change applies
+    await until(async () => (await new StateStore(dataDir).load()).state.switches.off.includes('gate'))
+    await until(async () => (await editor.locator('#banner li').allTextContents()).includes('gate: off'))
   })
 })
 
