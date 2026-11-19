@@ -4,7 +4,6 @@ import { measurePlain } from '../../api/measure.ts'
 import { messageCap, newBudget, spend } from '../../api/rate.ts'
 import type { Port } from '../carrier/seams.ts'
 import type { Runtime, WorkerStart } from '../plugins-manager/seams.ts'
-import { type HostLoading, loadHost } from './hosts.ts'
 
 // A MessagePortMain as the carrier reads a port. A worker's messages reach main only through the relay in the worker
 // host page, which forwards nothing but text within the plugin's cap, so the port reads only that and parses it.
@@ -50,25 +49,14 @@ function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() =>
   }
 }
 
-// The plugins manager's runtime on Electron. Workers start and end in the hidden renderer. A host half loads from the bytes the
-// plugins manager hashed, the built-ins frozen once before the first one. A utility half forks through the utility runtime.
-// limit is the carrier's: a limit as it applies to one plugin
+// The plugins manager's runtime on Electron. Workers start and end in the hidden renderer. A utility half forks through
+// the utility runtime. limit is the carrier's: a limit as it applies to one plugin
 export function electronRuntime(
   channel: () => { port1: MessagePortMain, port2: MessagePortMain },
   workers: Pick<Runtime, 'terminate'> & { start(start: WorkerStart): void },
   limit: (plugin: string, name: LimitName) => number,
-  hosts: HostLoading,
   utility: Pick<Runtime, 'startUtility' | 'kill'>,
 ): Runtime {
-  let frozen = false
-  const loading: HostLoading = {
-    freeze() {
-      if (frozen) return
-      frozen = true
-      hosts.freeze()
-    },
-    importer: hosts.importer,
-  }
   return {
     channel(id, counted = false) {
       const { port1, port2 } = channel()
@@ -77,9 +65,6 @@ export function electronRuntime(
     },
     startWorker(start) {
       workers.start(start)
-    },
-    startHost(start) {
-      return loadHost(start, loading)
     },
     terminate(id, incarnation) {
       workers.terminate(id, incarnation)

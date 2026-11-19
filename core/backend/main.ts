@@ -142,7 +142,7 @@ async function start(): Promise<void> {
       locked: LOCKED,
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])) as Record<typeof RELAY_LIMITS[number], number>,
     })
-    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, { freeze: freezeIntrinsics, importer: url => import(url) }, utility)
+    const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, utility)
 
     // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
     // main, so a Confirm counts only once it armed
@@ -158,8 +158,8 @@ async function start(): Promise<void> {
       for (const window of seen) if (window !== trusted.window && !window.isDestroyed()) window.close()
       editor = null
     }
-    // A failure while running: windows hear core.quitting and get their grace, then hetu quits with an error and starts
-    // once more. Or the plugins manager stopped in the stopped mode, which leaves only the trusted window
+    // The log failing while running: windows hear core.quitting and get their grace, then hetu quits with an error and
+    // starts once more. Or the plugins manager stopped in the stopped mode, which leaves only the trusted window
     const onFailure = (failure: Failure) => afterFailure(failure, {
       quitting: () => quitting !== null,
       announce: () => {
@@ -277,9 +277,11 @@ async function start(): Promise<void> {
       editor.focus()
     })
 
+    // The built-ins main decides with are frozen for the run before the core modules start
+    freezeIntrinsics()
     await wired.pluginsManager.start()
     if (quitting !== null) return
-    // A security control failed at start: only the trusted window opens, with the human's three choices
+    // The install list didn't check out: only the trusted window opens
     if (wired.pluginsManager.stopped() !== null) trusted.show()
     else editor = show(editorWindow())
   } catch (err) {
