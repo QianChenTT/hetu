@@ -92,6 +92,8 @@ export class CoreModules {
   // Why a module was stopped, by shutdown or by the stopped mode. A stopped module stays stopped for the run
   private readonly stoppedFor = new Map<CoreModuleId, 'shutdown' | 'stopped-mode'>()
   private handed: Handed | null = null
+  // True while start runs: every module reads starting until all are started and handed what they need
+  private booting = false
   // Shutdown began or the stopped mode: no module is started, handed anything or switched from then on
   private closed = false
   private halted = false
@@ -119,7 +121,7 @@ export class CoreModules {
   state(id: CoreModuleId): ModuleState {
     if (this.off.has(id)) return 'off'
     if (this.stoppedFor.has(id)) return 'stopped'
-    if (this.handed === null || this.beginning.has(id)) return 'starting'
+    if (this.handed === null || this.booting || this.beginning.has(id)) return 'starting'
     return this.startFailed.has(id) || this.pushFailed.has(id) ? 'failed' : 'on'
   }
 
@@ -129,7 +131,7 @@ export class CoreModules {
     if (this.off.has(id)) return 'off'
     const stopped = this.stoppedFor.get(id)
     if (stopped !== undefined) return stopped
-    if (this.handed === null || this.beginning.has(id)) return null
+    if (this.handed === null || this.booting || this.beginning.has(id)) return null
     return this.startFailed.has(id) ? 'start-failed' : this.pushFailed.has(id) ? 'state-changed' : null
   }
 
@@ -177,8 +179,17 @@ export class CoreModules {
     this.off = new Set(off)
     const before = this.states()
     this.handed = handed
-    for (const id of coreModuleIds) if (!this.off.has(id)) await this.begin(id)
-    for (const id of coreModuleIds) this.push(id)
+    this.booting = true
+    try {
+      // Shutdown or the stopped mode during the start starts nothing more
+      for (const id of coreModuleIds) {
+        if (this.closed) break
+        if (!this.off.has(id)) await this.begin(id)
+      }
+      for (const id of coreModuleIds) this.push(id)
+    } finally {
+      this.booting = false
+    }
     this.tell(before, null)
   }
 
@@ -189,6 +200,7 @@ export class CoreModules {
     this.off = new Set(off)
     if (this.handed === null || this.closed) return
     for (const id of coreModuleIds) {
+      if (this.closed) return
       if (was.has(id) === this.off.has(id)) continue
       // Read before the switch took, so the change is told from what the module was
       const before = new Map(this.states()).set(id, was.has(id) ? 'off' : this.startFailed.has(id) || this.pushFailed.has(id) ? 'failed' : 'on')
@@ -230,10 +242,12 @@ export class CoreModules {
   // they stand, so a module switched off keeps reading off
   stop(off: readonly string[]): void {
     if (this.halted) return
+    // Once shutdown began, the gate and the grant risk classifier answer to its end
+    const shutdown = this.closed
     this.halted = true
     this.closed = true
     this.off = new Set(off)
-    for (const id of closing) this.halt(id, 'stopped-mode')
+    for (const id of closing) if (!shutdown || (id !== 'gate' && id !== 'grant-risk-classifier')) this.halt(id, 'stopped-mode')
   }
 
   private opening(): Opening {

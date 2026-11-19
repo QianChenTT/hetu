@@ -402,6 +402,55 @@ describe('the core modules', () => {
     })
   })
 
+  describe('while the start runs', () => {
+    it('reads every module starting and serves nothing until all are started and handed what they need', async () => {
+      const { options } = fakes()
+      let finish = () => {}
+      options.storage!.open = () => {}
+      options.history!.start = () => new Promise<void>(resolve => {
+        finish = resolve
+      })
+      const modules = made(options)
+      const on = modules.start([], handing().handed)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) expect(modules.state(id)).toBe('starting')
+      expect(modules.gate()).toBeNull()
+      expect(modules.provider('storage')).toBeNull()
+      expect(modules.provider('exec')).toBeNull()
+      finish()
+      await on
+      expect(modules.state('exec')).toBe('on')
+      expect(modules.gate()).not.toBeNull()
+    })
+
+    it('starts nothing more once shutdown began', async () => {
+      const { options, seen } = fakes()
+      let finish = () => {}
+      options.history!.start = () => new Promise<void>(resolve => {
+        finish = resolve
+      })
+      const modules = made(options)
+      const on = modules.start([], handing().handed)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      modules.close()
+      finish()
+      await on
+      expect(seen).not.toContain('exec.start')
+      expect(modules.provider('exec')).toBeNull()
+    })
+  })
+
+  it('leaves the gate and the classifier answering when the stopped mode comes after shutdown began', async () => {
+    const { options } = fakes()
+    const modules = made(options)
+    await modules.start([], handing().handed)
+    modules.close()
+    modules.stop([])
+    expect(modules.gate()).toBe(options.gate)
+    expect(modules.grantRiskClassifier()).not.toBeNull()
+    expect(modules.provider('luoshu')).toBeNull()
+  })
+
   describe('the stopped mode', () => {
     it('closes every module in the reverse of its start, the gate last, and serves nothing after, the gate and the classifier included', async () => {
       const { options, seen } = fakes()
