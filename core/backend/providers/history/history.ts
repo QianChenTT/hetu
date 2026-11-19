@@ -231,7 +231,7 @@ export function createHistory(options: HistoryOptions = {}): History {
     // The paths as judged, each replaced once the gate allows the path a look resolved again
     const paths = targets.map(target => target.relative)
     // The judge's own refusal, so a commit refused for it answers what refused: the gate, a guard or a gate that is
-    // down or starting
+    // down
     let denied: ProviderRefusal | null = null
     for (const [at, prepared] of targets.entries()) {
       // Each note's look runs in the one queue every history call waits in, so a call whose time ran out on the notes

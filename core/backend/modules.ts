@@ -75,7 +75,7 @@ export class CoreModules {
     this.gateOf = options.gate ?? createGate()
     this.classifierOf = options.grantRiskClassifier ?? createGrantRiskClassifier()
     this.storageOf = options.storage ?? createStorage()
-    // Only luoshu's two topics go out, and a publish that throws never fails the write that made it
+    // Only luoshu's two topics go out. A publish that throws never fails the write that made it
     this.luoshuOf = options.luoshu ?? createLuoshu({
       publish: (topic, path) => {
         if (!(luoshuTopics as readonly string[]).includes(topic)) return

@@ -684,7 +684,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         if (target === undefined) throw refused('failed')
         // The gate asked again on the paths the call would act on now. With no judge on the call the answer is no. The
         // judge's own refusal is kept, so a call refused for it answers what refused: the gate, a guard or a gate that
-        // is down or starting
+        // is down
         let denied: ProviderRefusal | null = null
         const ask: Ask = paths => {
           if (call.judge === undefined) return false
