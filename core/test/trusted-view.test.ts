@@ -43,13 +43,15 @@ describe('what the trusted window draws', () => {
   it('names a plugin by its id with where it runs, its state and why, and a plugin-folder plugin’s class', () => {
     const drawn = screen(calm({
       plugins: [
-        plugin({ id: 'gate', from: 'install', place: 'host', security: true, class: null }),
+        plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
+        plugin({ id: 'history', from: 'core', place: 'core', state: 'failed', reason: 'start-failed', class: null }),
         plugin({ state: 'crashed', reason: 'flood' }),
         plugin({ id: 'tool', class: null }),
       ],
     }))
     expect(drawn.plugins.map(row => row.line)).toEqual([
-      'gate · ships with hetu · host · ready · security',
+      'gate · ships with hetu · core · ready · security',
+      'history · ships with hetu · core · failed (start-failed)',
       'search · plugin folder · sandboxed · crashed (flood) · class 1',
       'tool · plugin folder · sandboxed · ready · class unknown, counted as 4',
     ])
@@ -63,9 +65,11 @@ describe('what the trusted window draws', () => {
     expect(actions({ state: 'crashed' })).toEqual(['switch-off', 'restart', 'reset', 'remove'])
     expect(actions({ on: false, state: 'off' })).toEqual(['switch-on', 'reset', 'remove'])
     expect(actions({ firstParty: true, id: 'git' })).toEqual(['switch-off', 'stop', 'reset', 'restore', 'remove'])
-    // A host half stops only with its switch and restarts only with hetu
-    expect(actions({ from: 'install', place: 'host', id: 'luoshu' })).toEqual(['switch-off', 'reset'])
-    expect(actions({ from: 'install', place: 'host', id: 'luoshu', state: 'failed', reason: 'start-failed' })).toEqual(['switch-off', 'reset'])
+    // A core module has its switch alone, failed or not: nothing restarts it and Recover doesn't reset it
+    expect(actions({ from: 'core', place: 'core', id: 'luoshu', class: null })).toEqual(['switch-off'])
+    expect(actions({ from: 'core', place: 'core', id: 'luoshu', state: 'failed', reason: 'start-failed', class: null })).toEqual(['switch-off'])
+    expect(actions({ from: 'core', place: 'core', id: 'gate', state: 'off', on: false, security: true, class: null })).toEqual(['switch-on'])
+    // A page plugin stops only with its switch and restarts only with hetu
     expect(actions({ from: 'install', place: 'page', id: 'hidden-marks' })).toEqual(['switch-off', 'reset'])
   })
 
@@ -134,7 +138,7 @@ describe('what the trusted window draws', () => {
       plugins: [
         plugin({ id: 'search' }),
         plugin({ id: 'git', items: [{ capability: exec, off: false, firstUse: false }] }),
-        plugin({ id: 'gate', from: 'install', place: 'host', security: true }),
+        plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
       ],
       switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
     }))
@@ -260,41 +264,37 @@ describe('what the trusted window draws', () => {
   })
 
   describe('the stopped mode', () => {
-    it('says which control stopped hetu and why, with the three choices for a control that failed', () => {
-      const drawn = screen(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
+    // A core module that fails stops nothing, so only the log and the install list stop hetu
+    it('sends the human to the installer for an install list that doesn’t check out, with Quit alone', () => {
+      const drawn = screen(calm({ stopped: { control: 'install', why: 'tampered', reason: 'tampered', again: true } }))
       expect(drawn.stopped).toEqual({
-        control: 'gate',
-        lines: ['hetu stopped: the security plugin gate failed to start (start-failed)'],
-        choices: ['switch-off', 'recover', 'quit'],
-      })
-    })
-
-    it('sends the human to the installer for a control whose files are tampered or missing', () => {
-      const tampered = screen(calm({ stopped: { control: 'gate', why: 'tampered', reason: 'tampered', again: true } }))
-      expect(tampered.stopped).toEqual({
-        control: 'gate',
+        control: 'install',
         lines: [
-          'hetu stopped: the security plugin gate failed its hash check',
+          'hetu stopped: its install list doesn’t check out',
           'hetu already started again once after a failure, so it didn’t start again on its own',
           'Repair hetu with its installer to get its files back',
         ],
-        choices: ['switch-off', 'quit'],
+        choices: ['quit'],
       })
-      expect(screen(calm({ stopped: { control: 'gate', why: 'absent', reason: 'missing', again: false } })).stopped?.lines[0])
-        .toBe('hetu stopped: the security plugin gate is missing from the install')
     })
 
     it('turns each choice into the change it asks for', () => {
-      expect(choiceChange('gate', 'switch-off')).toEqual({ kind: 'plugin.off', plugin: 'gate' })
-      expect(choiceChange('gate', 'recover')).toEqual({ kind: 'plugin.reset', plugin: 'gate' })
       expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'recordNothing', on: true })
-      expect(choiceChange('gate', 'quit')).toBe(null)
+      expect(choiceChange('log', 'quit')).toBe(null)
+      expect(choiceChange('install', 'quit')).toBe(null)
     })
 
     it('offers to stop recording for a log that can’t write, and nothing to recover', () => {
       const drawn = screen(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: true } }))
-      expect(drawn.stopped?.lines[0]).toBe('hetu stopped: the event log can’t write')
-      expect(drawn.stopped?.choices).toEqual(['switch-off', 'quit'])
+      expect(drawn.stopped).toEqual({
+        control: 'log',
+        lines: [
+          'hetu stopped: the event log can’t write',
+          'hetu already started again once after a failure, so it didn’t start again on its own',
+          'Free space or fix the data folder’s permissions, or stop recording to start without the log',
+        ],
+        choices: ['switch-off', 'quit'],
+      })
     })
   })
 })
@@ -384,15 +384,15 @@ describe('the trusted page', () => {
 
   // With confirmOff on a choice applied through the request and hetu stayed stopped
   it('starts hetu again once a choice in the stopped mode applied at once', () => {
-    const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
-    page.ask({ kind: 'plugin.reset', plugin: 'gate' })
+    const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
+    page.ask({ kind: 'recordNothing', on: true })
     hears(replyTo(sent[2], { applied: true }))
     expect(sent.map(message => message.action)).toContain('core.relaunch')
   })
 
   it('starts nothing again for a choice that waits for its Confirm', () => {
-    const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
-    page.ask({ kind: 'plugin.reset', plugin: 'gate' })
+    const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
+    page.ask({ kind: 'recordNothing', on: true })
     hears(replyTo(sent[2], { held: 'r1' }))
     expect(sent.map(message => message.action)).not.toContain('core.relaunch')
   })
@@ -406,7 +406,7 @@ describe('the trusted page', () => {
   })
 
   it('starts hetu again once a choice in the stopped mode applied', () => {
-    const { sent, page, hears } = started(calm({ stopped: { control: 'gate', why: 'failed', reason: 'start-failed', again: false } }))
+    const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
     page.confirm('r1', 'gate')
     hears(replyTo(sent[2], null))
     expect(sent.map(message => message.action)).toContain('core.relaunch')
