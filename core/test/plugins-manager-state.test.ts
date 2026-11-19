@@ -1,9 +1,9 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until,
+  allowAll, cleanup, coreInstall, entryFor, fakeLuoshu, filesFor, harness, hashOf, hostManifest, reasonOf, stateOf, until,
   workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
 
@@ -11,12 +11,11 @@ afterEach(cleanup)
 
 const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
-const exists = (file: string) => stat(file).then(() => true, () => false)
 
 describe('grants snapshot versions', () => {
   it('start at 1, grow by one with every applied change and reach the gate through stateChanged', async () => {
     const gate = allowAll()
-    const made = await harness({ behave: { gate: { exports: { gate } } } })
+    const made = await harness({ modules: { gate } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.view()).toBe(1)
     expect(gate.views).toEqual([1])
@@ -32,7 +31,7 @@ describe('grants snapshot versions', () => {
 
   it('stay where they were when the write fails, and nothing applies', async () => {
     const gate = allowAll()
-    const made = await harness({ behave: { gate: { exports: { gate } } } })
+    const made = await harness({ modules: { gate } })
     await made.pluginsManager.start()
     made.store.writeSwitches = async () => { throw new Error('read-only') }
     await expect(made.pluginsManager.apply({ kind: 'skipVerification', on: true })).rejects.toThrow('read-only')
@@ -40,30 +39,38 @@ describe('grants snapshot versions', () => {
     expect(gate.views).toEqual([1])
   })
 
-  it('mark the gate failed when it throws on a new one', async () => {
+  it('mark the gate failed when it throws on a new one, stopping nothing, until the next one goes through', async () => {
     const gate = allowAll()
-    const made = await harness({ behave: { gate: { exports: { gate } } } })
+    const made = await harness({ modules: { gate } })
     await made.pluginsManager.start()
     gate.throws = true
     await made.pluginsManager.apply({ kind: 'confirmOff', on: true })
     expect(made.pluginsManager.policyJob('gate')).toBe('failed')
-    expect(reasonOf(made.pluginsManager, 'gate')).toBe('state-changed')
+    expect(made.modules.reason('gate')).toBe('state-changed')
+    expect(made.modules.gate()).toBeNull()
+    expect(made.link.events('policy-job.state')).toContainEqual({ policyJob: 'gate', state: 'failed' })
+    expect(made.pluginsManager.stopped()).toBeNull()
+    gate.throws = false
+    await made.pluginsManager.apply({ kind: 'confirmOff', on: false })
+    expect(made.pluginsManager.policyJob('gate')).toBe('on')
+    expect(gate.views.at(-1)).toBe(made.pluginsManager.view())
   })
 })
 
 describe('the human\'s switches, applied', () => {
-  it('off switches a core plugin off at once and it stays down for the run once switched on, since a host half starts once', async () => {
-    const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } } })
+  it('off switches a core module off at once and on starts it again in the run', async () => {
+    const luoshu = fakeLuoshu()
+    const made = await harness({ modules: { luoshu } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'luoshu' })
-    await made.pluginsManager.settled()
-    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('off')
-    expect(made.link.sentTo('luoshu', 'stop')).toHaveLength(1)
+    expect(made.modules.state('luoshu')).toBe('off')
+    expect(made.modules.provider('luoshu')).toBeNull()
+    expect(luoshu.closed).toBe(1)
+    expect((await new StateStore(made.dataDir).load()).state.switches.off).toEqual(['luoshu'])
     await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'luoshu' })
-    await made.pluginsManager.settled()
-    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('stopped')
-    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('restart-hetu')
-    expect(made.runtime.order().filter(id => id === 'luoshu')).toHaveLength(1)
+    expect(made.modules.state('luoshu')).toBe('on')
+    expect(made.modules.provider('luoshu')).toBe(luoshu.provider)
+    expect(luoshu.opened).toHaveLength(2)
   })
 
   it('off switches a policy job holder off at once, which reads off and not failed', async () => {
@@ -161,25 +168,13 @@ describe('the human\'s switches, applied', () => {
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
     await made.pluginsManager.apply({ kind: 'plugin.approve', plugin: 'alpha' })
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
-    // No grant risk classifier policy job here, so the class is unknown and every item asks at its first use
-    expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.view' }], class: null, enabled: true, firstUse: [{ type: 'ui.view' }] })
+    // The grant risk classifier classes a view at 0, which asks nothing at its first use
+    expect(entry).toEqual({ version: '1.0.0', contentHash: hash, signer: null, granted: [{ type: 'ui.view' }], class: 0, enabled: true })
     // No provenance yet, so the approved build still needs allowUnsigned to run
     expect(reasonOf(made.pluginsManager, 'alpha')).toBe('unsigned')
     await made.pluginsManager.apply({ kind: 'allowUnsigned', hash, on: true })
     await made.pluginsManager.settled()
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
-  })
-
-  it('switching off a host half held by its marker clears the marker, so switched on again it starts fresh', async () => {
-    const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } }, markers: ['luoshu'] })
-    await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
-    await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')
-    await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('marker')
-    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'luoshu' })
-    expect(await exists(path.join(made.dataDir, 'starting', 'luoshu'))).toBe(false)
-    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'luoshu' })
-    await until(() => stateOf(made.pluginsManager, 'luoshu') === 'ready')
   })
 
   it('writes the luoshu folder through the store', async () => {
@@ -192,7 +187,8 @@ describe('the human\'s switches, applied', () => {
   })
 
   it('applies changes one at a time, so two at once both land', async () => {
-    const made = await harness({ folder: { alpha: worker('alpha'), beta: worker('beta') }, entries: { alpha: signed(), beta: signed() } })
+    // Each holds nothing, so the pass at start leaves the class 0 its entry holds
+    const made = await harness({ folder: { alpha: worker('alpha'), beta: worker('beta') }, entries: { alpha: signed({ class: 0 }), beta: signed({ class: 0 }) } })
     await made.pluginsManager.start()
     await Promise.all([
       made.pluginsManager.apply({ kind: 'devMode', plugin: 'alpha', on: true }),
@@ -277,13 +273,14 @@ describe("the grants snapshot's grants", () => {
   const panel = { type: 'ui.view' as const }
   const item = (capability: object, off = false) => ({ capability, off, firstUse: false })
 
+  const http = 'mcp-http-handler'
   async function started() {
     const gate = allowAll()
     const made = await harness({
-      install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate', { capabilities: [{ type: 'log.read' }] })) } },
+      install: { ...coreInstall(), [http]: { files: filesFor(hostManifest(http, { capabilities: [{ type: 'log.read' }] })) } },
       folder: { alpha: worker('alpha', { capabilities: [read, panel] }), beta: worker('beta') },
-      entries: { alpha: signed({ granted: [read, panel] }), beta: signed() },
-      behave: { gate: { exports: { gate } } },
+      entries: { alpha: signed({ granted: [read, panel], class: 1 }), beta: signed({ class: 0 }) },
+      modules: { gate },
     })
     await made.pluginsManager.start()
     return { ...made, gate }
@@ -295,9 +292,9 @@ describe("the grants snapshot's grants", () => {
     expect(view.n).toBe(1)
     expect(view.foldCase).toBe(false)
     expect(view.plugins.alpha).toEqual([item(read), item(panel)])
-    expect(view.plugins.gate).toEqual([item({ type: 'log.read' })])
+    expect(view.plugins[http]).toEqual([item({ type: 'log.read' })])
     // A plugin holding nothing is left out, and an id every object has finds nothing
-    expect(Object.keys(view.plugins).sort()).toEqual(['alpha', 'gate'])
+    expect(Object.keys(view.plugins).sort()).toEqual(['alpha', http])
     expect(Object.getPrototypeOf(view.plugins)).toBe(null)
     expect(view.plugins.constructor).toBeUndefined()
     expect(Object.isFrozen(view.plugins.alpha[0].capability)).toBe(true)
@@ -328,7 +325,7 @@ describe("the grants snapshot's grants", () => {
     const made = await started()
     await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: 'alpha', capability: { type: 'luoshu.read', paths: ['other/**'] } })).rejects.toThrow()
     await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: 'nobody', capability: read })).rejects.toThrow()
-    await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: 'gate', capability: { type: 'log.read' } })).rejects.toThrow()
+    await expect(made.pluginsManager.apply({ kind: 'item.off', plugin: http, capability: { type: 'log.read' } })).rejects.toThrow()
     expect(made.pluginsManager.view()).toBe(1)
   })
 
@@ -336,11 +333,12 @@ describe("the grants snapshot's grants", () => {
   it("leave out a plugin the human switched off from the next one, before its stop has ended, and a core plugin switched off", async () => {
     const gate = allowAll()
     const made = await harness({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu', { capabilities: [{ type: 'log.read' }] })) } },
+      install: { ...coreInstall(), [http]: { files: filesFor(hostManifest(http, { capabilities: [{ type: 'log.read' }] })) } },
       folder: { alpha: worker('alpha', { capabilities: [read] }) },
       entries: { alpha: signed({ granted: [read] }) },
-      switches: { off: ['luoshu'] },
-      behave: { gate: { exports: { gate } }, alpha: { stopped: false } },
+      switches: { off: [http] },
+      modules: { gate },
+      behave: { alpha: { stopped: false } },
     })
     await made.pluginsManager.start()
     expect(Object.keys(gate.seen[0].plugins)).toEqual(['alpha'])
