@@ -40,6 +40,18 @@ describe('a core module that fails at start', () => {
     expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
   })
 
+  it('shows a failed module in the trusted window list and in the banner as crashed, its switch still on', async () => {
+    const history = fakeHistory()
+    history.fails = true
+    const made = await harness({ modules: { history }, switches: { off: ['exec'] } })
+    await made.pluginsManager.start()
+    const rows = ((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).plugins
+    expect(rows.find(row => row.id === 'history')).toMatchObject({ from: 'core', place: 'core', state: 'failed', reason: 'start-failed', on: true, security: false })
+    expect(rows.find(row => row.id === 'exec')).toMatchObject({ state: 'off', reason: 'off', on: false })
+    expect(rows.find(row => row.id === 'grant-risk-classifier')).toMatchObject({ state: 'ready', reason: null, on: true, security: true })
+    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).crashed).toEqual(['history'])
+  })
+
   it('starts on with the gate the human switched off', async () => {
     const gate = allowAll()
     gate.throws = true
