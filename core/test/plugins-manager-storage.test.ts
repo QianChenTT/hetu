@@ -1,6 +1,7 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { Switches } from '../backend/boot/state.ts'
 import type { StorageModule } from '../backend/modules.ts'
 import { cleanup, entryFor, filesFor, harness, workerManifest } from './plugins-manager-fakes.ts'
 
@@ -34,12 +35,12 @@ describe('clearing a plugin’s spaces', () => {
     expect(cleared).toEqual(['storage/tool', 'storage/tool', 'cache/tool'])
   })
 
-  it.each([
-    ['switched off', { switches: { off: ['storage'] } }, true],
-    ['failed at its start', {}, false],
-  ] as const)('removes the folder itself with storage %s', async (_name, more, opens) => {
+  it.each<[string, Switches['off'], boolean]>([
+    ['switched off', ['storage'], true],
+    ['failed at its start', [], false],
+  ])('removes the folder itself with storage %s', async (_name, off, opens) => {
     const { cleared, storage } = storageModule(opens)
-    const made = await harness({ ...tool, ...more, modules: { storage } })
+    const made = await harness({ ...tool, switches: { off }, modules: { storage } })
     await mkdir(path.join(made.dataDir, 'storage', 'tool'), { recursive: true })
     await writeFile(path.join(made.dataDir, 'storage', 'tool', 'key-a'), 'x')
     await made.pluginsManager.start()
