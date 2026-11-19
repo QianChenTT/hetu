@@ -16,8 +16,8 @@ export type Port = {
   on(event: 'message' | 'messageerror' | 'close', listener: (value: unknown) => void): unknown
 }
 
-// A plugin as a call target or a provider. actions are the manifest's provides.actions and serves is the half that
-// answers them. topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
+// A plugin as a call target. actions are the manifest's provides.actions and serves is the half that answers them.
+// topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
 export type PluginInfo = {
   state: PluginState
   place: 'host' | 'utility' | 'sandboxed' | 'page'
@@ -35,7 +35,7 @@ export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values
 
 // What the plugins manager owns: lifecycle, the state and the grants snapshot it pushes to the gate
 export type PluginsManager = {
-  // The state of the core plugin holding a policy job or a guard role
+  // The state of a policy job or a guard role, as the core module or core plugin holding it reads
   policyJob(id: string): PolicyJobState
   // The number of the newest grants snapshot pushed to the gate
   view(): number
@@ -81,7 +81,7 @@ export type Landing = 'landed' | 'muted' | 'lost'
 
 export type CarrierOptions = {
   pluginsManager: PluginsManager
-  // The holder's interface while the policy job or role is on, else null
+  // The holder's interface while the policy job or role is on, else null. A provider by its namespace's holder
   gate: () => Gate | null
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null
