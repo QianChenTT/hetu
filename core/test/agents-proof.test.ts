@@ -4,17 +4,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Call } from '../api/policy-jobs.ts'
+import type { Call, GrantRiskClassifier } from '../api/policy-jobs.ts'
 import { toolFor, toolList } from '../api/tools.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createGate } from '../backend/policy/gate/gate.ts'
-import { createHistory } from '../backend/providers/history/history.ts'
-import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import {
-  coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
-  type Half, type Message,
+  coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, throwingClassifier, tick, workerManifest, writeFolder,
+  writeInstall, type Half, type Message,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -47,38 +44,30 @@ async function world(
   await writeFile(path.join(folder, 'private', 'b.md'), 'private text')
   const install = (mcpVersion: string) => writeInstall(installDir, {
     ...coreInstall(),
-    luoshu: { files: filesFor(hostManifest('luoshu')) },
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcpOf(mcpVersion, items), firstParty: true },
-    ...(options.history === true ? { history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) } } : {}),
   })
   await install('1.0.0')
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  // History switched off unless the test asks for it, as when the install held none
+  await store.writeSwitches({ ...defaultSwitches(), off: options.history === true ? [] : ['history'] })
   await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcpOf('1.0.0', items))
   await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: items, class: 1, ...seed }))
   open.push(() => rm(base, { recursive: true, force: true }))
 
-  // One run of hetu over that folder, ended by the next start or the test's end
+  // One run of hetu over that folder, ended by the next start or the test's end. The grant risk classifier is the one
+  // the core makes unless the run hands another
   let end: (() => Promise<void>) | null = null
-  async function start() {
+  async function start(grantRiskClassifier?: GrantRiskClassifier) {
     await end?.()
     const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
-    const luoshu = createLuoshu()
-    const history = options.history === true ? createHistory() : null
-    await history?.start(dataDir)
     const runtime = new FakeRuntime()
-    runtime.behave = {
-      gate: { exports: { gate: createGate() } },
-      luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } },
-      ...(history === null ? {} : { history: { exports: { provider: history.provider, history: history.role } } }),
-    }
-    const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+    // The core modules the core makes, closed at the plugins manager's shutdown
+    const modules = grantRiskClassifier === undefined ? {} : { grantRiskClassifier }
+    const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
     const stop = async () => {
-      luoshu.close()
-      history?.close()
       await pluginsManager.shutdown().catch(() => {})
       carrier.close()
       await carrier.flush()
@@ -167,13 +156,13 @@ describe('step 5a part A in the joined core', () => {
       { agent: 'client#2', items: [privateNotes], revoked: false }, { agent: 'client#1', items: [], revoked: true },
     ])
 
-    // An update of mcp keeps #2's grant
+    // An update of mcp keeps #2's grant. The grant risk classifier fails each call in this run
     await proof.install('1.1.0')
-    run = await proof.start()
+    run = await proof.start(throwingClassifier())
     mcp = run.runtime.half('mcp')
     expect((await proof.stored()).version).toBe('1.1.0')
     expect((await proof.stored()).agents).toEqual([{ agent: 'client#2', capability: privateNotes }])
-    // The copy left mcp's class unknown with no grant risk classifier here, so mcp's own item asks at its first use as
+    // The copy left mcp's class unknown with the grant risk classifier failing here, so mcp's own item asks at its first use as
     // any updated plugin's does. Its Confirm is the human's, then #2 reads with the grant it kept
     const kept = await request(run.door, mcp, 'client#2')
     expect(await read(mcp, kept, 'private/b.md')).toBe('needs-confirm')

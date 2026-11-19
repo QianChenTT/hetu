@@ -9,7 +9,7 @@ import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createHistory } from '../backend/providers/history/history.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -28,13 +28,10 @@ async function world(folders: Record<string, Capability[]>) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, {
-    ...coreInstall(),
-    luoshu: { files: filesFor(hostManifest('luoshu')) },
-    history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) },
-  })
+  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
+  // The grant risk classifier off, so no item of a class 4 plugin asks at first use
+  await store.writeSwitches({ ...defaultSwitches(), off: ['grant-risk-classifier'] })
   await store.writeLuoshu({ folder })
   for (const [id, granted] of Object.entries(folders)) {
     const root = path.join(dataDir, 'plugins', id)
@@ -44,7 +41,6 @@ async function world(folders: Record<string, Capability[]>) {
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu({ settleMs: 50 })
   const history = createHistory()
-  await history.start(dataDir)
   const before = new Map<string, () => Promise<void>>()
   const provider = {
     prepare: history.provider.prepare,
@@ -56,12 +52,9 @@ async function world(folders: Record<string, Capability[]>) {
     },
   }
   const runtime = new FakeRuntime()
-  runtime.behave = {
-    gate: { exports: { gate: createGate() } },
-    luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } },
-    history: { exports: { provider, history: history.role } },
-  }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, debug: () => {} } as never)
+  // History as the core holds it around that provider, started on the data folder as the plugins manager starts
+  const modules = { gate: createGate(), luoshu, history: { ...history, provider } }
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     history.close()

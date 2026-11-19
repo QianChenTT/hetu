@@ -6,11 +6,7 @@ import type { Caller } from '../api/envelope.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Switches } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
-import { createExec } from '../backend/providers/exec/exec.ts'
-import { createGate } from '../backend/policy/gate/gate.ts'
-import { createHistory } from '../backend/providers/history/history.ts'
-import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 
@@ -34,14 +30,10 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, {
-    ...coreInstall(),
-    luoshu: { files: filesFor(hostManifest('luoshu')) },
-    history: { files: filesFor(hostManifest('history', { requires: ['luoshu'] })) },
-    exec: { files: filesFor(hostManifest('exec')) },
-  })
+  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), ...switches })
+  // The grant risk classifier off beside any switch given, so no item of a class 4 plugin asks at first use
+  await store.writeSwitches({ ...defaultSwitches(), ...switches, off: ['grant-risk-classifier', ...switches.off ?? []] })
   await store.writeLuoshu({ folder })
   for (const plugin of folders) {
     const root = path.join(dataDir, 'plugins', plugin.id)
@@ -49,23 +41,11 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
     await store.writePlugin(plugin.id, await entryFor(root, { granted: plugin.granted, class: 4 }))
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
-  const luoshu = createLuoshu()
-  const history = createHistory()
-  const exec = createExec()
-  await history.start(dataDir)
-  await exec.start(dataDir)
   const runtime = new FakeRuntime()
-  runtime.behave = {
-    gate: { exports: { gate: createGate() } },
-    luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } },
-    history: { exports: { provider: history.provider, history: history.role } },
-    exec: { exports: { provider: exec.provider, exec: exec.role } },
-  }
+  // The core modules are the ones the core makes, started on the data folder as the plugins manager starts and closed
+  // at its shutdown
   const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
   open.push(async () => {
-    luoshu.close()
-    history.close()
-    exec.close()
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
     await carrier.flush()
