@@ -298,7 +298,6 @@ describe('one door per part, header.ts', () => {
   it.each([...doors])('%s has a header.ts holding definitions only', part => {
     const under = parts.find(entry => entry.part === part)!.under
     const header = path.join(repo, under, 'header.ts')
-    expect(statSync(header).isFile()).toBe(true)
     expect(headerProblems(`${under}header.ts`, readFileSync(header, 'utf8'))).toEqual([])
   })
 
