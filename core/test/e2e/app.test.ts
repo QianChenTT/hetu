@@ -49,11 +49,17 @@ describe('hetu as an Electron app', () => {
     const all = await records(dataDir)
     const stopping = all.findIndex(record => record.event === 'core.stopping')
     expect(stopping).toBeGreaterThan(all.findIndex(record => record.event === 'core.ready'))
-    // Only the plugins' stops follow core.stopping, with the audit records Quit's flushes write. The core modules close
-    // once every plugin stopped and the gate answers to the end, so no record follows for them
-    const after = ['plugin.stopped', 'audit.call']
-    expect(all.slice(stopping + 1).map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
-    expect(all.filter(record => record.event !== 'audit.call').at(-1)).toMatchObject({ event: 'plugin.stopped', reason: 'shutdown' })
+    // Only the plugins' stops follow core.stopping, then the core modules closing once every plugin stopped, in the
+    // reverse of their start, with the audit records Quit's flushes write. The gate and the classifier answer to the
+    // end, so no record follows for them
+    const after = ['plugin.stopped', 'audit.call', 'module.state']
+    const tail = all.slice(stopping + 1)
+    expect(tail.map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
+    expect(tail.filter(record => record.event === 'module.state')).toEqual(['exec', 'history', 'luoshu', 'storage'].map(module => expect.objectContaining({
+      module, state: 'stopped', reason: 'shutdown',
+    })))
+    const lastStop = tail.findLastIndex(record => record.event === 'plugin.stopped')
+    expect(lastStop).toBeLessThan(tail.findIndex(record => record.event === 'module.state'))
   })
 
   it('quits once the last window closes', async () => {
