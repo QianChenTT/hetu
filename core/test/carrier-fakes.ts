@@ -372,10 +372,6 @@ export function harness(over: Partial<CarrierOptions> = {}) {
   const log = new FakeLog()
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
-  pluginsManager.installed('luoshu')
-  pluginsManager.installed('storage')
-  // The luoshu's manifest declares the two topics it publishes
-  pluginsManager.plugins.luoshu.topics = ['changed', 'outside']
   const carrier = new Carrier({
     pluginsManager,
     gate: () => gate,

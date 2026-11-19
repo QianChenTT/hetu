@@ -326,7 +326,6 @@ describe('the floor', () => {
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    pluginsManager.installed('exec')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const callers = [
       // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place

@@ -34,8 +34,6 @@ function started() {
   const exec = new Recording()
   made.providers.history = history
   made.providers.exec = exec
-  made.pluginsManager.installed('history')
-  made.pluginsManager.installed('exec')
   const asked: Access[] = []
   made.gate.decision = access => {
     asked.push(access)

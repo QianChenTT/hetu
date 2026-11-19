@@ -18,7 +18,7 @@ type Case = {
   grants?: string[]
   guard?: (call: GuardCall) => 'allow' | 'deny'
   // What changes in the gate's policy job between the first judgement and the second ask
-  policyJob?: 'off' | 'failed' | 'starting' | 'absent' | 'tampered'
+  policyJob?: 'off' | 'failed' | 'absent'
 }
 
 // The real carrier and the real luoshu with a fake gate and guard. Another program renames the folder plain to Plain
@@ -81,8 +81,6 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
   it.each([
     ['failed', 'policy-down'],
     ['absent', 'policy-down'],
-    ['tampered', 'policy-down'],
-    ['starting', 'starting'],
   ] as const)('answers %s gate on the second ask with %s and records it', async (policyJob, code) => {
     const { reply, records } = await renamedFolder('luoshu.read', 'b.md', { policyJob })
     expect(refusal(reply)).toBe(code)
@@ -136,7 +134,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
   it.each([
     ['the gate refuses the other case', undefined, 'not-granted'],
     ['the gate failed', 'failed', 'policy-down'],
-    ['the gate is starting', 'starting', 'starting'],
+    ['the gate absent', 'absent', 'policy-down'],
   ] as const)('passes the judge\'s code on when %s', async (_name, policyJob, code) => {
     const base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-second-ask-')))
     bases.push(base)
@@ -147,7 +145,6 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     await history.start(dataDir)
     history.role.open({ folder, dataDir, installDir: path.join(base, 'install') })
     const parts = harness()
-    parts.pluginsManager.installed('history')
     parts.gate.grants.search = [{ type: 'history', access: 'commit', paths: ['box/n.md'] }] as never
     parts.providers.history = {
       prepare: history.provider.prepare,

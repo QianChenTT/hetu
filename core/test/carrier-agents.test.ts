@@ -137,14 +137,14 @@ describe('an agent\'s label down a chain of calls', () => {
 
   it('refuses the door\'s mcp.handle with no label as invalid in every gate state and delivers nothing to mcp', async () => {
     const { door, mcp, pluginsManager, gate, carrier, log } = agents()
-    for (const state of ['on', 'off', 'starting', 'failed'] as const) {
+    for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
     }
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
     expect(asked(gate, 'mcp.handle')).toEqual([])
     const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
-    expect(records.map(record => record.code)).toEqual(['invalid', 'invalid', 'invalid', 'invalid'])
+    expect(records.map(record => record.code)).toEqual(['invalid', 'invalid', 'invalid'])
   })
 
   it('refuses the door\'s mcp.handle with a label out of the <client id>#<n> form as invalid and delivers nothing to mcp', async () => {
@@ -161,14 +161,14 @@ describe('an agent\'s label down a chain of calls', () => {
   it('refuses the door\'s mcp.handle for a label the plugins manager says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
     const { door, mcp, pluginsManager, gate, carrier, log } = agents()
     pluginsManager.revokedLabels.add('client#1')
-    for (const state of ['on', 'off', 'starting', 'failed'] as const) {
+    for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await door.ask('mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
     }
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
     expect(asked(gate, 'mcp.handle')).toEqual([])
     const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
-    expect(records.map(record => record.code)).toEqual(['not-granted', 'not-granted', 'not-granted', 'not-granted'])
+    expect(records.map(record => record.code)).toEqual(['not-granted', 'not-granted', 'not-granted'])
     pluginsManager.policyJobs.gate = 'on'
     // A label the first begins with is another agent
     const { got } = await handled(door, mcp, 'client#10')
@@ -232,7 +232,6 @@ describe('mcp\'s reach into notes, history and leases', () => {
 
   it('refuses mcp\'s call to another plugin, to exec and its subscribe to another plugin\'s topic with no parent and delivers nothing', async () => {
     const { mcp, search, beta, pluginsManager, gate } = agents()
-    pluginsManager.installed('exec')
     pluginsManager.plugins.mcp.topics = ['seen']
     gate.grants.mcp.push({ type: 'exec', commands: [['cat', 'private/b.md']], env: [] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'search.found'] })
     expect(code(await mcp.ask('search.query', {}))).toBe('not-granted')
@@ -412,8 +411,6 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     off: ['policy-down', 'policy-down', 'policy-down', 'policy-down', null],
     failed: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
     absent: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
-    tampered: ['policy-down', 'policy-down', 'policy-down', 'policy-down', 'policy-down'],
-    starting: ['starting', 'starting', 'starting', 'starting', 'starting'],
   }
 
   it.each(Object.keys(expected))('answers each case as the table has it with the gate %s', async state => {
@@ -438,12 +435,11 @@ describe('the gate over an agent\'s call, in every gate state', () => {
   it('refuses an agent\'s free call, its listing and a core action while the gate isn\'t on and serves them while it is', async () => {
     const { door, mcp, pluginsManager } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
-    for (const state of ['off', 'failed', 'starting'] as const) {
+    for (const state of ['off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
-      const down = state === 'starting' ? 'starting' : 'policy-down'
-      expect(code(await mcp.ask('storage.set', { key: 'k', value: 1 }, parent))).toBe(down)
-      expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe(down)
-      expect(code(await mcp.ask('core.self', undefined, parent))).toBe(down)
+      expect(code(await mcp.ask('storage.set', { key: 'k', value: 1 }, parent))).toBe('policy-down')
+      expect(code(await mcp.ask('luoshu.list', {}, parent))).toBe('policy-down')
+      expect(code(await mcp.ask('core.self', undefined, parent))).toBe('policy-down')
       // A subscribe of mcp's to another plugin's topic is refused at the floor before the gate's state is read
       expect(code(await mcp.ask('events.subscribe', { topics: ['luoshu.changed'] }, parent))).toBe('not-granted')
       // mcp's own free call with no parent is its own and free whatever the gate's state, as any plugin's
@@ -470,7 +466,7 @@ describe('the gate over an agent\'s call, in every gate state', () => {
   })
 
   it.each([
-    ['on', null], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'], ['tampered', 'policy-down'], ['starting', 'starting'],
+    ['on', null], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'],
   ] as const)('answers the door\'s mcp.handle with a label with the gate %s before mcp sees it, a plugin\'s own call beside it as before', async (state, expected) => {
     const { door, mcp, search, pluginsManager, luoshu } = gated()
     pluginsManager.policyJobs.gate = state
@@ -484,12 +480,12 @@ describe('the gate over an agent\'s call, in every gate state', () => {
     // The door's call with no label is refused for its form in every state. A plugin's own call is judged as before
     expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
     const own = await search.ask('luoshu.read', { path: 'inbox/a.md' })
-    expect(code(own)).toBe(state === 'on' || state === 'off' ? null : state === 'starting' ? 'starting' : 'policy-down')
+    expect(code(own)).toBe(state === 'on' || state === 'off' ? null : 'policy-down')
     expect(luoshu.performed.filter(done => done.call.caller.kind === 'plugin' && done.call.caller.id === 'mcp')).toEqual([])
   })
 
   it.each([
-    ['on', 'not-granted'], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'], ['tampered', 'policy-down'], ['starting', 'starting'],
+    ['on', 'not-granted'], ['off', 'policy-down'], ['failed', 'policy-down'], ['absent', 'policy-down'],
   ] as const)('tells an agent its items don\'t allow nothing of mcp\'s switched-off or asking items, raising no prompt, with the gate %s', async (state, expected) => {
     const { door, mcp, pluginsManager, asks, luoshu } = gated()
     luoshu.files.set('off/n.md', 'off')
@@ -577,8 +573,6 @@ describe('what an agent may read and list through mcp', () => {
     expect((await search.ask('core.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
     pluginsManager.policyJobs.gate = 'failed'
     expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
-    pluginsManager.policyJobs.gate = 'starting'
-    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('starting')
   })
 
   it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {
@@ -661,9 +655,9 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
   it('refuses it while the gate is not on, as any call for an agent', async () => {
     const { door, mcp, pluginsManager, seen } = asking()
     const { parent } = await handled(door, mcp, 'client#1')
-    for (const [state, expected] of [['off', 'policy-down'], ['failed', 'policy-down'], ['starting', 'starting']] as const) {
+    for (const state of ['off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
-      expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, parent))).toBe(expected)
+      expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, parent))).toBe('policy-down')
     }
     expect(seen).toEqual([])
   })
@@ -725,7 +719,7 @@ describe('core.agentConnect and core.agentConnected, the connect http asks the c
   it('serves both while the gate is not on, since a connect gives the agent nothing', async () => {
     const seen: Call[] = []
     const { door, pluginsManager } = agents({ core: async call => { seen.push(call); return null } })
-    for (const state of ['off', 'failed', 'starting'] as const) {
+    for (const state of ['off', 'failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
       expect((await door.ask('core.agentConnect', connect)).ok).toBe(true)
       expect((await door.ask('core.agentConnected', collect)).ok).toBe(true)
@@ -778,7 +772,6 @@ describe('the second ask for an agent\'s call', () => {
   it.each([
     ['off', 'policy-down'],
     ['failed', 'policy-down'],
-    ['starting', 'starting'],
   ] as const)('refuses an agent\'s second ask with the gate %s as its first ask is refused', async (state, refused) => {
     const parts = gated()
     const { parent } = await handled(parts.door, parts.mcp, 'client#1')
@@ -845,7 +838,6 @@ function tabled() {
   const parts = agents({ gate: () => gate })
   const reached: Record<string, string[]> = { history: [], exec: [], leases: [] }
   for (const id of Object.keys(reached)) {
-    parts.pluginsManager.installed(id)
     parts.providers[id] = {
       prepare: async (call: Call) => {
         reached[id].push(call.action)
@@ -882,7 +874,7 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
   })
   const names = closed.map(([action]) => action)
 
-  it.each(['on', 'off', 'failed', 'absent', 'tampered', 'starting'] as const)('refuses each action no tool marks as not-granted before the gate and the provider, the agent holding an item for it, with the gate %s', async state => {
+  it.each(['on', 'off', 'failed', 'absent'] as const)('refuses each action no tool marks as not-granted before the gate and the provider, the agent holding an item for it, with the gate %s', async state => {
     const parts = tabled()
     const { parent } = await handled(parts.door, parts.mcp, 'client#1')
     parts.pluginsManager.policyJobs.gate = state
@@ -905,9 +897,9 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
       luoshu: ['luoshu.read', 'luoshu.list', 'luoshu.write'], others: ['history.log'], gate: ['luoshu.read', 'luoshu.read', 'luoshu.write', 'luoshu.write', 'history.log', 'history.log'],
     })
     // With the gate not on, a marked action is refused for the gate's state and never for the table
-    for (const [state, down] of [['off', 'policy-down'], ['starting', 'starting']] as const) {
+    for (const state of ['off', 'failed'] as const) {
       parts.pluginsManager.policyJobs.gate = state
-      for (const [action, args] of marked) expect([action, code(await parts.mcp.ask(action, args, parent))]).toEqual([action, down])
+      for (const [action, args] of marked) expect([action, code(await parts.mcp.ask(action, args, parent))]).toEqual([action, 'policy-down'])
     }
   })
 
