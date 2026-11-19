@@ -13,7 +13,7 @@ export type Bridge = {
 }
 
 export type PluginAction = 'approve' | 'switch-on' | 'switch-off' | 'stop' | 'restart' | 'reset' | 'restore' | 'remove'
-export type Choice = 'switch-off' | 'recover' | 'quit'
+export type Choice = 'switch-off' | 'quit'
 
 // A line and the change its button asks for, none for a line with no button
 export type Switch = { line: string, change: Change | null }
@@ -75,40 +75,37 @@ function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
   return { ...request, heading: headingOf(request), revoke }
 }
 
+// Only the log failing and an install list that doesn't check out stop hetu. The list is hetu's own files damaged,
+// which only its installer puts back
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
-  const lines: string[] = []
-  if (mode.control === 'log') lines.push('hetu stopped: the event log can’t write')
-  else if (mode.control === 'install') lines.push('hetu stopped: its install list doesn’t check out')
-  else if (mode.why === 'tampered') lines.push(`hetu stopped: the security plugin ${mode.control} failed its hash check`)
-  else if (mode.why === 'absent') lines.push(`hetu stopped: the security plugin ${mode.control} is missing from the install`)
-  else lines.push(`hetu stopped: the security plugin ${mode.control} failed to start${mode.reason !== null ? ` (${mode.reason})` : ''}`)
+  const log = mode.control === 'log'
+  const lines = [log ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out']
   if (mode.again) lines.push('hetu already started again once after a failure, so it didn’t start again on its own')
-  // Bytes that don't check out are hetu's own files damaged, which only its installer puts back
-  const damaged = mode.why !== 'failed' || mode.control === 'install'
-  if (damaged) lines.push('Repair hetu with its installer to get its files back')
-  if (mode.control === 'log') lines.push('Free space or fix the data folder’s permissions, or stop recording to start without the log')
-  const choices: Choice[] = mode.control === 'install' ? ['quit'] : damaged || mode.control === 'log' ? ['switch-off', 'quit'] : ['switch-off', 'recover', 'quit']
+  lines.push(log
+    ? 'Free space or fix the data folder’s permissions, or stop recording to start without the log'
+    : 'Repair hetu with its installer to get its files back')
+  const choices: Choice[] = log ? ['switch-off', 'quit'] : ['quit']
   return { control: mode.control, lines, choices }
 }
 
-// The stopped mode's switch-off and Recover as the changes they ask for. The log goes off by stopping recording. Quit
-// is no change
+// The stopped mode's switch-off as the change it asks for: the log goes off by stopping recording. Quit is no change
 export function choiceChange(control: string, choice: Choice): Change | null {
-  if (choice === 'quit') return null
-  if (control === 'log') return { kind: 'recordNothing', on: true }
-  return { kind: choice === 'recover' ? 'plugin.reset' : 'plugin.off', plugin: control }
+  return choice === 'switch-off' && control === 'log' ? { kind: 'recordNothing', on: true } : null
 }
 
-// A plugin-folder plugin's class, from the grant risk classifier policy job. One it couldn't give counts as 4
+// A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
+// policy job. One it couldn't give counts as 4
 function pluginLine(plugin: ListedPlugin): string {
-  const from = plugin.from === 'install' ? 'ships with hetu' : 'plugin folder'
+  const from = plugin.from === 'folder' ? 'plugin folder' : 'ships with hetu'
   const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
-  const known = plugin.from === 'install' ? [] : [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`]
+  const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
   return [plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known].join(' · ')
 }
 
+// A core module has its switch alone: it restarts nothing and Recover doesn't reset it
 function actionsOf(plugin: ListedPlugin): PluginAction[] {
   const actions: PluginAction[] = []
+  if (plugin.from === 'core') return [plugin.on ? 'switch-off' : 'switch-on']
   if (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new') return ['approve', 'remove']
   actions.push(plugin.on ? 'switch-off' : 'switch-on')
   // A sandboxed plugin or a utility half stops and starts again within a run, a utility half whose bind failed included
