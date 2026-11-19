@@ -5,6 +5,7 @@ import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 import { communitySource } from './community.ts'
+import { checkModuleImports } from './module-imports.ts'
 
 // The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
 // or the community package npm installed at the commit package.json pins
@@ -98,6 +99,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   await mkdir(outDir, { recursive: true })
   const main = await build({
     ...shared,
+    absWorkingDir: core,
     entryPoints: [path.join(core, 'backend', 'main.ts')],
     outfile: path.join(outDir, 'main.js'),
     platform: 'node',
@@ -106,6 +108,9 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     external: ['electron'],
     define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
   })
+  // Each core module bundled into main.js reaches only the Node built-ins on its own list (D-566)
+  const reached = await checkModuleImports(main.metafile!)
+  if (reached.length > 0) throw new Error(`a core module reaches past its list:\n${reached.join('\n')}`)
   // The bootstrap each utility process runs, beside main.js: it imports a utility half's verified bytes and runs them on
   // the port main hands it
   const utility = await build({

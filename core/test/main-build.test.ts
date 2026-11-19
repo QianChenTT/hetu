@@ -3,11 +3,13 @@ import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
+import { build } from 'esbuild'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { coreModuleIds } from '../api/ids.ts'
 import { INSTALL_LIST, installList } from '../api/install.ts'
 import { installManifest } from '../api/manifest.ts'
 import { type BuildKind, buildMain, writeFirstParty } from '../build/main.ts'
+import { checkModuleImports, moduleBuiltins, moduleFolders } from '../build/module-imports.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
@@ -340,5 +342,80 @@ describe('a first-party plugin built from the community package', () => {
     } finally {
       await rm(via)
     }
+  })
+})
+
+describe('each core module\'s imports (D-566)', () => {
+  // A tree shaped as core/ with every module folder holding one file, each importing what files says
+  async function bundled(files: Record<string, string>) {
+    const root = await outDir()
+    const entry = coreModuleIds.map((id, i) => `export * as m${i} from './${moduleFolders[id]}/index.ts'`).join('\n')
+    await writeFolder(root, {
+      ...Object.fromEntries(coreModuleIds.map(id => [`${moduleFolders[id]}/index.ts`, 'export const x = 1\n'])), ...files, 'main.ts': `${entry}\n`,
+    })
+    const result = await build({
+      absWorkingDir: root, entryPoints: [path.join(root, 'main.ts')], bundle: true, platform: 'node', format: 'esm', write: false, metafile: true,
+      logLevel: 'silent', external: ['electron'],
+    })
+    return checkModuleImports(result.metafile, undefined, root)
+  }
+
+  it('holds each module to the list D-566 names: the gate and the classifier none, storage crypto, fs/promises and path', () => {
+    expect(moduleBuiltins).toEqual({
+      gate: [],
+      'grant-risk-classifier': [],
+      storage: ['node:crypto', 'node:fs/promises', 'node:path'],
+      luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+    })
+    expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
+  })
+
+  it('passes hetu\'s own modules as main.ts bundles them', async () => {
+    const root = path.join(import.meta.dirname, '..')
+    const result = await build({
+      absWorkingDir: root, entryPoints: [path.join(root, 'backend', 'main.ts')], bundle: true, platform: 'node', format: 'esm', write: false,
+      metafile: true, logLevel: 'silent', external: ['electron'], define: { __HETU_PACKAGED__: 'false', __HETU_LOCKED__: 'false' },
+    })
+    expect(await checkModuleImports(result.metafile)).toEqual([])
+  })
+
+  it('refuses a built-in off a module\'s list, named or not with node:', async () => {
+    expect(await bundled({
+      'backend/policy/gate/index.ts': 'import { connect } from \'node:net\'\nexport const x = connect\n',
+      'backend/providers/storage/index.ts': 'import { spawn } from \'child_process\'\nexport const x = spawn\n',
+    })).toEqual([
+      'gate: node:net isn\'t on its list, from backend/policy/gate/index.ts',
+      'storage: child_process isn\'t on its list, from backend/providers/storage/index.ts',
+    ])
+  })
+
+  it('refuses a built-in a module reaches through a file of hetu\'s own it imports', async () => {
+    expect(await bundled({
+      'lib/spawn.ts': 'import { spawn } from \'node:child_process\'\nexport const run = spawn\n',
+      'backend/providers/luoshu/index.ts': 'import { run } from \'../../../lib/spawn.ts\'\nexport const x = run\n',
+    })).toEqual(['luoshu: node:child_process isn\'t on its list, from lib/spawn.ts'])
+  })
+
+  it('refuses electron and anything else left to load at run time', async () => {
+    expect(await bundled({
+      'backend/policy/grant-risk-classifier/index.ts': 'import { app } from \'electron\'\nexport const x = app\n',
+    })).toEqual(['grant-risk-classifier: electron would load at run time, from backend/policy/grant-risk-classifier/index.ts'])
+  })
+
+  it('refuses the plain ways past an import in the files a module takes in', async () => {
+    const found = await bundled({
+      'backend/providers/history/index.ts': 'export const x = process.getBuiltinModule(\'node:net\')\n',
+    })
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatch(/^history: \d+:\d+ getBuiltinModule in backend\/providers\/history\/index\.ts, past its list$/)
+  })
+
+  it('refuses a module folder with no file in the bundle', async () => {
+    const root = await outDir()
+    await writeFolder(root, { 'main.ts': 'export const x = 1\n' })
+    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'main.ts')], bundle: true, write: false, metafile: true, logLevel: 'silent' })
+    expect(await checkModuleImports(result.metafile, undefined, root)).toContain('gate: no file under backend/policy/gate in the bundle')
   })
 })
