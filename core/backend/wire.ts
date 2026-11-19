@@ -5,7 +5,7 @@ import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/boot.ts'
 import { Carrier } from './carrier/carrier.ts'
 import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/seams.ts'
-import { CoreModules } from './modules.ts'
+import { CoreModules, type CoreModulesOptions } from './modules.ts'
 import { PluginsManager, type Failure } from './plugins-manager/plugins-manager.ts'
 import type { CarrierLink, Runtime } from './plugins-manager/seams.ts'
 
@@ -30,6 +30,8 @@ export type WireOptions = {
   confirmDelayMs?: number
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
+  // Core modules in place of the ones the core makes, for tests
+  modules?: Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec'>
 }
 
 // The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
@@ -113,6 +115,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
+    ...options.modules,
     publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path),
   })
   const pluginsManager = new PluginsManager({
