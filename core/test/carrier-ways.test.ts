@@ -3,7 +3,7 @@ import path from 'node:path'
 import { MessageChannel } from 'node:worker_threads'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
-import type { Port } from '../backend/carrier/seams.ts'
+import type { Port } from '../backend/carrier/header.ts'
 import { cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker, type Message } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -387,10 +387,10 @@ describe('the window way in', () => {
 })
 
 describe('the carrier\'s imports', () => {
-  it('imports nothing from boot, so the state store and the log arrive only through its seams', () => {
+  it('imports nothing from boot, so the state store and the log arrive only through its header', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
-    expect(files.sort()).toEqual(['audit.ts', 'bus.ts', 'carrier.ts', 'limits.ts', 'records.ts', 'seams.ts'])
+    expect(files.sort()).toEqual(['audit.ts', 'bus.ts', 'carrier.ts', 'header.ts', 'limits.ts', 'records.ts'])
     for (const name of files) {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])

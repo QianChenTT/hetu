@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RelayLimits } from '../api/rate.ts'
-import type { UtilityStart } from '../backend/plugins-manager/seams.ts'
+import type { UtilityStart } from '../backend/runtime/header.ts'
 import { type ForkOptions, utilityEnv, utilityRuntime, type UtilityChild } from '../backend/runtime/utility.ts'
 import { baseEnv } from '../lib/clean-env.ts'
 

@@ -2,8 +2,8 @@ import type { MessagePortMain } from 'electron'
 import type { LimitName } from '../../api/limits.ts'
 import { measurePlain } from '../../api/measure.ts'
 import { messageCap, newBudget, spend } from '../../api/rate.ts'
-import type { Port } from '../carrier/seams.ts'
-import type { Runtime, WorkerStart } from '../plugins-manager/seams.ts'
+import type { Port } from '../carrier/header.ts'
+import type { Runtime, WorkerStart } from './header.ts'
 
 // A MessagePortMain as the carrier reads a port. A worker's messages reach main only through the relay in the worker
 // host page, which forwards nothing but text within the plugin's cap, so the port reads only that and parses it.

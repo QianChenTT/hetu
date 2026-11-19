@@ -8,4 +8,4 @@ The grant risk classifier policy job's core module, in main. It classifies a plu
 - **the classes a change moves:** a change to one plugin can move its own class and the class of every plugin linked to it. A move up is shown on the Confirm of the request that causes it, by the plugin with the class it held and the one it moves to. A move down is stored without a line. A class not known counts as 4
 - **the moves that alert:** a move up made with no Confirm on screen gets a notice of its own only where the class changes what hetu does, leaving 0, whose updates apply on their own, or entering 4, whose items ask at first use. A move inside 1 to 3 raises nothing
 
-`grant-risk-classifier.ts` holds the logic. `core/backend/modules.ts` makes it and the plugins manager asks it while it is switched on. Its tests are in `core/test/modules/grant-risk-classifier`
+`grant-risk-classifier.ts` holds the logic. `core/backend/wire.ts` makes it and the plugins manager asks it while it is switched on. Its tests are in `core/test/modules/grant-risk-classifier`

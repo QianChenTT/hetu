@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../lib/event-log.ts'
 import { AuditQueue, CoreRecordLane } from '../backend/carrier/records.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions, CoreLog, CoreRecordLog, Landing } from '../backend/carrier/seams.ts'
+import type { CarrierOptions, CoreLog, CoreRecordLog, Landing } from '../backend/carrier/header.ts'
 import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -483,7 +483,7 @@ describe('the core record lane', () => {
     expect(appends).toBe(2)
   })
 
-  // seams.ts makes healthy optional. A log with no flag that fails is down, never one that refused the record
+  // header.ts makes healthy optional. A log with no flag that fails is down, never one that refused the record
   it('keeps a record when a log with no health flag fails', async () => {
     let failing = true
     const records: string[] = []

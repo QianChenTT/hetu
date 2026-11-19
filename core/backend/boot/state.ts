@@ -2,13 +2,14 @@ import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { capabilityKey, folderCapabilities, folderCapability, screenText, type Capability } from '../../api/capabilities.ts'
+import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
 import { coreModuleIds, corePluginIds, firstPartyIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
+import { agentItems, MAX_AGENT_ITEMS } from '../lib/agent-items.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
 // The format this build reads and writes. A file in a later one belongs to a newer build. From format 3 on, boot keeps
@@ -84,20 +85,6 @@ const switches = z.strictObject({
   // entry and handed to the entry it gets next. Left out of a file with none
   revokedAgents: list(agentLabel).optional(),
 })
-// Items for agents an entry holds in all, across every agent
-export const MAX_AGENT_ITEMS = 256
-// One item of an agent's grant: the label the agent door names the agent by in the agent label's form and an item in
-// the shape the plugin's own are in. Within one agent no item twice and the caps of a plugin's own list
-export const agentItems = z.array(z.strictObject({ agent: agentLabel, capability: folderCapability }))
-  .max(MAX_AGENT_ITEMS, { abort: true })
-  .superRefine((items, ctx) => {
-    const byAgent = new Map<string, Capability[]>()
-    for (const { agent, capability } of items) byAgent.set(agent, [...byAgent.get(agent) ?? [], capability])
-    for (const held of byAgent.values()) {
-      if (new Set(held.map(capabilityKey)).size !== held.length) ctx.addIssue({ code: 'custom', message: 'an item twice for one agent' })
-      if (!folderCapabilities.safeParse(held).success) ctx.addIssue({ code: 'custom', message: 'past the caps for one agent' })
-    }
-  })
 
 const plugin = z.strictObject({
   version: text,
@@ -189,30 +176,6 @@ export function defaultSwitches(): Switches {
 
 export function defaultState(): SecurityState {
   return { plugins: table({}), switches: defaultSwitches(), luoshu: null }
-}
-
-function absolute(value: string | undefined, name: string): string {
-  if (!value || !path.posix.isAbsolute(value)) throw new Error(`${name} is not an absolute path`)
-  return value
-}
-
-// determine local folder path, not roaming, so the state stays on this machine. 
-// folder name is hetu-dev for an unpackaged run
-export function stateDir(platform: string = process.platform, env: Record<string, string | undefined> = process.env, name = 'hetu'): string {
-  if (platform === 'win32') {
-    const local = env.LOCALAPPDATA
-    if (!local || !path.win32.isAbsolute(local)) throw new Error('LOCALAPPDATA is not an absolute path')
-    return path.win32.join(local, name)
-  }
-  if (platform === 'darwin') return path.posix.join(absolute(env.HOME, 'HOME'), 'Library', 'Application Support', name) // mac
-  if (platform === 'linux') {
-    // A bad XDG_STATE_HOME is refused, not skipped, or a typo would move the state without a word
-    const base = env.XDG_STATE_HOME === undefined
-      ? path.posix.join(absolute(env.HOME, 'HOME'), '.local', 'state')
-      : absolute(env.XDG_STATE_HOME, 'XDG_STATE_HOME')
-    return path.posix.join(base, name)
-  }
-  throw new Error(`no security state location on ${platform}`)
 }
 
 // A short hold by antivirus at boot would otherwise read as unreadable and suspect

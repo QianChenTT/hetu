@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import type { CustomScheme } from 'electron'
-import { resolveDataDir } from '../boot/boot.ts'
+import { resolveDataDir } from '../lib/data-dir.ts'
 
 // No fuse turns these off. The two debugging switches open the DevTools handler once main has run, no-sandbox turns the
 // renderers' sandbox off and ELECTRON_DISABLE_SANDBOX sets it with no argument at all, and the rest weaken what the

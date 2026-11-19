@@ -10,14 +10,16 @@ import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
 import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
-import type { Port } from '../backend/carrier/seams.ts'
-import { CoreModules, type CoreModulesOptions } from '../backend/modules.ts'
+import type { Port } from '../backend/carrier/header.ts'
+import type { CoreModules, CoreModulesOptions } from '../backend/modules/header.ts'
+import { realModules } from './modules-fakes.ts'
 import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
 import type { Exec } from '../backend/providers/exec/exec.ts'
 import type { History } from '../backend/providers/history/history.ts'
 import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
-import type { CarrierLink, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/plugins-manager/seams.ts'
+import type { CarrierLink, Landing } from '../backend/plugins-manager/header.ts'
+import type { Runtime, UtilityStart, WorkerStart } from '../backend/runtime/header.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
@@ -432,7 +434,7 @@ export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskCl
 // The core modules as wireCore makes them, each the real one unless a test hands its own, the luoshu publishing through
 // the carrier the link points at
 export function coreModules(dirs: { dataDir: string, installDir: string }, link: FakeLink, fakes: ModuleFakes = {}): CoreModules {
-  return new CoreModules({ ...dirs, publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path), ...fakes })
+  return realModules({ ...dirs, ...fakes, publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path) })
 }
 
 // A real carrier over the plugins manager and the core modules, built from the options wireCore builds it from, with no

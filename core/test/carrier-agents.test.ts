@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import type { Access, Call, Gate } from '../api/policy-jobs.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions } from '../backend/carrier/seams.ts'
+import type { CarrierOptions } from '../backend/carrier/header.ts'
 import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
 
 afterEach(cleanup)

@@ -133,3 +133,16 @@ export async function writeInstalled(dataDir: string, plugins: Installed): Promi
   await writable(folders.installed(dataDir))
   await replaceFile(folders.installed(dataDir), withHash(body))
 }
+
+// A piece of first-party code, which loads only from the install
+export function firstPartyPath(installDir: string, relative: string, platform: string = process.platform): string {
+  const paths = platform === 'win32' ? path.win32 : path.posix
+  if (relative === '' || paths.isAbsolute(relative)) throw new Error(`not a path inside the install: ${relative}`)
+  const resolved = paths.resolve(installDir, relative)
+  const inside = paths.relative(installDir, resolved)
+  // .. covers an escape and an absolute answer covers another drive, which a drive relative path like C:x can reach
+  if (inside === '' || inside === '..' || inside.startsWith(`..${paths.sep}`) || paths.isAbsolute(inside)) {
+    throw new Error(`not a path inside the install: ${relative}`)
+  }
+  return resolved
+}

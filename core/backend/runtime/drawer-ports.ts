@@ -1,5 +1,5 @@
 import type { PluginFile } from '../../lib/hash-files.ts'
-import type { WorkerStart } from '../plugins-manager/seams.ts'
+import type { WorkerStart } from './header.ts'
 
 // The ports between plugin workers and the editor page's drawer. Main makes one channel for each pair of a running worker
 // whose plugin holds a ui item and an editor page load, once the page's dom-ready says its preload listens, and hands

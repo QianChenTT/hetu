@@ -9,4 +9,4 @@ The luoshu, a core module in main that serves `luoshu.read`, `luoshu.write`, `lu
 - **the watcher** is `fs.watch` with `recursive`. A path quiet for 150 ms is hetu's own write when its bytes hash as the last write hetu made there, and `luoshu.outside` otherwise. A path canonical refuses, a dot path included, publishes nothing
 - with no folder picked every call answers `unavailable`
 
-`luoshu.ts` holds the logic. `core/backend/modules.ts` makes it and calls its `open` with the folder at start, when the luoshu is switched on again and each time `luoshu.pick` applies. Its publish reaches the carrier's `publishCore` for its two topics alone and makes no audit record of a call. Switched off, its watch ends. Its tests are in `core/test/modules/luoshu`
+`luoshu.ts` holds the logic. `core/backend/wire.ts` makes it and `core/backend/modules/modules.ts` calls its `open` with the folder at start, when the luoshu is switched on again and each time `luoshu.pick` applies. Its publish reaches the carrier's `publishCore` for its two topics alone and makes no audit record of a call. Switched off, its watch ends. Its tests are in `core/test/modules/luoshu`

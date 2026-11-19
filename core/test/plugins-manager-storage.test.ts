@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Switches } from '../backend/boot/state.ts'
-import type { StorageModule } from '../backend/modules.ts'
+import type { StorageModule } from '../backend/modules/header.ts'
 import { cleanup, entryFor, filesFor, harness, workerManifest } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)

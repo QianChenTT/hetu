@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import { countMessage, newRate } from '../api/rate.ts'
 import { Limits } from '../backend/carrier/limits.ts'
-import type { HumanLimits, Port } from '../backend/carrier/seams.ts'
+import type { HumanLimits, Port } from '../backend/carrier/header.ts'
 import { cleanup, code, editor, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)

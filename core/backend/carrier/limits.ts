@@ -1,5 +1,5 @@
 import { defaultLimits, type LimitName } from '../../api/limits.ts'
-import type { HumanLimits } from './seams.ts'
+import type { HumanLimits } from './header.ts'
 
 // A value the state gave, read only when the table holds it as its own and it is a positive whole number
 function own(values: unknown, name: string): unknown {

@@ -5,6 +5,6 @@ The plugins manager, one of the four parts of the core: what may run, where, whe
 - `graph.ts`: the requires graph as a pure function: cycles refused, a dependent waiting on its first direct requirement that can't serve it and the order every start and stop follows
 - `verify.ts`: one read of a plugin folder, its hash and its manifest parsed from the bytes read, with what a read alone can refuse
 - `folders.ts`: the plugins manager's folders in the data folder: staging, the swap that puts a copy or an update in place before its entry, the restart marker (`failed-once`) and the marker of each core plugin's version from the last run
-- `seams.ts`: what it needs from the carrier beyond `register` and `end` and from the runtime, each a small interface the tests fake. The carrier gives it all. `core/backend/wire.ts` builds the two in order
+- `header.ts`: what it needs from the carrier beyond `register` and `end`, a small interface the tests fake, kept here until the router breaks the loop between the two. `core/backend/wire.ts` builds the two in order. What it needs from the runtime the runtime announces in its own `header.ts`
 
-It imports `firstPartyPath` and the state's types from `boot` and nothing from the carrier but its seam types
+It imports the state's types from boot's `header.ts`, the runtime's from the runtime's `header.ts` and nothing from the carrier but its `header.ts`. `firstPartyPath` is in `folders.ts`, the one part that resolves install paths

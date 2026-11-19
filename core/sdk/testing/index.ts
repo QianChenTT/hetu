@@ -9,7 +9,7 @@ import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpe
 import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
-import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/seams.ts'
+import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/header.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'

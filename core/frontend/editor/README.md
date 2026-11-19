@@ -12,7 +12,7 @@ The page has three layers below the core layer's banner, bar, palette, raw view 
 - `marks.ts`: marks drawn as CodeMirror decorations with the drawer's own classes. A plugin sends no class and no CSS
 - `palette.ts`: names listed through `luoshu.list` a page at a time, up to 20 pages, and a filter that ranks a whole substring over letters in order
 - `raw.ts`: which note the raw view shows: the focused instance's buffer, unsaved text included, else the note written last by anyone, with the ten written last to switch between. Whatever a plugin saved shows up here
-- `keys.ts`: key names as the drawer compares them, so a binding and a key pressed meet however a plugin spelled the key
+- `keys.ts`: key names as the drawer compares them, so a binding and a key pressed meet however a plugin spelled the key. The core keys main reads before the page are in `core/api/keys.ts`
 - `versions.ts`: each instance's changes counted from 0, the last 500 kept. A mark made for an older version is mapped to the text it was made for. An edit made for one is rebased through the changes since and refused `stale` only when it touches text changed since
 - `surfaces.ts`: the trees the drawer keeps, one per owner and surface, each changed only by its owner's operations, at most 20 an owner
 - `views.ts`: the view instances. The first of each declared view opens when its owner connects holding `ui.view`, the owner opens more, a crashed owner's first ones stay in place as down. The layout gets the manifest's title, never one set while running

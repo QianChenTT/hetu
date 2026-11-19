@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { INSTALL_LIST } from '../api/install.ts'
 import { PluginsManager } from '../backend/plugins-manager/plugins-manager.ts'
 import { readInstalled, writeInstalled } from '../backend/plugins-manager/folders.ts'
-import type { Landing } from '../backend/plugins-manager/seams.ts'
+import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, fakeLuoshu, filesFor, harness, hostManifest, manifest, reasonOf, stateOf, tempBase, until,
   workerManifest, type Listing,

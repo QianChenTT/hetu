@@ -3,7 +3,8 @@ import { uptime } from 'node:os'
 import path from 'node:path'
 import { retried } from '../../lib/disk.ts'
 import { EventLog, type Opened } from '../../lib/event-log.ts'
-import { defaultSwitches, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
+import { resolveDataDir } from '../lib/data-dir.ts'
+import { defaultSwitches, StateStore, type Check, type SecurityState } from './state.ts'
 
 export type BootOptions = {
   packaged: boolean
@@ -32,31 +33,6 @@ export type Booted = {
   dataDir: string
   dev: boolean
   release: () => Promise<void>
-}
-
-// A packaged build ignores HETU_DATA_DIR, so the environment can't move the state somewhere else. An unpackaged run
-// gets its own folder, so a dev copy never shares the state of an installed hetu
-export function resolveDataDir(options: Omit<BootOptions, 'installDir'>): { dataDir: string, dev: boolean } {
-  const { packaged, env, platform } = options
-  if (packaged) return { dataDir: stateDir(platform, env), dev: false }
-  const override = env.HETU_DATA_DIR
-  if (override === undefined) return { dataDir: stateDir(platform, env, 'hetu-dev'), dev: true }
-  const paths = platform === 'win32' ? path.win32 : path.posix
-  if (!paths.isAbsolute(override)) throw new Error('HETU_DATA_DIR is not an absolute path')
-  return { dataDir: override, dev: true }
-}
-
-// A piece of first-party code, which loads only from the install
-export function firstPartyPath(installDir: string, relative: string, platform: string = process.platform): string {
-  const paths = platform === 'win32' ? path.win32 : path.posix
-  if (relative === '' || paths.isAbsolute(relative)) throw new Error(`not a path inside the install: ${relative}`)
-  const resolved = paths.resolve(installDir, relative)
-  const inside = paths.relative(installDir, resolved)
-  // .. covers an escape and an absolute answer covers another drive, which a drive relative path like C:x can reach
-  if (inside === '' || inside === '..' || inside.startsWith(`..${paths.sep}`) || paths.isAbsolute(inside)) {
-    throw new Error(`not a path inside the install: ${relative}`)
-  }
-  return resolved
 }
 
 function alive(pid: number): boolean {

@@ -11,8 +11,9 @@ import { coreModuleIds, corePluginIds } from '../api/ids.ts'
 // Every id the off switches may name: the core modules and the core plugins
 const switchable = [...coreModuleIds, ...corePluginIds]
 import {
-  defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,
+  defaultState, defaultSwitches, MAX_LISTED, StateStore, type Check, type Loaded,
 } from '../backend/boot/state.ts'
+import { stateDir } from '../backend/lib/data-dir.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { HOLD_TIMEOUT, holdOpen, onWindows, release, releaseAfter, releaseAll } from './hold.ts'
 
