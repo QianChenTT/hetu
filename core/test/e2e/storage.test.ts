@@ -26,12 +26,11 @@ async function data(switches: Partial<Switches> = {}): Promise<string> {
   return dataDir
 }
 
-// The built install, with storage among its host halves, up and the editor's page open
-async function started(dataDir: string, storage: 'on' | 'off' = 'on'): Promise<{ app: ElectronApplication, page: Page }> {
+// The built app up, storage among its core modules, and the editor's page open
+async function started(dataDir: string): Promise<{ app: ElectronApplication, page: Page }> {
   const app = await launch(dataDir)
   const page = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
-  if (storage === 'on') await until(() => logged(dataDir, 'plugin.started', { plugin: 'storage' }))
   return { app, page }
 }
 
@@ -70,7 +69,7 @@ describe('the storage plugin in the install', () => {
 
   it('answers unavailable with storage switched off, and hetu runs on without it', async () => {
     const dataDir = await data({ off: ['storage'] })
-    const { page } = await started(dataDir, 'off')
+    const { page } = await started(dataDir)
     expect((await ask(page, 'storage.get', { key: 'favorites' })).refusal?.code).toBe('unavailable')
     expect((await ask(page, 'cache.set', { key: 'k', value: 1 })).refusal?.code).toBe('unavailable')
     expect(await ask(page, 'log.verify')).toMatchObject({ ok: true, result: { ok: true } })

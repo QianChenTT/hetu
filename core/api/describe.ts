@@ -39,7 +39,7 @@ export function describeChange(change: Change): Described {
       return { text: `Delete everything ${change.plugin} keeps in its storage`, notes: ['This can\'t be undone'] }
     case 'plugin.reset':
       return {
-        text: `Reset ${change.plugin}: its storage, cache and start marker are cleared`,
+        text: `Reset ${change.plugin}: its storage and cache are cleared`,
         notes: ['A plugin from the plugin folder then waits for approval again', 'This can\'t be undone'],
       }
     case 'grant.widen':

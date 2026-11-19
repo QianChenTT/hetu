@@ -10,29 +10,30 @@ const list = (plugins: object) => ({ format: 1, plugins })
 describe('the install list', () => {
   it('takes core plugins and marked first-party copies', () => {
     const parsed = installList.parse(list({
-      gate: { path: 'plugins/gate', version: '1.0.0', hash },
+      'hidden-marks': { path: 'plugins/hidden-marks', version: '1.0.0', hash },
       git: { path: 'plugins/git', version: '2.1.0', hash, firstParty: true },
     }))
-    expect(parsed.plugins.gate).toEqual({ path: 'plugins/gate', version: '1.0.0', hash })
+    expect(parsed.plugins['hidden-marks']).toEqual({ path: 'plugins/hidden-marks', version: '1.0.0', hash })
     expect(parsed.plugins.git.firstParty).toBe(true)
     // No prototype, so an id naming one of Object's members finds nothing
     expect(Object.getPrototypeOf(parsed.plugins)).toBe(null)
   })
 
   it.each([
-    ['an install id marked first party', { gate: { path: 'g', version: '1.0.0', hash, firstParty: true } }],
+    ['a core module, which the core holds and no list names', { gate: { path: 'plugins/gate', version: '1.0.0', hash } }],
+    ['an install id marked first party', { 'hidden-marks': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
     ['a first-party id left unmarked', { git: { path: 'g', version: '1.0.0', hash } }],
     ['an id that is neither', { search2: { path: 'g', version: '1.0.0', hash } }],
     ['a community id marked first party', { 'my-plugin': { path: 'g', version: '1.0.0', hash, firstParty: true } }],
-    ['firstParty false, which marks nothing', { gate: { path: 'g', version: '1.0.0', hash, firstParty: false } }],
-    ['a folder named twice', { gate: { path: 'p', version: '1.0.0', hash }, log: { path: 'p', version: '1.0.0', hash } }],
-    ['a path out of the install', { gate: { path: '../gate', version: '1.0.0', hash } }],
-    ['an absolute path', { gate: { path: '/opt/gate', version: '1.0.0', hash } }],
-    ['a drive', { gate: { path: 'C:/gate', version: '1.0.0', hash } }],
-    ['a backslash', { gate: { path: 'plugins\\gate', version: '1.0.0', hash } }],
-    ['a version range', { gate: { path: 'g', version: '^1.0.0', hash } }],
-    ['an uppercase hash', { gate: { path: 'g', version: '1.0.0', hash: 'A'.repeat(64) } }],
-    ['a field it does not know', { gate: { path: 'g', version: '1.0.0', hash, signer: 'x' } }],
+    ['firstParty false, which marks nothing', { 'hidden-marks': { path: 'g', version: '1.0.0', hash, firstParty: false } }],
+    ['a folder named twice', { 'hidden-marks': { path: 'p', version: '1.0.0', hash }, log: { path: 'p', version: '1.0.0', hash } }],
+    ['a path out of the install', { 'hidden-marks': { path: '../hidden-marks', version: '1.0.0', hash } }],
+    ['an absolute path', { 'hidden-marks': { path: '/opt/hidden-marks', version: '1.0.0', hash } }],
+    ['a drive', { 'hidden-marks': { path: 'C:/hidden-marks', version: '1.0.0', hash } }],
+    ['a backslash', { 'hidden-marks': { path: 'plugins\\hidden-marks', version: '1.0.0', hash } }],
+    ['a version range', { 'hidden-marks': { path: 'g', version: '^1.0.0', hash } }],
+    ['an uppercase hash', { 'hidden-marks': { path: 'g', version: '1.0.0', hash: 'A'.repeat(64) } }],
+    ['a field it does not know', { 'hidden-marks': { path: 'g', version: '1.0.0', hash, signer: 'x' } }],
   ])('refuses %s', (_name, plugins) => {
     expect(installList.safeParse(list(plugins)).success).toBe(false)
   })
@@ -44,7 +45,7 @@ describe('the install list', () => {
   })
 
   it('refuses a duplicate key through the strict parser, which JSON.parse would let through', () => {
-    const text = `{"format":1,"plugins":{"gate":{"path":"a","version":"1.0.0","hash":"${hash}"},"gate":{"path":"b","version":"1.0.0","hash":"${hash}"}}}`
+    const text = `{"format":1,"plugins":{"hidden-marks":{"path":"a","version":"1.0.0","hash":"${hash}"},"hidden-marks":{"path":"b","version":"1.0.0","hash":"${hash}"}}}`
     expect(() => parseStrict(Buffer.from(text), installList)).toThrow()
   })
 

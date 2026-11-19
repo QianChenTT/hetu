@@ -102,18 +102,22 @@ async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions =
 }
 
 describe('what a call hides', () => {
-  it('retries a call refused starting until the provider is ready', async () => {
-    const { ctx, pluginsManager } = await plugin()
-    pluginsManager.installed('luoshu', 'starting')
-    setTimeout(() => pluginsManager.installed('luoshu', 'ready'), 100)
-    expect(await ctx.luoshu.read({ path: 'notes/a.md' })).toEqual({ text: 'hello' })
+  // A plugin that starts answers starting. The core modules never do
+  it('retries a call refused starting until the target is ready', async () => {
+    const { ctx, pluginsManager, mcp } = await plugin()
+    pluginsManager.sandboxed('mcp', { handle: {} }, 'starting')
+    setTimeout(() => pluginsManager.sandboxed('mcp', { handle: {} }), 100)
+    const result = ctx.call('mcp', 'handle', {})
+    const delivery = await mcp.delivered('mcp.handle')
+    mcp.answer(delivery.callId, 'done')
+    expect(await result).toBe('done')
   })
 
   it('gives up on starting at the call\'s deadline with the last refusal', async () => {
     const { ctx, pluginsManager } = await plugin()
-    pluginsManager.installed('luoshu', 'starting')
+    pluginsManager.sandboxed('mcp', { handle: {} }, 'starting')
     const started = Date.now()
-    await expect(ctx.luoshu.read({ path: 'notes/a.md' }, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
+    await expect(ctx.call('mcp', 'handle', {}, { timeoutMs: 200 })).rejects.toMatchObject({ code: 'starting' })
     expect(Date.now() - started).toBeLessThan(1000)
   })
 

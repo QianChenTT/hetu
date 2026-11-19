@@ -3,7 +3,7 @@ import { delivery, token, type Caller } from '../api/envelope.ts'
 import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
 import type { CarrierOptions } from '../backend/carrier/seams.ts'
-import { cleanup, code, editor, FakeGuard, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -529,12 +529,12 @@ describe('filterReadable', () => {
     expect(code(await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
   })
 
-  it('gives back every path with the gate off and refuses policy-down while it starts or is failed', async () => {
+  it('gives back every path with the gate off and refuses policy-down while it is failed or absent', async () => {
     const { search, got, pluginsManager, gate } = await incoming()
     pluginsManager.policyJobs.gate = 'off'
     const paths = ['notes/a.md', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
-    for (const state of ['starting', 'failed', 'absent'] as const) {
+    for (const state of ['failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('policy-down')
     }
@@ -743,28 +743,6 @@ describe('a listing', () => {
   })
 })
 
-describe('calls a provider holds', () => {
-  it('ignores a reply the provider\'s own handle sends for a call it is performing, which only perform answers', async () => {
-    const { carrier, connect, gate, luoshu } = harness()
-    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-    luoshu.files.set('a.md', 'x')
-    let open!: () => void
-    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
-    const own = hostHalf(carrier, host('luoshu'))
-    const search = connect(worker('search'))
-    const id = search.call('luoshu.read', { path: 'a.md' })
-    for (let i = 0; i < 100 && luoshu.performed.length === 0; i++) await tick(2)
-    const { callId } = luoshu.performed[0].call
-    own.handle.post({ v: 1, kind: 'reply', callId, ok: true, result: 'forged' })
-    // The provider may hang its own sub-calls under the call
-    expect((await own.ask('core.self', undefined, { parent: callId })).ok).toBe(true)
-    expect(search.repliesTo(id)).toEqual([])
-    open()
-    expect((await search.reply(id)).result).toEqual({ text: 'x' })
-    expect(code(await own.ask('core.self', undefined, { parent: callId }))).toBe('invalid')
-  })
-})
-
 describe('a crash', () => {
   it('lets the plugins manager move dependents to waiting before any call the plugin held is answered', async () => {
     const { carrier, connect, pluginsManager } = harness()
@@ -840,12 +818,12 @@ describe('editor.reach', () => {
     expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: false })
   })
 
-  it('answers every reach with the gate off and policy-down while it starts, is failed or absent', async () => {
+  it('answers every reach with the gate off and policy-down while it is failed or absent', async () => {
     const { way, pluginsManager } = made()
     pluginsManager.policyJobs.gate = 'off'
     expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
       .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
-    for (const state of ['starting', 'failed', 'absent'] as const) {
+    for (const state of ['failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
     }

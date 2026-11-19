@@ -29,7 +29,7 @@ const heard = (messages: Message[], topic: string) => messages.filter(message =>
 // The topics each signal of one kind named, in the order they came
 const signals = (messages: Message[], topic: 'events.dropped' | 'events.ended') => heard(messages, topic).map(message => message.topics)
 
-// The luoshu's host half publishes luoshu.changed with a path, search publishes search.indexed with none. search reads
+// The luoshu module publishes luoshu.changed and luoshu.outside with a path through the carrier, search publishes search.indexed with none. search reads
 // notes/**, scribe reads every path and git hears search.indexed. way is the editor window and trustedWay the trusted one,
 // each holding its window grants and each with its own inbox
 function setup(over: Partial<CarrierOptions> = {}) {
@@ -45,16 +45,16 @@ function setup(over: Partial<CarrierOptions> = {}) {
   ]
   gate.grants.scribe = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
   gate.grants.git = [{ type: 'events.subscribe', topics: ['search.indexed'] }]
-  const luoshuHalf = hostHalf(carrier, host('luoshu'))
   const way = windowWay(carrier, { 'editor-1': editor })
   const trustedWay = windowWay(carrier, { trusted })
   const search = connect(worker('search'))
   const scribe = connect(worker('scribe'))
   const git = connect(worker('git'))
-  // The luoshu telling its subscribers a note changed
-  const edited = (path: string) => luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path })
+  // The luoshu telling its subscribers a note changed or changed outside hetu
+  const edited = async (path: string) => carrier.publishCore('luoshu', 'changed', path)
+  const outside = async (path: string) => carrier.publishCore('luoshu', 'outside', path)
   const indexed = () => search.ask('events.publish', { topic: 'search.indexed' })
-  return { ...parts, luoshuHalf, way, trustedWay, search, scribe, git, edited, indexed }
+  return { ...parts, way, trustedWay, search, scribe, git, edited, outside, indexed }
 }
 
 describe('a gate outage end to end, the bus\'s proof', () => {
@@ -76,8 +76,8 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/b.md')
     await indexed()
-    // Starting again is the same outage
-    pluginsManager.policyJobs.gate = 'starting'
+    // The gate's next push throwing too is the same outage
+    pluginsManager.policyJobs.gate = 'failed'
     carrier.changed()
     await edited('notes/c.md')
     await indexed()
@@ -143,7 +143,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(signals(search.events(), 'events.dropped')).toEqual([['luoshu.changed'], ['luoshu.changed']])
   })
 
-  it.each(['absent', 'tampered'] as const)('keeps a subscribe made while the gate is %s standing', async state => {
+  it.each(['absent'] as const)('keeps a subscribe made while the gate is %s standing', async state => {
     const { carrier, pluginsManager, scribe, edited } = setup()
     pluginsManager.policyJobs.gate = state
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
@@ -279,14 +279,14 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
 describe('asking again', () => {
   it('ends a subscription a new grants snapshot no longer grants with events.ended and sends it nothing more', async () => {
-    const { carrier, pluginsManager, gate, search, scribe, edited, luoshuHalf } = setup()
+    const { carrier, pluginsManager, gate, search, scribe, edited, outside } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.outside'] }, { type: 'luoshu.read', paths: ['**'] }]
     pluginsManager.current = 2
     carrier.changed()
     await edited('notes/a.md')
-    await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/b.md' })
+    await outside('notes/b.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
     await settle()
     expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
@@ -532,22 +532,27 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 })
 
-// A path with a dot segment names no note. The luoshu publishes none, so one on the bus is a string a plugin wrote
+// A path with a dot segment names no note. The luoshu publishes none, so one on the bus is a string a plugin wrote or
+// a luoshu gone wrong
 describe('a path with a dot segment', () => {
   const dotted = ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config']
 
-  it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while the publish answers as any other', async state => {
-    const { carrier, pluginsManager, gate, search, scribe, edited } = setup()
+  it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while a plugin\'s publish answers as any other', async state => {
+    const { carrier, pluginsManager, gate, search, scribe, git, edited } = setup()
     gate.listable = () => true
     pluginsManager.policyJobs.gate = state
     carrier.changed()
     for (const side of [search, scribe]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
-    for (const path of dotted) expect((await edited(path)).ok, path).toBe(true)
+    expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).ok).toBe(true)
+    for (const path of dotted) {
+      await edited(path)
+      expect((await search.ask('events.publish', { topic: 'search.indexed', path })).ok, path).toBe(true)
+    }
     await edited('notes/a.md')
-    await until(() => [search, scribe].every(side => paths(side.events()).includes('notes/a.md')))
+    await search.ask('events.publish', { topic: 'search.indexed', path: 'notes/a.md' })
+    await until(() => [search, scribe, git].every(side => paths(side.events()).includes('notes/a.md')))
     await settle()
-    expect(paths(search.events())).toEqual(['notes/a.md'])
-    expect(paths(scribe.events())).toEqual(['notes/a.md'])
+    for (const side of [search, scribe, git]) expect(paths(side.events())).toEqual(['notes/a.md'])
     expect(gate.lists.filter(asked => asked.path !== 'notes/a.md')).toEqual([])
   })
 })
@@ -637,14 +642,12 @@ describe('the gate off by the human', () => {
 
 describe('owned topics', () => {
   it.each(['on', 'off', 'failed'] as const)('lets a plugin publish only the topics its manifest declared, with the gate %s', async state => {
-    const { pluginsManager, connect, gate, search, scribe, way, trustedWay, luoshuHalf } = setup()
+    const { pluginsManager, connect, gate, search, scribe, way, trustedWay } = setup()
     pluginsManager.policyJobs.gate = state
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     // Its own declared topic from any of its halves
     expect((await search.ask('events.publish', { topic: 'search.indexed' })).ok).toBe(true)
     expect((await panel.ask('events.publish', { topic: 'search.indexed', path: 'notes/a.md' })).ok).toBe(true)
-    expect((await luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })).ok).toBe(true)
-    expect((await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/a.md' })).ok).toBe(true)
     // An undeclared topic of its own, another plugin's, a core topic, a signal and a plugin the plugins manager doesn't know
     for (const topic of ['search.other', 'luoshu.changed', 'git.indexed', 'core.status', 'events.dropped']) {
       expect(code(await search.ask('events.publish', { topic }))).toBe('not-granted')
@@ -703,19 +706,21 @@ describe('owned topics', () => {
 
 describe('core.*', () => {
   it('refuses a plugin, a host half included, a core topic whatever its grants and the gate', async () => {
-    const { carrier, pluginsManager, gate, search, luoshuHalf } = setup()
+    const { carrier, connect, pluginsManager, gate, search } = setup()
+    pluginsManager.utility('mcp-http-handler')
+    const http = connect(host('mcp-http-handler'))
     gate.grants.search.push({ type: 'events.subscribe', topics: ['core.status'] })
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await search.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
       expect(code(await search.ask('events.subscribe', { topics: ['luoshu.changed', 'core.security'] }))).toBe('not-granted')
-      expect(code(await luoshuHalf.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
+      expect(code(await http.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
     }
     pluginsManager.policyJobs.gate = 'on'
     carrier.changed()
     await settle()
     expect(search.events()).toEqual([])
-    expect(luoshuHalf.inbox.filter(message => message.kind === 'event')).toEqual([])
+    expect(http.events()).toEqual([])
   })
 
   // core.* reaches the trusted window by subscription, so the floor lets it subscribe to the core topics only
@@ -945,14 +950,14 @@ describe('subscribing', () => {
   })
 
   it('does not widen a subscription when a host half changes its array after posting', async () => {
-    const { carrier, gate, edited, luoshuHalf } = setup()
+    const { carrier, gate, edited, outside } = setup()
     gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }, { type: 'luoshu.read', paths: ['**'] }]
     const history = hostHalf(carrier, host('history'))
     const topics = ['luoshu.changed']
     history.handle.post({ v: 1, kind: 'call', id: 1, action: 'events.subscribe', args: { topics } })
     topics.push('luoshu.outside')
     await until(() => history.inbox.some(message => message.kind === 'reply'))
-    await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/a.md' })
+    await outside('notes/a.md')
     await edited('notes/b.md')
     await until(() => history.inbox.filter(message => message.kind === 'event').length === 1)
     await settle()
@@ -1058,9 +1063,9 @@ describe('read scope', () => {
   })
 
   it('does not ask canList about a topic the subscriber did not name', async () => {
-    const { search, gate, luoshuHalf } = setup()
+    const { search, gate, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.outside'] })
-    await luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' })
+    await edited('notes/a.md')
     await settle()
     expect(gate.lists).toEqual([])
     expect(search.events()).toEqual([])
@@ -1116,9 +1121,9 @@ describe('read scope', () => {
 
 describe('what a subscriber receives', () => {
   it('holds the topic, its seq and the path and nothing else, and a publish carrying more is refused', async () => {
-    const { search, edited, luoshuHalf } = setup()
+    const { search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    expect(code(await luoshuHalf.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md', text: 'the whole note' }))).toBe('invalid')
+    expect(code(await search.ask('events.publish', { topic: 'search.indexed', path: 'notes/a.md', text: 'the whole note' }))).toBe('invalid')
     await edited('notes/a.md')
     await until(() => search.events().length === 1)
     expect(search.events()).toStrictEqual([{ v: 1, kind: 'event', seq: 1, topic: 'luoshu.changed', path: 'notes/a.md' }])
@@ -1150,21 +1155,40 @@ describe('what a subscriber receives', () => {
     ['no topic', {}],
     ['a topic that is not a string', { topic: 5 }],
     ['an empty topic', { topic: '' }],
-    ['a path that is not a string', { topic: 'luoshu.changed', path: 5 }],
-    ['a null path', { topic: 'luoshu.changed', path: null }],
-    ['an empty path', { topic: 'luoshu.changed', path: '' }],
-    ['a path with a dot segment', { topic: 'luoshu.changed', path: 'notes/../secret/a.md' }],
-    ['a path with a backslash', { topic: 'luoshu.changed', path: 'notes\\a.md' }],
-    ['a path with a control character', { topic: 'luoshu.changed', path: `notes/a${String.fromCharCode(10)}.md` }],
-    ['a path past the longest scope', { topic: 'luoshu.changed', path: `${'a/'.repeat(300)}b.md` }],
+    ['a path that is not a string', { topic: 'search.indexed', path: 5 }],
+    ['a null path', { topic: 'search.indexed', path: null }],
+    ['an empty path', { topic: 'search.indexed', path: '' }],
+    ['a path with a dot segment', { topic: 'search.indexed', path: 'notes/../secret/a.md' }],
+    ['a path with a backslash', { topic: 'search.indexed', path: 'notes\\a.md' }],
+    ['a path with a control character', { topic: 'search.indexed', path: `notes/a${String.fromCharCode(10)}.md` }],
+    ['a path past the longest scope', { topic: 'search.indexed', path: `${'a/'.repeat(300)}b.md` }],
   ])('refuses a publish with %s and tells nobody', async (_name, args) => {
-    const { search, scribe, luoshuHalf } = setup()
-    await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    expect(code(await luoshuHalf.ask('events.publish', args))).toBe('invalid')
+    const { search, git } = setup()
+    await git.ask('events.subscribe', { topics: ['search.indexed'] })
+    expect(code(await search.ask('events.publish', args))).toBe('invalid')
     await settle()
-    expect(search.events()).toEqual([])
-    expect(scribe.events()).toEqual([])
+    expect(git.events()).toEqual([])
+  })
+
+  // The luoshu module publishes with no call to refuse, so a path events.publish would refuse reaches nobody
+  it.each([
+    ['an empty path', ''],
+    ['a path with a dot segment', 'notes/../secret/a.md'],
+    ['a path with a backslash', 'notes\\a.md'],
+    ['a path with a control character', `notes/a${String.fromCharCode(10)}.md`],
+    ['a path past the longest scope', `${'a/'.repeat(300)}b.md`],
+  ])('delivers no luoshu publish with %s', async (_name, path) => {
+    const { carrier, gate, search, scribe, edited } = setup()
+    gate.listable = () => true
+    await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await edited(path)
+    carrier.publishCore('luoshu', 'outside', path)
+    await edited('notes/a.md')
+    await until(() => [search, scribe].every(side => paths(side.events()).includes('notes/a.md')))
+    await settle()
+    expect(paths(search.events())).toEqual(['notes/a.md'])
+    expect(paths(scribe.events())).toEqual(['notes/a.md'])
   })
 
   it('matches a topic exactly, never as a prefix', async () => {
@@ -1326,11 +1350,11 @@ describe('credits', () => {
   })
 
   it('names in the catch-up events.dropped only the topics the subscriber still holds', async () => {
-    const { pluginsManager, search, edited, luoshuHalf } = setup()
+    const { pluginsManager, search, edited, outside } = setup()
     pluginsManager.human.plugins.search = { eventCredits: 1 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await edited('notes/a.md')
-    await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/b.md' })
+    await outside('notes/b.md')
     await edited('notes/c.md')
     await until(() => search.events().length === 1)
     await search.ask('events.unsubscribe', { topics: ['luoshu.outside'] })
@@ -1340,12 +1364,12 @@ describe('credits', () => {
   })
 
   it('names every topic missed while past the credits in the one catch-up events.dropped', async () => {
-    const { pluginsManager, search, edited, luoshuHalf } = setup()
+    const { pluginsManager, search, edited, outside } = setup()
     pluginsManager.human.plugins.search = { eventCredits: 1 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await edited('notes/a.md')
     // Both dropped, each topic in its turn
-    await luoshuHalf.ask('events.publish', { topic: 'luoshu.outside', path: 'notes/b.md' })
+    await outside('notes/b.md')
     await edited('notes/c.md')
     await until(() => search.events().length === 1)
     await settle()

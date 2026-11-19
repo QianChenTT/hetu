@@ -7,7 +7,7 @@ import { StateStore } from '../backend/boot/state.ts'
 import { PluginsManager } from '../backend/plugins-manager/plugins-manager.ts'
 import type { Landing } from '../backend/plugins-manager/seams.ts'
 import {
-  cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, plant, reasonOf, stateOf, until, wire, workerManifest,
+  cleanup, coreInstall, coreModules, filesFor, firstPartyEntry, harness, hashOf, plant, reasonOf, stateOf, until, wire, workerManifest,
   type Files, type Listing,
 } from './plugins-manager-fakes.ts'
 
@@ -39,9 +39,8 @@ describe('the first-party reconcile', () => {
     const loaded = await new StateStore(made.dataDir).load()
     expect(loaded.state.plugins.git).toEqual({
       version: '1.0.0', contentHash: installHash, signer: FIRST_PARTY_SIGNER,
-      // No grant risk classifier policy job here, so the class is unknown and every item asks at its first use
-      granted: [{ type: 'history', access: 'commit', paths: ['**'] }], class: null, enabled: true,
-      firstUse: [{ type: 'history', access: 'commit', paths: ['**'] }],
+      // The grant risk classifier classes the copy, a commit to history asking nothing at its first use
+      granted: [{ type: 'history', access: 'commit', paths: ['**'] }], class: 2, enabled: true,
     })
     expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'git', version: '1.0.0' }])
     expect(stateOf(made.pluginsManager, 'git')).toBe('ready')
@@ -82,8 +81,9 @@ describe('the first-party reconcile', () => {
     const booted = await boot(options)
     try {
       expect(booted.removedKnown).toBe(false)
-      const pluginsManager = new PluginsManager({ booted, installDir: first.installDir, link: first.link, runtime: first.runtime })
-      wire(pluginsManager, first.link)
+      const modules = coreModules({ dataDir: first.dataDir, installDir: first.installDir }, first.link, { gate: first.gate })
+      const pluginsManager = new PluginsManager({ booted, installDir: first.installDir, link: first.link, runtime: first.runtime, modules })
+      wire(pluginsManager, modules, first.link)
       await pluginsManager.start()
       expect(await exists(folderOf(first.dataDir, 'git'))).toBe(false)
       expect((await new StateStore(first.dataDir).load()).state.switches.removed).toEqual(['git'])

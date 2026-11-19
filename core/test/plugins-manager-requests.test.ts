@@ -6,9 +6,7 @@ import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { carrierOptions } from '../backend/wire.ts'
-import {
-  allowAll, cleanup, coreInstall, entryFor, filesFor, harness, hostManifest, reasonOf, stateOf, workerManifest, type Files,
-} from './plugins-manager-fakes.ts'
+import { allowAll, cleanup, entryFor, filesFor, harness, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
 
@@ -193,7 +191,7 @@ describe('a security request', () => {
 describe('typing to prove attention', () => {
   it('confirms switching a security control off only with its id typed', async () => {
     const gate = allowAll()
-    const made = await harness({ behave: { gate: { exports: { gate } } } })
+    const made = await harness({ modules: { gate } })
     await made.pluginsManager.start()
     const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, editor))
     expect(await code(made.pluginsManager.confirm(id, {}))).toBe('invalid')
@@ -314,16 +312,13 @@ describe('the kinds the plugins manager applies since the trusted window', () =>
     expect(limits.all).toEqual({ readyMs: 20000 })
   })
 
-  it('plugin.reset clears a core plugin\'s start marker, so it starts at the next start', async () => {
-    const made = await harness({ install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } }, markers: ['luoshu'] })
-    await mkdir(path.join(made.dataDir, 'starting'), { recursive: true })
-    await writeFile(path.join(made.dataDir, 'starting', 'luoshu'), '')
+  // A core module has no storage, cache or entry of its own to reset, its switch is the way out
+  it('plugin.reset refuses a core module and changes nothing', async () => {
+    const made = await harness()
     await made.pluginsManager.start()
-    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('marker')
-    await made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'luoshu' })
-    expect(await readdir(path.join(made.dataDir, 'starting'))).toEqual([])
-    // A host half starts once per run, so it waits for Restart hetu
-    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('restart-hetu')
+    await expect(made.pluginsManager.apply({ kind: 'plugin.reset', plugin: 'luoshu' })).rejects.toThrow('core module')
+    expect(made.modules.state('luoshu')).toBe('on')
+    expect(made.link.events('security.applied')).toEqual([])
   })
 })
 
@@ -370,16 +365,19 @@ describe('first-use asks', () => {
     stage: 'canonical' as const, caller: { kind: 'plugin' as const, id, half: 'worker', incarnation: 1 }, action: 'luoshu.read',
     capability: capability.type, scope: { paths: ['notes/a.md'] },
   })
-  const asking = (extra: object = {}) => harness({
-    behave: { gate: { exports: { gate: allowAll() } } },
+  // Each of alpha's items is class 4, so the grant risk classifier has each ask at its first use. beta's read of notes
+  // is class 1 and asks nothing
+  const wide: Capability = { type: 'luoshu.write', paths: ['**'] }
+  const anywhere: Capability = { type: 'net.fetch', hosts: ['*'] }
+  const asking = (gate = allowAll()) => harness({
+    modules: { gate },
     folder: { alpha: worker('alpha'), beta: worker('beta') },
-    entries: { alpha: signed({ granted: [notes, panel], firstUse: [notes, panel] }), beta: signed({ granted: [notes] }) },
-    ...extra,
+    entries: { alpha: signed({ granted: [wide, anywhere], class: 4, firstUse: [wide, anywhere] }), beta: signed({ granted: [notes] }) },
   })
 
   it('reach the gate as items whose first use asks, from the firstUse list in the entry', async () => {
     const gate = allowAll()
-    const made = await asking({ behave: { gate: { exports: { gate } } } })
+    const made = await asking(gate)
     await made.pluginsManager.start()
     const view = gate.seen.at(-1)!
     expect(view.plugins.alpha.map(item => item.firstUse)).toEqual([true, true])
@@ -389,7 +387,7 @@ describe('first-use asks', () => {
   it('hold an item.on for the item asked, named for the plugin', async () => {
     const made = await asking()
     await made.pluginsManager.start()
-    const id = made.pluginsManager.asks.raise(key(notes), access('alpha'))
+    const id = made.pluginsManager.asks.raise(key(wide), access('alpha', wide))
     expect(typeof id).toBe('string')
     expect(made.pluginsManager.pending()).toEqual([{ id, kind: 'item.on', plugin: 'alpha' }])
   })
@@ -397,9 +395,9 @@ describe('first-use asks', () => {
   it('answer the same ask with the same id and another one while it is open with throttled', async () => {
     const made = await asking()
     await made.pluginsManager.start()
-    const id = made.pluginsManager.asks.raise(key(notes), access('alpha'))
-    expect(made.pluginsManager.asks.raise(key(notes), access('alpha'))).toBe(id)
-    expect(made.pluginsManager.asks.raise(key(panel), access('alpha', panel))).toEqual({ code: 'throttled' })
+    const id = made.pluginsManager.asks.raise(key(wide), access('alpha', wide))
+    expect(made.pluginsManager.asks.raise(key(wide), access('alpha', wide))).toBe(id)
+    expect(made.pluginsManager.asks.raise(key(anywhere), access('alpha', anywhere))).toEqual({ code: 'throttled' })
   })
 
   it('answer not-granted for an item the plugin holds with no first use, or doesn\'t hold', async () => {
@@ -412,22 +410,22 @@ describe('first-use asks', () => {
 
   it('switch the item on for good once confirmed', async () => {
     const gate = allowAll()
-    const made = await asking({ behave: { gate: { exports: { gate } } } })
+    const made = await asking(gate)
     await made.pluginsManager.start()
-    const id = made.pluginsManager.asks.raise(key(notes), access('alpha')) as string
+    const id = made.pluginsManager.asks.raise(key(wide), access('alpha', wide)) as string
     await made.pluginsManager.confirm(id, {})
     expect(gate.seen.at(-1)!.plugins.alpha.map(item => item.firstUse)).toEqual([false, true])
-    expect((await stateIn(made.dataDir)).plugins.alpha.firstUse).toEqual([panel])
+    expect((await stateIn(made.dataDir)).plugins.alpha.firstUse).toEqual([anywhere])
   })
 
   it('answer declined for the rest of the run once the human cancelled one', async () => {
     const made = await asking()
     await made.pluginsManager.start()
-    const id = made.pluginsManager.asks.raise(key(notes), access('alpha')) as string
+    const id = made.pluginsManager.asks.raise(key(wide), access('alpha', wide)) as string
     await made.pluginsManager.cancel(id)
-    expect(made.pluginsManager.asks.raise(key(notes), access('alpha'))).toEqual({ code: 'not-granted', reason: 'declined' })
+    expect(made.pluginsManager.asks.raise(key(wide), access('alpha', wide))).toEqual({ code: 'not-granted', reason: 'declined' })
     // Another item still asks
-    expect(typeof made.pluginsManager.asks.raise(key(panel), access('alpha', panel))).toBe('string')
+    expect(typeof made.pluginsManager.asks.raise(key(anywhere), access('alpha', anywhere))).toBe('string')
   })
 })
 
@@ -446,9 +444,9 @@ describe('requests the core raises itself', () => {
 describe('the wiring', () => {
   it('hands the carrier the plugins manager\'s asks unless a test names others', async () => {
     const made = await harness()
-    expect(carrierOptions(made.pluginsManager, { log: null }).asks).toBe(made.pluginsManager.asks)
+    expect(carrierOptions(made.pluginsManager, made.modules, { log: null }).asks).toBe(made.pluginsManager.asks)
     const other = { raise: () => 'req-1' }
-    expect(carrierOptions(made.pluginsManager, { log: null, asks: other }).asks).toBe(other)
+    expect(carrierOptions(made.pluginsManager, made.modules, { log: null, asks: other }).asks).toBe(other)
   })
 })
 
@@ -468,7 +466,7 @@ describe('the core actions the plugins manager serves', () => {
   })
 
   it('passes what the human typed on to the Confirm', async () => {
-    const made = await harness({ behave: { gate: { exports: { gate: allowAll() } } } })
+    const made = await harness()
     await made.pluginsManager.start()
     const { held: id } = await made.pluginsManager.serve(call(editor, 'security.request', { change: { kind: 'plugin.off', plugin: 'gate' } })) as { held: string }
     expect(await code(made.pluginsManager.serve(call(trusted, 'security.confirm', { requestId: id })))).toBe('invalid')
@@ -478,14 +476,13 @@ describe('the core actions the plugins manager serves', () => {
 
   it('lists each plugin, the switches, the requests in the core\'s words and the stopped mode for the trusted window', async () => {
     const made = await harness({
-      behave: { gate: { exports: { gate: allowAll() } } },
       folder: { alpha: worker('alpha') },
       entries: { alpha: signed({ granted: [notes, panel], off: [panel] }) },
     })
     await made.pluginsManager.start()
     await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, editor)
     const list = await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList
-    expect(list.plugins.find(plugin => plugin.id === 'gate')).toMatchObject({ from: 'install', place: 'host', state: 'ready', security: true, on: true })
+    expect(list.plugins.find(plugin => plugin.id === 'gate')).toMatchObject({ from: 'core', place: 'core', state: 'ready', security: true, on: true })
     expect(list.plugins.find(plugin => plugin.id === 'alpha')).toMatchObject({
       from: 'folder', place: 'sandboxed', security: false, on: true,
       items: [{ capability: notes, off: false, firstUse: false }, { capability: panel, off: true, firstUse: false }],
@@ -520,7 +517,7 @@ describe('the core actions the plugins manager serves', () => {
     expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).luoshu).toBe(folder)
   })
 
-  it('stops and restarts a sandboxed plugin for the human, never a host half', async () => {
+  it('stops and restarts a sandboxed plugin for the human, never a core module', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
@@ -529,7 +526,8 @@ describe('the core actions the plugins manager serves', () => {
     await made.pluginsManager.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
     await made.pluginsManager.settled()
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
-    expect(await code(made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-granted')
+    expect(await code(made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'gate' })))).toBe('not-found')
+    expect(made.modules.state('gate')).toBe('on')
     expect(await code(made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'ghost' })))).toBe('not-found')
   })
 
@@ -647,7 +645,7 @@ describe('the request to approve a plugin', () => {
     await made.pluginsManager.start()
     const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out'])
   })
 
   it('quotes each target, topic and variable its manifest names', async () => {
@@ -668,7 +666,7 @@ describe('the request to approve a plugin', () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
     await made.pluginsManager.start()
     const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
-    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use'])
+    expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'Class 0, Contained'])
   })
 })
 

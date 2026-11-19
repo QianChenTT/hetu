@@ -34,7 +34,7 @@ describe('the packed folder', () => {
 })
 
 describe('a start', () => {
-  it('reaches core.ready with the gate and its plugins, its pages and preloads read out of app.asar, and reads no folder the environment names', async () => {
+  it('reaches core.ready with the gate on and its plugins, its pages and preloads read out of app.asar, and reads no folder the environment names', async () => {
     const decoy = await temp()
     const decoyData = path.join(decoy, 'data')
     const decoyInstall = path.join(decoy, 'install')
@@ -44,7 +44,7 @@ describe('a start', () => {
     expect(started.ready).toBe(true)
     expect(started.dataDir).toBe(dataDir)
     const events = started.records.map(record => `${record.event}${typeof record.plugin === 'string' ? ` ${record.plugin}` : ''}`)
-    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started gate', 'plugin.started grant-risk-classifier', 'plugin.started search', 'plugin.started layout', 'plugin.started file-explorer', 'plugin.started mcp-http-handler']))
+    expect(events).toEqual(expect.arrayContaining(['install.checked', 'plugin.started search', 'plugin.started layout', 'plugin.started file-explorer', 'plugin.started mcp-http-handler']))
     expect(started.records.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
     expect(started.records.find(record => record.event === 'core.ready')).toMatchObject({ gate: 'on' })
     expect([await exists(decoyData), await exists(decoyInstall)]).toEqual([false, false])
@@ -262,25 +262,21 @@ describe('a changed core plugin', () => {
     return copy
   }
 
+  // The core modules are inside app.asar, which its integrity check holds, so mcp-http-handler is the core plugin the
+  // list's hash check is left to hold
   it('fails alone as tampered and hetu runs', async () => {
-    const started = await start({ dir: await tampered('storage') })
-    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'storage')).toMatchObject({ result: 'tampered' })
+    const started = await start({ dir: await tampered('mcp-http-handler') })
+    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'mcp-http-handler')).toMatchObject({ result: 'tampered' })
     expect(started.ready).toBe(true)
   })
 
-  it('stops hetu when it is the gate', async () => {
-    const started = await start({ dir: await tampered('gate'), until: all => all.some(record => record.event === 'core.stopped') })
-    expect(started.records.find(record => record.event === 'core.stopped')).toMatchObject({ control: 'gate' })
-    expect(started.ready).toBe(false)
-  })
-
   it('stays tampered with a list planted beside app.asar that names its new hash', async () => {
-    const copy = await tampered('storage')
+    const copy = await tampered('mcp-http-handler')
     const planted = await list()
-    planted.plugins.storage.hash = hashFiles(await readFiles(path.join(resourcesOf(copy), 'plugins', 'storage')))
+    planted.plugins['mcp-http-handler'].hash = hashFiles(await readFiles(path.join(resourcesOf(copy), 'plugins', 'mcp-http-handler')))
     await writeFile(path.join(resourcesOf(copy), 'hetu-install.json'), JSON.stringify(planted))
     const started = await start({ dir: copy })
-    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'storage')).toMatchObject({ result: 'tampered' })
+    expect(started.records.find(record => record.event === 'plugin.checked' && record.plugin === 'mcp-http-handler')).toMatchObject({ result: 'tampered' })
   })
 
   it('never reads a plugin folder the list doesn\'t name', async () => {

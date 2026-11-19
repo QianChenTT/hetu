@@ -6,7 +6,7 @@ import { capabilityKey, folderCapabilities, folderCapability, screenText, type C
 import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
-import { firstPartyIds, corePluginIds, isReservedId, pluginId } from '../../api/ids.ts'
+import { coreModuleIds, corePluginIds, firstPartyIds, isReservedId, pluginId } from '../../api/ids.ts'
 import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
@@ -21,12 +21,13 @@ export const MAX_LISTED = 256
 const text = z.string().min(1)
 const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 
-const installId = z.enum(corePluginIds)
+// A core module or an install id, so a state file written while the modules were core plugins still reads
+const coreId = z.enum([...coreModuleIds, ...corePluginIds])
 const firstPartyId = z.enum(firstPartyIds)
-// An id some plugin can hold: an install or first-party id, or one the reserved list leaves to community plugins. The
-// namespaces the core serves, cache included, name no plugin
+// An id some plugin or module can hold: a core module, install or first-party id, or one the reserved list leaves to
+// community plugins. The namespaces the core serves, cache included, name none
 const anyPlugin = pluginId.refine(
-  id => !isReservedId(id) || installId.safeParse(id).success || firstPartyId.safeParse(id).success,
+  id => !isReservedId(id) || coreId.safeParse(id).success || firstPartyId.safeParse(id).success,
   'an id no plugin holds',
 )
 
@@ -70,7 +71,7 @@ const limits = z.strictObject({
 
 // What each file holds, in the shape callers see. The writers take exactly this shape and add the format number
 const switches = z.strictObject({
-  off: list(installId), // a core plugin not named here is on, so a lost entry can't read as off
+  off: list(coreId), // a core module or core plugin not named here is on, so a lost entry can't read as off
   devMode: list(anyPlugin), // load unhashed with live reload
   skipVerification: z.boolean(),
   allowUnsigned: z.array(sha256Hex), // builds pinned by content hash
@@ -171,7 +172,7 @@ export type Check = {
 // newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
 export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean }
 
-// Loosens nothing: every core plugin on, empty lists, false switches and no raised limits
+// Loosens nothing: every core module and core plugin on, empty lists, false switches and no raised limits
 export function defaultSwitches(): Switches {
   return {
     off: [],

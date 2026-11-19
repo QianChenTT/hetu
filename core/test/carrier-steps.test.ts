@@ -172,14 +172,7 @@ describe('guards', () => {
     expect(guards.second.calls).toHaveLength(1)
   })
 
-  it('answers starting while a guard starts', async () => {
-    const { connect, pluginsManager, luoshu } = setup()
-    pluginsManager.policyJobs.second = 'starting'
-    expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('starting')
-    expect(luoshu.performed).toEqual([])
-  })
-
-  it.each(['failed', 'absent', 'tampered'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
+  it.each(['failed', 'absent'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
     const { carrier, connect, pluginsManager, luoshu, guards } = setup()
     pluginsManager.policyJobs.leases = state
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
@@ -337,18 +330,25 @@ describe('perform', () => {
     expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 
-  it('answers unavailable for a provider that is off, failed or gone and starting for one that starts', async () => {
-    const { connect, pluginsManager, gate } = harness()
+  // The core modules answer null for a module that is off or failed and a lookup that throws reads as null
+  it('answers unavailable for a provider the core modules hold none for, off, failed or throwing', async () => {
+    let held: 'on' | 'none' | 'throws' = 'none'
+    const { connect, gate, luoshu } = harness({
+      providers: id => {
+        if (held === 'throws') throw new Error('lookup')
+        return held === 'on' && id === 'luoshu' ? luoshu : null
+      },
+    })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
+    luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
-    for (const state of ['off', 'failed', 'stopped'] as const) {
-      pluginsManager.installed('luoshu', state)
+    for (const state of ['none', 'throws'] as const) {
+      held = state
       expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('unavailable')
     }
-    pluginsManager.installed('luoshu', 'starting')
-    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
-    delete pluginsManager.plugins.luoshu
-    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('unavailable')
+    expect(luoshu.prepared).toEqual([])
+    held = 'on'
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).ok).toBe(true)
   })
 })
 

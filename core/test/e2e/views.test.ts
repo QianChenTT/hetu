@@ -65,7 +65,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
 async function running(dataDir: string, plugins: string[]): Promise<{ app: ElectronApplication, editor: Page }> {
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+  await until(() => logged(dataDir, 'core.ready'))
   for (const id of plugins) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor }
 }

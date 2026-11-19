@@ -58,7 +58,7 @@ async function started(setup: { notes?: Record<string, string>, plugins?: Record
   }
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+  await until(() => logged(dataDir, 'core.ready'))
   for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, dataDir }
 }

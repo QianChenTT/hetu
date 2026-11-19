@@ -1,6 +1,6 @@
 // Kept apart from zod, so the SDK and the limits load without it
 
-// Host halves share these tables in the same process, so a slip there can't change what the core decides with them
+// The code in one process shares these tables, so a slip there can't change what the core decides with them
 export function frozen<T>(value: T): T {
   if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
     Object.freeze(value)

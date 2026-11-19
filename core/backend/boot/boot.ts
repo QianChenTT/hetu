@@ -1,7 +1,6 @@
-import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { uptime } from 'node:os'
 import path from 'node:path'
-import { pluginId } from '../../api/ids.ts'
 import { retried } from '../../lib/disk.ts'
 import { EventLog, type Opened } from '../../lib/event-log.ts'
 import { defaultSwitches, stateDir, StateStore, type Check, type SecurityState } from './state.ts'
@@ -32,9 +31,6 @@ export type Booted = {
   logHealthy: boolean
   dataDir: string
   dev: boolean
-  // Host halves whose start marker an earlier run left, so their start never reached ready. The plugins manager holds each one
-  // failed for this run
-  markers: string[]
   release: () => Promise<void>
 }
 
@@ -143,19 +139,6 @@ async function lock(dataDir: string): Promise<() => Promise<void>> {
   }
 }
 
-// The start markers in starting/, one empty file per host half named by its id. A name that is no plugin id is no
-// marker. A folder that can't be read holds nothing back, since a marker only ever holds a plugin down
-async function readMarkers(dataDir: string): Promise<{ ids: string[], readable: boolean }> {
-  const dir = path.join(dataDir, 'starting')
-  let names: string[]
-  try {
-    names = await readdir(dir)
-  } catch (err) {
-    return { ids: [], readable: (err as NodeJS.ErrnoException).code === 'ENOENT' }
-  }
-  return { ids: names.filter(name => pluginId.safeParse(name).success).sort(), readable: true }
-}
-
 // The log may be down, so logging never stops a boot. healthy says whether it all went in
 async function record(log: EventLog, event: string, fields: Record<string, string | boolean> = {}): Promise<boolean> {
   try {
@@ -220,8 +203,6 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
     }
   }
 
-  const markers = await readMarkers(dataDir)
-
   let healthy = opened !== null
   // With recording off nothing goes in, boot's core records included. Only switches that checked out can turn it off
   // and the defaults record, so a wipe or an edit is still recorded
@@ -237,11 +218,9 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
         ? record(log, 'boot.default-written', { file })
         : record(log, 'boot.default-failed', { file, error })) && healthy
     }
-    if (!markers.readable) healthy = await record(log, 'boot.markers-unreadable') && healthy
   }
 
   return {
-    state, suspect, checks, removedKnown, store, log, logHealthy: healthy && log.healthy, dataDir, dev,
-    markers: markers.ids, release,
+    state, suspect, checks, removedKnown, store, log, logHealthy: healthy && log.healthy, dataDir, dev, release,
   }
 }

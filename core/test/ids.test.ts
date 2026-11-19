@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
+  coreModuleIds, coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, policyJobIds, utilityIds,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
@@ -87,10 +87,13 @@ describe('policy jobs, providers and guards', () => {
     expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
-  it('lists the core plugins, host and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual([
-      'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
-    ])
+  it('lists the core plugins, utility and in-page, with CodeMirror in the drawer and no editor-core', () => {
+    expect(corePluginIds).toEqual(['watchdog', 'leases', 'mcp-http-handler', 'net', 'hidden-marks'])
+  })
+
+  it('lists the core modules main holds apart from the core plugins', () => {
+    expect(coreModuleIds).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'])
+    for (const id of coreModuleIds) expect(corePluginIds).not.toContain(id)
   })
 
   // Each runs in a process of its own with Node and no sandbox, so the list is exact and grows only on purpose
@@ -104,8 +107,8 @@ describe('policy jobs, providers and guards', () => {
     }
   })
 
-  it('serves every provider and fills every policy job from the install', () => {
-    for (const id of [...policyJobIds, ...Object.values(providers)]) expect(corePluginIds).toContain(id)
+  it('serves every provider and fills every policy job from a core module or a core plugin', () => {
+    for (const id of [...policyJobIds, ...Object.values(providers)]) expect([...coreModuleIds, ...corePluginIds]).toContain(id)
   })
 })
 

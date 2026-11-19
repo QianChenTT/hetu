@@ -14,8 +14,8 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/)
 const folder = screenText(MAX_FOLDER_LENGTH)
 const on = z.boolean()
 
-// plugin.reset is Recover's reset: the plugin's storage, cache and start marker cleared and a plugin-folder plugin's
-// entry removed, so it waits for approval again
+// plugin.reset is Recover's reset: the plugin's storage and cache cleared and a plugin-folder plugin's entry removed, so
+// it waits for approval again. A core module has none
 const pluginKinds = [
   'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
   'plugin.reset',
@@ -31,7 +31,7 @@ export const changeKinds = frozen([
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
-  // plugin.off covers install and folder plugins alike
+  // plugin.off covers core modules, install and folder plugins alike
   z.strictObject({ kind: z.literal(pluginKinds), plugin: pluginId }),
   // Only folder plugins have grants to change, a core plugin's grants are its manifest
   z.strictObject({ kind: z.literal(grantKinds), plugin: pluginId, capability: folderCapability }),

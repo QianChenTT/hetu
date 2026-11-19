@@ -11,11 +11,12 @@ import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { CarrierLink } from '../backend/plugins-manager/seams.ts'
 import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
-import { createGate } from '../../core-plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../backend/policy/gate/gate.ts'
+import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
 import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
+import { luoshuModule, storageModule } from './modules-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
@@ -38,13 +39,15 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 }
 
 // The joined core over a real boot: a temp data folder holding approved folder plugins, an install written from
-// fixtures and the fake runtime. before runs on the booted core before anything starts
+// fixtures, the fake runtime and the core modules, a gate that allows everything and the real others unless modules
+// hands its own. before runs on the booted core before anything starts
 async function joined(options: {
   install?: Record<string, Listing>
   folder?: Record<string, Files>
   // More for a folder plugin's approved entry, its grants and switches
   entries?: Record<string, Partial<Plugin>>
   behave?: FakeRuntime['behave']
+  modules?: WireOptions['modules']
   before?: (booted: Booted) => void
   // Runs on the data folder before boot reads it
   prepare?: (dataDir: string) => Promise<void>
@@ -67,7 +70,9 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
+  const { pluginsManager, carrier, modules } = wireCore({
+    booted, installDir, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0, ...options.wire,
+  })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
@@ -78,7 +83,7 @@ async function joined(options: {
     await booted.release()
     await rm(base, { recursive: true, force: true })
   })
-  return { pluginsManager, carrier, runtime, booted, dataDir, installDir }
+  return { pluginsManager, carrier, modules, runtime, booted, dataDir, installDir }
 }
 
 // The records the core record lane wrote to the boot's event log, in order, each with its fields
@@ -99,7 +104,7 @@ function gateDeciding(decide: (access: Access, view: number) => unknown) {
 
 describe('wiring the core', () => {
   it('builds link, plugins manager and carrier so the plugins manager reaches the real carrier', async () => {
-    const { carrier, pluginsManager, dataDir } = await joined()
+    const { carrier, pluginsManager, dataDir } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await pluginsManager.start()
     await carrier.flush()
     const events = await coreRecordEvents(dataDir)
@@ -117,7 +122,7 @@ describe('wiring the core', () => {
     await carrier.flush()
     const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
-    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' })
+    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent' })
     expect(records.at(-1)).not.toHaveProperty('log')
   })
 
@@ -157,7 +162,7 @@ describe('a plugin\'s life through the joined core', () => {
         beta: filesFor(workerManifest('beta', { requires: ['alpha'] })),
         gamma: filesFor(workerManifest('gamma', { provides: { topics: ['changed'] } })),
       },
-      behave: { gate: { exports: { gate } } },
+      modules: { gate },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
@@ -291,26 +296,23 @@ describe('a plugin\'s life through the joined core', () => {
   })
 })
 
-// Shutdown stops sandboxed plugins in reverse graph order, then host plugins in reverse with the log last. A plugin in
-// its stop grace can still save, so the host plugins it needs serve until their own turn
+// Shutdown stops sandboxed plugins in reverse graph order, then the core modules close with the log last. A plugin in
+// its stop grace can still save, so the core modules it needs serve until every plugin stopped
 describe('shutdown through the joined core', () => {
   async function quitting(options: { alphaHolds?: boolean } = {}) {
     const storage = new FakeStorage()
+    const gate = allowAll()
     const parts = await joined({
-      install: { ...coreInstall(), storage: { files: filesFor(hostManifest('storage')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: {
-        gate: { exports: { gate: allowAll() } },
-        storage: { exports: { provider: storage } },
-        alpha: { stopped: options.alphaHolds !== true },
-      },
+      modules: { gate, storage: storageModule(storage) },
+      behave: { alpha: { stopped: options.alphaHolds !== true } },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
-    return { ...parts, storage }
+    return { ...parts, storage, gate }
   }
 
-  it('keeps core plugins serving while sandboxed plugins stop for shutdown', async () => {
+  it('keeps the core modules serving while sandboxed plugins stop for shutdown', async () => {
     const { pluginsManager, runtime, storage } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     const shutdown = pluginsManager.shutdown()
@@ -322,23 +324,25 @@ describe('shutdown through the joined core', () => {
     expect([...storage.values.values()]).toContain('last words')
   })
 
-  it('records no policy job as failed when shutdown stops it', async () => {
+  // The gate answers until the end, so its state changes with no stop
+  it('records no policy job state when shutdown runs', async () => {
     const { carrier, dataDir, pluginsManager } = await quitting()
     await pluginsManager.shutdown()
     await carrier.flush()
     const records = await coreRecords(dataDir)
     const after = records.slice(records.findIndex(record => record.event === 'core.stopping'))
     const policyJobs = after.filter(record => record.event === 'policy-job.state')
-    expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'stopped']])
+    expect(policyJobs).toEqual([])
   })
 
-  it('records a host policy job that fails during shutdown, before its own stop, as failed', async () => {
-    const { carrier, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
+  it('records the gate failing during shutdown as failed', async () => {
+    const { carrier, dataDir, pluginsManager, runtime, gate } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
-    // What the carrier tells the plugins manager when a host half floods its way
-    pluginsManager.crashed({ kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 }, 'flood')
+    // The next grants snapshot throws in the gate's push
+    gate.throws = true
+    await pluginsManager.apply({ kind: 'confirmOff', on: true })
     await until(() => pluginsManager.policyJob('gate') === 'failed')
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
@@ -389,9 +393,8 @@ describe('what wireCore hands the carrier', () => {
   async function writing(wire: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>, gate = allowAll()) {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
+      modules: { gate, luoshu: luoshuModule(luoshu) },
       wire,
     })
     await parts.pluginsManager.start()
@@ -434,7 +437,7 @@ describe('core.status, for a window\'s banner', () => {
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
-      policyJobs: { gate: 'on', 'grant-risk-classifier': 'absent', watchdog: 'absent' },
+      policyJobs: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent' },
       crashed: [],
       devMode: [],
       allowUnsigned: 0,
@@ -497,7 +500,6 @@ describe('the core\'s log through the joined core', () => {
         alpha: filesFor(workerManifest('alpha', { provides: { actions: { hello: {} } } })),
         beta: filesFor(workerManifest('beta')),
       },
-      behave: { gate: { exports: { gate: allowAll() } } },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
@@ -524,15 +526,13 @@ describe('a guard down through the joined core', () => {
   const leases: Listing = { files: filesFor(hostManifest('leases')) }
 
   it.each([
-    ['its module throws', leases, { leases: { throws: true } }, 'start-failed'],
-    ['its start never answers', leases, { leases: { ready: false } }, 'start-timeout'],
-    ['it fails its hash check', { ...leases, hash: '0'.repeat(64) }, {}, 'tampered'],
-  ] as const)('refuses the writes it guards with guard-down when %s', async (_name, listing, behave, reason) => {
+    ['it fails its hash check', { ...leases, hash: '0'.repeat(64) }, 'tampered'],
+  ] as const)('refuses the writes it guards with guard-down when %s', async (_name, listing, reason) => {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, leases: listing },
+      install: { ...coreInstall(), leases: listing },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate: allowAll() } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } }, ...behave },
+      modules: { luoshu: luoshuModule(luoshu) },
       wire: { guardsFor: () => ['leases'] },
       before: booted => {
         booted.state.switches = { ...booted.state.switches, limits: { all: { readyMs: 300 }, plugins: {} } }
@@ -547,8 +547,8 @@ describe('a guard down through the joined core', () => {
   })
 })
 
-// The plugins manager's grants snapshot into the gate plugin as it ships, for a folder plugin's calls
-describe('the gate plugin on the joined core', () => {
+// The plugins manager's grants snapshot into the gate module as it ships, for a folder plugin's calls
+describe('the gate module on the joined core', () => {
   const read = { type: 'luoshu.read' as const, paths: ['notes/**'] }
   const write = { type: 'luoshu.write' as const, paths: ['notes/**'] }
 
@@ -556,10 +556,9 @@ describe('the gate plugin on the joined core', () => {
     const luoshu = new FakeLuoshu()
     luoshu.files.set('notes/a.md', 'a note')
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read, write] })) },
       entries: { alpha: { granted: [read, write], ...entry } },
-      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
+      modules: { gate: createGate(), luoshu: luoshuModule(luoshu) },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
@@ -592,10 +591,9 @@ describe('the gate plugin on the joined core', () => {
     const luoshu = new FakeLuoshu()
     luoshu.files.set('notes/a.md', 'a note')
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read] })) },
       entries: { alpha: { granted: [read] } },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
+      modules: { gate, luoshu: luoshuModule(luoshu) },
     })
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
@@ -603,7 +601,7 @@ describe('the gate plugin on the joined core', () => {
     thrown.on = true
     await parts.pluginsManager.apply({ kind: 'confirmOff', on: true })
     expect(parts.pluginsManager.policyJob('gate')).toBe('failed')
-    expect(reasonOf(parts.pluginsManager, 'gate')).toBe('state-changed')
+    expect(parts.modules.reason('gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
   })
 })
@@ -625,10 +623,9 @@ describe('dot folders through the joined core', () => {
     const luoshu = createLuoshu()
     open.push(async () => luoshu.close())
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha', { capabilities: granted })), zero: filesFor(workerManifest('zero')) },
       entries: { alpha: { granted } },
-      behave: { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } } },
+      modules: { gate: createGate(), luoshu },
       prepare: dataDir => new StateStore(dataDir).writeLuoshu({ folder }),
       before: booted => { if (gate === 'off') booted.state.switches.off = ['gate'] },
     })
@@ -768,7 +765,7 @@ describe('a failing log', () => {
 })
 
 // #101: every switch keeps this design's fail-safe default and none has an
-// off state of its own. What a call answers with each core plugin switched off, through the joined core, mostly
+// off state of its own. What a call answers with each core module switched off, through the joined core, mostly
 // against a gate that refuses everything, so a call that passes shows the gate was skipped
 describe('the off states', () => {
   // The time each core joined here may take. Starting one took up to about 5 s on a shared Windows runner against
@@ -781,9 +778,8 @@ describe('the off states', () => {
       ? { allow: true, view }
       : { allow: false, code: decides === 'item-off' ? 'switched-off' : 'not-granted', view })
     const parts = await joined({
-      install: { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } },
       folder: { alpha: filesFor(workerManifest('alpha')) },
-      behave: { gate: { exports: { gate } }, luoshu: { exports: { provider: luoshu, luoshu: { open() {} } } } },
+      modules: { gate, luoshu: luoshuModule(luoshu) },
       before: booted => { booted.state.switches.off = off as typeof booted.state.switches.off },
     })
     await parts.pluginsManager.start()
@@ -872,8 +868,8 @@ describe('the door through the joined core', () => {
       },
       folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
       entries: { beta: { granted: [callMcp] } },
+      modules: { gate },
       behave: {
-        gate: { exports: { gate } },
         'mcp-http-handler': {
           utility: start => {
             const port_ = start.port as MessagePort

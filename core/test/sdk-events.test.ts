@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { definePlugin, type PluginContext, run } from '../sdk/plugin.ts'
 import type { Refused } from '../sdk/refused.ts'
-import { cleanup, harness, host, hostHalf, tick, worker } from './carrier-fakes.ts'
+import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
 import { sdkTransport, type TransportOptions } from './sdk-fakes.ts'
 
 afterEach(() => {
@@ -31,8 +31,8 @@ async function listening(way: TransportOptions = {}) {
   run(definePlugin({ start: given => { ctx = given } }), transport)
   parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
-  const luoshu = hostHalf(parts.carrier, host('luoshu'))
-  const publish = (path?: string, topic = 'luoshu.changed') => luoshu.ask('events.publish', path === undefined ? { topic } : { topic, path })
+  // The luoshu module publishing through the carrier as the core wires it
+  const publish = async (path: string) => parts.carrier.publishCore('luoshu', 'changed', path)
   const sent = () => transport.sent as Sent[]
   const subscribes = () => sent().filter(message => message.action === 'events.subscribe').map(message => message.args!.topics)
   return { ...parts, ctx: ctx!, transport, publish, sent, subscribes }
@@ -77,7 +77,7 @@ describe('events through the SDK', () => {
 
   it('reports the topics the bus keeps standing', async () => {
     const { ctx, pluginsManager } = await listening()
-    pluginsManager.policyJobs.gate = 'starting'
+    pluginsManager.policyJobs.gate = 'failed'
     const subscription = await ctx.events.on('luoshu.changed', () => {})
     expect(subscription.standing).toEqual(['luoshu.changed'])
   })

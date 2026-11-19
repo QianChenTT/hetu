@@ -3,10 +3,13 @@ import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
+import { build } from 'esbuild'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { coreModuleIds } from '../api/ids.ts'
 import { INSTALL_LIST, installList } from '../api/install.ts'
 import { installManifest } from '../api/manifest.ts'
 import { type BuildKind, buildMain, writeFirstParty } from '../build/main.ts'
+import { checkModuleImports, moduleBuiltins, moduleFolders } from '../build/module-imports.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { parseStrict } from '../lib/hashed-file.ts'
 import { checkManifest } from '../sdk/build/check-manifest.ts'
@@ -48,7 +51,7 @@ describe('the main bundle', () => {
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['exec', 'file-explorer', 'gate', 'grant-risk-classifier', 'hidden-marks', 'history', 'layout', 'luoshu', 'mcp-http-handler', 'search', 'storage'])
+    expect(Object.keys(list.plugins).sort()).toEqual(['file-explorer', 'hidden-marks', 'layout', 'mcp-http-handler', 'search'])
     expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
   })
@@ -128,65 +131,18 @@ describe('the main bundle', () => {
     expect([kindNamesNoSource, takesTwo]).toEqual([true, true])
   })
 
-  it('writes the gate and the grant risk classifier into the install as host halves, each one module importing nothing, with the hash of its files', async () => {
+  it('writes none of the core modules into the install, main.js holding each of them', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    for (const [id, role] of [['gate', 'gate'], ['grant-risk-classifier', 'grantRiskClassifier']]) {
-      const root = path.join(out, 'plugins', id)
-      expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-      expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
-      expect(await checkManifest(root, { install: true, built: true })).toEqual([])
-      const text = await readFile(path.join(root, 'dist', 'host.js'))
-      expect(text.toString('utf8')).not.toMatch(/^\s*import\b/m)
-      const module = await import(`data:text/javascript;base64,${text.toString('base64')}`) as Record<string, unknown>
-      expect(typeof module[role]).toBe('object')
+    for (const id of coreModuleIds) {
+      expect(Object.keys(list.plugins)).not.toContain(id)
+      await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
     }
-  })
-
-  it('writes the luoshu into the install as a host half with its provider and luoshu roles', async () => {
-    const out = await outDir()
-    await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'luoshu')
-    expect(list.plugins.luoshu).toEqual({ path: 'plugins/luoshu', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
-    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
-    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
-    expect(typeof (module.luoshu as { open?: unknown }).open).toBe('function')
-    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
-  })
-
-  it('writes storage into the install as a host half importing only the built-ins its manifest names', async () => {
-    const out = await outDir()
-    await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'storage')
-    expect(list.plugins.storage).toEqual({ path: 'plugins/storage', version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
-    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
-    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
-    const imports = new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))
-    expect([...imports].sort()).toEqual(['node:crypto', 'node:fs/promises', 'node:path'])
-    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
-    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
-  })
-
-  it.each([['history', 'open'], ['exec', 'stateChanged']])('writes %s into the install as a host half with its provider and its role, importing only the built-ins its manifest names', async (id, method) => {
-    const out = await outDir()
-    await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', id)
-    expect(list.plugins[id]).toEqual({ path: `plugins/${id}`, version: '0.1.0', hash: hashFiles(await readFiles(root)) })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/host.js', 'hetu-plugin.json'])
-    expect(await checkManifest(root, { install: true, built: true })).toEqual([])
-    const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
-    const imports = [...new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))]
-    const named = (JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { node: string[] }).node
-    expect(imports.filter(name => !named.some(allowed => name === `node:${allowed}` || name.startsWith(`node:${allowed}/`)))).toEqual([])
-    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
-    expect(typeof (module.provider as { perform?: unknown }).perform).toBe('function')
-    expect(typeof (module[id] as Record<string, unknown>)[method]).toBe('function')
+    const main = await readFile(path.join(out, 'main.js'), 'utf8')
+    for (const make of ['createGate', 'createGrantRiskClassifier', 'createStorage', 'createLuoshu', 'createHistory', 'createExec']) {
+      expect(main, make).toContain(`function ${make}(`)
+    }
   })
 
   // http's host half runs in a utility process, so it holds no provider and no role and its module is the plugin alone
@@ -386,5 +342,80 @@ describe('a first-party plugin built from the community package', () => {
     } finally {
       await rm(via)
     }
+  })
+})
+
+describe('each core module\'s imports (D-566)', () => {
+  // A tree shaped as core/ with every module folder holding one file, each importing what files says
+  async function bundled(files: Record<string, string>) {
+    const root = await outDir()
+    const entry = coreModuleIds.map((id, i) => `export * as m${i} from './${moduleFolders[id]}/index.ts'`).join('\n')
+    await writeFolder(root, {
+      ...Object.fromEntries(coreModuleIds.map(id => [`${moduleFolders[id]}/index.ts`, 'export const x = 1\n'])), ...files, 'main.ts': `${entry}\n`,
+    })
+    const result = await build({
+      absWorkingDir: root, entryPoints: [path.join(root, 'main.ts')], bundle: true, platform: 'node', format: 'esm', write: false, metafile: true,
+      logLevel: 'silent', external: ['electron'],
+    })
+    return checkModuleImports(result.metafile, undefined, root)
+  }
+
+  it('holds each module to the list D-566 names: the gate and the classifier none, storage crypto, fs/promises and path', () => {
+    expect(moduleBuiltins).toEqual({
+      gate: [],
+      'grant-risk-classifier': [],
+      storage: ['node:crypto', 'node:fs/promises', 'node:path'],
+      luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+    })
+    expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
+  })
+
+  it('passes hetu\'s own modules as main.ts bundles them', async () => {
+    const root = path.join(import.meta.dirname, '..')
+    const result = await build({
+      absWorkingDir: root, entryPoints: [path.join(root, 'backend', 'main.ts')], bundle: true, platform: 'node', format: 'esm', write: false,
+      metafile: true, logLevel: 'silent', external: ['electron'], define: { __HETU_PACKAGED__: 'false', __HETU_LOCKED__: 'false' },
+    })
+    expect(await checkModuleImports(result.metafile)).toEqual([])
+  })
+
+  it('refuses a built-in off a module\'s list, named or not with node:', async () => {
+    expect(await bundled({
+      'backend/policy/gate/index.ts': 'import { connect } from \'node:net\'\nexport const x = connect\n',
+      'backend/providers/storage/index.ts': 'import { spawn } from \'child_process\'\nexport const x = spawn\n',
+    })).toEqual([
+      'gate: node:net isn\'t on its list, from backend/policy/gate/index.ts',
+      'storage: child_process isn\'t on its list, from backend/providers/storage/index.ts',
+    ])
+  })
+
+  it('refuses a built-in a module reaches through a file of hetu\'s own it imports', async () => {
+    expect(await bundled({
+      'lib/spawn.ts': 'import { spawn } from \'node:child_process\'\nexport const run = spawn\n',
+      'backend/providers/luoshu/index.ts': 'import { run } from \'../../../lib/spawn.ts\'\nexport const x = run\n',
+    })).toEqual(['luoshu: node:child_process isn\'t on its list, from lib/spawn.ts'])
+  })
+
+  it('refuses electron and anything else left to load at run time', async () => {
+    expect(await bundled({
+      'backend/policy/grant-risk-classifier/index.ts': 'import { app } from \'electron\'\nexport const x = app\n',
+    })).toEqual(['grant-risk-classifier: electron would load at run time, from backend/policy/grant-risk-classifier/index.ts'])
+  })
+
+  it('refuses the plain ways past an import in the files a module takes in', async () => {
+    const found = await bundled({
+      'backend/providers/history/index.ts': 'export const x = process.getBuiltinModule(\'node:net\')\n',
+    })
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatch(/^history: \d+:\d+ getBuiltinModule in backend\/providers\/history\/index\.ts, past its list$/)
+  })
+
+  it('refuses a module folder with no file in the bundle', async () => {
+    const root = await outDir()
+    await writeFolder(root, { 'main.ts': 'export const x = 1\n' })
+    const result = await build({ absWorkingDir: root, entryPoints: [path.join(root, 'main.ts')], bundle: true, write: false, metafile: true, logLevel: 'silent' })
+    expect(await checkModuleImports(result.metafile, undefined, root)).toContain('gate: no file under backend/policy/gate in the bundle')
   })
 })

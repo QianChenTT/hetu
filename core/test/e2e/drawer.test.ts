@@ -180,7 +180,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   const { dataDir, folder } = await prepared(setup)
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+  await until(() => logged(dataDir, 'core.ready'))
   for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.loads ?? {})]) {
     await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   }
@@ -372,7 +372,7 @@ describe('the drawer', () => {
     expect(await done).toBe(0)
     const again = await launch(dataDir)
     const next = await editorPage(again)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+    await until(() => logged(dataDir, 'core.ready'))
     await open(next, 'a.md')
     await until(async () => (await next.locator('#note-text').innerText()).includes('A draft of this note'))
     await next.getByRole('button', { name: 'Restore' }).click()

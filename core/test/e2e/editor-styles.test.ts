@@ -51,7 +51,8 @@ async function started(notes: Record<string, string>, plugins: Record<string, Fi
       console.error(`Content Security Policy refused ${event.violatedDirective} ${event.blockedURI}`)
     })
   })
-  for (const id of ['luoshu', ...Object.keys(plugins)]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  await until(() => logged(dataDir, 'core.ready'))
+  for (const id of Object.keys(plugins)) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
   return { app, editor, refused }
 }
 

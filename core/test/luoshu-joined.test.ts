@@ -5,19 +5,20 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { GuardCall } from '../api/policy-jobs.ts'
+import type { Gate, GuardCall } from '../api/policy-jobs.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
-import { createGate } from '../../core-plugins/gate/src/gate.ts'
-import { createLuoshu } from '../../core-plugins/luoshu/src/luoshu.ts'
+import { createGate } from '../backend/policy/gate/gate.ts'
+import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
 import { CoreLink } from '../frontend/editor/link.ts'
 import { type Editors, Notes } from '../frontend/editor/notes.ts'
 import type { SettingsValue } from '../frontend/editor/settings.ts'
 import type { UiHooks } from '../frontend/editor/ui-port.ts'
 import { Versions } from '../frontend/editor/versions.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { cleanup, FakeGuard, harness, windowWay } from './carrier-fakes.ts'
+import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 const versionOf = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -30,16 +31,16 @@ afterEach(async () => {
 
 type Reply = { id?: number, ok?: boolean, result?: unknown, refusal?: { code: string } }
 
-// The joined core over a real boot, with the gate and the luoshu plugins as they ship and the folder picked. Calls come
+// The joined core over a real boot, with the gate and the luoshu modules as they ship and the folder picked. Calls come
 // from the editor window, each reply handed back the moment the carrier sends it, or from a plugin-folder plugin
 // approved at class 4 with the grants and the API range given
 type Folder = Record<string, { granted: Capability[], api?: string }>
-async function joined(folder: string, options: { behave?: FakeRuntime['behave'], wire?: Pick<WireOptions, 'guardsFor' | 'trash'>, install?: object, gate?: 'off', plugins?: Folder } = {}) {
+async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wire?: Pick<WireOptions, 'trash'>, plugins?: Folder } = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
   const dataDir = path.join(base, 'data')
   await mkdir(installDir, { recursive: true })
-  await writeInstall(installDir, { ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) }, ...options.install })
+  await writeInstall(installDir, coreInstall())
   const store = new StateStore(dataDir)
   // The gate switched off by the human, as the trusted window does
   await store.writeSwitches(options.gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
@@ -52,8 +53,9 @@ async function joined(folder: string, options: { behave?: FakeRuntime['behave'],
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
   const runtime = new FakeRuntime()
-  runtime.behave = { gate: { exports: { gate: createGate() } }, luoshu: { exports: { provider: luoshu.provider, luoshu: luoshu.role } }, ...options.behave }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0, ...options.wire })
+  // The gate the core modules hold, the shipping one unless holder is given
+  const gate = options.holder ?? createGate()
+  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
@@ -117,15 +119,31 @@ async function notes(): Promise<string> {
   return folder
 }
 
+// No core plugin holds a guard once host halves went, so the carrier's harness holds one before the real luoshu, the
+// editor window asking
+async function guarded(folder: string, check: (call: GuardCall) => 'allow' | 'deny') {
+  const base = path.dirname(folder)
+  for (const dir of ['data', 'install']) await mkdir(path.join(base, dir), { recursive: true })
+  const luoshu = createLuoshu()
+  luoshu.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+  const parts = harness({ guardsFor: () => ['leases'] })
+  parts.pluginsManager.policyJobs.leases = 'on'
+  parts.guards.leases = new FakeGuard()
+  parts.guards.leases.answer = check
+  parts.providers.luoshu = luoshu.provider
+  open.push(async () => {
+    luoshu.close()
+    cleanup()
+  })
+  const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
+  return { ask: (action: string, args?: unknown) => way.ask('editor', action, args) as Promise<Reply> }
+}
+
 describe('the guard step', () => {
   it('refuses a write a guard denies, leaving the note as it was and the lock free', async () => {
     const folder = await notes()
     await writeFile(path.join(folder, 'a.md'), 'as it was')
-    const { ask } = await joined(folder, {
-      install: { leases: { files: filesFor(hostManifest('leases')) } },
-      behave: { leases: { exports: { guard: { check: () => 'deny' } } } },
-      wire: { guardsFor: () => ['leases'] },
-    })
+    const { ask } = await guarded(folder, () => 'deny')
     const read = await ask('luoshu.read', { path: 'a.md' })
     const { version } = read.result as { version: string }
     expect((await ask('luoshu.write', { path: 'a.md', text: 'changed', baseVersion: version })).refusal?.code).toBe('guard-refused')
@@ -138,14 +156,10 @@ describe('the guard step', () => {
     await writeFile(path.join(folder, 'held.md'), 'held')
     await writeFile(path.join(folder, 'free.md'), 'free')
     const asked: string[][] = []
-    const { ask } = await joined(folder, {
-      install: { leases: { files: filesFor(hostManifest('leases')) } },
-      behave: { leases: { exports: { guard: { check: (call: GuardCall) => {
-        const paths = call.scope.paths ?? []
-        asked.push([...paths])
-        return paths.includes('held.md') ? 'deny' : 'allow'
-      } } } } },
-      wire: { guardsFor: () => ['leases'] },
+    const { ask } = await guarded(folder, call => {
+      const paths = call.scope.paths ?? []
+      asked.push([...paths])
+      return paths.includes('held.md') ? 'deny' : 'allow'
     })
     expect((await ask('luoshu.move', { from: 'held.md', to: 'moved.md' })).refusal?.code).toBe('guard-refused')
     expect((await ask('luoshu.move', { from: 'free.md', to: 'held.md' })).refusal?.code).toBe('guard-refused')
@@ -352,7 +366,7 @@ describe('the dot rule with the gate off by the human', () => {
   const asked = () => {
     throw new Error('the gate was asked')
   }
-  const unasked = { gate: { exports: { gate: { decide: asked, canRead: asked, canList: asked, verbs: asked, stateChanged: asked } } } }
+  const unasked: Gate = { decide: asked, canRead: asked, canList: asked, verbs: asked, stateChanged: asked }
 
   async function dotted() {
     const folder = await notes()
@@ -363,7 +377,7 @@ describe('the dot rule with the gate off by the human', () => {
     await writeFile(path.join(folder, 'a.md'), 'note a')
     await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
     // A remove past canonical would answer failed here, so not-granted shows canonical refused it
-    const { ask } = await joined(folder, { gate: 'off', behave: unasked, wire: { trash: async () => { throw new Error('nothing goes to the bin') } } })
+    const { ask } = await joined(folder, { gate: 'off', holder: unasked, wire: { trash: async () => { throw new Error('nothing goes to the bin') } } })
     return { folder, ask }
   }
 

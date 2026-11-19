@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_CAPABILITIES } from '../api/capabilities.ts'
 import { MAX_FOLDER_LENGTH } from '../api/changes.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
-import { corePluginIds } from '../api/ids.ts'
+import { coreModuleIds, corePluginIds } from '../api/ids.ts'
+
+// Every id the off switches may name: the core modules and the core plugins
+const switchable = [...coreModuleIds, ...corePluginIds]
 import {
   defaultState, defaultSwitches, MAX_LISTED, stateDir, StateStore, type Check, type Loaded,
 } from '../backend/boot/state.ts'
@@ -317,7 +320,7 @@ describe('writing', () => {
     const ids = ['watchdog', 'editor-core', 'search', 'my-plugin-x_2']
     const switches = {
       ...switchesIn,
-      off: [...corePluginIds],
+      off: switchable,
       devMode: ids,
       execAnyCommand: ids,
       removed: ['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'],
@@ -1110,17 +1113,17 @@ describe('a failed check and a switch-off', () => {
 
   const switchesSpoiled: [string, () => Promise<unknown>][] = [
     ['edited', async () => writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"confirmOff": false', '"confirmOff": true'))],
-    ['invalid', () => plant(switchesPath(), switchesText({ off: [...corePluginIds, 'search'] }))],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: [...corePluginIds] }))],
+    ['invalid', () => plant(switchesPath(), switchesText({ off: [...switchable, 'search'] }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: switchable }))],
     ['missing', () => rm(switchesPath())],
   ]
 
-  it.each(switchesSpoiled)('reads a switches file that is %s as every core plugin on, never as one off', async (_name, spoil) => {
-    await store.writeSwitches({ ...noSwitches, off: [...corePluginIds] })
+  it.each(switchesSpoiled)('reads a switches file that is %s as every core module and core plugin on, never as one off', async (_name, spoil) => {
+    await store.writeSwitches({ ...noSwitches, off: switchable })
     await spoil()
     const { state } = await store.load()
     expect(state.switches).toEqual(noSwitches)
-    for (const id of corePluginIds) expect(state.switches.off).not.toContain(id)
+    for (const id of switchable) expect(state.switches.off).not.toContain(id)
   })
 
   it('leaves out a plugin whose entry is bad and touches no switch', async () => {

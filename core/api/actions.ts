@@ -346,18 +346,19 @@ export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & 
 // plugin is named in. A window draws it as a notice that opens the trusted window
 export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
 
-// Why hetu stopped instead of starting: a security control that is on failed its check, is missing from the install
-// or failed at start, with the lifecycle reason. again says the run before already restarted hetu after a failure, so
-// it didn't restart a second time
+// Why hetu stopped: the install list didn't check out at start or the event log failed while hetu ran, with the
+// lifecycle reason. again says the run before already restarted hetu after a failure, so it didn't restart a second
+// time
 export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
 
-// One plugin as the trusted window's plugin list shows it: where its code came from and where it runs (in main, in a
-// utility process, in a sandboxed worker or in the editor page), its state and why, whether it is a security control,
-// the human's switch and, for a plugin-folder plugin, each item it was granted
+// One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the install
+// or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the
+// editor page), its state and why, whether it is a security control, the human's switch and, for a plugin-folder
+// plugin, each item it was granted
 export type ListedPlugin = {
   id: string
-  from: 'install' | 'folder'
-  place: 'host' | 'utility' | 'sandboxed' | 'page'
+  from: 'core' | 'install' | 'folder'
+  place: 'core' | 'host' | 'utility' | 'sandboxed' | 'page'
   state: PluginState
   reason: string | null
   security: boolean
@@ -365,8 +366,8 @@ export type ListedPlugin = {
   firstParty: boolean
   on: boolean
   items: { capability: Capability, off: boolean, firstUse: boolean }[]
-  // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for an
-  // core plugin
+  // The class the grant risk classifier policy job gave a plugin-folder plugin, null for none known, which counts as 4, and for a
+  // core module or core plugin
   class: number | null
 }
 

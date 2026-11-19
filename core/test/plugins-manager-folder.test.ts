@@ -130,18 +130,17 @@ describe('reserved ids in the plugin folder', () => {
     expect(made.pluginsManager.list()).toContainEqual({ id, from: 'folder', place: 'sandboxed', state: 'refused', reason: 'reserved-id', incarnation: 0 })
     expect(made.link.events('plugin.refused')).toContainEqual({ plugin: id, reason: 'reserved-id' })
     expect(made.runtime.started.filter(start => start.half === 'worker')).toEqual([])
-    // The install's own plugin of that id, if there is one, is untouched
-    if (id === 'gate') {
-      expect(made.pluginsManager.plugin('gate')?.place).toBe('host')
-      expect(made.pluginsManager.policyJob('gate')).toBe('on')
-    }
+    // The core's own module of that id, if there is one, is untouched
+    if (id === 'gate' || id === 'luoshu') expect(made.modules.state(id)).toBe('on')
+    if (id === 'gate') expect(made.pluginsManager.policyJob('gate')).toBe('on')
   })
 
-  it('refuses an entry for an install id with no folder, so it never stands in for the install\'s', async () => {
+  it('refuses an entry for a core module\'s id with no folder, so it never stands in for the core\'s', async () => {
     const made = await harness({ entries: { gate: firstPartyEntry('d'.repeat(64), { signer: 'sigstore:someone' }) } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.policyJob('gate')).toBe('on')
-    expect(made.pluginsManager.list().filter(row => row.id === 'gate').map(row => row.from).sort()).toEqual(['folder', 'install'])
+    expect(made.pluginsManager.list().filter(row => row.id === 'gate').map(row => [row.from, row.state])).toEqual([['folder', 'refused']])
+    expect(made.runtime.order()).toEqual([])
   })
 
   it('loads a first-party id only as the install\'s own copy, its entry carrying the first-party signer', async () => {
@@ -307,7 +306,7 @@ describe('the scan', () => {
     expect(reasonOf(made.pluginsManager, 'outline')).toBe('entry')
     expect(reasonOf(made.pluginsManager, 'tagger')).toBe('newer')
     expect(reasonOf(made.pluginsManager, 'mapper')).toBe('entry')
-    expect(made.runtime.order()).toEqual(['gate'])
+    expect(made.runtime.order()).toEqual([])
   })
 
   it('counts what in the plugin folder is no plugin folder, a file or a bad name, without reading it', async () => {

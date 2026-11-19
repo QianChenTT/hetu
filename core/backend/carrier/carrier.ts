@@ -12,6 +12,7 @@ import {
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
+import { pathProblem } from '../../api/scope.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
   agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
@@ -76,7 +77,6 @@ type Pending = {
   charged: [string, string | null][]
   children: Set<Pending>
   callee: Way | null
-  host: Way | null
   timer: ReturnType<typeof setTimeout> | null
   done: boolean
   started: number
@@ -348,6 +348,15 @@ export class Carrier {
   // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
   quitting(): void {
     if (!this.closed) this.bus.emit('core.quitting')
+  }
+
+  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path events.publish's shape
+  // refuses reaches nobody, as no call checks it, and one with a dot segment reaches no subscriber whatever the gate's
+  // state. The module names its own topics, so no manifest is read. No call carries it, so it makes no audit record of
+  // an events.publish
+  publishCore(owner: string, topic: string, path: string): void {
+    if (this.closed || pathProblem(path) !== null || dotted(path)) return
+    this.bus.publish(`${owner}.${topic}`, path)
   }
 
   // Writes what the audit queue holds, then the core record backlog: for a log that came back and for Quit, before close and
@@ -753,7 +762,7 @@ export class Carrier {
   }
 
   // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
-  // only while the policy job is on: starting, failed, absent and tampered act as off and off makes no restarts. The handle
+  // only while the policy job is on: starting, failed and absent act as off and off makes no restarts. The handle
   // can outlive that, minted before start and kept through a stop grace
   private isWatchdog(way: Way): boolean {
     const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
@@ -849,7 +858,6 @@ export class Carrier {
       charged,
       children: new Set(),
       callee: null,
-      host: null,
       timer: null,
       done: false,
       started,
@@ -1219,15 +1227,14 @@ export class Carrier {
     this.result(pending, null, result)
   }
 
-  // 6 route to a provider, then 7 prepare, 8 decide, 9 guard and 10 perform. The provider's lock, held from prepare,
-  // goes back through release when the call stops before perform
+  // 6 route to a provider, then 7 prepare, 8 decide, 9 guard and 10 perform. The provider is the core module serving
+  // the namespace, null while that module is off or failed, which answers unavailable. The provider's lock, held from
+  // prepare, goes back through release when the call stops before perform
   private async provide(pending: Pending, id: string, args: unknown, kind: Kind): Promise<void> {
     const listing = providerActions[pending.action]?.filter === 'list'
     const unlisted = listing ? this.listingRefused(pending) : null
     if (unlisted !== null) return this.finish(pending, no(unlisted))
-    const info = this.info(id)
-    if (info?.state === 'starting') return this.finish(pending, no('starting'))
-    const provider = info?.state === 'ready' ? this.holder(() => this.options.providers(id)) : null
+    const provider = this.holder(() => this.options.providers(id))
     if (provider === null) return this.finish(pending, no(this.down('unavailable')))
     const lister = listing ? this.lister(pending) : null
     // Set once the gate and the guards let the call on, so a judge asked before then answers no
@@ -1236,13 +1243,6 @@ export class Carrier {
     const call = frozen({
       ...this.callOf(pending, args), ...(lister === null ? {} : { canList: lister.canList }), ...(judge === undefined ? {} : { judge }),
     })
-    // The provider's own handle may name this call as the parent of its sub-calls
-    const host = this.ways.get(keyOf({ kind: 'plugin', id, half: 'host', incarnation: info!.incarnation }))
-    if (host?.open) {
-      host.delivered.set(pending.callId, pending)
-      pending.host = host
-    }
-
     let given: unknown
     try {
       given = await provider.prepare(call)
@@ -1329,7 +1329,6 @@ export class Carrier {
     for (const id of this.guardsFor(pending.action)) {
       const state = this.policyJob(id)
       if (state === 'off') continue
-      if (state === 'starting') return 'starting'
       const guard = state === 'on' ? this.holder(() => this.options.guards(id)) : null
       if (guard === null) return this.down('guard-down')
       const call: GuardCall = frozen({
@@ -1533,7 +1532,6 @@ export class Carrier {
     pending.way.made.delete(pending.id)
     pending.parent?.children.delete(pending)
     pending.callee?.delivered.delete(pending.callId)
-    pending.host?.delivered.delete(pending.callId)
     if (pending.way.open) {
       const head = { v: VERSION, kind: 'reply', id: pending.id, callId: pending.callId }
       pending.answer(outcome.ok

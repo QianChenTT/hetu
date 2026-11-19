@@ -5,7 +5,7 @@ import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/plugins-manager/plugins-manager.ts'
 import {
-  allowAll, cleanup, coreInstall, filesFor, harness, hostManifest, reasonOf, stateOf, until, workerManifest, type Files,
+  allowAll, cleanup, coreInstall, entryFor, fakeHistory, filesFor, harness, hostManifest, stateOf, until, workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -15,89 +15,86 @@ const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const worker = (id: string): Files => filesFor(workerManifest(id))
 const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
 const exists = (file: string) => stat(file).then(() => true, () => false)
-// The install with a gate that answers and a provider behind it, which a stopped start must never start
-const install = () => ({ ...coreInstall(), luoshu: { files: filesFor(hostManifest('luoshu')) } })
-const working = () => ({ exports: { gate: allowAll() } })
+// An install list naming a core module, which the core holds and no list may name, so the list can't be read
+const naming = () => ({ ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) } })
+const plugins = () => ({ folder: { alpha: worker('alpha') }, entries: { alpha: (root: string) => entryFor(root) } })
+const tampered = (again: boolean) => ({ control: 'install', why: 'tampered', reason: null, again })
 
-describe('a security control that fails at start', () => {
+describe('a core module that fails at start', () => {
   it.each([
-    ['a start that throws', { gate: { ...working(), throws: true } }, 'start-failed'],
-    ['a start that never reaches ready', { gate: { ...working(), ready: false } }, 'start-timeout'],
-    ['a module with no gate export', { gate: { exports: {} } }, 'no-role'],
-  ])('stops hetu in the stopped mode on %s, starting nothing more', async (_name, behave, reason) => {
-    const made = await harness({ install: install(), behave })
+    ['the gate', 'gate', 'state-changed'],
+    ['history', 'history', 'start-failed'],
+  ] as const)('stops nothing when %s throws, which reads failed while every plugin starts', async (_name, id, reason) => {
+    const gate = allowAll()
+    gate.throws = id === 'gate'
+    const history = fakeHistory()
+    history.fails = id === 'history'
+    const made = await harness({ ...plugins(), modules: { gate, history } })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'failed', reason, again: false })
-    expect(made.runtime.order()).not.toContain('luoshu')
-    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('stopped')
-    expect(reasonOf(made.pluginsManager, 'luoshu')).toBe('control-failed')
-    expect(made.link.events('core.ready')).toEqual([])
-    expect(made.link.events('core.stopped')).toEqual([{ control: 'gate', why: 'failed', reason, again: false }])
+    expect(made.pluginsManager.stopped()).toBe(null)
+    expect(made.modules.state(id)).toBe('failed')
+    expect(made.modules.reason(id)).toBe(reason)
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    expect(made.link.events('core.stopped')).toEqual([])
+    expect(made.link.events('core.ready')).toHaveLength(1)
+    expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
   })
 
-  it('stops hetu on a gate whose bytes fail their hash check', async () => {
-    const made = await harness({ install: { ...install(), gate: { files: filesFor(hostManifest('gate')), hash: 'f'.repeat(64) } } })
+  it('shows a failed module in the trusted window list and in the banner as crashed, its switch still on', async () => {
+    const history = fakeHistory()
+    history.fails = true
+    const made = await harness({ modules: { history }, switches: { off: ['exec'] } })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'tampered', reason: 'tampered', again: false })
-  })
-
-  it('stops hetu on a gate the install list names whose files are gone', async () => {
-    const made = await harness({ install: install(), behave: { gate: working() } })
-    await import('node:fs/promises').then(fs => fs.rm(path.join(made.installDir, 'plugins', 'gate'), { recursive: true }))
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'gate', why: 'absent' })
-  })
-
-  it('stops hetu on a gate its start marker holds', async () => {
-    const made = await harness({ install: install(), behave: { gate: working() }, markers: ['gate'] })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'gate', why: 'failed', reason: 'marker' })
+    const rows = ((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).plugins
+    expect(rows.find(row => row.id === 'history')).toMatchObject({ from: 'core', place: 'core', state: 'failed', reason: 'start-failed', on: true, security: false })
+    expect(rows.find(row => row.id === 'exec')).toMatchObject({ state: 'off', reason: 'off', on: false })
+    expect(rows.find(row => row.id === 'grant-risk-classifier')).toMatchObject({ state: 'ready', reason: null, on: true, security: true })
+    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).crashed).toEqual(['history'])
   })
 
   it('starts on with the gate the human switched off', async () => {
-    const made = await harness({ install: install(), behave: { gate: { throws: true } }, switches: { off: ['gate'] } })
+    const gate = allowAll()
+    gate.throws = true
+    const made = await harness({ ...plugins(), modules: { gate }, switches: { off: ['gate'] } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
-    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('ready')
-  })
-
-  it('starts on when the install list names no control', async () => {
-    const made = await harness({ install: { luoshu: { files: filesFor(hostManifest('luoshu')) } } })
-    await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toBe(null)
-    expect(stateOf(made.pluginsManager, 'luoshu')).toBe('ready')
+    expect(made.pluginsManager.policyJob('gate')).toBe('off')
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
   it('never stops for a plugin-folder plugin that fails', async () => {
-    const made = await harness({ behave: { gate: working(), alpha: { ready: false } }, folder: { alpha: worker('alpha') } })
+    const made = await harness({ behave: { alpha: { ready: false } }, folder: { alpha: worker('alpha') } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
   })
+})
 
-  it('says again when the run before restarted for the same control', async () => {
-    const made = await harness({
-      install: install(),
-      behave: { gate: { ...working(), throws: true } },
-      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'gate'),
-    })
+describe('an install list that can\'t be read', () => {
+  it('stops hetu in the stopped mode as tampered when it names a core module, starting no plugin', async () => {
+    const made = await harness({ ...plugins(), install: naming() })
     await made.pluginsManager.start()
-    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'gate', again: true })
+    expect(made.pluginsManager.stopped()).toEqual(tampered(false))
+    expect(made.runtime.order()).toEqual([])
+    expect(stateOf(made.pluginsManager, 'alpha')).not.toBe('ready')
+    expect(made.link.events('core.ready')).toEqual([])
+    expect(made.link.events('core.stopped')).toEqual([tampered(false)])
+  })
+
+  it('says again when the run before restarted', async () => {
+    const made = await harness({ install: naming(), before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log') })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stopped()).toEqual(tampered(true))
   })
 
   it('shows the stopped mode in core.status and the trusted window\'s list', async () => {
-    const made = await harness({ install: install(), behave: { gate: { ...working(), throws: true } } })
+    const made = await harness({ install: naming() })
     await made.pluginsManager.start()
-    const mode = { control: 'gate', why: 'failed', reason: 'start-failed', again: false }
-    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).stopped).toEqual(mode)
-    expect(((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).stopped).toEqual(mode)
+    expect(((await made.pluginsManager.serve(call(editor, 'core.status'))) as CoreStatus).stopped).toEqual(tampered(false))
+    expect(((await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList).stopped).toEqual(tampered(false))
   })
 
-  it('takes the human\'s switch-off in the stopped mode and clears the restart marker with it', async () => {
-    const made = await harness({
-      install: install(),
-      behave: { gate: { ...working(), throws: true } },
-      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'gate'),
-    })
+  it('takes the human\'s choice in the stopped mode and clears the restart marker with it', async () => {
+    const made = await harness({ install: naming(), before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log') })
     await made.pluginsManager.start()
     const { held } = await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted) as { held: string }
     await made.pluginsManager.confirm(held, { typed: 'gate' })
@@ -105,58 +102,59 @@ describe('a security control that fails at start', () => {
   })
 })
 
-describe('a security control that fails while hetu runs', () => {
+describe('the log failing while hetu runs', () => {
   const failing = async () => {
     const failures: Failure[] = []
     const gate = allowAll()
-    const made = await harness({ install: install(), behave: { gate: { exports: { gate } } }, pluginsManager: { onFailure: failure => { failures.push(failure) } } })
+    const made = await harness({ ...plugins(), modules: { gate }, pluginsManager: { onFailure: failure => { failures.push(failure) } } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     return { made, gate, failures }
   }
 
   it('asks the runtime to quit and start again, with the restart marker written first', async () => {
-    const { made, gate, failures } = await failing()
-    gate.throws = true
-    await made.pluginsManager.apply({ kind: 'confirmOff', on: true })
-    await until(() => failures.length > 0)
-    expect(failures).toEqual([{ action: 'relaunch', control: 'gate', reason: 'state-changed' }])
-    expect(await readFile(path.join(made.dataDir, 'failed-once'), 'utf8')).toBe('gate')
-    expect(made.link.events('core.failed')).toEqual([{ control: 'gate', reason: 'state-changed' }])
-  })
-
-  it('stops in the stopped mode instead when the run before restarted for the same control', async () => {
-    const failures: Failure[] = []
-    const gate = allowAll()
-    const made = await harness({
-      install: install(),
-      behave: { gate: { exports: { gate } } },
-      pluginsManager: { onFailure: failure => { failures.push(failure) } },
-      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'gate'),
-    })
-    await made.pluginsManager.start()
-    gate.throws = true
-    await made.pluginsManager.apply({ kind: 'confirmOff', on: true })
-    await until(() => failures.length > 0)
-    const mode = { control: 'gate', why: 'failed', reason: 'state-changed', again: true }
-    expect(failures).toEqual([{ action: 'stopped', mode }])
-    expect(made.pluginsManager.stopped()).toEqual(mode)
-    await made.pluginsManager.settled()
-    expect(stateOf(made.pluginsManager, 'luoshu')).not.toBe('ready')
-  })
-
-  it('takes the core\'s log failing the same way', async () => {
     const { made, failures } = await failing()
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
     expect(failures).toEqual([{ action: 'relaunch', control: 'log', reason: 'log-failing' }])
     expect(await readFile(path.join(made.dataDir, 'failed-once'), 'utf8')).toBe('log')
+    expect(made.link.events('core.failed')).toEqual([{ control: 'log', reason: 'log-failing' }])
+  })
+
+  it('stops in the stopped mode instead when the run before restarted for it', async () => {
+    const failures: Failure[] = []
+    const made = await harness({
+      ...plugins(),
+      pluginsManager: { onFailure: failure => { failures.push(failure) } },
+      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log'),
+    })
+    await made.pluginsManager.start()
+    made.pluginsManager.controlFailed('log', 'log-failing')
+    await until(() => failures.length > 0)
+    const mode = { control: 'log', why: 'failed', reason: 'log-failing', again: true }
+    expect(failures).toEqual([{ action: 'stopped', mode }])
+    expect(made.pluginsManager.stopped()).toEqual(mode)
+    await made.pluginsManager.settled()
+    expect(stateOf(made.pluginsManager, 'alpha')).not.toBe('ready')
+  })
+
+  // A core module that throws is refused per call and stops nothing, the log alone stops hetu
+  it('asks nothing of the runtime when a core module throws while hetu runs', async () => {
+    const { made, gate, failures } = await failing()
+    gate.throws = true
+    await made.pluginsManager.apply({ kind: 'confirmOff', on: true })
+    await made.pluginsManager.settled()
+    expect(made.pluginsManager.policyJob('gate')).toBe('failed')
+    expect(failures).toEqual([])
+    expect(made.link.events('core.failed')).toEqual([])
+    expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
   it('reports one failure however many follow', async () => {
     const { made, failures } = await failing()
     made.pluginsManager.controlFailed('log', 'log-failing')
-    made.pluginsManager.controlFailed('gate', 'state-changed')
+    made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
     await new Promise(resolve => setTimeout(resolve, 50))
     expect(failures).toHaveLength(1)
@@ -171,25 +169,21 @@ describe('a security control that fails while hetu runs', () => {
   })
 })
 describe('the restart marker, after the review', () => {
-  it('stops hetu on a failure of any control once the run before restarted, so two controls can\u2019t take turns', async () => {
+  it('stops hetu on the log failing once the run before restarted, whatever the marker names', async () => {
     const failures: Failure[] = []
-    const gate = allowAll()
     const made = await harness({
-      install: install(),
-      behave: { gate: { exports: { gate } } },
       pluginsManager: { onFailure: failure => { failures.push(failure) } },
-      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log'),
+      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'gate'),
     })
     await made.pluginsManager.start()
-    gate.throws = true
-    await made.pluginsManager.apply({ kind: 'confirmOff', on: true })
+    made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
-    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'gate', why: 'failed', reason: 'state-changed', again: true } }])
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true } }])
   })
 
   it('stops hetu instead of starting it again when the marker can\u2019t be written', async () => {
     const failures: Failure[] = []
-    const made = await harness({ install: install(), behave: { gate: working() }, pluginsManager: { onFailure: failure => { failures.push(failure) } } })
+    const made = await harness({ pluginsManager: { onFailure: failure => { failures.push(failure) } } })
     await made.pluginsManager.start()
     // A folder where the marker goes makes its write fail
     await mkdir(path.join(made.dataDir, 'failed-once'), { recursive: true })
@@ -201,7 +195,7 @@ describe('the restart marker, after the review', () => {
 
   it('makes shutdown wait for its write', async () => {
     const { made } = await (async () => {
-      const made = await harness({ install: install(), behave: { gate: working() }, pluginsManager: { onFailure: () => {} } })
+      const made = await harness({ pluginsManager: { onFailure: () => {} } })
       await made.pluginsManager.start()
       return { made }
     })()
@@ -211,7 +205,7 @@ describe('the restart marker, after the review', () => {
   })
 
   it('is cleared by a clean Quit only once a write under way has landed', async () => {
-    const made = await harness({ install: install(), behave: { gate: working() }, pluginsManager: { onFailure: () => {} } })
+    const made = await harness({ pluginsManager: { onFailure: () => {} } })
     await made.pluginsManager.start()
     made.pluginsManager.controlFailed('log', 'log-failing')
     await made.pluginsManager.cleanQuit()
@@ -220,7 +214,7 @@ describe('the restart marker, after the review', () => {
 
   it('ignores a failure told before the start finished, so the carrier can tell it again later', async () => {
     const failures: Failure[] = []
-    const made = await harness({ install: install(), behave: { gate: working() }, pluginsManager: { onFailure: failure => { failures.push(failure) } } })
+    const made = await harness({ pluginsManager: { onFailure: failure => { failures.push(failure) } } })
     expect(made.pluginsManager.controlFailed('log', 'log-failing')).toBe(false)
     await made.pluginsManager.start()
     expect(made.pluginsManager.controlFailed('log', 'log-failing')).toBe(true)
@@ -230,7 +224,7 @@ describe('the restart marker, after the review', () => {
 
 describe('the restart marker', () => {
   it('is cleared by a clean Quit', async () => {
-    const made = await harness({ install: install(), behave: { gate: working() } })
+    const made = await harness()
     await mkdir(made.dataDir, { recursive: true })
     await writeFile(path.join(made.dataDir, 'failed-once'), 'gate')
     await made.pluginsManager.start()

@@ -15,7 +15,7 @@ function frozenRealm(): (code: string) => unknown {
 const throws = (run: (code: string) => unknown, code: string) => run(`try { ${code}; 'passed' } catch (err) { err.constructor.name }`)
 
 describe('freezing the built-ins', () => {
-  it('keeps a host half from replacing a method core/api decides with', () => {
+  it('keeps code in main from replacing a method core/api decides with', () => {
     const run = frozenRealm()
     for (const code of [
       'Array.prototype.includes = () => true', 'Set.prototype.has = () => true', 'String.prototype.startsWith = () => true',
@@ -56,7 +56,7 @@ describe('freezing the built-ins', () => {
     expect(throws(run, 'const o = {}; o.constructor = 5')).toBe('TypeError')
   })
 
-  it('keeps the global names bound to the built-ins, so a host half can\'t swap Set or structuredClone under the core', () => {
+  it('keeps the global names bound to the built-ins, so code in main can\'t swap Set or structuredClone under the core', () => {
     // A VM's global is a proxy that lets a delete through, so this one runs in a real realm of its own
     const freeze = pathToFileURL(path.join(import.meta.dirname, '..', 'backend', 'runtime', 'intrinsics.ts')).href
     const script = `

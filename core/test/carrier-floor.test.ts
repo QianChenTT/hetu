@@ -139,7 +139,7 @@ describe('the floor', () => {
       ...['mcp', 'search', 'gate'].map(id => connect(worker(id))),
       ...['luoshu', 'gate', 'watchdog'].map(id => hostHalf(carrier, host(id))),
     ]
-    for (const state of ['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const) {
+    for (const state of ['on', 'off', 'failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
       for (const plugin of plugins) expect(code(await plugin.ask(action, args))).toBe('not-granted')
     }
@@ -265,9 +265,9 @@ describe('the floor', () => {
     expect(seen).toEqual([])
   })
 
-  // Starting, failed, absent and tampered act as off and off makes no restarts. The handle can outlive the policy job,
+  // Failed and absent act as off and off makes no restarts. The handle can outlive the policy job,
   // minted before start and kept through a stop grace
-  it.each(['off', 'starting', 'failed', 'absent', 'tampered'] as const)('takes no watchdog.* from the watchdog\'s handle while its policy job is %s', async state => {
+  it.each(['off', 'failed', 'absent'] as const)('takes no watchdog.* from the watchdog\'s handle while its policy job is %s', async state => {
     const seen: Call[] = []
     const { carrier, connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = 'off'
@@ -326,7 +326,6 @@ describe('the floor', () => {
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    pluginsManager.installed('exec')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const callers = [
       // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
@@ -456,7 +455,7 @@ describe('ui.*', () => {
 })
 
 describe('the gate policy job', () => {
-  it.each(['failed', 'absent', 'tampered'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
+  it.each(['failed', 'absent'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
     const { carrier, connect, pluginsManager, gate, luoshu } = harness()
     pluginsManager.policyJobs.gate = state
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
@@ -469,13 +468,6 @@ describe('the gate policy job', () => {
     expect(code(await way.ask('editor-1', 'luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(gate.asked).toEqual([])
     expect(luoshu.prepared).toEqual([])
-  })
-
-  it('answers starting while the gate starts, so the SDK retries', async () => {
-    const { connect, pluginsManager, gate } = harness()
-    pluginsManager.policyJobs.gate = 'starting'
-    expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('starting')
-    expect(gate.asked).toEqual([])
   })
 
   it('treats a gate that is on with no holder to ask as down', async () => {

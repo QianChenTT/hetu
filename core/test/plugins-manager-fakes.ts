@@ -1,5 +1,4 @@
 import { API_VERSION } from '../api/manifest.ts'
-import { createGrantRiskClassifier } from '../../core-plugins/grant-risk-classifier/src/grant-risk-classifier.ts'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,12 +7,17 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
-import type { Gate, GrantsSnapshot } from '../api/policy-jobs.ts'
+import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { Port } from '../backend/carrier/seams.ts'
+import { CoreModules, type CoreModulesOptions } from '../backend/modules.ts'
+import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
+import type { Exec } from '../backend/providers/exec/exec.ts'
+import type { History } from '../backend/providers/history/history.ts'
+import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
-import type { CarrierLink, HostExports, HostLink, HostStart, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/plugins-manager/seams.ts'
+import type { CarrierLink, Landing, Runtime, UtilityStart, WorkerStart } from '../backend/plugins-manager/seams.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
@@ -52,7 +56,6 @@ export class FakeLink implements CarrierLink {
   waiting = 0
   limits: Partial<Record<LimitName, number>> = {}
   private readonly ports = new Map<string, Port>()
-  private readonly receivers = new Map<string, (message: unknown) => void>()
 
   register(port: Port, caller: Caller): void {
     this.carrier!.register(port, caller)
@@ -60,34 +63,17 @@ export class FakeLink implements CarrierLink {
     this.ports.set(keyOf(caller), port)
   }
 
-  handle(caller: Caller, receive: (message: unknown) => void): { post: (message: unknown) => void } {
-    const way = this.carrier!.handle(caller, receive)
-    this.registered.push(caller)
-    this.receivers.set(keyOf(caller), receive)
-    return way
-  }
-
   end(caller: Caller, code: 'stopped' | 'crashed' = 'stopped'): void {
     this.ended.push({ caller, code })
     if (caller.kind === 'plugin') this.timeline.push(`end ${caller.id}`)
     this.ports.delete(keyOf(caller))
-    this.receivers.delete(keyOf(caller))
     this.carrier!.end(caller, code)
   }
 
   send(caller: Caller, message: unknown): void {
     this.sent.push({ caller, message: message as Message })
     if (caller.kind === 'plugin') this.timeline.push(`${(message as Message).kind} ${caller.id}`)
-    const port = this.ports.get(keyOf(caller))
-    if (port !== undefined) return port.postMessage(message)
-    const receive = this.receivers.get(keyOf(caller))
-    if (receive === undefined) return
-    const copy = structuredClone(message)
-    queueMicrotask(() => {
-      try {
-        receive(copy)
-      } catch {}
-    })
+    this.ports.get(keyOf(caller))?.postMessage(message)
   }
 
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
@@ -130,7 +116,7 @@ export class FakeLink implements CarrierLink {
 
 // What a fake plugin does: answer init with ready and stop with stopped, or not. utility runs a utility half on its
 // port in place of the scripted half, such as a real plugin through the SDK
-export type Behaviour = { ready: boolean, stopped: boolean, pong: boolean, throws: boolean, exports: HostExports, utility?: (start: UtilityStart) => void }
+export type Behaviour = { ready: boolean, stopped: boolean, pong: boolean, throws: boolean, utility?: (start: UtilityStart) => void }
 
 // A plugin half as the fake runtime started it. inbox holds what the core sent it
 export class Half {
@@ -177,7 +163,7 @@ export class Half {
 }
 
 export class FakeRuntime implements Runtime {
-  readonly started: { id: string, incarnation: number, half: 'worker' | 'host' | 'utility', code: string | null }[] = []
+  readonly started: { id: string, incarnation: number, half: 'worker' | 'utility', code: string | null }[] = []
   readonly terminated: { id: string, incarnation: number }[] = []
   // The utility processes the plugins manager asked to end, and every utility start as the plugins manager made it
   readonly killed: { id: string, incarnation: number }[] = []
@@ -190,17 +176,11 @@ export class FakeRuntime implements Runtime {
   readonly ports: MessagePort[] = []
   behave: Record<string, Partial<Behaviour>> = {}
 
-  // A security control's module and the luoshu's give their role, as the install's own do, so a test stops hetu only on purpose
   private of(id: string): Behaviour {
-    const roles: Record<string, HostExports> = {
-      gate: { gate: allowAll() }, watchdog: { watchdog: { sample() {} } }, luoshu: { luoshu: { open() {} } }, 'grant-risk-classifier': { grantRiskClassifier: createGrantRiskClassifier() },
-      history: { history: { open() {} } }, exec: { exec: { stateChanged() {} } },
-    }
-    const exports: HostExports = roles[id] ?? {}
-    return { ready: true, stopped: true, pong: true, throws: false, exports, ...this.behave[id] }
+    return { ready: true, stopped: true, pong: true, throws: false, ...this.behave[id] }
   }
 
-  half(id: string, incarnation = 1, half: 'worker' | 'host' | 'utility' = 'worker'): Half {
+  half(id: string, incarnation = 1, half: 'worker' | 'utility' = 'worker'): Half {
     const found = this.halves.get(`${id}:${incarnation}:${half}`)
     if (found === undefined) throw new Error(`no ${half} for ${id} ${incarnation}`)
     return found
@@ -244,17 +224,6 @@ export class FakeRuntime implements Runtime {
     this.halves.set(`${start.id}:${start.incarnation}:worker`, half)
   }
 
-  async startHost(start: HostStart): Promise<HostExports> {
-    this.started.push({ id: start.id, incarnation: start.incarnation, half: 'host', code: null })
-    const behaviour = this.of(start.id)
-    if (behaviour.throws) throw new Error('the module threw')
-    const link: HostLink = start.link
-    const half = new Half(message => link.post(message), () => {})
-    link.listen(message => this.answer(half, start.id, message as Message))
-    this.halves.set(`${start.id}:${start.incarnation}:host`, half)
-    return behaviour.exports
-  }
-
   terminate(id: string, incarnation: number): void {
     this.terminated.push({ id, incarnation })
   }
@@ -283,6 +252,97 @@ export class FakeRuntime implements Runtime {
   exit(id: string, incarnation: number, killed: boolean): void {
     this.utilityStarts.find(start => start.id === id && start.incarnation === incarnation)!.exited({ killed })
   }
+}
+
+// A provider that serves nothing, for a core module's fake
+const servesNothing = (): Provider => ({ prepare: async () => ({ scope: {} }), perform: async () => null })
+
+// A luoshu that keeps each opening it was handed and how often it was closed. Its open throws while throws holds
+export function fakeLuoshu(): Luoshu & { opened: Opening[], closed: number, throws: boolean } {
+  const made = {
+    opened: [] as Opening[],
+    closed: 0,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      open(opening: Opening) {
+        made.opened.push(opening)
+        if (made.throws) throw new Error('no folder to open')
+      },
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+// History or exec as the core holds it, keeping what it was handed, how often it started and closed. start throws
+// while fails holds and the push while throws holds
+export function fakeHistory(): History & { opened: Opening[], started: number, closed: number, fails: boolean, throws: boolean } {
+  const made = {
+    opened: [] as Opening[],
+    started: 0,
+    closed: 0,
+    fails: false,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      open(opening: Opening) {
+        made.opened.push(opening)
+        if (made.throws) throw new Error('no folder to open')
+      },
+    },
+    async start() {
+      made.started++
+      if (made.fails) throw new Error('no git')
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+export function fakeExec(): Exec & { views: ExecView[], started: number, closed: number, fails: boolean, throws: boolean } {
+  const made = {
+    views: [] as ExecView[],
+    started: 0,
+    closed: 0,
+    fails: false,
+    throws: false,
+    provider: servesNothing(),
+    role: {
+      stateChanged(view: ExecView) {
+        made.views.push(view)
+        if (made.throws) throw new Error('bad view')
+      },
+    },
+    async start() {
+      made.started++
+      if (made.fails) throw new Error('no folder')
+    },
+    close() {
+      made.closed++
+    },
+  }
+  return made
+}
+
+// The real grant risk classifier, each of whose calls throws while throws holds, as a classifier that fails per call
+export function throwingClassifier(): GrantRiskClassifier & { throws: boolean } {
+  const real = createGrantRiskClassifier()
+  const made = { throws: true } as GrantRiskClassifier & { throws: boolean }
+  for (const name of Object.keys(real) as (keyof GrantRiskClassifier)[]) {
+    const own = real[name] as (...args: unknown[]) => unknown
+    Object.assign(made, {
+      [name]: (...args: unknown[]) => {
+        if (made.throws) throw new Error('the policy threw')
+        return own.apply(real, args)
+      },
+    })
+  }
+  return made
 }
 
 // A gate that allows everything and remembers each grants snapshot it was given
@@ -362,14 +422,23 @@ export async function entryFor(root: string, extra: Partial<Plugin> = {}): Promi
 export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plugin =>
   ({ version: '1.0.0', contentHash: hash, signer: FIRST_PARTY_SIGNER, granted: [], class: null, enabled: true, ...extra })
 
-// The install the host tier needs to come up: the gate, with a host half. The log is the core's own
-export const coreInstall = (): Record<string, Listing> => ({
-  gate: { files: filesFor(hostManifest('gate')) },
-})
+// The install the core needs to come up: nothing, the gate and the other core modules ship inside the core as the log
+// does
+export const coreInstall = (): Record<string, Listing> => ({})
 
-// A real carrier over the plugins manager, built from the options wireCore builds it from, with no core record log
-export function wire(pluginsManager: PluginsManager, link: FakeLink): Carrier {
-  const carrier = new Carrier(carrierOptions(pluginsManager, { log: null }))
+// The core modules' instances a test hands in place of the real ones, and the OS's bin for the luoshu
+export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'trash'>>
+
+// The core modules as wireCore makes them, each the real one unless a test hands its own, the luoshu publishing through
+// the carrier the link points at
+export function coreModules(dirs: { dataDir: string, installDir: string }, link: FakeLink, fakes: ModuleFakes = {}): CoreModules {
+  return new CoreModules({ ...dirs, publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path), ...fakes })
+}
+
+// A real carrier over the plugins manager and the core modules, built from the options wireCore builds it from, with no
+// core record log
+export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Carrier {
+  const carrier = new Carrier(carrierOptions(pluginsManager, modules, { log: null }))
   link.carrier?.close()
   link.carrier = carrier
   return carrier
@@ -382,6 +451,9 @@ export type Harness = {
   store: StateStore
   link: FakeLink
   runtime: FakeRuntime
+  modules: CoreModules
+  // The gate the core modules hold, the one handed in or one that allows everything
+  gate: Gate
   pluginsManager: PluginsManager
   carrier: Carrier
 }
@@ -394,8 +466,10 @@ export async function tempBase(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'hetu-plugins-manager-'))
 }
 
-// A plugins manager over a real StateStore and a real carrier, with the fake runtime. state writes the entries and switches the
-// boot hands over. removedKnown and markers stand in for what boot found
+// A plugins manager over a real StateStore, the core modules and a real carrier, with the fake runtime. state writes the
+// entries and switches the boot hands over. removedKnown stands in for what boot found. The gate allows everything
+// unless modules hands another, as the gate the install held did, and every other core module is the real one unless
+// modules hands a fake
 export async function harness(options: {
   base?: string
   install?: Record<string, Listing> | null
@@ -403,8 +477,8 @@ export async function harness(options: {
   entries?: Record<string, Plugin | ((root: string) => Promise<Plugin>)>
   switches?: Partial<Switches>
   removedKnown?: boolean
-  markers?: string[]
   behave?: FakeRuntime['behave']
+  modules?: ModuleFakes
   limits?: FakeLink['limits']
   pluginsManager?: Partial<PluginsManagerOptions>
   // Runs once the folders and entries are written and before the store loads, to plant what boot would find
@@ -431,17 +505,20 @@ export async function harness(options: {
   link.limits = { readyMs: 1000, stopGraceMs: 100, ...options.limits }
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
+  const gate = options.modules?.gate ?? allowAll()
+  const modules = coreModules({ dataDir, installDir }, link, { ...options.modules, gate })
   const pluginsManager = new PluginsManager({
-    booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir, markers: options.markers ?? [] },
+    booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir },
     installDir,
     link,
     runtime,
+    modules,
     // A request counts at once unless a test is about the delay
     confirmDelayMs: 0,
     ...options.pluginsManager,
   })
-  const carrier = wire(pluginsManager, link)
-  const made = { base, installDir, dataDir, store, link, runtime, pluginsManager, carrier }
+  const carrier = wire(pluginsManager, modules, link)
+  const made = { base, installDir, dataDir, store, link, runtime, modules, gate, pluginsManager, carrier }
   live.push(made)
   return made
 }

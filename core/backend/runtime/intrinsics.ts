@@ -1,5 +1,5 @@
-// Run in main once, before the first host half loads. Freezes every built-in core/api decides with, each constructor
-// and its prototype and the ones with no global name, and binds their global names for good, so a host half can't swap
+// Run in main once, before the core modules start. Freezes every built-in core/api decides with, each constructor and
+// its prototype and the ones with no global name, and binds their global names for good, so no code in main can swap
 // Array.prototype.includes, Set.prototype.has or Set itself to flip a decision, or add to a prototype. Freezing a
 // prototype makes its data properties read-only, and assigning to an inherited read-only property fails even on code's
 // own objects (the override mistake), so a few properties code commonly sets on its own objects become accessors whose

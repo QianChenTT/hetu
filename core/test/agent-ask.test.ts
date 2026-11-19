@@ -27,13 +27,13 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
   const made = await harness({
     install: {
-      ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcp, firstParty: true },
+      ...coreInstall(), mcp: { files: mcp, firstParty: true },
       'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
     entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
     ...(aside !== undefined ? { switches: { revokedAgents: aside } } : {}),
-    behave: { gate: { exports: { gate } } },
+    modules: { gate },
     pluginsManager: { clock: () => clock.now, confirmDelayMs: 0 },
   })
   await made.pluginsManager.start()
@@ -110,8 +110,8 @@ describe('an agent\'s ask', () => {
     const { pluginsManager, ask, list } = await started()
     expect(await code(ask('client#1', [inbox, { type: 'plugin.call', targets: ['mcp-http-handler', 'press-confirm-to-finish'] }]))).toBe('not-found')
     expect(pluginsManager.pending()).toEqual([])
-    expect(await ask('client#1', [{ type: 'plugin.call', targets: ['mcp-http-handler', 'gate'] }])).toEqual({ asked: 'waiting' })
-    expect((await list()).requests[0].notes[0]).toBe('It asks for: plugin.call to "mcp-http-handler", "gate"')
+    expect(await ask('client#1', [{ type: 'plugin.call', targets: ['mcp-http-handler', 'mcp'] }])).toEqual({ asked: 'waiting' })
+    expect((await list()).requests[0].notes[0]).toBe('It asks for: plugin.call to "mcp-http-handler", "mcp"')
   })
 
   it('answers granted with no request for items the agent holds already', async () => {
@@ -231,11 +231,11 @@ describe('agents\' items across an update of mcp and a Recover', () => {
   async function installed(installVersion: string) {
     const gate = allowAll()
     const made = await harness({
-      install: { ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) }, mcp: { files: mcpOf(installVersion), firstParty: true } },
+      install: { ...coreInstall(), mcp: { files: mcpOf(installVersion), firstParty: true } },
       folder: { mcp: mcpOf('1.0.0') },
       // granted holds a widen the human gave beyond the manifest, which a copy resets
       entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read, write], class: 1, agents, revoked: ['client#5'] }) },
-      behave: { gate: { exports: { gate } } },
+      modules: { gate },
       pluginsManager: { confirmDelayMs: 0 },
     })
     await made.pluginsManager.start()
