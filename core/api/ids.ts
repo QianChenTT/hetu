@@ -72,6 +72,11 @@ export function securityControls(listed: readonly string[]): string[] {
   return [...policyJobIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
 }
 
+// The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
+// their own and no incarnation. Each keeps its off switch in the state and its id reserved
+export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const)
+export type CoreModuleId = typeof coreModuleIds[number]
+
 // Core plugins, host and in-page, which load only from the install
 export const corePluginIds = frozen([
   'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
