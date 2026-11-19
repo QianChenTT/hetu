@@ -32,10 +32,11 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the carrier asks, each held by the core plugin of the same id. The log is the core's own
+// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id and
+// the watchdog by the core plugin of its id. The log is the core's own
 export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
 
-// The plugin that serves each provider namespace
+// The core module or core plugin that serves each provider namespace
 export const providers = table({
   luoshu: 'luoshu',
   leases: 'leases',
@@ -59,17 +60,10 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The security controls: the policy job holders and every guard core/api expects. One that is on and fails stops hetu. The
-// log is the core's own and the providers serve powers without limiting anyone, so neither is one
+// The security controls: the policy job holders and every guard core/api expects. Switching one off widens what
+// plugins may do. The log is the core's own and the providers serve powers without limiting anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
   return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
-}
-
-// The security controls an install holds, in the order they start. A control the install list doesn't name isn't
-// part of the build
-export function securityControls(listed: readonly string[]): string[] {
-  const named = new Set(listed)
-  return [...policyJobIds, ...new Set(Object.values(guards).flat())].filter(id => named.has(id))
 }
 
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
@@ -77,10 +71,9 @@ export function securityControls(listed: readonly string[]): string[] {
 export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, host and in-page, which load only from the install
-export const corePluginIds = frozen([
-  'gate', 'grant-risk-classifier', 'watchdog', 'storage', 'luoshu', 'leases', 'history', 'exec', 'mcp-http-handler', 'net', 'hidden-marks',
-] as const)
+// Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the
+// editor page. The watchdog, leases and net are designed and not built
+export const corePluginIds = frozen(['watchdog', 'leases', 'mcp-http-handler', 'net', 'hidden-marks'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
@@ -96,6 +89,7 @@ const reserved = new Set<string>([
   ...Object.values(providers),
   ...policyJobIds,
   ...Object.values(guards).flat(),
+  ...coreModuleIds,
   ...corePluginIds,
   ...firstPartyIds,
 ])

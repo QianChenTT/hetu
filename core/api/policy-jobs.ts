@@ -147,7 +147,7 @@ export type GrantRiskClassifier = {
   alerts?(move: ClassMove): boolean
 }
 
-// How the plugins manager clears a space through the storage plugin, so the clear runs after every call already queued on the
+// How the plugins manager clears a space through storage, so the clear runs after every call already queued on the
 // space and nothing a stopped plugin queued lands after it
 export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
 
@@ -158,12 +158,12 @@ export type Opening = { readonly folder: string | null, readonly dataDir: string
 // a file. None in a core with no bin, where a remove answers unavailable
 export type LuoshuOpening = Opening & { readonly trash?: (absolute: string) => Promise<void> }
 
-// How the plugins manager hands the luoshu its folder: when the plugin is ready and each time luoshu.pick applies. A throw marks
-// the luoshu failed
+// How the core hands the luoshu its folder: at start, when the luoshu is switched on again and each time luoshu.pick
+// applies. A throw marks the luoshu failed
 export type LuoshuRole = { open(opening: LuoshuOpening): void }
 
-// How the plugins manager hands history the notes folder: when the plugin is ready and each time luoshu.pick applies. A throw
-// marks history failed
+// How the core hands history the notes folder: at start, when history is switched on again and each time luoshu.pick
+// applies. A throw marks history failed
 export type HistoryRole = { open(opening: Opening): void }
 
 // One exec item a plugin holds: its exact commands and the variables they get by name
@@ -177,7 +177,7 @@ export type ExecView = {
   readonly opening: Opening
 }
 
-// How the plugins manager hands exec its view. A throw marks exec failed
+// How the core hands exec its view, with every grants snapshot. A throw marks exec failed
 export type ExecRole = { stateChanged(view: ExecView): void }
 
 // A host guard answers from its own state and makes no calls
@@ -200,9 +200,9 @@ export type Provider = {
   release?(call: Call, prepared: Prepared): void
 }
 
-// A policy job or guard role as the carrier applies it: on, off by the human, starting, failed (crashed, timed out,
-// unresponsive or held by its marker), absent from the install or tampered
-export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent', 'tampered'] as const)
+// A policy job or guard role as the carrier applies it: on, off by the human, failed (its module's last start or push
+// threw) or absent, held by nothing that runs
+export const policyJobStates = frozen(['on', 'off', 'failed', 'absent'] as const)
 export type PolicyJobState = typeof policyJobStates[number]
 
 // A plugin's lifecycle state, which the plugins manager owns

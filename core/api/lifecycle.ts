@@ -10,22 +10,21 @@ import { frozen } from './plain.ts'
 export const stopReasons = frozen([
   // its check: files gone, a manifest outside the schema or naming another id, an api range outside this core, bytes
   // that don't match, a null signer allowUnsigned doesn't name, the first-party signer on another id, a reserved id, a
-  // requires list it may not have, a policy job, provider or guard id with no host half, a requires cycle, a state entry that
-  // failed its check or is in a newer format
+  // requires list it may not have, a host entry the core runs nowhere, a requires cycle, a state entry that failed its
+  // check or is in a newer format
   'missing', 'invalid', 'install-only', 'id', 'api', 'tampered', 'unsigned', 'signer', 'reserved-id', 'requires',
   'place', 'cycle', 'entry', 'newer',
   // found with no entry yet, waiting for the human's approval
   'new',
-  // its run: no ready in time, a start that threw, its way closed or flooded, held by its start marker, a throw from
-  // the gate's stateChanged or the luoshu's open, a security control or the luoshu whose module gave no role, a worker
+  // its run: no ready in time, a start that threw, its way closed or flooded, a core module whose push threw, a worker
   // the relay cut off for a message that wasn't text within the cap, a utility process that exited by itself, was
   // killed or missed its beats and mcp-http-handler's bind on its port, taken by another program or failing otherwise
-  'start-timeout', 'start-failed', 'closed', 'flood', 'marker', 'state-changed', 'no-role', 'malformed', 'exited', 'killed',
+  'start-timeout', 'start-failed', 'closed', 'flood', 'state-changed', 'malformed', 'exited', 'killed',
   'unresponsive', 'port-taken', 'bind-failed',
-  // held back because a security control failed and hetu stopped
+  // held back because the log or the install list failed and hetu stopped
   'control-failed',
-  // who stopped it: the human's switch, the watchdog, the human, the core's own shutdown, an update or a removal. A host
-  // half switched back on after it ran waits for Restart hetu, since a host half starts once per run
+  // who stopped it: the human's switch, the watchdog, the human, the core's own shutdown, an update or a removal. A core
+  // plugin Recover reset waits for Restart hetu
   'off', 'watchdog', 'human', 'shutdown', 'update', 'removed', 'restart-hetu',
 ] as const)
 export type StopReason = typeof stopReasons[number]
@@ -64,8 +63,7 @@ const deps = z.record(pluginId, z.enum(depStates))
 const head = { v: z.literal(VERSION) }
 
 // The core's first message on a half's way. lastStop is why the plugin last stopped or waited in this run, null on its
-// first start. previousVersion is the version an update replaced, until the new version reaches ready once. dataDir
-// goes to a core plugin's host half only
+// first start. previousVersion is the version an update replaced, until the new version reaches ready once
 export const init = z.strictObject({
   ...head,
   kind: z.literal('init'),
@@ -75,7 +73,6 @@ export const init = z.strictObject({
   deps,
   lastStop: reason.nullable(),
   previousVersion: pluginVersion.nullable(),
-  dataDir: z.string().min(1).optional(),
 })
 export type Init = z.infer<typeof init>
 
