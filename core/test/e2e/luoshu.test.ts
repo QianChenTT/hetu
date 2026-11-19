@@ -52,7 +52,7 @@ async function started(): Promise<{ app: ElectronApplication, editor: Page, data
   await writeFile(path.join(notes, 'a.md'), 'note a')
   const app = await launch(dataDir)
   const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+  await until(() => logged(dataDir, 'core.ready'))
   return { app, editor, dataDir, notes }
 }
 
@@ -94,7 +94,7 @@ describe('the luoshu in the install', () => {
     await new StateStore(dataDir).writeLuoshu({ folder: notes })
     const again = await launch(dataDir)
     const page = await editorPage(again)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
+    await until(() => logged(dataDir, 'core.ready'))
     void editor
     expect(codeOf(await ask(page, 'luoshu.read', { path: 'a.md' }))).toBe('ok')
     expect(codeOf(await ask(page, 'luoshu.read', { path: '.git/config' }))).toBe('not-granted')

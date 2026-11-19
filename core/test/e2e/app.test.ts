@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build } from 'esbuild'
 import { afterEach, describe, expect, it } from 'vitest'
+import { coreModuleIds } from '../../api/ids.ts'
 import {
   appCommand, cleanup, counting, editorPage, electronPath, env, events, exists, exited, launch, records, repo, sandboxArgs, temp, tick, until,
   visibleWindows,
@@ -24,10 +25,10 @@ describe('hetu as an Electron app', () => {
     const all = await records(dataDir)
     expect(all.map(record => record.event)).toEqual(expect.arrayContaining(['boot.default-written', 'install.checked']))
     expect(all.find(record => record.event === 'install.checked')).toMatchObject({ result: 'ok' })
-    // search ships in the install, is copied into the plugin folder and starts once the luoshu is ready, which answers
-    // unavailable until a folder is picked
+    // search ships in the install, is copied into the plugin folder and starts while the luoshu module is on, which
+    // answers unavailable until a folder is picked. The core modules start with the core, so no plugin record names one
     expect(all.find(record => record.event === 'plugin.copied')).toMatchObject({ plugin: 'search', version: '0.1.0' })
-    expect(all.find(record => record.event === 'plugin.started' && record.plugin === 'luoshu')).toBeDefined()
+    expect(all.filter(record => (coreModuleIds as readonly unknown[]).includes(record.plugin))).toEqual([])
     expect(all.some(record => record.event === 'plugin.waiting' && record.plugin === 'search')).toBe(false)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
       gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent',
@@ -48,12 +49,11 @@ describe('hetu as an Electron app', () => {
     const all = await records(dataDir)
     const stopping = all.findIndex(record => record.event === 'core.stopping')
     expect(stopping).toBeGreaterThan(all.findIndex(record => record.event === 'core.ready'))
-    // Only the host tier's stops follow core.stopping, with the audit records Quit's flushes write. The gate stops last
-    // of all
-    const after = ['plugin.stopped', 'policy-job.state', 'audit.call']
+    // Only the plugins' stops follow core.stopping, with the audit records Quit's flushes write. The core modules close
+    // once every plugin stopped and the gate answers to the end, so no record follows for them
+    const after = ['plugin.stopped', 'audit.call']
     expect(all.slice(stopping + 1).map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
-    expect(all.filter(record => record.event === 'plugin.stopped').at(-1)).toMatchObject({ plugin: 'gate', reason: 'shutdown' })
-    expect(all.filter(record => record.event !== 'audit.call').at(-1)).toMatchObject({ event: 'plugin.stopped', plugin: 'gate' })
+    expect(all.filter(record => record.event !== 'audit.call').at(-1)).toMatchObject({ event: 'plugin.stopped', reason: 'shutdown' })
   })
 
   it('quits once the last window closes', async () => {

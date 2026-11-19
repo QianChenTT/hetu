@@ -1,38 +1,21 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, type Files, type Listing } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exists, exited, launch, logged, pageAt, repo, temp, tick, until, visibleWindows } from './helpers.ts'
+import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { cleanup, editorPage, exited, launch, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
 
 // The input delay and a little more, so a click after it lands
 const PAST_DELAY = 1300
 
-async function shipped(id: string): Promise<Files> {
-  const root = path.join(repo, 'core', 'dist', 'plugins', id)
-  return {
-    'hetu-plugin.json': await readFile(path.join(root, 'hetu-plugin.json'), 'utf8'),
-    'dist/host.js': await readFile(path.join(root, 'dist', 'host.js'), 'utf8'),
-  }
-}
-
-async function install(gate?: Listing): Promise<string> {
+// An install holding no plugin. The gate and the other core modules ship inside the core
+async function install(): Promise<string> {
   const dir = await temp()
-  await writeInstall(dir, { gate: gate ?? { files: await shipped('gate') } })
+  await writeInstall(dir, {})
   return dir
 }
-
-const host = (id: string, module: string): Listing => ({ files: filesFor(hostManifest(id), { 'host.js': module }) })
-const starts = 'export default { kind: \'hetu-plugin\', spec: { start() {} } }\n'
-const hangs = 'export default { kind: \'hetu-plugin\', spec: { start() { return new Promise(() => {}) } } }\n'
-// A gate that allows everything and throws from stateChanged once it has seen more views than ok
-const gateRole = (ok: number) => `let views = 0
-export const gate = { decide() { return { allow: true, view: 0 } }, canRead() { return true }, verbs() { return [] },
-  stateChanged() { views++; if (views > ${ok}) throw new Error('no') } }
-`
 
 // A worker speaking the lifecycle as text on the port its page hands it. after runs once it is ready
 const lifecycle = (after = '') => `
@@ -92,113 +75,37 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
   bridge.send({ v: 1, kind: 'call', id, action, args })
 }), [next++, action, args] as const) as Promise<Reply>
 
-describe('a security control that fails at start', () => {
-  it.each([
-    ['fails its hash check', async () => ({ files: await shipped('gate'), hash: '0'.repeat(64) }), 'failed its hash check'],
-    ['throws from its module', async () => host('gate', 'throw new Error(\'the gate module threw\')\n'), 'failed to start (start-failed)'],
-    ['throws from its first stateChanged', async () => host('gate', `${starts}${gateRole(0)}`), 'failed to start (state-changed)'],
-    ['gives no gate role', async () => host('gate', starts), 'failed to start (no-role)'],
-  ])('stops hetu with only the trusted window open when the gate %s', async (_name, gate, line) => {
+// A core module that fails stops nothing, so only the log and the install list stop hetu. A list naming a core module
+// doesn't check out, as no install hetu's installer writes holds one
+describe('an install list that doesn\'t check out', () => {
+  async function broken(): Promise<string> {
+    const dir = await temp()
+    await writeInstall(dir, { gate: { files: filesFor(hostManifest('gate')) } })
+    return dir
+  }
+
+  it('stops hetu with only the trusted window open and sends the human to the installer', async () => {
     const dataDir = await data()
-    const app = await start(dataDir, await install(await gate()))
+    const app = await start(dataDir, await broken())
     const page = await trustedPage(app)
-    await showing(page, `hetu stopped: the security plugin gate ${line}`)
+    await showing(page, 'hetu stopped: its install list doesn’t check out')
+    await showing(page, 'Repair hetu with its installer to get its files back')
     expect(await visibleWindows(app)).toEqual(['hetu://trusted/'])
     // The record lands a moment after the window shows, later on a slow machine
-    await until(() => logged(dataDir, 'core.stopped', { control: 'gate' }))
+    await until(() => logged(dataDir, 'core.stopped', { control: 'install' }))
     expect(await logged(dataDir, 'core.ready')).toBe(false)
   })
 
-  it('stops hetu when the gate hangs at start, once readyMs runs out', async () => {
-    const dataDir = await data({ switches: { limits: { all: {}, plugins: { gate: { readyMs: 1500 } } } } })
-    const app = await start(dataDir, await install(host('gate', `${hangs}${gateRole(1)}`)))
-    const page = await trustedPage(app)
-    await showing(page, 'hetu stopped: the security plugin gate failed to start (start-timeout)')
-  })
-})
-
-describe('the stopped mode\'s three choices', () => {
-  const failing = () => install(host('gate', 'throw new Error(\'the gate module threw\')\n'))
-
-  it('starts with the gate switched off once the human typed its id and confirmed after the delay', async () => {
+  it('quits, the one choice it offers', async () => {
     const dataDir = await data()
-    const installDir = await failing()
-    const app = await start(dataDir, installDir)
+    const app = await start(dataDir, await broken())
     const page = await trustedPage(app)
     await showing(page, 'hetu stopped')
-    await tick(PAST_DELAY)
-    await page.getByRole('button', { name: 'Start with it switched off' }).click()
-    await showing(page, 'Switch gate off')
-    const confirm = page.getByRole('button', { name: 'Confirm' })
-    expect(await confirm.isDisabled()).toBe(true)
-    await page.getByLabel('Type gate to confirm').fill('gate')
-    // The request counts once it has been first in line for the delay
-    await tick(PAST_DELAY)
-    const done = exited(app)
-    await confirm.click()
-    expect(await done).toBe(0)
-    expect(await logged(dataDir, 'security.confirm', { kind: 'plugin.off', target: 'gate' })).toBe(true)
-
-    // The next run, as Restart hetu would start it, runs with the gate off and says so
-    const again = await start(dataDir, installDir)
-    const editor = await editorPage(again)
-    await until(async () => (await editor.locator('#banner li').allTextContents()).includes('gate: off'))
-  })
-
-  it('quits', async () => {
-    const dataDir = await data()
-    const app = await start(dataDir, await failing())
-    const page = await trustedPage(app)
-    await showing(page, 'hetu stopped')
+    expect(await page.getByRole('button', { name: 'Start with it switched off' }).count()).toBe(0)
     await tick(PAST_DELAY)
     const done = exited(app)
     await page.getByRole('button', { name: 'Quit' }).click()
     expect(await done).toBe(0)
-  })
-
-  it('recovers a gate its start marker held, so the next run starts it', async () => {
-    const dataDir = await data({ before: async dir => {
-      await mkdir(path.join(dir, 'starting'), { recursive: true })
-      await writeFile(path.join(dir, 'starting', 'gate'), '')
-    } })
-    const installDir = await install()
-    const app = await start(dataDir, installDir)
-    const page = await trustedPage(app)
-    await showing(page, 'failed to start (marker)')
-    await tick(PAST_DELAY)
-    await page.getByRole('button', { name: 'Recover' }).click()
-    await showing(page, 'Reset gate')
-    await tick(PAST_DELAY)
-    const done = exited(app)
-    await page.getByRole('button', { name: 'Confirm' }).click()
-    expect(await done).toBe(0)
-    expect(await exists(path.join(dataDir, 'starting', 'gate'))).toBe(false)
-    const again = await start(dataDir, installDir)
-    await editorPage(again)
-    await until(() => logged(dataDir, 'core.ready', { gate: 'on' }))
-  })
-})
-
-describe('a security control that fails while hetu runs', () => {
-  it('quits with an error to start again, then stops in the stopped mode when the same control fails in the next run', async () => {
-    const dataDir = await data()
-    const installDir = await install(host('gate', `${starts}${gateRole(1)}`))
-    const app = await start(dataDir, installDir)
-    const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'core.ready'))
-    const done = exited(app)
-    // Any applied change gives the gate a new grants snapshot, which this gate throws on
-    expect((await ask(editor, 'security.request', { change: { kind: 'confirmOff', on: false } })).ok).toBe(true)
-    expect(await done).toBe(1)
-    expect(await logged(dataDir, 'core.failed', { control: 'gate', reason: 'state-changed' })).toBe(true)
-    expect(await readFile(path.join(dataDir, 'failed-once'), 'utf8')).toBe('gate')
-
-    const again = await start(dataDir, installDir)
-    const second = await editorPage(again)
-    await ask(second, 'security.request', { change: { kind: 'confirmOff', on: false } })
-    const page = await trustedPage(again)
-    await showing(page, 'hetu already started again once after a failure')
-    await until(async () => (await visibleWindows(again)).length === 1)
   })
 })
 
@@ -318,7 +225,7 @@ describe('the agent list', () => {
   it('lists each agent of mcp by its label in quotes with its items, revokes one at once with no Confirm and shows it revoked', async () => {
     const mcp = filesFor(workerManifest('mcp', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': lifecycle() })
     const installDir = await temp()
-    await writeInstall(installDir, { gate: { files: await shipped('gate') }, mcp: { files: mcp, firstParty: true } })
+    await writeInstall(installDir, { mcp: { files: mcp, firstParty: true } })
     const inbox = { type: 'luoshu.read' as const, paths: ['inbox/**'] }
     const dataDir = await data({
       before: async dir => {
@@ -355,7 +262,7 @@ describe('the agent list', () => {
   it('draws each label in a fixed-width face that wraps, so a client id of 255 characters keeps its number in view and I reads apart from l', async () => {
     const mcp = filesFor(workerManifest('mcp', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': lifecycle() })
     const installDir = await temp()
-    await writeInstall(installDir, { gate: { files: await shipped('gate') }, mcp: { files: mcp, firstParty: true } })
+    await writeInstall(installDir, { mcp: { files: mcp, firstParty: true } })
     const inbox = { type: 'luoshu.read' as const, paths: ['inbox/**'] }
     const prefix = 'https://claude.ai/oauth/'
     const long = `${prefix}${'x'.repeat(255 - prefix.length)}#7`
@@ -443,11 +350,10 @@ describe('a plugin’s class', () => {
         await new StateStore(dir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(root)] })
       },
     })
-    const installDir = await temp()
-    await writeInstall(installDir, { gate: { files: await shipped('gate') }, 'grant-risk-classifier': { files: await shipped('grant-risk-classifier') } })
-    const app = await start(dataDir, installDir)
+    const app = await start(dataDir, await install())
     const editor = await editorPage(app)
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'grant-risk-classifier' }))
+    // The grant risk classifier is a core module, on from the start
+    await until(() => logged(dataDir, 'core.ready', { 'grant-risk-classifier': 'on' }))
     await tick(PAST_DELAY)
     await editor.getByRole('button', { name: 'Plugins and security' }).click()
     const page = await trustedPage(app)

@@ -2,25 +2,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, exited, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
-
-// The luoshu's host half as one ES module, which can import only Node's built-ins: its plugin, its provider role and
-// the luoshu role the plugins manager hands the folder to
-const host = `
-export default Object.freeze({ kind: 'hetu-plugin', spec: Object.freeze({ start() {} }) })
-export const luoshu = { open() {} }
-export const provider = {
-  async prepare(call) {
-    return { scope: { paths: [call.args.path] } }
-  },
-  async perform(call, prepared) {
-    return { text: 'hello from the host half: ' + prepared.scope.paths[0], version: 'v1' }
-  },
-}
-`
 
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
@@ -38,19 +23,20 @@ export default definePlugin({
 
 const read = [{ type: 'luoshu.read' as const, paths: ['**'] }]
 
-// The install holds the luoshu and the gate switched off, which lets calls through until the gate is built
+// The install holds no plugin, the luoshu module serves a notes folder holding notes/a.md and the gate is switched
+// off, so what is under test is the wall and not a grant
 async function prepared(): Promise<{ dataDir: string, installDir: string }> {
   const installDir = await temp()
-  await writeInstall(installDir, {
-    luoshu: { files: filesFor(hostManifest('luoshu'), { 'host.js': host }) },
-    gate: { files: filesFor(hostManifest('gate')) },
-  })
+  await writeInstall(installDir, {})
+  const folder = await temp()
+  await writeFolder(folder, { 'notes/a.md': 'hello from the luoshu' })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': hello })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: ['gate'] })
+  await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'hello')
   await writeFolder(root, filesFor(workerManifest('hello', { requires: ['luoshu'], capabilities: read }), { 'worker.js': built.text }))
   await store.writePlugin('hello', await entryFor(root, { granted: read }))
@@ -58,10 +44,9 @@ async function prepared(): Promise<{ dataDir: string, installDir: string }> {
 }
 
 describe('one call across the wall', () => {
-  it('has a sandboxed worker read a note through a host half\'s provider and get its answer', async () => {
+  it('has a sandboxed worker read a note through the luoshu module in main and get its answer', async () => {
     const { dataDir, installDir } = await prepared()
     const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
-    await until(() => logged(dataDir, 'plugin.started', { plugin: 'luoshu' }))
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'hello' }))
     const page = await workersPage(app, 'hello')
     await until(() => page.workers().length === 1)
@@ -70,8 +55,8 @@ describe('one call across the wall', () => {
       answer = await page.workers()[0].evaluate(() => (globalThis as { answer?: unknown }).answer)
       return answer !== undefined
     })
-    expect(answer).toEqual({ ok: true, value: { text: 'hello from the host half: notes/a.md', version: 'v1' } })
-    // main froze its built-ins before the host half loaded, and runs and quits in order with them frozen
+    expect(answer).toMatchObject({ ok: true, value: { text: 'hello from the luoshu', path: 'notes/a.md' } })
+    // main froze its built-ins before the plugins manager started, and runs and quits in order with them frozen
     expect(await app.evaluate(() => [Object.isFrozen(Array.prototype), Object.isFrozen(Set.prototype)])).toEqual([true, true])
     const done = exited(app)
     await app.close()
