@@ -680,6 +680,16 @@ describe('stopping recording with the log down', () => {
     expect(made.modules.state('recording')).toBe('off')
   })
 
+  it('applies though the drain before its record threw, with how much waited unknown', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
+    made.link.drain = async () => { throw new Error('broken') }
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
+    expect(made.link.events('security.confirm')).toMatchObject([{ target: 'recording', unwritten: null }])
+  })
+
   it('lets the audit writer go again when the switch can\u2019t be written', async () => {
     const made = await harness()
     await made.pluginsManager.start()

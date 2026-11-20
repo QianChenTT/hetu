@@ -295,7 +295,8 @@ export class Requests {
     const stopping = change.kind === 'plugin.off' && change.plugin === 'recording'
     const whole = this.host.recordMs ?? CONFIRM_RECORD_MS
     const wait = stopping ? whole / 2 : whole
-    if (stopping) fields = { ...fields, unwritten: await this.host.recording.drain(wait) }
+    // A drain that throws leaves how much still waits unknown, and the switch goes on all the same
+    if (stopping) fields = { ...fields, unwritten: await Promise.resolve().then(() => this.host.recording.drain(wait)).catch(() => null) }
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), wait)
     let landing: Landing
