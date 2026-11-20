@@ -1,10 +1,10 @@
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
-import type { DecorationSet } from '@codemirror/view'
+import type { DecorationSet, EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
 import { pluginMarks, setMarks } from '../frontend/editor/editor.ts'
-import { beforeBreak, move, remove, removeGroup, settle } from '../frontend/editor/hidden-rules.ts'
+import { beforeBreak, hiddenKeys, move, remove, removeTo, settle } from '../frontend/editor/hidden-rules.ts'
 
 // x **bold** y, then ## Title: the bold markers at 2-4 and 8-10, the heading's marker at 13-16
 const bold = 'x **bold** y\n## Title'
@@ -172,7 +172,7 @@ describe('Backspace and Delete', () => {
   })
 
   it('take a word with Ctrl less any hidden text inside it', () => {
-    const word = (at: number, forward: boolean) => press(note(bold, boldMarks, at), (state, given) => removeGroup(state, given, forward)).doc.toString()
+    const word = (at: number, forward: boolean) => press(note(bold, boldMarks, at), (state, given) => removeTo(state, given, forward, 'word')).doc.toString()
     expect(word(8, false)).toBe('x **** y\n## Title')
     expect(word(11, false)).toBe('x **bold**y\n## Title')
     expect(word(2, true)).toBe('x **** y\n## Title')
@@ -199,5 +199,56 @@ describe('Enter', () => {
     const plain: Mark[] = [{ kind: 'hide', from: 2, to: 4 }, { kind: 'hide', from: 8, to: 10 }]
     expect(enter(note('x **bold**', plain, 8))).toBe('x **bold**\n')
     expect(enter(note('x **bold**', plain, 2))).toBe('x \n**bold**')
+  })
+})
+
+describe('the keys', () => {
+  // A view as far as the keys use one
+  function keyView(state: EditorState, composing = false) {
+    const view = {
+      state,
+      composing,
+      dispatch(spec: TransactionSpec) {
+        view.state = view.state.update(spec).state
+      },
+    }
+    return view
+  }
+
+  // The doc after a key, as the PC or the Mac binds it, or null when the rules leave the key to CodeMirror
+  function pressKey(state: EditorState, name: string, mac = false, composing = false): string | null {
+    const shift = name.startsWith('Shift-')
+    const bare = shift ? name.slice(6) : name
+    const binding = hiddenKeys.find(one => (mac ? one.mac ?? one.key : one.key) === bare)
+    const run = shift ? binding?.shift : binding?.run
+    if (run === undefined) throw new Error(`no binding for ${name}`)
+    const view = keyView(state, composing)
+    return run(view as unknown as EditorView) ? settled(view.state).doc.toString() : null
+  }
+
+  it('run the rules for every key CodeMirror deletes with on the PC', () => {
+    expect(pressKey(note(bold, boldMarks, 10), 'Backspace')).toBe('x **bol** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 10), 'Shift-Backspace')).toBe('x **bol** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Delete')).toBe('x **bold**y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Mod-Backspace')).toBe('x **** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 2), 'Mod-Delete')).toBe('x **** y\n## Title')
+  })
+
+  it('run the rules for every key CodeMirror deletes with on the Mac and leave hidden text out of a swap', () => {
+    expect(pressKey(note(bold, boldMarks, 10), 'Ctrl-h', true)).toBe('x **bol** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Ctrl-d', true)).toBe('x **bold**y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Ctrl-k', true)).toBe('x **bold**\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Alt-Backspace', true)).toBe('x **** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Ctrl-Alt-h', true)).toBe('x **** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 2), 'Alt-Delete', true)).toBe('x **** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Mod-Backspace', true)).toBe('**** y\n## Title')
+    expect(pressKey(note(bold, boldMarks, 2), 'Mod-Delete', true)).toBe('x ****\n## Title')
+    expect(pressKey(note(bold, boldMarks, 8), 'Ctrl-t', true)).toBe(bold)
+    expect(pressKey(note(bold, boldMarks, 6), 'Ctrl-t', true)).toBe(null)
+  })
+
+  it('do nothing during an IME composition', () => {
+    expect(pressKey(note(bold, boldMarks, 10), 'Backspace', false, true)).toBe(null)
+    expect(pressKey(note(bold, boldMarks, 10), 'ArrowRight', false, true)).toBe(null)
   })
 })

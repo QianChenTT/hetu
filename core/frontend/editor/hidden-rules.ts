@@ -1,6 +1,6 @@
 import { deleteGroupBackward, deleteGroupForward } from '@codemirror/commands'
 import { EditorSelection, type EditorState, type Extension, Facet, findClusterBreak, Prec, type TransactionSpec } from '@codemirror/state'
-import { type DecorationSet, type EditorView, keymap, ViewPlugin } from '@codemirror/view'
+import { type DecorationSet, type EditorView, type KeyBinding, keymap, ViewPlugin } from '@codemirror/view'
 
 // The drawer's rules for text a plugin hid, the same for every plugin: the caret never rests inside it, arrows step over
 // it to the next character the human sees, Backspace and Delete take only characters the human sees and a selection
@@ -164,19 +164,27 @@ export function beforeBreak(state: EditorState, sets: Sets): TransactionSpec | n
   return at === range.head ? null : { selection: { anchor: at } }
 }
 
-// Ctrl+Backspace or Ctrl+Delete: CodeMirror's word from the spot's edge, less any hidden text inside it
-export function removeGroup(state: EditorState, sets: Sets, forward: boolean): TransactionSpec | null {
+// A word or the rest of the line: CodeMirror's word or the line's start or end from the spot's edge, the line break
+// when the spot is at it, less any hidden text inside
+export function removeTo(state: EditorState, sets: Sets, forward: boolean, reach: 'word' | 'line'): TransactionSpec | null {
   if (!state.selection.main.empty) return remove(state, sets, forward)
   const spot = spotAt(sets, state.selection.main.head)
-  const words: { from: number, to: number }[] = []
-  ;(forward ? deleteGroupForward : deleteGroupBackward)({
-    state: state.update({ selection: { anchor: forward ? spot.to : spot.from } }).state,
-    dispatch: tr => tr.changes.iterChangedRanges((from, to) => {
-      words.push({ from, to })
-    }),
-  })
+  const at = forward ? spot.to : spot.from
+  const spans: { from: number, to: number }[] = []
+  if (reach === 'word') {
+    ;(forward ? deleteGroupForward : deleteGroupBackward)({
+      state: state.update({ selection: { anchor: at } }).state,
+      dispatch: tr => tr.changes.iterChangedRanges((from, to) => {
+        spans.push({ from, to })
+      }),
+    })
+  } else {
+    const line = state.doc.lineAt(at)
+    const other = forward ? (at === line.to ? Math.min(at + 1, state.doc.length) : line.to) : (at === line.from ? Math.max(at - 1, 0) : line.from)
+    spans.push({ from: Math.min(at, other), to: Math.max(at, other) })
+  }
   const changes: { from: number, to: number }[] = []
-  for (const { from, to } of words) {
+  for (const { from, to } of spans) {
     let at = from
     for (const piece of near(sets, from, to).filter(one => !one.widget).sort((a, b) => a.from - b.from)) {
       if (piece.from > at) changes.push({ from: at, to: Math.min(piece.from, to) })
@@ -231,15 +239,35 @@ function breakHere(view: EditorView): boolean {
   return false
 }
 
+// The Mac's Ctrl+T swaps the characters either side of the caret, so the key is taken, doing nothing, when one is hidden
+function swapHere(view: EditorView): boolean {
+  const head = view.state.selection.main.head
+  return !view.composing && near(setsOf(view), Math.max(head - 1, 0), head + 1).some(piece => piece.from < head + 1 && piece.to > head - 1)
+}
+
+const char = (forward: boolean) => bound((state, sets) => remove(state, sets, forward))
+const word = (forward: boolean) => bound((state, sets) => removeTo(state, sets, forward, 'word'))
+const line = (forward: boolean) => bound((state, sets) => removeTo(state, sets, forward, 'line'))
+
+// Every key CodeMirror moves by a character or deletes with, on the PC and on the Mac
+export const hiddenKeys: readonly KeyBinding[] = [
+  { key: 'ArrowLeft', run: bound((state, sets) => move(state, sets, false, false)), shift: bound((state, sets) => move(state, sets, false, true)) },
+  { key: 'ArrowRight', run: bound((state, sets) => move(state, sets, true, false)), shift: bound((state, sets) => move(state, sets, true, true)) },
+  { key: 'Backspace', run: char(false), shift: char(false) },
+  { key: 'Delete', run: char(true) },
+  { key: 'Mod-Backspace', mac: 'Alt-Backspace', run: word(false) },
+  { key: 'Mod-Delete', mac: 'Alt-Delete', run: word(true) },
+  { mac: 'Mod-Backspace', run: line(false) },
+  { mac: 'Mod-Delete', run: line(true) },
+  { mac: 'Ctrl-h', run: char(false) },
+  { mac: 'Ctrl-d', run: char(true) },
+  { mac: 'Ctrl-k', run: line(true) },
+  { mac: 'Ctrl-Alt-h', run: word(false) },
+  { mac: 'Ctrl-t', run: swapHere },
+]
+
 export const hiddenRules: Extension = [
-  Prec.highest(keymap.of([{ key: 'Enter', run: breakHere, shift: breakHere }])),
-  Prec.high(keymap.of([
-    { key: 'ArrowLeft', run: bound((state, sets) => move(state, sets, false, false)), shift: bound((state, sets) => move(state, sets, false, true)) },
-    { key: 'ArrowRight', run: bound((state, sets) => move(state, sets, true, false)), shift: bound((state, sets) => move(state, sets, true, true)) },
-    { key: 'Backspace', run: bound((state, sets) => remove(state, sets, false)), shift: bound((state, sets) => remove(state, sets, false)) },
-    { key: 'Delete', run: bound((state, sets) => remove(state, sets, true)) },
-    { key: 'Mod-Backspace', mac: 'Alt-Backspace', run: bound((state, sets) => removeGroup(state, sets, false)) },
-    { key: 'Mod-Delete', mac: 'Alt-Delete', run: bound((state, sets) => removeGroup(state, sets, true)) },
-  ])),
+  Prec.highest(keymap.of([{ key: 'Enter', run: breakHere, shift: breakHere }, { mac: 'Ctrl-o', run: breakHere }])),
+  Prec.high(keymap.of(hiddenKeys)),
   settler,
 ]
