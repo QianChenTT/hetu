@@ -91,7 +91,16 @@ describe('a selection over hidden text', () => {
   it("leaves hidden text at its edges that belongs to an element it doesn't hold whole, so a cut takes only what it showed", () => {
     expect(selected(settled(note(bold, boldMarks, 6, 10)))).toBe('ld')
     expect(selected(settled(note(bold, boldMarks, 10, 0)))).toBe('x **bold**')
-    expect(selected(settled(note(bold, boldMarks, 21, 13)))).toBe('Title')
+  })
+
+  // ## Title, then **a** b, hidden as the install's hidden marks hide it, with no group: such text belongs to its line
+  it('takes hidden text with no group when it holds its whole line, so select-all copies the markdown and a cut line leaves nothing', () => {
+    const text = '## Title\n**a** b'
+    const plain: Mark[] = [{ kind: 'hide', from: 0, to: 3 }, { kind: 'hide', from: 9, to: 11 }, { kind: 'hide', from: 12, to: 14 }]
+    expect(selected(settled(note(text, plain, 0, text.length)))).toBe(text)
+    expect(selected(settled(note(bold, boldMarks, 21, 13)))).toBe('## Title')
+    expect(press(note(text, plain, 0, 8), backspace).doc.toString()).toBe('\n**a** b')
+    expect(selected(settled(note(text, plain, 11, 14)))).toBe('a')
   })
 
   it('keeps hidden text between the visible text it holds', () => {

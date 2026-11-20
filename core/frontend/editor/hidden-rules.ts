@@ -67,13 +67,13 @@ function hullOf(state: EditorState, sets: Sets, group: string): { from: number, 
 }
 
 // A selection's ends moved in past the hidden text at its edges, but for hidden ranges whose whole element lies within
-// the spots the selection reaches to
+// the spots the selection reaches to. A hidden range with no group belongs to its whole line
 function trim(state: EditorState, sets: Sets, from: number, to: number): { from: number, to: number } {
   const start = spotAt(sets, from)
   const end = spotAt(sets, to)
   const held = (piece: Piece) => {
-    if (piece.widget || piece.group === undefined) return false
-    const hull = hullOf(state, sets, piece.group)
+    if (piece.widget) return false
+    const hull = piece.group === undefined ? { from: state.doc.lineAt(piece.from).from, to: state.doc.lineAt(piece.to).to } : hullOf(state, sets, piece.group)
     return hull.from >= start.from && hull.to <= end.to
   }
   let inFrom = start.to
