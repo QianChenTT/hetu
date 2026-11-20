@@ -178,13 +178,13 @@ const coreTable = {
   'core.identities': { from: 'utility', args: z.strictObject({ fields: z.array(label).min(1).max(MAX_FIELDS_ASKED) }) },
   // A utility half asks the human to connect a client, which its calls then carry as field. The core raises the request
   // and answers at once with a handle it made, which the same plugin collects the answer with. Never a handle from the
-  // plugin
+  // plugin. redirect is null for a client on this computer that reaches the plugin over its local pipe
   'core.consentAsk': {
     from: 'utility',
     args: z.strictObject({
       client: screenText(MAX_CLIENT_ID_LENGTH),
       name: clientName.nullable(),
-      redirect: screenText(MAX_REDIRECT_LENGTH),
+      redirect: screenText(MAX_REDIRECT_LENGTH).nullable(),
       field: label,
     }),
   },

@@ -95,13 +95,15 @@ export function describeChange(change: Change): Described {
           'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
         ],
       }
-    // Where the client comes from first, then what it calls itself, where it gets its answer and the field it gets last,
-    // each in quotes as data. The field's place last is where the trusted window finds it to draw apart
+    // Where the client comes from first, then what it calls itself, where it gets its answer or that it runs on this
+    // computer and the field it gets last, each in quotes as data. The field's place last is where the trusted window
+    // finds it to draw apart
     case 'consent.ask': {
       const from = change.clientHost === null ? `the client ${quoted(change.client)}` : `the client from ${quoted(change.clientHost)}`
       const named = change.name === null ? 'with no name' : `named ${quoted(change.name)}`
+      const reached = change.redirectHost === null ? 'a program on this computer reaching hetu over the local pipe' : `which returns to ${quoted(change.redirectHost)}`
       return {
-        text: `Connect ${from} ${named}, which returns to ${quoted(change.redirectHost)}, through ${change.plugin} as ${quoted(change.field)}`,
+        text: `Connect ${from} ${named}, ${reached}, through ${change.plugin} as ${quoted(change.field)}`,
         notes: [
           'Any program on this computer can connect under that client id and that name, so confirm only a connect you started just now',
           'It reaches no note yet. It asks for items later and each ask waits for your Confirm',

@@ -9,9 +9,10 @@ import { grantKeyOf } from '../../api/envelope.ts'
 // A pair as the plugins manager reads it: the root plugin's id and the field
 export type PairOf = { readonly root: string, readonly field: string }
 
-// What a utility half sends for a connect: the client id, the name the client's document gives or null, the redirect
-// and the field the plugin's calls for the client will carry
-export type ConnectAsked = { client: string, name: string | null, redirect: string, field: string }
+// What a utility half sends for a connect: the client id, the name the client's document gives or null, the redirect or
+// null for a client on this computer reaching the plugin over its local pipe and the field the plugin's calls for the
+// client will carry
+export type ConnectAsked = { client: string, name: string | null, redirect: string | null, field: string }
 
 // An address's host with its port where one is named, null for text that is no URL or a URL with no host. user says it
 // names a user or a password before the host, which can make it read as another host
@@ -21,15 +22,15 @@ function hostOf(address: string): { host: string, user: boolean } | null {
   return url.host === '' ? null : { host: url.host, user: url.username !== '' || url.password !== '' }
 }
 
-// The connect as the human is shown it, or null for one the core refuses: a redirect with no host, a client id or a
-// redirect with user info, or values out of the kind's form
+// The connect as the human is shown it, or null for one the core refuses: a redirect given with no host, a client id or
+// a redirect with user info, or values out of the kind's form. No redirect has no redirect host
 export function connectChange(asked: ConnectAsked, plugin: string): ConsentAsk | null {
-  const to = hostOf(asked.redirect)
+  const to = asked.redirect === null ? null : hostOf(asked.redirect)
   const from = hostOf(asked.client)
-  if (to === null || to.user || from?.user === true) return null
+  if ((asked.redirect !== null && to === null) || to?.user === true || from?.user === true) return null
   const change = {
     kind: 'consent.ask' as const, plugin, client: asked.client, clientHost: from?.host ?? null, name: asked.name,
-    redirect: asked.redirect, redirectHost: to.host, field: asked.field,
+    redirect: asked.redirect, redirectHost: to?.host ?? null, field: asked.field,
   }
   return consentAsk.safeParse(change).success ? change : null
 }

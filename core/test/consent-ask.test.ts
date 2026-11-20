@@ -20,8 +20,11 @@ const ch = (code: number) => String.fromCharCode(code)
 // Shalom in Hebrew letters, written right to left
 const HEBREW = [0x5e9, 0x5dc, 0x5d5, 0x5dd].map(ch).join('')
 const asked = { client: CLAUDE, name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: `${CLAUDE}#3` }
-const built = (over: Partial<typeof asked> | { name: string | null } = {}) => connectChange({ ...asked, ...over }, 'mcp-http-handler')
-const words = (over: Partial<typeof asked> | { name: string | null } = {}) => describeChange(built(over)!)
+type Over = Partial<typeof asked> | { name?: string | null, redirect?: string | null }
+const built = (over: Over = {}) => connectChange({ ...asked, ...over }, 'mcp-http-handler')
+const words = (over: Over = {}) => describeChange(built(over)!)
+// A client on this computer reaching the handler over its local pipe, with no redirect
+const PIPED = { client: 'claude-code', redirect: null, field: 'claude-code#1' }
 
 describe('the consent.ask kind', () => {
   const connect: ConsentAsk = {
@@ -54,6 +57,22 @@ describe('the consent.ask kind', () => {
     ]) expect(consentAsk.safeParse({ ...connect, ...over }).success, JSON.stringify(over)).toBe(false)
   })
 
+  it('takes a connect with no redirect and no redirect host, never one of the two alone', () => {
+    const piped = { ...connect, redirect: null, redirectHost: null }
+    expect(consentAsk.parse(piped)).toEqual(piped)
+    expect(consentAsk.safeParse({ ...connect, redirect: null }).success).toBe(false)
+    expect(consentAsk.safeParse({ ...connect, redirectHost: null }).success).toBe(false)
+    expect(consentAsk.safeParse({ ...connect, redirect: '', redirectHost: '' }).success).toBe(false)
+  })
+
+  it('takes core.consentAsk with no redirect and refuses an empty one', () => {
+    const args = coreActions['core.consentAsk'].args
+    expect(args.safeParse({ ...asked, ...PIPED }).success).toBe(true)
+    expect(args.safeParse({ ...asked, redirect: '' }).success).toBe(false)
+    const { redirect: _redirect, ...missing } = asked
+    expect(args.safeParse(missing).success).toBe(false)
+  })
+
   it('refuses a field of the message it does not name, the number of the old form among them', () => {
     expect(consentAsk.safeParse({ ...connect, handle: 'h' }).success).toBe(false)
     expect(consentAsk.safeParse({ ...connect, number: 3 }).success).toBe(false)
@@ -67,6 +86,12 @@ describe('the connect as the core builds it from what a utility half sends', () 
       redirectHost: 'localhost:33418', field: `${CLAUDE}#3`,
     })
     expect(built({ client: 'https://Claude.AI:443/doc?x=1', redirect: 'http://[::1]:5000/cb' })).toMatchObject({ clientHost: 'claude.ai', redirectHost: '[::1]:5000' })
+  })
+
+  it('has no redirect host for a connect with no redirect', () => {
+    expect(built(PIPED)).toEqual({
+      kind: 'consent.ask', plugin: 'mcp-http-handler', client: 'claude-code', clientHost: null, name: 'Claude Code', redirect: null, redirectHost: null, field: 'claude-code#1',
+    })
   })
 
   it('has no host for a client id that is not a URL with one', () => {
@@ -120,6 +145,15 @@ describe('the words of a connect', () => {
       text: 'Connect the client "my-client" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "my-client#12"',
       notes: FIXED,
     })
+  })
+
+  it('says a client with no redirect is a program on this computer reaching hetu over the local pipe, in place of where it returns to', () => {
+    expect(words(PIPED)).toEqual({
+      text: 'Connect the client "claude-code" named "Claude Code", a program on this computer reaching hetu over the local pipe, through mcp-http-handler as "claude-code#1"',
+      notes: FIXED,
+    })
+    expect(words({ ...PIPED, client: CLAUDE, name: null }).text)
+      .toBe('Connect the client from "claude.ai" with no name, a program on this computer reaching hetu over the local pipe, through mcp-http-handler as "claude-code#1"')
   })
 
   it('says a client gives no name', () => {
@@ -261,6 +295,17 @@ describe('a connect a utility half asks for', () => {
     const { pluginsManager, connect } = await started()
     for (const field of ['#7', '#']) expect(await code(connect({ field })), field).toBe('invalid')
     expect(pluginsManager.pending()).toEqual([])
+  })
+
+  it('raises a connect with no redirect, which the trusted window shows as a program on this computer', async () => {
+    const { connect, collect, list, first, pluginsManager } = await started()
+    const handle = await connect(PIPED)
+    const shown = (await list()).requests[0]!
+    expect([shown.text, shown.field]).toEqual([
+      'Connect the client "claude-code" named "Claude Code", a program on this computer reaching hetu over the local pipe, through mcp-http-handler as "claude-code#1"', 'claude-code#1',
+    ])
+    await pluginsManager.confirm(first(), {})
+    expect(await collect(handle)).toBe('yes')
   })
 
   it('refuses with invalid what the core won\'t show, before any request', async () => {
