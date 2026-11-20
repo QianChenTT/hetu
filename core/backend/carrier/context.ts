@@ -73,6 +73,13 @@ export type Pending = {
   coalesce: boolean
   // The view of this call a part gets with an action that names it, made once, so a part can keep what it needs with it
   live: LiveCall | null
+  // Aborts the signal the call carries into perform
+  ended: AbortController
+  // What the gate let on at the canonical stage, which a new grants snapshot judges again, null until then and for a
+  // call with no power
+  judged: { kind: Extract<Kind, { kind: 'power' }>, scope: Scope } | null
+  // The code a call its grant no longer covers answers once its perform throws
+  revoked: RefusalCode | null
 }
 
 // Where a call goes, by the route the namespace table gives its namespace: the part serving it with the contract's entry

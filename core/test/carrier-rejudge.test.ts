@@ -1,0 +1,169 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import type { Call, Prepared, Provider } from '../api/policy-jobs.ts'
+import { cleanup, code, harness, tick, worker, type HarnessOptions } from './carrier-fakes.ts'
+
+afterEach(cleanup)
+
+// An exec that runs until the test lets it go or its call's signal aborts, killed then as exec kills its process
+class FakeExec implements Provider {
+  readonly signals: AbortSignal[] = []
+  private readonly running: (() => void)[] = []
+
+  async prepare(call: Call): Promise<Prepared> {
+    return { scope: { command: (call.args as { command: string[] }).command } }
+  }
+
+  async perform(call: Call): Promise<unknown> {
+    const signal = call.signal as AbortSignal
+    this.signals.push(signal)
+    await new Promise<void>(resolve => {
+      this.running.push(resolve)
+      signal.addEventListener('abort', () => resolve(), { once: true })
+    })
+    if (signal.aborted) throw { code: 'stale' }
+    return { code: 0, signal: null, stdout: 'built', stderr: '', truncated: false }
+  }
+
+  finish(): void {
+    for (const done of this.running.splice(0)) done()
+  }
+}
+
+const build = ['C:/tools/make.exe', 'all']
+
+function made(over: HarnessOptions = {}) {
+  const parts = harness(over)
+  const exec = new FakeExec()
+  parts.providers.exec = exec
+  parts.gate.grants.search = [{ type: 'exec', commands: [build], env: [] }, { type: 'luoshu.write', paths: ['notes/**'] }]
+  const search = parts.connect(worker('search'))
+  // The first grants snapshot the carrier reads, as the plugins manager tells it at start, is where it starts
+  parts.carrier.changed()
+  // A new grants snapshot, as the plugins manager pushes one, then tells the carrier
+  const snapshot = () => {
+    parts.pluginsManager.current++
+    parts.carrier.changed()
+  }
+  return { ...parts, exec, search, snapshot }
+}
+
+describe('open calls judged again on a new grants snapshot', () => {
+  it('kills an exec run its grant no longer covers as stale, and the retry is not-granted', async () => {
+    const { exec, search, gate, snapshot } = made()
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    gate.grants.search = []
+    snapshot()
+    expect(code(await search.reply(id))).toBe('stale')
+    expect(exec.signals[0].aborted).toBe(true)
+    expect(code(await search.ask('exec.run', { command: build }))).toBe('not-granted')
+  })
+
+  it('lets a write in perform finish on the grant it was judged on', async () => {
+    const { luoshu, search, gate, snapshot } = made()
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const id = search.call('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    expect(luoshu.performed).toHaveLength(1)
+    gate.grants.search = []
+    snapshot()
+    await tick(10)
+    expect(search.repliesTo(id)).toEqual([])
+    open()
+    const reply = await search.reply(id)
+    expect([reply.ok, luoshu.files.get('notes/a.md')]).toEqual([true, 'x'])
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(true)
+  })
+
+  it('sends a plugin callee cancel and answers its caller stale', async () => {
+    const parts = made()
+    const { pluginsManager, gate, connect, snapshot } = parts
+    pluginsManager.sandboxed('word-count', { count: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    await counter.waitFor(message => message.kind === 'cancel' && message.callId === got.callId)
+  })
+
+  it('stops nothing when the new grants snapshot widens a grant', async () => {
+    const { exec, search, gate, snapshot } = made()
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    gate.grants.search = [...gate.grants.search, { type: 'luoshu.read', paths: ['**'] }]
+    snapshot()
+    await tick(10)
+    expect(exec.signals[0].aborted).toBe(false)
+    exec.finish()
+    expect((await search.reply(id)).ok).toBe(true)
+  })
+
+  it('judges nothing again while the grants snapshot stays the same', async () => {
+    const { exec, search, gate, carrier } = made()
+    search.call('exec.run', { command: build })
+    await tick(20)
+    const asked = gate.asked.length
+    gate.grants.search = []
+    carrier.changed()
+    await tick(10)
+    expect([gate.asked.length - asked, exec.signals[0].aborted]).toEqual([0, false])
+    exec.finish()
+  })
+
+  it('judges a call not yet judged on the newest grants snapshot when it gets there, never as stale', async () => {
+    const { luoshu, search, gate, snapshot } = made()
+    let open!: () => void
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    const id = search.call('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    gate.grants.search = []
+    snapshot()
+    open()
+    expect(code(await search.reply(id))).toBe('not-granted')
+    expect(luoshu.performed).toEqual([])
+  })
+
+  // The gate judges a short name as written at precheck and only the name it resolves to at decide, so a call still in
+  // prepare when the grants snapshot moves has nothing judged at the canonical stage to judge again
+  it('leaves a call in prepare to its own decide on the newest grants snapshot, its own answer intact', async () => {
+    const { luoshu, search, gate, snapshot } = made()
+    luoshu.short.set('A~1', 'a.md')
+    gate.decision = access => access.stage === 'raw' || !access.scope.paths?.some(path => path.includes('~')) ? gate.granted(access) : { allow: false, code: 'not-granted', view: gate.granted(access).view }
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
+    let open!: () => void
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    const id = search.call('luoshu.read', { path: 'notes/A~1' })
+    await tick(20)
+    snapshot()
+    open()
+    expect(code(await search.reply(id))).toBe('not-found')
+  })
+
+  // A gate that throws refuses that one call, so a call it can't judge again stops as one it refused, policy-down
+  it('stops a run as policy-down with a fault when the gate throws on judging it again', async () => {
+    const { exec, search, gate, snapshot, log, recording } = made()
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    gate.decision = () => { throw new Error('gate broke') }
+    snapshot()
+    expect(code(await search.reply(id))).toBe('policy-down')
+    expect(exec.signals[0].aborted).toBe(true)
+    await recording.flush()
+    expect(log.events('fault').map(record => record.fields)).toContainEqual(expect.objectContaining({ plugin: 'gate', step: 'decide' }))
+  })
+
+  it('carries a signal into perform that aborts once the call ends any other way', async () => {
+    const { exec, search } = made()
+    search.call('exec.run', { command: build })
+    await tick(20)
+    search.post({ v: 1, kind: 'cancel', id: 1 })
+    await tick(10)
+    expect(exec.signals[0].aborted).toBe(true)
+  })
+})

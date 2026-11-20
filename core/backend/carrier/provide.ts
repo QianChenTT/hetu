@@ -7,7 +7,7 @@ import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
 import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
-import { stop, result, thrown, finish, callOf } from './open-calls.ts'
+import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
 // the bus and a listing ask of the gate
@@ -184,7 +184,8 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   // Set once the gate and the guards let the call on, so a judge asked before then answers no
   let cleared: Prepared | null = null
   const judge = kind.kind === 'power' ? (paths: readonly string[]) => judgeAgain(c, pending, kind, cleared, paths) : undefined
-  const call = frozen({
+  // Frozen one level, since callOf froze the rest and the signal must stay able to abort
+  const call = Object.freeze({
     ...callOf(pending, args), ...(lister === null ? {} : { canList: lister.canList }), ...(judge === undefined ? {} : { judge }),
   })
   let given: unknown
@@ -212,6 +213,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     return finish(c, pending, { ok: false, ...refused })
   }
   cleared = prepared
+  if (kind.kind === 'power') pending.judged = { kind, scope: prepared.scope }
   // A gate or a guard that ran past the deadline leaves the call no time to act in
   if (c.clock() >= pending.due) {
     release()
@@ -224,6 +226,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   } catch (err) {
     if (refusalIn(err)?.code === 'tampered') tampered(c, pending, id, args)
     lister?.charge()
+    if (pending.revoked !== null) return finish(c, pending, no(pending.revoked))
     return thrown(c, pending, id, 'perform', err)
   }
   if (lister !== null) {
@@ -263,7 +266,22 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
   }
   pending.scope = now.scope
   pending.refusedScope = undefined
+  pending.judged = { kind, scope: now.scope }
   return null
+}
+
+// 8 decide again, for every open call with power the gate let on, on the frozen copy it judged, once a new grants
+// snapshot applied. No prompt is raised. A refused call is revoked as stale, or as policy-down when the gate can't
+// judge it, so a gate that throws stops what it can't judge. A call not yet judged is judged on the newest grants
+// snapshot when it gets there, and a widened grant stops nothing
+export function rejudge(c: Context): void {
+  for (const way of [...c.ways.values()]) {
+    for (const pending of [...way.made.values()]) {
+      if (pending.done || pending.judged === null) continue
+      const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
+      if (refused !== null) revoke(c, pending, refused.code === 'policy-down' ? 'policy-down' : 'stale')
+    }
+  }
 }
 
 // 9 guard: every expected guard on the action, in core/api's order, unless the human switched it off. A GuardCall

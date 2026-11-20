@@ -146,6 +146,7 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
   if (kind.kind === 'power') {
     const refused = judge(c, pending, 'canonical', kind.capability, kind.scope)
     if (refused !== null) return finish(c, pending, { ok: false, ...refused })
+    pending.judged = { kind, scope: kind.scope }
   }
   if (c.clock() >= pending.due) return stop(c, pending, 'timeout')
   pending.callee = callee

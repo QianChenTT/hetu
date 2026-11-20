@@ -6,7 +6,7 @@ import { Bus } from './bus.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Asks, CarrierDoor, CarrierOptions, Heard, Port, Served, WayClosed } from './header.ts'
 import { topicsOf, whoOf, Context } from './context.ts'
-import { busState, listable, recheck } from './provide.ts'
+import { busState, listable, recheck, rejudge } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
@@ -62,8 +62,9 @@ export class Carrier implements CarrierDoor {
 
   // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
   // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
-  // core.security once a new grants snapshot applied a security change. The first grants snapshot the carrier reads is where it
-  // starts, not a change
+  // core.security once a new grants snapshot applied a security change. A new grants snapshot also has the gate judge
+  // every open call with power again, stopping the ones it no longer lets on. The first grants snapshot the carrier
+  // reads is where it starts, not a change
   changed(): void {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
@@ -72,7 +73,9 @@ export class Carrier implements CarrierDoor {
     if (view === this.c.announced) return
     const first = this.c.announced === undefined
     this.c.announced = view
-    if (!first) this.c.bus.emit(coreTopic.security)
+    if (first) return
+    rejudge(this.c)
+    this.c.bus.emit(coreTopic.security)
   }
 
   // The door's pipes, each in door.ts

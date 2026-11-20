@@ -36,6 +36,17 @@ export type Call = {
   // For an action that names a live call delivered to its caller: a view of that call, the same object for as long as
   // the call lives
   readonly live?: LiveCall
+  // Aborts once the call ends, answered or stopped, and when a new grants snapshot no longer covers a call let on. A
+  // provider that can stop what it does stops then and throws, a single write finishes
+  readonly signal?: CallSignal
+}
+
+// What a call's signal offers, as an AbortSignal does. reason is the refusal code the call ends with
+export type CallSignal = {
+  readonly aborted: boolean
+  readonly reason: unknown
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void
+  removeEventListener(type: 'abort', listener: () => void): void
 }
 
 // A live call as the router hands it on with an action that names it, never the call itself: its own caller, whose

@@ -190,8 +190,11 @@ export function createExec(options: ExecOptions = {}): Exec {
       try {
         await mkdir(cwd)
         const ran = await runClean(kept.program, command.slice(1), {
-          cwd, env: withDeclared(baseEnv(ambient), kept.env, ambient), maxOutput: outputBytes, deadline: call.deadline, signal: stopping.signal,
+          cwd, env: withDeclared(baseEnv(ambient), kept.env, ambient), maxOutput: outputBytes, deadline: call.deadline,
+          // Killed when exec closes or when the call's signal aborts, a call the gate no longer lets on among them
+          signal: call.signal instanceof AbortSignal ? AbortSignal.any([stopping.signal, call.signal]) : stopping.signal,
         })
+        if (call.signal?.aborted === true) throw refused('stale')
         if (ran.timedOut) throw refused('timeout')
         return {
           code: ran.code, signal: ran.signal, stdout: ran.stdout.toString('utf8'), stderr: ran.stderr.toString('utf8'), truncated: ran.truncated,

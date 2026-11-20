@@ -55,6 +55,9 @@ export function admitted(c: Context,
       ? !target.each
       : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
     live: null,
+    ended: new AbortController(),
+    judged: null,
+    revoked: null,
   }
   way.made.set(pending.id, pending)
   parent?.children.add(pending)
@@ -106,6 +109,7 @@ export function finish(c: Context, pending: Pending, outcome: Outcome): void {
   pending.done = true
   for (const child of [...pending.children]) stop(c, child, 'stopped')
   if (pending.timer !== null) clearTimeout(pending.timer)
+  pending.ended.abort(outcome.ok ? 'answered' : outcome.code)
   pending.release?.()
   pending.way.made.delete(pending.id)
   pending.parent?.children.delete(pending)
@@ -150,13 +154,27 @@ function refusalOf(action: string, refused: No): Refusal {
   }
 }
 
+// Frozen but for the signal, which freezing would keep from aborting
 export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
-  return frozen({
-    callId: pending.callId, caller: pending.caller,
-    ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
-    ...(pending.parent !== null ? { parent: pending.parent.callId } : {}),
-    action: pending.action, args, deadline: pending.deadline, ...(live !== undefined ? { live } : {}),
+  return Object.freeze({
+    ...frozen({
+      callId: pending.callId, caller: pending.caller,
+      ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
+      ...(pending.parent !== null ? { parent: pending.parent.callId } : {}),
+      action: pending.action, args, deadline: pending.deadline, ...(live !== undefined ? { live } : {}),
+    }),
+    signal: pending.ended.signal,
   })
+}
+
+// A call a new grants snapshot no longer covers. A plugin callee is sent cancel and the caller answered code at once.
+// A provider hears the call's signal: one that stops answers code once its perform throws, a single write finishes and
+// answers as it would
+export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
+  if (pending.done) return
+  if (pending.callee !== null) return stop(c, pending, code)
+  pending.revoked = code
+  pending.ended.abort(code)
 }
 
 // The view of a live call a part gets with an action that names it, the same object for the call's life. The door's
