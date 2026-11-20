@@ -1,6 +1,7 @@
 import { definePlugin, type PluginContext, Refused } from '@hetu/sdk'
 import { Index } from './index.ts'
 import { listAll } from './listing.ts'
+import { Viewer } from './viewer.ts'
 
 const CACHE_KEY = 'index'
 // What the listing at start reads. A path of any other kind is read when an event names it
@@ -100,6 +101,7 @@ async function start(ctx: PluginContext): Promise<void> {
     const hits = index.search(text).slice(0, MAX_HITS)
     return { paths: hits.length === 0 ? [] : await ctx.filterReadable(call, hits) }
   })
+  new Viewer(ctx, text => index.search(text)).start()
 
   // A path-less event names no note, so it waits for the resync that follows. A refused subscribe leaves search
   // answering from the index it has
