@@ -108,7 +108,10 @@ describe('after a failure', () => {
       announce: () => { did.push('announce') },
       quit: (code, again) => { did.push(`quit ${code} ${again}`) },
       showTrusted: () => { did.push('trusted') },
-      showBox: mode => { did.push(`box ${mode.control}`) },
+      showBox: mode => {
+        did.push(`box ${mode.control}`)
+        return 'quit'
+      },
       closeEditors: () => { did.push('close editors') },
       packaged: false,
       env: {},
@@ -154,11 +157,28 @@ describe('after a failure', () => {
     expect(timers).toEqual([])
   })
 
+  it('offers Try again in the box for a control that failed at start and starts hetu again once chosen', () => {
+    const failed = { control: 'gate', why: 'start-failed', reason: 'state-changed', again: false } as const
+    const retried = parts({ showBox: () => 'retry' })
+    afterFailure({ action: 'stopped', mode: failed, box: true }, retried.made)
+    expect(retried.did).toEqual(['close editors', 'quit 1 true'])
+    const left = parts({ showBox: () => 'retry', env: { HETU_NO_RELAUNCH: '1' } })
+    afterFailure({ action: 'stopped', mode: failed, box: true }, left.made)
+    expect(left.did).toEqual(['close editors', 'quit 1 false'])
+    expect(stoppedBox(failed)).toEqual({
+      title: 'hetu stopped',
+      message: 'hetu stopped: gate failed at start',
+      detail: 'The security view is off, so hetu can’t start with gate switched off. Try again starts hetu again',
+      buttons: ['Quit', 'Try again'],
+    })
+  })
+
   it('names the cause in the box\'s words', () => {
     expect(stoppedBox({ control: 'log', why: 'failed', reason: 'log-failing', again: false })).toEqual({
       title: 'hetu stopped',
       message: 'hetu stopped: the event log can’t write',
       detail: 'The security view is off, so the choices that would start hetu again can’t be made. Free space or fix the data folder’s permissions, then start hetu',
+      buttons: ['Quit'],
     })
     expect(stoppedBox({ control: 'install', why: 'tampered', reason: null, again: false }).message).toBe('hetu stopped: its install list doesn’t check out')
   })

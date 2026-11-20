@@ -14,7 +14,7 @@ export type Bridge = {
 }
 
 export type PluginAction = 'approve' | 'switch-on' | 'switch-off' | 'stop' | 'restart' | 'reset' | 'restore' | 'remove'
-export type Choice = 'switch-off' | 'quit'
+export type Choice = 'retry' | 'switch-off' | 'quit'
 
 // A line and the change its button asks for, none for a line with no button
 export type Switch = { line: string, change: Change | null }
@@ -78,11 +78,17 @@ function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
   return { ...request, heading: headingOf(request), revoke }
 }
 
-// Only the log failing and an install list that doesn't check out stop hetu. The list is hetu's own files damaged,
-// which only its installer puts back
+// The log failing, an install list that doesn't check out and a control that judges yes or no failing at start stop
+// hetu. The list is hetu's own files damaged, which only its installer puts back. A control that failed at start is
+// tried again or switched off, which counts as the human's switch
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
-  const log = mode.control === 'log'
   const lines = [stoppedCause(mode)]
+  if (mode.why === 'start-failed') {
+    lines.push('Try again starts hetu again, for a failure that has passed')
+    lines.push(`Start with it switched off runs hetu with ${mode.control} off until you switch it on, after its Confirm and its name typed`)
+    return { control: mode.control, lines, choices: ['retry', 'switch-off', 'quit'] }
+  }
+  const log = mode.control === 'log'
   if (mode.again) lines.push('hetu already started again once after a failure, so it didn’t start again on its own')
   lines.push(log
     ? 'Free space or fix the data folder’s permissions, or stop recording to start without the log'
@@ -91,9 +97,11 @@ function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   return { control: mode.control, lines, choices }
 }
 
-// The stopped mode's switch-off as the change it asks for: the log goes off by switching recording off. Quit is no change
+// The stopped mode's switch-off as the change it asks for: the log goes off by switching recording off and a control
+// that failed at start by its own switch. Try again and Quit are no change
 export function choiceChange(control: string, choice: Choice): Change | null {
-  return choice === 'switch-off' && control === 'log' ? { kind: 'plugin.off', plugin: 'recording' } : null
+  if (choice !== 'switch-off') return null
+  return { kind: 'plugin.off', plugin: control === 'log' ? 'recording' : control }
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier

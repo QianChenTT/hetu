@@ -356,13 +356,14 @@ export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & 
 // plugin is named in. A window draws it as a notice that opens the trusted window
 export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
 
-// Why hetu stopped: the install list didn't check out at start or the event log failed while hetu ran, with the
-// lifecycle reason. again says the run before already restarted hetu after a failure, so it didn't restart a second
-// time
-export type StoppedMode = { control: string, why: 'tampered' | 'failed', reason: string | null, again: boolean }
+// Why hetu stopped: the install list didn't check out at start, a control that judges yes or no failed at start or the
+// event log failed while hetu ran, with the lifecycle reason. again says the run before already restarted hetu after a
+// failure, so it didn't restart a second time
+export type StoppedMode = { control: string, why: 'tampered' | 'failed' | 'start-failed', reason: string | null, again: boolean }
 
 // The words that name why hetu stopped, the same in the trusted window and in the native box
 export function stoppedCause(mode: StoppedMode): string {
+  if (mode.why === 'start-failed') return `hetu stopped: ${mode.control} failed at start`
   return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
 }
 

@@ -182,7 +182,7 @@ async function start(): Promise<void> {
       },
       showTrusted: () => trusted.show(),
       // Modal, so the quit follows once the human closed it
-      showBox: mode => void dialog.showMessageBoxSync({ type: 'error', buttons: ['Quit'], defaultId: 0, ...stoppedBox(mode) }),
+      showBox: mode => (dialog.showMessageBoxSync({ type: 'error', defaultId: 0, ...stoppedBox(mode) }) === 1 ? 'retry' : 'quit'),
       closeEditors,
       packaged: LOCKED,
       env: process.env,

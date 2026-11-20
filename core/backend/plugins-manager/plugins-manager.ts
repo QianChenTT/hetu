@@ -3,7 +3,7 @@ import { connectLabel, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
-import { coreModuleIds, firstPartyIds, isSecurityControl } from '../../api/ids.ts'
+import { coreModuleIds, firstPartyIds, isSecurityControl, judgingModuleIds } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
@@ -247,6 +247,11 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         limit: (plugin, name) => this.limitOf(plugin, name),
       },
     })
+    // A control that judges yes or no and failed at start stops hetu in the stopped mode before anything runs, where the
+    // human quits, tries again or starts with it switched off. No restart marker is written, so it never starts again
+    // on its own
+    const failed = judgingModuleIds.find(id => this.modules.state(id) === 'failed')
+    if (failed !== undefined) return this.enterStopped({ control: failed, why: 'start-failed', reason: this.modules.reason(failed), again: false })
     this.phase = 'all'
     this.replan()
     await this.settled()

@@ -308,6 +308,21 @@ describe('what the trusted window draws', () => {
       })
     })
 
+    it('offers Try again, Start with it switched off and Quit for a control that judges yes or no and failed at start', () => {
+      const drawn = screen(calm({ stopped: { control: 'gate', why: 'start-failed', reason: 'state-changed', again: false } }))
+      expect(drawn.stopped).toEqual({
+        control: 'gate',
+        lines: [
+          'hetu stopped: gate failed at start',
+          'Try again starts hetu again, for a failure that has passed',
+          'Start with it switched off runs hetu with gate off until you switch it on, after its Confirm and its name typed',
+        ],
+        choices: ['retry', 'switch-off', 'quit'],
+      })
+      expect(choiceChange('gate', 'switch-off')).toEqual({ kind: 'plugin.off', plugin: 'gate' })
+      expect(choiceChange('gate', 'retry')).toBe(null)
+    })
+
     it('turns each choice into the change it asks for', () => {
       expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'plugin.off', plugin: 'recording' })
       expect(choiceChange('log', 'quit')).toBe(null)

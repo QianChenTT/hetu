@@ -292,7 +292,7 @@ describe('starting', () => {
     expect(reasonOf(pluginsManager, 'outline')).toBe('start-failed')
   })
 
-  it('hands the gate grants snapshot 1 as the core starts, and marks it failed when stateChanged throws', async () => {
+  it('hands the gate grants snapshot 1 as the core starts and stops hetu in the fail-safe when stateChanged throws', async () => {
     const gate = allowAll()
     const { pluginsManager, modules } = await harness({ modules: { gate } })
     await pluginsManager.start()
@@ -304,8 +304,8 @@ describe('starting', () => {
     broken.throws = true
     const other = await harness({ modules: { gate: broken } })
     await other.pluginsManager.start()
+    expect(other.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'start-failed', reason: 'state-changed', again: false })
     expect(other.pluginsManager.policyJob('gate')).toBe('failed')
-    expect(other.modules.reason('gate')).toBe('state-changed')
     expect(other.modules.gate()).toBe(null)
   })
 })

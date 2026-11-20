@@ -8,7 +8,8 @@ import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeHistory, filesFor, harness, hostManifest, stateOf, until, workerManifest, type Files,
+  allowAll, cleanup, coreInstall, entryFor, fakeHistory, filesFor, harness, hostManifest, stateOf, tempBase, throwingClassifier, until, workerManifest,
+  type Files,
 } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -25,14 +26,11 @@ const tampered = (again: boolean) => ({ control: 'install', why: 'tampered', rea
 
 describe('a core module that fails at start', () => {
   it.each([
-    ['the gate', 'gate', 'state-changed'],
     ['history', 'history', 'start-failed'],
   ] as const)('stops nothing when %s throws, which reads failed while every plugin starts', async (_name, id, reason) => {
-    const gate = allowAll()
-    gate.throws = id === 'gate'
     const history = fakeHistory()
     history.fails = id === 'history'
-    const made = await harness({ ...plugins(), modules: { gate, history } })
+    const made = await harness({ ...plugins(), modules: { history } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     expect(made.modules.state(id)).toBe('failed')
@@ -277,5 +275,62 @@ describe('the restart marker', () => {
     await made.pluginsManager.start()
     await made.pluginsManager.cleanQuit()
     expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+  })
+})
+
+// A control that judges yes or no and failed at start stops hetu in the fail-safe: the human quits, tries again or starts
+// with it switched off, which counts as switching it off
+describe('the fail-safe at start', () => {
+  const failing = () => {
+    const gate = allowAll()
+    gate.throws = true
+    return gate
+  }
+  const trustedWindow = { kind: 'window', role: 'trusted', n: 1 } as const
+
+  it('stops hetu in the stopped mode for the gate whose first grants snapshot throws, no plugin starting and no marker written', async () => {
+    const made = await harness({ ...plugins(), modules: { gate: failing() } })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'start-failed', reason: 'state-changed', again: false })
+    expect(made.link.events('core.stopped')).toEqual([{ control: 'gate', why: 'start-failed', reason: 'state-changed', again: false }])
+    expect(made.link.events('core.ready')).toEqual([])
+    expect(stateOf(made.pluginsManager, 'alpha')).not.toBe('ready')
+    expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+  })
+
+  it('starts again with the gate switched off once its off applied in the stopped mode with its typed word', async () => {
+    const base = await tempBase()
+    const made = await harness({ base, ...plugins(), modules: { gate: failing() } })
+    await made.pluginsManager.start()
+    await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trustedWindow)
+    const [held] = made.pluginsManager.pending()
+    await made.pluginsManager.confirm(held.id, { typed: 'gate' })
+    const { switches } = (await made.store.load()).state
+    expect(switches.off).toContain('gate')
+    await made.pluginsManager.shutdown()
+    // The harness writes the switches it is handed, so the next start is handed the ones on disk
+    const again = await harness({ base, switches, modules: { gate: failing() } })
+    await again.pluginsManager.start()
+    expect(again.pluginsManager.stopped()).toBe(null)
+    expect(again.pluginsManager.policyJob('gate')).toBe('off')
+    expect(stateOf(again.pluginsManager, 'alpha')).toBe('ready')
+  })
+
+  it('refuses everything and stops nothing for the gate failing in use', async () => {
+    const gate = allowAll()
+    const made = await harness({ ...plugins(), modules: { gate } })
+    await made.pluginsManager.start()
+    gate.throws = true
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'alpha' })
+    expect(made.pluginsManager.policyJob('gate')).toBe('failed')
+    expect(made.pluginsManager.stopped()).toBe(null)
+  })
+
+  it('keeps the class fallback and stops nothing for the grant risk classifier failing at start', async () => {
+    const made = await harness({ ...plugins(), modules: { grantRiskClassifier: throwingClassifier() } })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stopped()).toBe(null)
+    expect((await made.store.load()).state.plugins.alpha).toMatchObject({ class: null })
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 })
