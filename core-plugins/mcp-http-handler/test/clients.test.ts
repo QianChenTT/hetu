@@ -176,7 +176,7 @@ describe('a revoke', () => {
     expect(core.asked).toHaveLength(1)
   })
 
-  it('asks the core about each client with an open connection once a poll, and about nothing with none open', async () => {
+  it('asks the core about each client with an open connection once a poll and about nothing with none open', async () => {
     const { core, join } = started()
     core.pair.set('claude-code', 'items')
     const one = await join('claude-code')
