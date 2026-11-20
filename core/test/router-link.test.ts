@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, code, FakeGuard, FakeLog, harness, host, hostHalf, tick, worker } from './router-fakes.ts'
+import { cleanup, code, editor, FakeGuard, FakeLog, harness, host, hostHalf, tick, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -89,6 +89,19 @@ describe('shutdown', () => {
     router.stopping()
     pluginsManager.policyJobs.gate = 'failed'
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('stopped')
+  })
+
+  it('answers gate.reach and gate.filterReadable stopped once shutdown began and the gate reads failed', async () => {
+    const { router, pluginsManager, gate, scribe, search } = setup()
+    pluginsManager.sandboxed('search', { query: {} })
+    gate.grants.scribe = [...gate.grants.scribe, { type: 'plugin.call', targets: ['search'] }]
+    const way = windowWay(router, { editor })
+    scribe.call('search.query', {})
+    const got = await search.delivered('search.query')
+    router.stopping()
+    pluginsManager.policyJobs.gate = 'failed'
+    expect(code(await way.ask('editor', 'gate.reach', { plugin: 'search', path: 'notes/a.md' }))).toBe('stopped')
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('stopped')
   })
 
   it('answers stopped for a guarded write once shutdown began and the guard reads failed', async () => {

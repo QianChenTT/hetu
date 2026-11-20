@@ -122,6 +122,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
   const gateActions = createGateActions({
     gate: () => modules.gate(),
     table: () => parts.pluginsManager,
+    stopping: () => parts.router?.shutting() === true,
     limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
     clock: () => performance.now(),
     fault: step => recording.coalesced('fault', { plugin: 'gate', step }),

@@ -23,14 +23,14 @@ function fakeGate(readable: Record<string, string[]>): Gate & { reads: number } 
   return gate as unknown as Gate & { reads: number }
 }
 
-function made(over: { state?: PolicyJobState, gate?: Gate | null, budget?: number, clock?: () => number } = {}) {
+function made(over: { state?: PolicyJobState, gate?: Gate | null, budget?: number, clock?: () => number, stopping?: boolean } = {}) {
   const faults: string[] = []
   let state = over.state ?? 'on'
   let view = 1
   const table = { policyJob: () => state, view: () => view } as unknown as PluginTable
   const gate = over.gate === undefined ? fakeGate({ search: ['notes/a.md', 'notes/b.md'], 'word-count': ['notes/a.md'] }) : over.gate
   const actions = createGateActions({
-    gate: () => gate, table: () => table, limit: () => over.budget ?? 100,
+    gate: () => gate, table: () => table, stopping: () => over.stopping ?? false, limit: () => over.budget ?? 100,
     clock: over.clock ?? (() => performance.now()), fault: step => { faults.push(step) },
   })
   return { actions, gate, faults, set: (next: PolicyJobState) => { state = next }, bump: () => { view++ } }
@@ -76,6 +76,22 @@ describe('the gate module\'s actions', () => {
     const gate = fakeGate({ search: ['notes/a.md', 'notes/b.md', ...dotted], 'word-count': ['notes/a.md', 'notes/b.md', ...dotted] })
     const { actions } = made({ state, gate })
     expect(await actions.serve(filter(['notes/a.md', ...dotted, 'notes/b.md']))).toEqual(['notes/a.md', 'notes/b.md'])
+  })
+
+  it.each(['starting', 'failed', 'absent'] as const)('refuses stopped while the gate is %s once shutdown began', async state => {
+    const { actions } = made({ state, stopping: true })
+    expect(await refusal(actions.serve(filter(['notes/a.md'])))).toBe('stopped')
+    expect(await refusal(actions.serve(reach('notes/a.md')))).toBe('stopped')
+  })
+
+  // As at the router, a gate that throws answers as a fault whatever the time
+  it('refuses policy-down with a fault when the gate throws once shutdown began', async () => {
+    const gate = fakeGate({ search: ['notes/a.md'], 'word-count': ['notes/a.md'] })
+    const { actions, faults } = made({ gate, stopping: true })
+    gate.canRead = () => { throw new Error('boom') }
+    expect(await refusal(actions.serve(filter(['notes/a.md'])))).toBe('policy-down')
+    expect(await refusal(actions.serve(reach('notes/a.md')))).toBe('policy-down')
+    expect(faults).toEqual(['canRead', 'reach'])
   })
 
   it.each(['starting', 'failed', 'absent'] as const)('refuses policy-down while the gate is %s', async state => {

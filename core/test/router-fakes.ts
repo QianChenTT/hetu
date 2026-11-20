@@ -413,6 +413,7 @@ export function harness(given: HarnessOptions = {}) {
   const gateActions = createGateActions({
     gate: () => (over.gate ?? (() => gate))(),
     table: () => pluginsManager,
+    stopping: () => parts.router?.shutting() === true,
     limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
     clock,
     fault: step => parts.recording?.coalesced('fault', { plugin: 'gate', step }),

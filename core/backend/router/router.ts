@@ -41,6 +41,11 @@ export class Router implements RouterDoor {
     this.c.shutting = true
   }
 
+  // Whether shutdown began, for a part the router hands calls to, so what is down there answers stopped as here
+  shutting(): boolean {
+    return this.c.shutting
+  }
+
   // Recording saw the log's health change: windows read core.status again, which says whether the log takes appends
   status(): void {
     if (!this.c.closed && !this.c.shutting) this.c.bus.emit(coreTopic.status)

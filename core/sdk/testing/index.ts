@@ -293,6 +293,7 @@ export class FakeCore {
     const gateActions = createGateActions({
       gate: () => this.gate,
       table: () => this.pluginsManager,
+      stopping: () => this.router.shutting(),
       limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
       clock: () => performance.now(),
       fault: () => {},

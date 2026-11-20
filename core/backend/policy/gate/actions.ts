@@ -12,6 +12,8 @@ export type GateActionsOptions = {
   gate: () => Gate | null
   // The plugins manager's table, for the gate's state and the grants snapshot's number, null until it is built
   table: () => PluginTable | null
+  // Whether shutdown began, from which a gate that is down answers stopped, as at the router
+  stopping: () => boolean
   // filterMsPerSecond for the plugin, or for a window with null
   limit: (plugin: string | null) => number
   // A clock no change of the wall clock moves
@@ -60,6 +62,15 @@ export function createGateActions(options: GateActionsOptions): GateActions {
       return null
     }
   }
+  // stopped for a gate that is down once shutdown began, policy-down before. A gate that throws answers policy-down
+  // whatever the time, as a fault
+  const down = (): RefusalCode => {
+    try {
+      return options.stopping() === true ? 'stopped' : 'policy-down'
+    } catch {
+      return 'policy-down'
+    }
+  }
   // A fault that can't be recorded is lost
   const fault = (step: string) => {
     try {
@@ -85,8 +96,8 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
   // anything about the note: read it, write it, list its name and the ui items it holds, from the gate with the plugin
   // as the caller at the canonical stage. A write whose item still asks at first use counts as none, since the bridge
-  // raises no prompt. Everything with the gate off by the human, policy-down while it starts or is down, as for any
-  // call
+  // raises no prompt. Everything with the gate off by the human, policy-down while it starts or is down and stopped
+  // then once shutdown began, as for any call
   function reach(args: unknown): unknown {
     const { plugin, path } = args as { plugin: string, path?: string }
     const now = state()
@@ -96,7 +107,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
       return { read: any, edit: any, uiRead: any, list: any, verbs }
     }
     const gate = now === 'on' ? held() : null
-    if (gate === null) throw refuse('policy-down')
+    if (gate === null) throw refuse(down())
     const caller: Caller = frozen({ kind: 'plugin', id: plugin, half: 'worker', incarnation: 1 })
     try {
       const given = gate.verbs(plugin, 'editor')
@@ -120,16 +131,16 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   }
 
   // The paths the asking callee may read itself that the live call's own caller may read too, every path with the gate
-  // off and policy-down while the gate is starting or failed. A store from an older build may hold a dot segment or a
-  // spelling no action takes, so a path a callee read is taken in and the contract's path check drops such a path from
-  // the answer, gate on or off, while the call still answers. One message asks the gate up to twice per path,
-  // synchronously in main. Scopes shaped for the matcher's worst case make each ask slow, so the gate's time counts
-  // against the live call's caller, filterMsPerSecond each second, so one that floods a plugin with calls spends only
-  // its own. Past it the call answers throttled and the live call keeps how far it got, so the next try goes on from
-  // there and any call finishes within its deadline. That progress is dropped once the gate or the grants snapshot
-  // changed, so no answer from before a narrowing stands. For a live call that acts for an agent, the paths the agent
-  // may read too. The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer
-  // on to the agent, so there the agent's grant stands in for the caller's
+  // off and policy-down while the gate is starting or failed, stopped then once shutdown began. A store from an older
+  // build may hold a dot segment or a spelling no action takes, so a path a callee read is taken in and the contract's
+  // path check drops such a path from the answer, gate on or off, while the call still answers. One message asks the
+  // gate up to twice per path, synchronously in main. Scopes shaped for the matcher's worst case make each ask slow, so
+  // the gate's time counts against the live call's caller, filterMsPerSecond each second, so one that floods a plugin
+  // with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got, so the
+  // next try goes on from there and any call finishes within its deadline. That progress is dropped once the gate or
+  // the grants snapshot changed, so no answer from before a narrowing stands. For a live call that acts for an agent,
+  // the paths the agent may read too. The door's own call names mcp-http-handler as its caller, which reads nothing and
+  // passes the answer on to the agent, so there the agent's grant stands in for the caller's
   function filterReadable(call: Call): unknown {
     const { live } = call
     const paths = (call.args as { paths: string[] }).paths.filter(path => actionPathProblem(path) === null)
@@ -137,7 +148,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
     const now = state()
     if (now === 'off') return paths
     const gate = now === 'on' ? held() : null
-    if (gate === null) throw refuse('policy-down')
+    if (gate === null) throw refuse(down())
     if (time.spent(live.principal, live.plugin)) throw refuse('throttled')
     const budget = options.limit(live.plugin)
     const spent = secondOf(live.principal)
