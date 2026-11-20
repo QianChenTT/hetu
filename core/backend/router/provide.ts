@@ -226,10 +226,10 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     if (pending.revoked !== null) return finish(c, pending, no(pending.revoked))
     return thrown(c, pending, id, 'perform', err)
   }
-  if (lister !== null) {
-    lister.charge()
-    return finish(c, pending, listed(c, lister, performed))
-  }
+  lister?.charge()
+  // A result that comes after the revoke is dropped, a write that landed included, and the caller hears why
+  if (pending.revoked !== null) return finish(c, pending, no(pending.revoked))
+  if (lister !== null) return finish(c, pending, listed(c, lister, performed))
   result(c, pending, id, performed)
 }
 
@@ -247,12 +247,14 @@ function judged(c: Context, pending: Pending, kind: Kind, prepared: Prepared, pr
 }
 
 // A provider's second ask, when a look at the disk after the first judgement reads a path otherwise: the paths it
-// would act on now, one for each path prepare gave, judged as the first were. Never once the call has ended. No prompt
+// would act on now, one for each path prepare gave, judged as the first were. Never once the call has ended or was
+// revoked, which answers with the revoke's code. No prompt
 // is raised from here, so an item that still asks at first use answers not-granted. A call let on acts on these
 // paths, so its record names them. A call that ends refused after a refused one records the paths refused, with the
 // code the provider passes on, in place of the paths judged before. One that fails on its shape names nothing new
 function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'power' }>, prepared: Prepared | null, paths: readonly string[]): No | null {
   if (prepared === null || pending.done) return { code: 'not-granted' }
+  if (pending.revoked !== null) return { code: pending.revoked }
   const given = prepared.scope.paths
   if (!Array.isArray(paths) || given === undefined || paths.length !== given.length || !paths.every(path => typeof path === 'string')) return { code: 'failed' }
   const now: Prepared = frozen({ ...prepared, scope: { ...prepared.scope, paths: [...paths] } })
