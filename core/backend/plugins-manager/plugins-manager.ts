@@ -245,8 +245,12 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
     // read from policyJob as the router reads it
     const controls = failSafeControls(action => this.guardsFor(action))
-    // A start marker the run before left names the control whose start hung main, which goes to the fail-safe
-    const [hung] = await readStartMarkers(this.dataDir, controls)
+    // A start marker the run before left names the control whose start hung main, which goes to the fail-safe. One of a
+    // control the human switched off is left from a clear that failed, holds nothing back and is cleared
+    const markers = await readStartMarkers(this.dataDir, controls)
+    const off = markers.filter(id => isOne(this.state.switches.off, id))
+    for (const id of off) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
+    const hung = markers.find(id => !off.includes(id))
     if (hung !== undefined) return this.enterStopped({ control: hung, why: 'start-failed', reason: START_HUNG, again: false })
     const guard = controls.find(id => !isModule(id) && this.policyJob(id) !== 'on' && this.policyJob(id) !== 'off')
     if (guard !== undefined) return this.enterStopped({ control: guard, why: 'start-failed', reason: this.policyJob(guard), again: false })
@@ -263,8 +267,8 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         kill: plugin => this.missed(plugin, false),
         limit: (plugin, name) => this.limitOf(plugin, name),
       },
-      starting: id => writeStartMarker(this.dataDir, id),
-      started: id => clearStartMarker(this.dataDir, id),
+      starting: id => this.marking(writeStartMarker(this.dataDir, id)),
+      started: id => this.marking(clearStartMarker(this.dataDir, id)),
     })
     // A control that judges yes or no and failed at start stops hetu in the stopped mode before any other module began
     // or any plugin runs, where the human quits, tries again or starts with it switched off. No restart marker is

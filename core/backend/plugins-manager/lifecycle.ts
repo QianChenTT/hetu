@@ -117,7 +117,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
   // The human chose Try again: every start marker goes, so the next launch starts as usual and a start that hangs again
   // leaves a new one
   async triedAgain(): Promise<void> {
-    for (const id of failSafeControls(action => this.guardsFor(action))) await clearStartMarker(this.dataDir, id).catch(() => {})
+    for (const id of failSafeControls(action => this.guardsFor(action))) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start

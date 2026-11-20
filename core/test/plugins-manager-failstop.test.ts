@@ -527,6 +527,28 @@ describe('the fail-safe at start', () => {
       expect(third.pluginsManager.stopped()).toBe(null)
     })
 
+    // A clear that failed after the off applied leaves the marker of a control already off
+    it('holds nothing back for the marker of a control the human switched off and clears it', async () => {
+      const made = await harness({ ...plugins(), switches: { off: ['gate'] }, before: marked('gate') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(false)
+    })
+
+    it('has shutdown wait for the clear of a marker, so a quit during the start leaves none', async () => {
+      const gate = allowAll()
+      const push = gate.stateChanged.bind(gate)
+      let quit: Promise<boolean> | null = null
+      let made!: Awaited<ReturnType<typeof harness>>
+      gate.stateChanged = view => {
+        push(view)
+        quit ??= made.pluginsManager.shutdown().then(() => existsSync(starting(made.dataDir, 'gate')))
+      }
+      made = await harness({ ...plugins(), modules: { gate } })
+      await made.pluginsManager.start()
+      expect(await quit).toBe(false)
+    })
+
     it('holds nothing back for a marker naming no control the fail-safe covers', async () => {
       const made = await harness({ ...plugins(), before: marked('storage') })
       await made.pluginsManager.start()

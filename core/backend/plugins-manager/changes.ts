@@ -58,7 +58,7 @@ export abstract class PluginsChanges extends PluginsInstall {
       case 'plugin.off':
         await this.switchPlugin(change.plugin, change.kind === 'plugin.on')
         // Started with it switched off, the control's start marker holds nothing back any more
-        if (change.kind === 'plugin.off' && this.phase === 'stopped') await clearStartMarker(this.dataDir, change.plugin).catch(() => {})
+        if (change.kind === 'plugin.off' && this.phase === 'stopped') await this.marking(clearStartMarker(this.dataDir, change.plugin)).catch(() => {})
         return
       case 'plugin.approve':
         return this.approve(change.plugin, confirm)

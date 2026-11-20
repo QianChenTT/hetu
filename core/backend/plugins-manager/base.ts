@@ -178,7 +178,8 @@ export abstract class PluginsBase {
   protected readonly minted = new Map<string, number>()
   protected readonly lastPolicyJobs = new Map<string, PolicyJobState>()
   protected readonly waiters: (() => void)[] = []
-  // Restart marker writes under way, which shutdown waits for, so none is cut off when the process ends
+  // Restart marker writes and start marker writes and clears under way, which shutdown and a clean Quit wait for, so
+  // none is cut off when the process ends
   protected readonly markerWork = new Set<Promise<void>>()
   protected state: SecurityState
   protected removedKnown: boolean
@@ -296,6 +297,14 @@ ${capabilityKey(change.capability)}`)
     if (!isModule(id)) return isOne(this.state.switches.off, id) && this.expected().includes(id) ? 'off' : 'absent'
     const state = this.modules.state(id)
     return state === 'stopped' ? 'failed' : state
+  }
+
+  // A start marker's write or clear, kept among the marker work until it ends either way
+  protected marking(work: Promise<void>): Promise<void> {
+    const ended = work.catch(() => {})
+    this.markerWork.add(ended)
+    void ended.then(() => this.markerWork.delete(ended))
+    return work
   }
 
   view(): number {
