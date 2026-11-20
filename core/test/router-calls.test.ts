@@ -542,15 +542,15 @@ describe('filterReadable', () => {
   })
 
   // A saved index or another store from a build before dot names were refused could still hold one. The callee read it
-  // itself, so it is taken as it is and left to the gate, whose matcher matches no dot name
-  it('takes a path with a dot segment as the callee gave it, the gate answering for it and every path back with the gate off', async () => {
+  // itself, so the call takes it and answers without it, whatever the gate says of it
+  it('drops a path with a dot segment from the answer with the gate on and off, the gate never asked about it', async () => {
     const { search, got, pluginsManager, gate } = await incoming()
-    gate.readable = (_caller, path) => !path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.'))
+    gate.readable = () => true
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
     expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
-    expect(gate.reads.map(read => read.path)).toEqual(expect.arrayContaining(['.env', '.git/config']))
+    expect(new Set(gate.reads.map(read => read.path))).toEqual(new Set(['notes/a.md', 'other/c.md']))
     pluginsManager.policyJobs.gate = 'off'
-    expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
   })
 
   it('refuses policy-down when canRead throws and counts only an exact true', async () => {

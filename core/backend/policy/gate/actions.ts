@@ -1,3 +1,4 @@
+import { actionPathProblem } from '../../../api/actions.ts'
 import { capabilityTypes, scopedUiTypes } from '../../../api/capabilities.ts'
 import type { Caller, RefusalCode } from '../../../api/envelope.ts'
 import { frozen } from '../../../api/plain.ts'
@@ -119,19 +120,19 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   }
 
   // The paths the asking callee may read itself that the live call's own caller may read too, every path with the gate
-  // off and policy-down while the gate is starting or failed. A path a callee read is taken as it is, a dot segment
-  // included, since a store from an older build may hold one: the gate's matcher matches no such path and with the gate
-  // off the callee gets back only what it gave. One message asks the gate up to twice per path, synchronously in main,
-  // and scopes shaped for the matcher's worst case make each ask slow. So the gate's time counts against the live
-  // call's caller, filterMsPerSecond each second, so one that floods a plugin with calls spends only its own. Past it
-  // the call answers throttled and the live call keeps how far it got, so the next try goes on from there and any call
-  // finishes within its deadline. That progress is dropped once the gate or the grants snapshot changed, so no answer
-  // from before a narrowing stands. For a live call that acts for an agent, the paths the agent may read too. The
-  // door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer on to the agent, so
-  // there the agent's grant stands in for the caller's
+  // off and policy-down while the gate is starting or failed. A store from an older build may hold a dot segment or a
+  // spelling no action takes, so a path a callee read is taken in and the contract's path check drops such a path from
+  // the answer, gate on or off, while the call still answers. One message asks the gate up to twice per path,
+  // synchronously in main. Scopes shaped for the matcher's worst case make each ask slow, so the gate's time counts
+  // against the live call's caller, filterMsPerSecond each second, so one that floods a plugin with calls spends only
+  // its own. Past it the call answers throttled and the live call keeps how far it got, so the next try goes on from
+  // there and any call finishes within its deadline. That progress is dropped once the gate or the grants snapshot
+  // changed, so no answer from before a narrowing stands. For a live call that acts for an agent, the paths the agent
+  // may read too. The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer
+  // on to the agent, so there the agent's grant stands in for the caller's
   function filterReadable(call: Call): unknown {
     const { live } = call
-    const paths = (call.args as { paths: string[] }).paths
+    const paths = (call.args as { paths: string[] }).paths.filter(path => actionPathProblem(path) === null)
     if (live === undefined || !live.open()) throw refuse('invalid')
     const now = state()
     if (now === 'off') return paths

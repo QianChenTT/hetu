@@ -63,11 +63,19 @@ describe('the gate module\'s actions', () => {
     expect(await refusal(actions.serve(filter(['notes/a.md'], null)))).toBe('invalid')
   })
 
-  it('answers as today with the gate off: every path given back, reach everything', async () => {
+  it('answers with the gate off: every path given back but a dot one, reach everything', async () => {
     const { actions } = made({ state: 'off', gate: null })
-    expect(await actions.serve(filter(['notes/z.md', '.git/config']))).toEqual(['notes/z.md', '.git/config'])
+    expect(await actions.serve(filter(['notes/z.md', '.git/config']))).toEqual(['notes/z.md'])
     expect(await actions.serve(reach('notes/a.md'))).toMatchObject({ read: true, edit: true, uiRead: true, list: true })
     expect(await actions.serve(reach())).toMatchObject({ read: false, edit: false })
+  })
+
+  // A store from an older build may hold a dot path, which no caller gets back whatever the gate says of it
+  it.each(['on', 'off'] as const)('drops every path with a dot segment with the gate %s and gives back the others', async state => {
+    const dotted = ['.obsidian/app.json', 'notes/.hidden.md', 'notes/b/.git/config', 'notes/./a.md']
+    const gate = fakeGate({ search: ['notes/a.md', 'notes/b.md', ...dotted], 'word-count': ['notes/a.md', 'notes/b.md', ...dotted] })
+    const { actions } = made({ state, gate })
+    expect(await actions.serve(filter(['notes/a.md', ...dotted, 'notes/b.md']))).toEqual(['notes/a.md', 'notes/b.md'])
   })
 
   it.each(['starting', 'failed', 'absent'] as const)('refuses policy-down while the gate is %s', async state => {

@@ -17,7 +17,8 @@ import type { ThemeSpec } from './ui.ts'
 // action here yet. Each provider's own step settles its list: net has none yet
 
 // Why a path no action takes, or null: a spelling no canonical path holds, or a dot segment, which names no note. The
-// one definition of both, read by the path schema and by the core's own publish, which no schema checks
+// one definition of both, read by the path schema and by the core's own publish, which no schema checks.
+// gate.filterReadable drops a path it names from its answer
 export function actionPathProblem(value: string): string | null {
   return pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
 }
@@ -128,7 +129,7 @@ const coreTable = {
   // The caller as its way in names it
   'core.self': { from: 'any', args: nothing, reads: true },
   // Only for a live call delivered to the caller on the same way in. Gives back the paths both the caller and the
-  // call's own caller may read
+  // call's own caller may read, never one actionPathProblem refuses, a dot segment among them, gate on or off
   'gate.filterReadable': {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
