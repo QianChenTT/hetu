@@ -97,7 +97,7 @@ describe('the luoshu in the install', () => {
     await until(() => logged(dataDir, 'core.ready'))
     void editor
     expect(codeOf(await ask(page, 'luoshu.read', { path: 'a.md' }))).toBe('ok')
-    expect(codeOf(await ask(page, 'luoshu.read', { path: '.git/config' }))).toBe('not-granted')
+    expect(codeOf(await ask(page, 'luoshu.read', { path: '.git/config' }))).toBe('invalid')
     expect(codeOf(await ask(page, 'luoshu.read', { path: 'a.md::$DATA' }))).toBe('invalid')
     expect(codeOf(await ask(page, 'luoshu.read', { path: '.git::$INDEX_ALLOCATION/config' }))).toBe('invalid')
     expect(codeOf(await ask(page, 'luoshu.write', { path: 'journal/con.md', text: 'x' }))).toBe('invalid')
