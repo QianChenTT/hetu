@@ -4,17 +4,15 @@ import path from 'node:path'
 import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
 import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
-import { agentLabel } from '../../api/envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
 import { coreModuleIds, corePluginIds, firstPartyIds, isReservedId, pluginId } from '../../api/ids.ts'
-import { agentHost } from '../../api/policy-jobs.ts'
 import { retried, syncDir, writable } from '../../lib/disk.ts'
-import { agentItems, MAX_AGENT_ITEMS } from '../lib/agent-items.ts'
 import { checkHash, parseStrict, replaceFile, withHash } from '../../lib/hashed-file.ts'
 
-// The format this build reads and writes. A file in a later one belongs to a newer build. From format 3 on, boot keeps
-// a reader for the format before
-export const FORMAT = 2
+// The format this build reads and writes. A file in a later one belongs to a newer build. Boot keeps a reader for the
+// format before, OLDER, whose files it writes back in this one
+export const FORMAT = 3
+export const OLDER = 2
 // Entries in one list or map of the switches that names plugins. More than one machine runs, since each community
 // plugin gets a renderer of about 70 MB
 export const MAX_LISTED = 256
@@ -80,9 +78,6 @@ const switches = z.strictObject({
   removed: list(firstPartyId), // tombstones, which the reconcile never copies back
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
-  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, held here while the agent host has no
-  // entry and handed to the entry it gets next. Left out of a file with none
-  revokedAgents: list(agentLabel).optional(),
 })
 
 const plugin = z.strictObject({
@@ -108,18 +103,7 @@ const plugin = z.strictObject({
   // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human
   // answers it: the class last shown, null for one never known, what moved it and the plugin whose change it was
   owed: z.strictObject({ from: classNumber.nullable(), cause: z.enum(classCauses), by: pluginId.nullable() }).optional(),
-  // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
-  // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
-  agents: agentItems.optional(),
-  // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, each once. Only the agent host's entry
-  // holds the list. Left out of an entry with none
-  revoked: z.array(agentLabel).max(MAX_AGENT_ITEMS, { abort: true }).refine(labels => new Set(labels).size === labels.length, 'a label twice').optional(),
 })
-
-// An entry as the plugin id it is for may hold it: no other plugin's entry holds agents' items or revoked labels
-const hostOnly = (entry: { agents?: unknown, revoked?: unknown }) => entry.agents === undefined && entry.revoked === undefined
-const pluginFor = (id: string) => (id === agentHost ? plugin : plugin.refine(hostOnly, 'agents\' items'))
-const pluginFileFor = (id: string) => (id === agentHost ? pluginFile : pluginFile.refine(hostOnly, 'agents\' items'))
 
 // Absolute by the rules of the platform the folder is on. On Windows a drive or a share: Windows reads \notes against
 // whichever drive is current, which Node's isAbsolute takes as absolute
@@ -137,11 +121,21 @@ function luoshuFor(platform: string) {
 const format = z.literal(FORMAT)
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
 // recording in off and never written again. watchdog in off is a core plugin that is gone, read with the id dropped
-const switchesFile = z.strictObject({
-  format, ...switches.shape, recordNothing: z.boolean().optional(),
+const switchesFields = {
+  ...switches.shape, recordNothing: z.boolean().optional(),
   off: z.preprocess(value => (Array.isArray(value) ? value.filter(id => id !== 'watchdog') : value), switches.shape.off),
-})
+}
+const switchesFile = z.strictObject({ format, ...switchesFields })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
+
+// Format 2 held the items and the revoked labels of agents on one plugin's entry and the revoked labels in the switches
+// while that entry was gone. A pair's items now last for one run, so the reader drops them and reads the rest as this
+// format. Read only at boot and written back in this format once
+const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
+const switchesOlder = z.strictObject({ format: z.literal(OLDER), ...switchesFields, revokedAgents: dropped })
+  .transform(({ revokedAgents, ...rest }) => ({ ...rest, format: FORMAT }))
+const pluginOlder = z.strictObject({ format: z.literal(OLDER), ...plugin.shape, agents: dropped, revoked: dropped })
+  .transform(({ agents, revoked, ...rest }) => ({ ...rest, format: FORMAT }))
 
 export type Switches = z.infer<typeof switches>
 export type Plugin = z.infer<typeof plugin>
@@ -191,17 +185,20 @@ async function readIfExists(file: string): Promise<Buffer | null> {
   }
 }
 
-// A later build's file. Any other format, 1 included, has no reader here and reads as invalid
-function laterFormat(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'format')) return false
+// The file's format number when it is a whole number, else null
+function formatOf(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, 'format')) return null
   const found = (value as { format: unknown }).format
-  return typeof found === 'number' && Number.isSafeInteger(found) && found > FORMAT
+  return typeof found === 'number' && Number.isSafeInteger(found) ? found : null
 }
 
-type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T> }
+// older says the file was read in format 2
+type Read<T extends z.ZodType> = { result: FileResult, value?: z.output<T>, older?: true }
 
-// Each file stands or falls alone, with the hash checked over the raw bytes before any parsing
-async function readChecked<T extends z.ZodType>(file: string, schema: T): Promise<Read<T>> {
+// Each file stands or falls alone, with the hash checked over the raw bytes before any parsing. A later build's file
+// reads as newer. A file in format 2 is read by the older schema where the kind has one. Any other format, 1 included,
+// has no reader here and reads as invalid
+async function readChecked<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
   let bytes: Buffer | null
   try {
     bytes = await readIfExists(file)
@@ -218,7 +215,12 @@ async function readChecked<T extends z.ZodType>(file: string, schema: T): Promis
   } catch {
     return { result: 'invalid' }
   }
-  if (laterFormat(value)) return { result: 'newer' }
+  const found = formatOf(value)
+  if (found !== null && found > FORMAT) return { result: 'newer' }
+  if (found === OLDER) {
+    const read = (older ?? schema).safeParse(value)
+    return read.success ? { result: 'ok', value: read.data as z.output<T>, older: true } : { result: 'invalid' }
+  }
   const parsed = schema.safeParse(value)
   return parsed.success ? { result: 'ok', value: parsed.data } : { result: 'invalid' }
 }
@@ -258,9 +260,12 @@ export class StateStore {
   private readonly dir: string
   private readonly luoshu: ReturnType<typeof luoshuFor>
   private readonly luoshuFile: z.ZodType<Luoshu & { format: typeof FORMAT }>
+  private readonly luoshuOlder: z.ZodType<Luoshu & { format: typeof FORMAT }>
   // Files a load found in a later format. Held for the rest of the run, so an older build never writes over a newer
   // state
   private readonly newer = new Set<string>()
+  // The kinds of file the last load read in format 2 and that checked out, each written back in this format by upgrade
+  private older: { check: Check['check'], id?: string }[] = []
   private tail: Promise<unknown> = Promise.resolve()
 
   // platform gives the rules the luoshu folder must be absolute by
@@ -268,6 +273,7 @@ export class StateStore {
     this.dir = dir
     this.luoshu = luoshuFor(platform)
     this.luoshuFile = z.strictObject({ format, ...this.luoshu.shape })
+    this.luoshuOlder = z.strictObject({ format: z.literal(OLDER), ...this.luoshu.shape }).transform(read => ({ ...read, format: FORMAT }))
   }
 
   private file(...parts: string[]) {
@@ -306,7 +312,7 @@ export class StateStore {
   }
 
   async writePlugin(id: string, input: unknown): Promise<void> {
-    const entry = pluginFor(id).parse(input)
+    const entry = plugin.parse(input)
     await this.put(this.file('plugins', `${pluginId.parse(id)}.json`), entry)
   }
 
@@ -337,13 +343,32 @@ export class StateStore {
     })
   }
 
-  // Never writes: a bad file stays as found until the next write of the same file
+  // Never writes: a bad file stays as found until the next write of the same file, one in format 2 until upgrade
   load(): Promise<Loaded> {
     return this.serial(() => this.read())
   }
 
-  private async checkFile<T extends z.ZodType>(file: string, schema: T): Promise<Read<T>> {
-    const read = await readChecked(file, schema)
+  // Each file the last load read in format 2 written back in this format from the state that load gave, once. One
+  // whose write fails stays in format 2 and is read the same way at the next start. Gives back each file with the
+  // error code of a write that failed
+  async upgrade(state: SecurityState): Promise<{ check: Check['check'], id?: string, error?: string }[]> {
+    const done: { check: Check['check'], id?: string, error?: string }[] = []
+    for (const one of this.older.splice(0)) {
+      try {
+        if (one.check === 'switches') await this.writeSwitches(state.switches)
+        else if (one.check === 'luoshu' && state.luoshu !== null) await this.writeLuoshu(state.luoshu)
+        else if (one.check === 'plugin-entry' && one.id !== undefined && state.plugins[one.id] !== undefined) await this.writePlugin(one.id, state.plugins[one.id])
+        else continue
+        done.push(one)
+      } catch (err) {
+        done.push({ ...one, error: (err as NodeJS.ErrnoException).code ?? 'unknown' })
+      }
+    }
+    return done
+  }
+
+  private async checkFile<T extends z.ZodType>(file: string, schema: T, older?: z.ZodType): Promise<Read<T>> {
+    const read = await readChecked(file, schema, older)
     if (read.result === 'newer') this.newer.add(file)
     return read
   }
@@ -351,15 +376,18 @@ export class StateStore {
   private async read(): Promise<Loaded> {
     const state = defaultState()
     const checks: Check[] = []
+    this.older = []
 
     // A bad or missing switches file never touches the luoshu and a bad luoshu file never touches the switches
-    const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile)
+    const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile, switchesOlder)
     checks.push({ check: 'switches', result: switchesRead.result })
+    if (switchesRead.older === true) this.older.push({ check: 'switches' })
     if (switchesRead.value) state.switches = switchesOf(withoutFormat(switchesRead.value))
 
     // Absent is a luoshu not picked yet
-    const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile)
+    const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile, this.luoshuOlder)
     checks.push({ check: 'luoshu', result: luoshuRead.result })
+    if (luoshuRead.older === true) this.older.push({ check: 'luoshu' })
     if (luoshuRead.value) state.luoshu = withoutFormat(luoshuRead.value)
 
     await this.readPlugins(state, checks)
@@ -381,8 +409,9 @@ export class StateStore {
     const { ids, invalid } = sortEntryNames(names)
     for (const id of invalid) checks.push({ check: 'plugin-entry', id, result: 'invalid' })
     for (const id of ids) {
-      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFileFor(id))
+      const read = await this.checkFile(this.file('plugins', `${id}.json`), pluginFile, pluginOlder)
       checks.push({ check: 'plugin-entry', id, result: read.result })
+      if (read.older === true) this.older.push({ check: 'plugin-entry', id })
       // With no valid entry there is no hash to check the code against, so the plugin is left out
       if (read.value) state.plugins[id] = withoutFormat(read.value)
     }

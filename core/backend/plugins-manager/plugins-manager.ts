@@ -187,7 +187,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const read = this.bundled.get(change.plugin)
       const listed = this.install?.plugins[change.plugin]
       if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true, 'restore')
+      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
       return [...this.classes('restore', change.plugin, after, true).lines]
     }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {

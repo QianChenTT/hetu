@@ -102,13 +102,6 @@ export type Access = {
   readonly scope: Scope
 }
 
-// The agent door: mcp-http-handler's host half in its utility process, on the port the plugins manager minted, calling mcp.handle on behalf
-// of an agent, named by its label. Every call under that call carries the label as the agent's and can't set its own. A
-// label set anywhere else names nobody's agent, the same half on an in-process handle or with mcp-http-handler placed elsewhere too
-export const agentDoor = frozen({ plugin: 'mcp-http-handler', half: 'host', action: 'mcp.handle' } as const)
-// The plugin agents act through, whose entry holds their grants as labelled items
-export const agentHost = 'mcp'
-
 // view is the number of the grants snapshot the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only
 export type Decision =

@@ -179,6 +179,10 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
     }
   }
 
+  // Each file in the format before written back in this build's format, the fields that format drops gone. Before
+  // anything else is recorded too
+  const upgraded = await store.upgrade(state)
+
   let healthy = opened !== null
   // With recording off nothing goes in, boot's core records included. Only switches that checked out can turn it off
   // and the defaults record, so a wipe or an edit is still recorded
@@ -193,6 +197,10 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
       healthy = await (error === undefined
         ? record(log, 'boot.default-written', { file })
         : record(log, 'boot.default-failed', { file, error })) && healthy
+    }
+    for (const { check, id, error } of upgraded) {
+      const fields: Record<string, string> = { file: check, ...(id !== undefined ? { id } : {}) }
+      healthy = await (error === undefined ? record(log, 'boot.upgraded', fields) : record(log, 'boot.upgrade-failed', { ...fields, error })) && healthy
     }
   }
 

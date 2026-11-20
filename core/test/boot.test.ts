@@ -276,7 +276,7 @@ describe('the luoshu file', () => {
 describe('a state file in a newer format', () => {
   it('runs on the default switches, writes no default over the file and logs it, nothing suspect', async () => {
     await stopped(await started())
-    await plant(stateFile('switches.json'), JSON.stringify({ format: 3, off: ['gate'] }))
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 4, off: ['gate'] }))
     const before = await readFile(stateFile('switches.json'))
     const booted = await started()
     expect(booted.checks).toEqual([{ check: 'switches', result: 'newer' }, { check: 'luoshu', result: 'absent' }])
@@ -292,7 +292,7 @@ describe('a state file in a newer format', () => {
 
   it('refuses every write of that file for the rest of the run', async () => {
     await stopped(await started())
-    await plant(stateFile('switches.json'), JSON.stringify({ format: 3 }))
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 4 }))
     await plant(stateFile('luoshu.json'), JSON.stringify({ format: 7 }))
     const booted = await started()
     await expect(booted.store.writeSwitches(noSwitches)).rejects.toThrow(/newer format/)

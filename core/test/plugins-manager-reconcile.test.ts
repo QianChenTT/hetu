@@ -185,7 +185,7 @@ describe('the first-party reconcile', () => {
   it('counts an entry in a newer format as present and writes nothing over it', async () => {
     const made = await harness({
       install: installWith({ git: gitFiles() }),
-      before: ({ dataDir }) => plant(entryFile(dataDir, 'git'), '{"format":3,"anything":true}'),
+      before: ({ dataDir }) => plant(entryFile(dataDir, 'git'), '{"format":4,"anything":true}'),
     })
     await made.pluginsManager.start()
     expect(await exists(folderOf(made.dataDir, 'git'))).toBe(false)

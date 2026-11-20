@@ -159,6 +159,17 @@ export abstract class PluginsClasses extends PluginsIdentities {
     return [...(change.own === null ? [] : [change.own]), ...change.others].map(decided => decided.id)
   }
 
+  // A plugin's new entry as classing gave it written with the others the change classed, a class that rises settled
+  // before the write and one that falls after, then each notice owed raised
+  protected async writeClassed(id: string, change: Classed): Promise<void> {
+    const entry = change.own!.entry!
+    await this.settle(change.others, true)
+    await this.store.writePlugin(id, entry)
+    this.putEntry(id, entry)
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
+  }
+
   // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
   // it holds, naming the cause and the plugin whose change it was. Notices take places of their own. One that finds no
   // place stays owed and is raised again once a notice is answered or at the next start, and a notice that says what is
@@ -199,18 +210,14 @@ export abstract class PluginsClasses extends PluginsIdentities {
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
   }
 
-  // A first-party copy's entry before it is classed, with the human's item switches carried over. A newer version's copy
-  // keeps the agents' items, so an update leaves each agent what the human gave it. A restore is Recover and drops them
-  protected copied(id: string, read: Read, listed: Listed, enabled: boolean, cause: 'copy' | 'restore'): Plugin {
+  // A first-party copy's entry before it is classed, with the human's item switches carried over
+  protected copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
     const granted = read.manifest!.capabilities ?? []
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
-    const agents = cause === 'copy' ? before?.agents : undefined
-    // A revoked label stays marked either way, until mcp-http-handler says it ended the label's tokens
-    const revoked = before?.revoked
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}), ...(revoked !== undefined ? { revoked } : {}),
+      ...(off.length > 0 ? { off } : {}),
     }
   }
 

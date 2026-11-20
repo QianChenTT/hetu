@@ -182,7 +182,6 @@ export abstract class PluginsChanges extends PluginsInstall {
       if (k.from === 'folder' && k.entry !== null) {
         const change = this.classes('reset', id, null, confirm)
         await this.settle(change.others, true)
-        await this.setMarksAside(id)
         await this.store.removePlugin(id)
         delete this.state.plugins[id]
         await this.settle(change.others, false)
@@ -309,14 +308,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     if (k === undefined || k.from !== 'folder' || k.entry !== null || this.status(k).kind !== 'found') {
       throw new Error(`nothing to approve for ${id}`)
     }
-    const change = this.classes('approve', id, this.approval(k), confirm)
-    const entry = this.withMarks(id, change.own!.entry!)
-    await this.settle(change.others, true)
-    await this.store.writePlugin(id, entry)
-    this.putEntry(id, entry)
-    await this.marksHandedBack(id)
-    await this.settle(change.others, false)
-    this.raiseOwed(this.touched(change))
+    await this.writeClassed(id, this.classes('approve', id, this.approval(k), confirm))
     this.bump()
     this.replan()
   }
@@ -331,7 +323,6 @@ export abstract class PluginsChanges extends PluginsInstall {
     if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
       await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
     }
-    await this.setMarksAside(id)
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
     this.pairsGone(id)

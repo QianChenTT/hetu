@@ -240,11 +240,11 @@ describe('writing', () => {
     expect((await readdir(stateFile('plugins'))).sort()).toEqual(['search.json'])
   })
 
-  it('gives each file format 2 and its own content', async () => {
+  it('gives each file format 3 and its own content', async () => {
     await writeAll()
-    expect(await jsonOf(switchesPath())).toEqual({ format: 2, ...switchesIn })
-    expect(await jsonOf(luoshuPath())).toEqual({ format: 2, ...luoshuIn })
-    expect(await jsonOf(pluginPath('search'))).toEqual({ format: 2, ...pluginIn() })
+    expect(await jsonOf(switchesPath())).toEqual({ format: 3, ...switchesIn })
+    expect(await jsonOf(luoshuPath())).toEqual({ format: 3, ...luoshuIn })
+    expect(await jsonOf(pluginPath('search'))).toEqual({ format: 3, ...pluginIn() })
   })
 
   it('ends every file with one line holding the hash of the exact bytes above it', async () => {
@@ -330,7 +330,7 @@ describe('writing', () => {
   })
 
   it('takes the most each list and map of plugins holds', async () => {
-    // Pinned, since the cases follow MAX_LISTED wherever it goes. A lower cap would read a file another format 2 build
+    // Pinned, since the cases follow MAX_LISTED wherever it goes. A lower cap would read a file another format 3 build
     // wrote as invalid
     expect(MAX_LISTED).toBe(256)
     const ids = many(MAX_LISTED, i => `p${i}`)
@@ -477,7 +477,7 @@ describe('writing', () => {
     const refused: [string, () => Promise<void>][] = [
       ['a switch that is not a boolean', switches({ confirmOff: 'true' })],
       ['an unknown switch', switches({ gateOff: true })],
-      ['switches that carry a format', switches({ format: 2 })],
+      ['switches that carry a format', switches({ format: 3 })],
       ['the guard list of format 1', switches({ guardsOff: [] })],
       ['dev mode as the boolean of format 1', switches({ devMode: true })],
       // Each switch on its own, so a default on any one can't fill in what a caller left out
@@ -538,7 +538,7 @@ describe('writing', () => {
       ['a luoshu folder with a bidi override', () => store.writeLuoshu({ folder: `${notes}\u202egnp.exe` })],
       ['a luoshu with no folder', () => store.writeLuoshu({})],
       ['a luoshu with an unknown field', () => store.writeLuoshu({ ...luoshuIn, extra: 1 })],
-      ['a luoshu that carries a format', () => store.writeLuoshu({ ...luoshuIn, format: 2 })],
+      ['a luoshu that carries a format', () => store.writeLuoshu({ ...luoshuIn, format: 3 })],
       ['__proto__ inside the luoshu', () => store.writeLuoshu(proto(`{"folder":${JSON.stringify(notes)},"__proto__":{}}`))],
       ['a plugin with an unknown capability', () => store.writePlugin('search', pluginIn({ granted: [{ type: 'host.replace' }] }))],
       // Entries are for folder plugins, which never hold an install-only type
@@ -552,7 +552,7 @@ describe('writing', () => {
       }))],
       ['a plugin with an unknown field', () => store.writePlugin('search', pluginIn({ extra: 1 }))],
       ['a plugin that carries its own id', () => store.writePlugin('search', pluginIn({ id: 'search' }))],
-      ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 2 }))],
+      ['a plugin that carries a format', () => store.writePlugin('search', pluginIn({ format: 3 }))],
       ['a plugin class out of range', () => store.writePlugin('search', pluginIn({ class: 5 }))],
       ['a plugin class as text', () => store.writePlugin('search', pluginIn({ class: '1' }))],
       ['a plugin with no class at all', () => store.writePlugin('search', pluginIn({ class: undefined }))],
@@ -649,14 +649,14 @@ const capabilityCases = (wrap: (capability: object) => string): [string, string]
 ]
 
 const badUtf8 = (before: string, after: string) => Buffer.concat([Buffer.from(before), Buffer.from([0xff]), Buffer.from(after)])
-const switchesText = (over: object) => JSON.stringify({ format: 2, ...switchesIn, ...over })
-const limitsText = JSON.stringify({ format: 2, ...switchesIn })
+const switchesText = (over: object) => JSON.stringify({ format: 3, ...switchesIn, ...over })
+const limitsText = JSON.stringify({ format: 3, ...switchesIn })
 
 const kinds: Kind[] = [
   {
     name: 'switches',
     file: switchesPath,
-    valid: { format: 2, ...switchesIn },
+    valid: { format: 3, ...switchesIn },
     seed: () => store.writeSwitches(switchesIn),
     edit: text => text.replace('"confirmOff": true', '"confirmOff": false'),
     result: loaded => result(loaded, 'switches'),
@@ -700,7 +700,7 @@ const kinds: Kind[] = [
   {
     name: 'luoshu',
     file: luoshuPath,
-    valid: { format: 2, ...luoshuIn },
+    valid: { format: 3, ...luoshuIn },
     seed: () => store.writeLuoshu(luoshuIn),
     edit: text => text.replace('notes"', 'other"'),
     result: loaded => result(loaded, 'luoshu'),
@@ -708,20 +708,20 @@ const kinds: Kind[] = [
     seeded: loaded => expect(loaded.state.luoshu).toEqual(luoshuIn),
     fellBack: loaded => expect(loaded.state.luoshu).toBeNull(),
     rejected: [
-      ['a relative folder', JSON.stringify({ format: 2, folder: 'notes' })],
-      ['an empty folder', JSON.stringify({ format: 2, folder: '' })],
-      ['a folder that is not text', JSON.stringify({ format: 2, folder: ['/notes'] })],
-      ['a null folder', JSON.stringify({ format: 2, folder: null })],
-      ['no folder', JSON.stringify({ format: 2 })],
-      ['a folder with a control character', JSON.stringify({ format: 2, folder: `${notes}\u0000` })],
-      ['an unknown luoshu field', JSON.stringify({ format: 2, ...luoshuIn, extra: 1 })],
-      ['a duplicate folder', JSON.stringify({ format: 2, ...luoshuIn }).replace('{"format":2', '{"format":2,"folder":"/elsewhere"')],
+      ['a relative folder', JSON.stringify({ format: 3, folder: 'notes' })],
+      ['an empty folder', JSON.stringify({ format: 3, folder: '' })],
+      ['a folder that is not text', JSON.stringify({ format: 3, folder: ['/notes'] })],
+      ['a null folder', JSON.stringify({ format: 3, folder: null })],
+      ['no folder', JSON.stringify({ format: 3 })],
+      ['a folder with a control character', JSON.stringify({ format: 3, folder: `${notes}\u0000` })],
+      ['an unknown luoshu field', JSON.stringify({ format: 3, ...luoshuIn, extra: 1 })],
+      ['a duplicate folder', JSON.stringify({ format: 3, ...luoshuIn }).replace('{"format":3', '{"format":3,"folder":"/elsewhere"')],
     ],
   },
   {
     name: 'plugin entry',
     file: () => pluginPath('search'),
-    valid: { format: 2, ...pluginIn() },
+    valid: { format: 3, ...pluginIn() },
     seed: async () => { await addPlugin('search') },
     edit: text => text.replace('"class": 1', '"class": 0'),
     result: loaded => result(loaded, 'plugin-entry', 'search'),
@@ -729,24 +729,24 @@ const kinds: Kind[] = [
     seeded: loaded => expect(loaded.state.plugins.search).toMatchObject({ version: '1.0.0', class: 1, enabled: true }),
     fellBack: loaded => expect(loaded.state.plugins.search).toBeUndefined(),
     rejected: [
-      ['a missing field', JSON.stringify({ format: 2, ...pluginIn(), enabled: undefined })],
-      ['an unknown plugin field', JSON.stringify({ format: 2, ...pluginIn(), extra: 1 })],
-      ['an id inside the file, which the file name already gives', JSON.stringify({ format: 2, ...pluginIn(), id: 'other' })],
-      ['a content hash that is not a hash', JSON.stringify({ format: 2, ...pluginIn({ contentHash: 'abc' }) })],
-      ['an uppercase content hash', JSON.stringify({ format: 2, ...pluginIn({ contentHash: 'A'.repeat(64) }) })],
-      ['a class out of range', JSON.stringify({ format: 2, ...pluginIn({ class: 5 }) })],
-      ['a negative class', JSON.stringify({ format: 2, ...pluginIn({ class: -1 }) })],
-      ['a class that is not whole', JSON.stringify({ format: 2, ...pluginIn({ class: 1.5 }) })],
-      ['a class as text', JSON.stringify({ format: 2, ...pluginIn({ class: '4' }) })],
-      ['an empty version', JSON.stringify({ format: 2, ...pluginIn({ version: '' }) })],
-      ['an empty signer', JSON.stringify({ format: 2, ...pluginIn({ signer: '' }) })],
-      ['a signer that is not text or null', JSON.stringify({ format: 2, ...pluginIn({ signer: 5 }) })],
-      ['enabled that is not a boolean', JSON.stringify({ format: 2, ...pluginIn({ enabled: 'yes' }) })],
+      ['a missing field', JSON.stringify({ format: 3, ...pluginIn(), enabled: undefined })],
+      ['an unknown plugin field', JSON.stringify({ format: 3, ...pluginIn(), extra: 1 })],
+      ['an id inside the file, which the file name already gives', JSON.stringify({ format: 3, ...pluginIn(), id: 'other' })],
+      ['a content hash that is not a hash', JSON.stringify({ format: 3, ...pluginIn({ contentHash: 'abc' }) })],
+      ['an uppercase content hash', JSON.stringify({ format: 3, ...pluginIn({ contentHash: 'A'.repeat(64) }) })],
+      ['a class out of range', JSON.stringify({ format: 3, ...pluginIn({ class: 5 }) })],
+      ['a negative class', JSON.stringify({ format: 3, ...pluginIn({ class: -1 }) })],
+      ['a class that is not whole', JSON.stringify({ format: 3, ...pluginIn({ class: 1.5 }) })],
+      ['a class as text', JSON.stringify({ format: 3, ...pluginIn({ class: '4' }) })],
+      ['an empty version', JSON.stringify({ format: 3, ...pluginIn({ version: '' }) })],
+      ['an empty signer', JSON.stringify({ format: 3, ...pluginIn({ signer: '' }) })],
+      ['a signer that is not text or null', JSON.stringify({ format: 3, ...pluginIn({ signer: 5 }) })],
+      ['enabled that is not a boolean', JSON.stringify({ format: 3, ...pluginIn({ enabled: 'yes' }) })],
       ['more capabilities than core/api allows', JSON.stringify({
-        format: 2, ...pluginIn({ granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'storage' })) }),
+        format: 3, ...pluginIn({ granted: many(MAX_CAPABILITIES + 1, () => ({ type: 'storage' })) }),
       })],
-      ['bytes that are not UTF-8', badUtf8('{"format":2,"version":"1.0.', `","contentHash":"${HASH}","signer":null,"granted":[],"class":1,"enabled":true}`)],
-      ...capabilityCases(capability => JSON.stringify({ format: 2, ...pluginIn({ granted: [capability] }) })),
+      ['bytes that are not UTF-8', badUtf8('{"format":3,"version":"1.0.', `","contentHash":"${HASH}","signer":null,"granted":[],"class":1,"enabled":true}`)],
+      ...capabilityCases(capability => JSON.stringify({ format: 3, ...pluginIn({ granted: [capability] }) })),
     ],
   },
 ]
@@ -754,24 +754,24 @@ const kinds: Kind[] = [
 // Same rules for every kind of file: a failure shows in that file's check and falls back for that file alone
 describe.each(kinds)('the $name file', kind => {
   const validText = JSON.stringify(kind.valid)
-  const newerText = validText.replace('{"format":2', '{"format":3')
+  const newerText = validText.replace('{"format":3', '{"format":4')
   const raw: [string, string | Buffer][] = [
     ['not JSON', 'hello'],
     ['an empty file', ''],
     ['a comment', `${validText} // note`],
     ['a trailing comma', validText.replace(/}$/, ',}')],
     ['a BOM', `\ufeff${validText}`],
-    ['a duplicate top level key', validText.replace('{"format":2', '{"format":3,"format":2')],
-    ['a duplicate key hidden by an escape', validText.replace('{"format":2', '{"format":3,"\\u0066ormat":2')],
-    ['__proto__ at the top', validText.replace('{"format":2', '{"__proto__":{"confirmOff":true},"format":2')],
+    ['a duplicate top level key', validText.replace('{"format":3', '{"format":4,"format":3')],
+    ['a duplicate key hidden by an escape', validText.replace('{"format":3', '{"format":4,"\\u0066ormat":3')],
+    ['__proto__ at the top', validText.replace('{"format":3', '{"__proto__":{"confirmOff":true},"format":3')],
     ['nesting too deep to parse', `${'['.repeat(200000)}${']'.repeat(200000)}`],
-    ['format 1, which no reader takes', validText.replace('{"format":2', '{"format":1')],
-    ['format 0', validText.replace('{"format":2', '{"format":0')],
-    ['a negative format', validText.replace('{"format":2', '{"format":-3')],
-    ['a format that is not whole', validText.replace('{"format":2', '{"format":2.5')],
-    ['a format as text', validText.replace('{"format":2', '{"format":"3"')],
-    ['a format past the safe integers', validText.replace('{"format":2', '{"format":9007199254740993')],
-    ['no format', validText.replace('{"format":2,', '{')],
+    ['format 1, which no reader takes', validText.replace('{"format":3', '{"format":1')],
+    ['format 0', validText.replace('{"format":3', '{"format":0')],
+    ['a negative format', validText.replace('{"format":3', '{"format":-3')],
+    ['a format that is not whole', validText.replace('{"format":3', '{"format":3.5')],
+    ['a format as text', validText.replace('{"format":3', '{"format":"4"')],
+    ['a format past the safe integers', validText.replace('{"format":3', '{"format":9007199254740993')],
+    ['no format', validText.replace('{"format":3,', '{')],
     ['a list in place of the object', `[${validText}]`],
     ['JSON null', 'null'],
     ['an unknown top level field', validText.replace(/}$/, ',"extra":1}')],
@@ -906,7 +906,7 @@ describe.each(kinds)('the $name file', kind => {
 
   it('still checks the hash of a newer file first', async () => {
     await plant(kind.file(), newerText)
-    await writeFile(kind.file(), (await readFile(kind.file(), 'utf8')).replace('"format":3', '"format":4'))
+    await writeFile(kind.file(), (await readFile(kind.file(), 'utf8')).replace('"format":4', '"format":5'))
     const loaded = await store.load()
     expect(kind.result(loaded)).toBe('hash-mismatch')
     expect(loaded.suspect).toBe(true)
@@ -938,7 +938,7 @@ describe.each(kinds)('the $name file', kind => {
 
 describe('newer formats', () => {
   it('hold only the file that is newer, every other file still writes', async () => {
-    await plant(switchesPath(), JSON.stringify({ format: 3 }))
+    await plant(switchesPath(), JSON.stringify({ format: 4 }))
     await store.load()
     await store.writeLuoshu(luoshuIn)
     await addPlugin('search')
@@ -949,14 +949,14 @@ describe('newer formats', () => {
   })
 
   it('refuse removing a plugin entry in a newer format', async () => {
-    await plant(pluginPath('search'), JSON.stringify({ format: 3 }))
+    await plant(pluginPath('search'), JSON.stringify({ format: 4 }))
     await store.load()
     await expect(store.removePlugin('search')).rejects.toThrow(/newer format/)
     expect(await readdir(stateFile('plugins'))).toEqual(['search.json'])
   })
 
   it('hold a write queued behind the load that finds the newer file', async () => {
-    await plant(switchesPath(), JSON.stringify({ format: 3 }))
+    await plant(switchesPath(), JSON.stringify({ format: 4 }))
     const [loaded, written] = await Promise.allSettled([store.load(), store.writeSwitches(switchesIn)])
     expect(loaded.status === 'fulfilled' && result(loaded.value, 'switches')).toBe('newer')
     expect(written.status).toBe('rejected')
@@ -967,15 +967,15 @@ describe('newer formats', () => {
 describe('the retired recordNothing', () => {
   it('reads true as recording in off and false as nothing, then writes the switches back without it', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate'], recordNothing: true }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate'], recordNothing: true }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches).toEqual({ ...noSwitches, off: ['gate', 'recording'] })
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain('recordNothing')
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['recording'], recordNothing: true }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['recording'], recordNothing: true }))
     expect((await store.load()).state.switches.off).toEqual(['recording'])
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, recordNothing: false }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, recordNothing: false }))
     expect((await store.load()).state.switches).toEqual(noSwitches)
   })
 })
@@ -984,7 +984,7 @@ describe('the retired recordNothing', () => {
 describe('the dropped watchdog', () => {
   it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate', 'watchdog', 'leases'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'watchdog', 'leases'] }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
@@ -997,7 +997,7 @@ describe('the dropped watchdog', () => {
 describe('what the hash does not catch', () => {
   it('accepts an edit whose hash was rewritten too', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, confirmOff: true }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, confirmOff: true }))
     const loaded = await store.load()
     expect(loaded.state.switches.confirmOff).toBe(true)
     expect(loaded.suspect).toBe(false)
@@ -1061,7 +1061,7 @@ describe('files that fail alone', () => {
 
   it.each([
     ['missing', () => rm(switchesPath())],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3 }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 4 }))],
     ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
   ])('keeps the luoshu when the switches file is %s', async (_name, spoil) => {
     await setup()
@@ -1075,8 +1075,8 @@ describe('files that fail alone', () => {
   it.each([
     ['edited', () => tamper(luoshuPath())],
     ['missing', () => rm(luoshuPath())],
-    ['in a newer format', () => plant(luoshuPath(), JSON.stringify({ format: 3 }))],
-    ['relative inside', () => plant(luoshuPath(), JSON.stringify({ format: 2, folder: 'notes' }))],
+    ['in a newer format', () => plant(luoshuPath(), JSON.stringify({ format: 4 }))],
+    ['relative inside', () => plant(luoshuPath(), JSON.stringify({ format: 3, folder: 'notes' }))],
   ])('keeps the switches and the plugins when the luoshu file is %s', async (_name, spoil) => {
     await setup()
     await spoil()
@@ -1143,7 +1143,7 @@ describe('a failed check and a switch-off', () => {
   const switchesSpoiled: [string, () => Promise<unknown>][] = [
     ['edited', async () => writeFile(switchesPath(), (await readFile(switchesPath(), 'utf8')).replace('"confirmOff": false', '"confirmOff": true'))],
     ['invalid', () => plant(switchesPath(), switchesText({ off: [...switchable, 'search'] }))],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, off: switchable }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 4, off: switchable }))],
     ['missing', () => rm(switchesPath())],
   ]
 
@@ -1184,7 +1184,7 @@ describe('the tombstones', () => {
     ['missing, which only boot can tell from a first run', () => rm(switchesPath())],
     ['edited', () => writeFile(switchesPath(), 'tampered')],
     ['invalid', () => plant(switchesPath(), switchesText({ removed: ['luoshu'] }))],
-    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 3, removed: ['git'] }))],
+    ['in a newer format', () => plant(switchesPath(), JSON.stringify({ format: 4, removed: ['git'] }))],
     ['unreadable', async () => { await rm(switchesPath()); await mkdir(switchesPath()) }],
   ])('are not known when the switches file is %s', async (_name, spoil) => {
     await store.writeSwitches(switchesIn)
@@ -1239,15 +1239,15 @@ describe('the luoshu folder', () => {
   })
 
   it('reads a folder absolute only on another platform as invalid', async () => {
-    await plant(luoshuPath(), JSON.stringify({ format: 2, folder: 'C:\\Users\\han\\notes' }))
+    await plant(luoshuPath(), JSON.stringify({ format: 3, folder: 'C:\\Users\\han\\notes' }))
     expect(result(await new StateStore(dir, 'linux').load(), 'luoshu')).toBe('invalid')
-    await plant(luoshuPath(), JSON.stringify({ format: 2, folder: '/home/han/notes' }))
+    await plant(luoshuPath(), JSON.stringify({ format: 3, folder: '/home/han/notes' }))
     expect(result(await new StateStore(dir, 'win32').load(), 'luoshu')).toBe('invalid')
   })
 })
 
 describe('names in the plugins folder', () => {
-  const entry = JSON.stringify({ format: 2, ...pluginIn() })
+  const entry = JSON.stringify({ format: 3, ...pluginIn() })
 
   it.each(['Evil', 'a b', '.hidden', 'trail.', 'a..b', '-a', '_a', 'a-', 'con', 'nul'])('ignores %j and reports it as invalid', async name => {
     await addPlugin('search')
@@ -1372,7 +1372,7 @@ describe('loading', () => {
     await store.writeLuoshu(luoshuIn)
     await writeFile(path.join(searchRoot, 'a.js'), 'changed')
     await writeFile(switchesPath(), 'tampered')
-    await plant(luoshuPath(), JSON.stringify({ format: 3 }))
+    await plant(luoshuPath(), JSON.stringify({ format: 4 }))
     await writeFile(pluginPath('git'), 'tampered')
     await plant(pluginPath('mcp'), JSON.stringify({ format: 1, ...pluginIn() }))
     await writeFile(stateFile('plugins', 'notes.txt'), 'x')

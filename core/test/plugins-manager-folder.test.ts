@@ -296,7 +296,7 @@ describe('the scan', () => {
       entries: { mapper: signed() },
       before: async ({ dataDir }) => {
         await plant(entry(dataDir, 'outline'), '{"format":2,"version":"1.0.0"}')
-        await plant(entry(dataDir, 'tagger'), '{"format":3}')
+        await plant(entry(dataDir, 'tagger'), '{"format":4}')
         // An edit by something that doesn't know hetu leaves the old hash line
         const file = entry(dataDir, 'mapper')
         await writeFile(file, (await readFile(file, 'utf8')).replace('"enabled": true', '"enabled": false'))

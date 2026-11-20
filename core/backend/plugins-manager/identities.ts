@@ -5,7 +5,7 @@ import type { Call, GrantedItem } from '../../api/policy-jobs.ts'
 import type { AskRefusal, Asks } from '../router/header.ts'
 import type { PairOf } from './connects.ts'
 import { MAX_PENDING } from './requests.ts'
-import { PluginsAgents } from './agents.ts'
+import { PluginsLifecycle } from './lifecycle.ts'
 
 // The items the pairs of one root plugin hold in all
 export const MAX_PAIR_ITEMS = 256
@@ -24,7 +24,7 @@ function withAsked(held: readonly Capability[], change: IdentityAsk): Capability
 // The pairs' state, in memory alone so nothing of it outlives a run of hetu: the items each pair holds, the pairs the
 // human revoked and a count per pair that an ask waiting for it is held against. Also the asks a plugin's own call
 // raises at an item's first use
-export abstract class PluginsIdentities extends PluginsAgents {
+export abstract class PluginsIdentities extends PluginsLifecycle {
   // Each root plugin's pairs by field, each with its items in the order the human gave them
   private readonly pairs = new Map<string, Map<string, Capability[]>>()
   // The fields the human revoked under each root plugin, refused for the rest of the run

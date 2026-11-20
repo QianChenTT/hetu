@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ElectronApplication, Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, firstPartyEntry, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows } from './helpers.ts'
 
 afterEach(cleanup)
@@ -318,115 +318,6 @@ describe('the switches and limits', () => {
     // The record lands before the change applies
     await until(async () => (await new StateStore(dataDir).load()).state.switches.off.includes('gate'))
     await until(async () => (await editor.locator('#banner li').allTextContents()).includes('gate: off'))
-  })
-})
-
-describe('the agent list', () => {
-  it('lists each agent of mcp by its label in quotes with its items, revokes one at once with no Confirm and shows it revoked', async () => {
-    const mcp = filesFor(workerManifest('mcp', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': lifecycle() })
-    const installDir = await temp()
-    await writeInstall(installDir, { mcp: { files: mcp, firstParty: true } })
-    const inbox = { type: 'luoshu.read' as const, paths: ['inbox/**'] }
-    const dataDir = await data({
-      before: async dir => {
-        const root = path.join(dir, 'plugins', 'mcp')
-        await writeFolder(root, mcp)
-        await new StateStore(dir).writePlugin('mcp', firstPartyEntry(await hashOf(root), {
-          granted: [{ type: 'luoshu.read', paths: ['**'] }], class: 1,
-          agents: [{ agent: 'https://claude.ai/oauth/claude-code-client-metadata#3', capability: inbox }, { agent: 'client#10', capability: inbox }],
-          revoked: ['client#2'],
-        }))
-      },
-    })
-    const app = await start(dataDir, installDir)
-    const editor = await editorPage(app)
-    await tick(PAST_DELAY)
-    await editor.getByRole('button', { name: 'Plugins and security' }).click()
-    const page = await trustedPage(app)
-    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · luoshu.read on "inbox/**"')
-    const agents = page.locator('section.agents')
-    expect(await agents.innerText()).toContain('Its name and whether its token is live are mcp-http-handler’s to know, not this list’s')
-    expect(await agents.innerText()).toContain('"client#2" · revoked, its tokens end once mcp-http-handler hears')
-    expect(await agents.locator('p.agent', { hasText: '"client#2"' }).getByRole('button').count()).toBe(0)
-    await tick(PAST_DELAY)
-    await agents.locator('p.agent', { hasText: 'claude-code-client-metadata#3' }).getByRole('button', { name: 'Revoke' }).click()
-    await showing(page, '"https://claude.ai/oauth/claude-code-client-metadata#3" · revoked, its tokens end once mcp-http-handler hears')
-    // Applied at once, nothing waits for a Confirm
-    expect(await page.locator('section.request').count()).toBe(0)
-    const entry = (await new StateStore(dataDir).load()).state.plugins.mcp
-    expect(entry.agents).toEqual([{ agent: 'client#10', capability: inbox }])
-    expect(entry.revoked).toEqual(['client#2', 'https://claude.ai/oauth/claude-code-client-metadata#3'])
-    expect(await logged(dataDir, 'security.applied', { kind: 'identity.revoke', target: 'https://claude.ai/oauth/claude-code-client-metadata#3', by: 'narrows' })).toBe(true)
-  })
-
-  it('draws each label in a fixed-width face that wraps, so a client id of 255 characters keeps its number in view and I reads apart from l', async () => {
-    const mcp = filesFor(workerManifest('mcp', { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] }), { 'worker.js': lifecycle() })
-    const installDir = await temp()
-    await writeInstall(installDir, { mcp: { files: mcp, firstParty: true } })
-    const inbox = { type: 'luoshu.read' as const, paths: ['inbox/**'] }
-    const prefix = 'https://claude.ai/oauth/'
-    const long = `${prefix}${'x'.repeat(255 - prefix.length)}#7`
-    const dataDir = await data({
-      before: async dir => {
-        const root = path.join(dir, 'plugins', 'mcp')
-        await writeFolder(root, mcp)
-        await new StateStore(dir).writePlugin('mcp', firstPartyEntry(await hashOf(root), {
-          granted: [{ type: 'luoshu.read', paths: ['**'] }], class: 1,
-          agents: [{ agent: long, capability: inbox }, { agent: 'client#1', capability: inbox }, { agent: 'cIient#1', capability: inbox }],
-        }))
-      },
-    })
-    const app = await start(dataDir, installDir)
-    const editor = await editorPage(app)
-    await tick(PAST_DELAY)
-    await editor.getByRole('button', { name: 'Plugins and security' }).click()
-    const page = await trustedPage(app)
-    await showing(page, '"cIient#1" · luoshu.read on "inbox/**"')
-    // The rows the page drew, then a request's heading built as the page builds one, since no agent can ask in the built
-    // app until the door mints labels
-    const measured = await page.evaluate(label => {
-      const heading = document.createElement('h1')
-      const span = document.createElement('span')
-      span.className = 'label'
-      span.textContent = JSON.stringify(label)
-      heading.append('Give the agent ', span, ' what it asks for through mcp')
-      const request = document.createElement('section')
-      request.className = 'request'
-      request.append(heading)
-      document.body.append(request)
-      const width = document.documentElement.clientWidth
-      const all = [...document.querySelectorAll('section.agents p.agent'), heading].map(line => {
-        const drawn = line.querySelector('.label')!
-        const text = drawn.firstChild!
-        // The box of the label's last two characters, the end of its number
-        const end = document.createRange()
-        end.setStart(text, text.textContent!.length - 2)
-        end.setEnd(text, text.textContent!.length)
-        const style = getComputedStyle(drawn)
-        return {
-          label: drawn.textContent, font: style.fontFamily, wrap: style.overflowWrap, fits: line.scrollWidth <= line.clientWidth,
-          right: Math.ceil(end.getBoundingClientRect().right), height: Math.round(line.getBoundingClientRect().height),
-        }
-      })
-      const rows = all.slice(0, -1)
-      const asked = all.at(-1)!
-      // The face the label is drawn in: every character as wide as every other, so the system had a fixed-width one
-      const pen = document.createElement('canvas').getContext('2d')!
-      pen.font = `${getComputedStyle(span).fontSize} ${getComputedStyle(span).fontFamily}`
-      const widths = Object.fromEntries(['I', 'l', '1', 'i', 'm', 'W'].map(glyph => [glyph, pen.measureText(glyph).width]))
-      request.remove()
-      return { width, scroll: document.documentElement.scrollWidth, rows, asked, widths }
-    }, long)
-    console.log(JSON.stringify(measured))
-    expect(measured.scroll).toBeLessThanOrEqual(measured.width)
-    for (const drawn of [...measured.rows, measured.asked]) {
-      expect(drawn.font).toContain('monospace')
-      expect(drawn.wrap).toBe('anywhere')
-      expect(drawn.fits).toBe(true)
-      expect(drawn.right).toBeLessThanOrEqual(measured.width)
-    }
-    expect(measured.rows.map(row => row.label)).toEqual([JSON.stringify(long), '"client#1"', '"cIient#1"'])
-    expect(new Set(Object.values(measured.widths)).size).toBe(1)
   })
 })
 
