@@ -16,6 +16,7 @@ const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const write: Capability = { type: 'luoshu.write', paths: ['inbox/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
+const doorHost: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 const refusal = (work: Promise<unknown>) => work.then(() => null, (err: unknown) => err)
 
@@ -38,9 +39,10 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   })
   await made.pluginsManager.start()
   let n = 0
-  // core.identityAsk as the router hands it over once its floor passed: from mcp, on behalf of the chain's label
-  const ask = (label: string, capabilities: Capability[]) => made.pluginsManager.serve({
-    callId: `call-${++n}`, caller: mcpWorker, onBehalf: label, action: 'core.identityAsk', args: { capabilities }, deadline: Date.now() + 30_000,
+  // core.identityAsk as the router hands it over once its floor passed: from mcp under mcp-http-handler's call, on behalf of
+  // the chain's label
+  const ask = (label: string, capabilities: Capability[], from: Caller = mcpWorker, root: Caller = doorHost) => made.pluginsManager.serve({
+    callId: `call-${++n}`, caller: from, root, onBehalf: label, action: 'core.identityAsk', args: { capabilities }, deadline: Date.now() + 30_000,
   } as Call)
   const list = async () => await made.pluginsManager.serve({ callId: `list-${++n}`, caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
   const stored = async () => (await new StateStore(made.dataDir).load()).state.plugins.mcp
@@ -48,6 +50,17 @@ async function started(over: { agents?: { agent: string, capability: Capability 
 }
 
 describe('an agent\'s ask', () => {
+  it('takes an ask only from mcp under a chain rooted at mcp-http-handler, whose labels mcp\'s entry holds', async () => {
+    const { ask, pluginsManager } = await started()
+    const search: Caller = { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }
+    const beta: Caller = { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }
+    expect(await code(ask('client#1', [inbox], search, beta))).toBe('not-granted')
+    expect(await code(ask('client#1', [inbox], mcpWorker, beta))).toBe('not-granted')
+    expect(await code(ask('client#1', [inbox], search, doorHost))).toBe('not-granted')
+    expect(pluginsManager.pending()).toEqual([])
+    expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })
+  })
+
   it('raises a request of its own kind for the label the call carries and answers at once that it waits', async () => {
     const { pluginsManager, ask, list, stored, link } = await started()
     expect(await ask('client#1', [inbox, write])).toEqual({ asked: 'waiting' })

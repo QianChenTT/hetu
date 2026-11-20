@@ -6,7 +6,7 @@ import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, firstPartyIds, guardableActions, isSecurityControl, judgingModuleIds } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { PluginTable } from '../../api/policy-jobs.ts'
+import { agentDoor, agentHost, type PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Served } from '../router/header.ts'
 import { readFailedOnce } from './folders.ts'
@@ -50,8 +50,13 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         return null
       case 'security.list':
         return this.securityList()
-      // The router's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
+      // The router's floor let only the plugin the root of a chain called through, so onBehalf is that chain's field. The
+      // asks file under the agent host's entry for the labels the door sets, so one is taken only from the agent host under
+      // a chain rooted at the door's plugin
       case 'core.identityAsk':
+        if (call.caller.kind !== 'plugin' || call.caller.id !== agentHost || call.root.kind !== 'plugin' || call.root.id !== agentDoor.plugin) {
+          throw { code: 'not-granted' }
+        }
         return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
       // The floor let only mcp-http-handler's half on its utility port through
       case 'core.identities':

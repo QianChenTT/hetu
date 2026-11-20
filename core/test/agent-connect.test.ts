@@ -181,7 +181,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   await made.pluginsManager.start()
   let n = 0
   const serve = (caller: Caller, action: string, args: unknown, onBehalf?: string) => made.pluginsManager.serve({
-    callId: `call-${++n}`, caller, action, args, deadline: Date.now() + 30_000, ...(onBehalf !== undefined ? { onBehalf } : {}),
+    callId: `call-${++n}`, caller, action, args, deadline: Date.now() + 30_000, ...(onBehalf !== undefined ? { onBehalf, root: door } : { root: caller }),
   } as Call)
   // core.consentAsk and core.consentAnswer as the router hands them over once its floor let http's door through
   const connect = async (over: Partial<ConnectAsked> = {}) => (await serve(door, 'core.consentAsk', { ...asked, ...over }) as { handle: string }).handle
