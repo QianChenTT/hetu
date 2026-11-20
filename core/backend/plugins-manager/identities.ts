@@ -1,6 +1,7 @@
 import type { ActionResults, ListedIdentity } from '../../api/actions.ts'
 import { capabilityKey, folderCapabilities, type Capability } from '../../api/capabilities.ts'
 import { identityAsk as identityAskChange, type Change, type IdentityAsk } from '../../api/changes.ts'
+import { grantKeyOf } from '../../api/envelope.ts'
 import type { Call, GrantedItem } from '../../api/policy-jobs.ts'
 import type { AskRefusal, Asks } from '../router/header.ts'
 import type { PairOf } from './connects.ts'
@@ -79,13 +80,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   }
 
   // An ask for the chain's pair from the plugin the root called, which the router let through. The pair comes from the
-  // chain, never from an argument. The items the pair holds already are left out and the rest put in key order, so the
-  // same ask in another order finds the request waiting. One ask waits for a pair at a time and a pair whose ask the
-  // human cancelled waits IDENTITY_ASK_PAUSE_MS
+  // chain, never from an argument, keyed by the grant key of its field. The items the pair holds already are left out
+  // and the rest put in key order, so the same ask in another order finds the request waiting. One ask waits for a
+  // pair at a time and a pair whose ask the human cancelled waits IDENTITY_ASK_PAUSE_MS
   protected identityAsk(call: Call, capabilities: Capability[]): ActionResults['core.identityAsk'] {
     const { caller, root, onBehalf } = call
     if (caller.kind !== 'plugin' || root.kind !== 'plugin' || onBehalf === undefined) throw { code: 'not-granted' }
-    const pair = { root: root.id, field: onBehalf }
+    const pair = { root: root.id, field: grantKeyOf(onBehalf) }
     if (this.revoked(pair)) throw { code: 'not-granted' }
     const paused = this.askPaused.get(keyOf(pair))
     if (paused !== undefined && this.clock() < paused) throw { code: 'throttled' }
@@ -122,8 +123,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // Every item of the pair goes with its ask waiting and the pair is refused for the rest of the run. A pair that holds
   // nothing is revoked only when the core saw it ask in this run, its ask waiting or the pause after a Cancel still
   // running, so the human can turn away a pair that only asks and no window can fill the list with pairs that never
-  // asked. Any other pair changes nothing and answers unchanged
-  protected identityRevoke(pair: PairOf): void | 'unchanged' {
+  // asked. Any other pair changes nothing and answers unchanged. A field naming one session revokes its client
+  protected identityRevoke(named: PairOf): void | 'unchanged' {
+    const pair = { root: named.root, field: grantKeyOf(named.field) }
     const asked = this.requests.changes().some(({ change }) => this.waitingFor(pair)(change))
     this.requests.withdraw(this.waitingFor(pair))
     const paused = this.askPaused.get(keyOf(pair))
@@ -158,11 +160,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return this.itemsOf(pair).length > 0 || this.revoked(pair) || this.requests.changes().some(({ change }) => this.waitingFor(pair)(change))
   }
 
-  // For a utility half, whether each field under its own plugin holds items, holds none or was revoked
+  // For a utility half, whether each field under its own plugin holds items, holds none or was revoked, read from the
+  // pair of the field's grant key
   protected identitiesOf(root: string, fields: readonly string[]): ActionResults['core.identities'] {
-    return fields.map(field => ({
-      field, holds: this.revoked({ root, field }) ? 'revoked' : this.itemsOf({ root, field }).length > 0 ? 'items' : 'none',
-    }))
+    return fields.map(field => {
+      const pair = { root, field: grantKeyOf(field) }
+      return { field, holds: this.revoked(pair) ? 'revoked' : this.itemsOf(pair).length > 0 ? 'items' : 'none' }
+    })
   }
 
   // The trusted window's list: each pair holding items in the order its root plugin first got one, then each revoked
