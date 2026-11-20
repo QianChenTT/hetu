@@ -1,3 +1,4 @@
+import type { Recording } from '../backend/recording/header.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import type { Access, Call, Gate } from '../api/policy-jobs.ts'
@@ -53,8 +54,8 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-async function written(carrier: Carrier, log: FakeLog) {
-  await carrier.flush()
+async function written(recording: Recording, log: FakeLog) {
+  await recording.flush()
   return log.events('audit.call').map(record => record.fields)
 }
 
@@ -136,14 +137,14 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle with no label as invalid in every gate state and delivers nothing to mcp', async () => {
-    const { door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
     }
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
     expect(asked(gate, 'mcp.handle')).toEqual([])
-    const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
+    const records = (await written(recording, log)).filter(record => record.action === 'mcp.handle')
     expect(records.map(record => record.code)).toEqual(['invalid', 'invalid', 'invalid'])
   })
 
@@ -159,7 +160,7 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle for a label the plugins manager says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
-    const { door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
     pluginsManager.revokedLabels.add('client#1')
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
@@ -167,7 +168,7 @@ describe('an agent\'s label down a chain of calls', () => {
     }
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
     expect(asked(gate, 'mcp.handle')).toEqual([])
-    const records = (await written(carrier, log)).filter(record => record.action === 'mcp.handle')
+    const records = (await written(recording, log)).filter(record => record.action === 'mcp.handle')
     expect(records.map(record => record.code)).toEqual(['not-granted', 'not-granted', 'not-granted'])
     pluginsManager.policyJobs.gate = 'on'
     // A label the first begins with is another agent
@@ -791,13 +792,13 @@ describe('the second ask for an agent\'s call', () => {
 
 describe('the audit record of an agent\'s call', () => {
   it('names the inherited label on a sub-call and the parent\'s label, never its own, on one refused for setting its own', async () => {
-    const { carrier, door, mcp, log } = agents()
+    const { recording, carrier, door, mcp, log } = agents()
     const { id, got, parent } = await handled(door, mcp)
     expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { ...parent, onBehalf: 'client#2' }))).toBe('invalid')
     mcp.answer(got.callId, null)
     await door.reply(id)
-    const records = (await written(carrier, log)).map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])
+    const records = (await written(recording, log)).map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])
     expect(records).toEqual([
       ['luoshu.read', null, 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
       ['luoshu.read', 'invalid', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
@@ -934,10 +935,10 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
   })
 
   it('writes the refusal\'s record with the agent\'s label, the door at its root', async () => {
-    const { carrier, door, mcp, log } = tabled()
+    const { recording, carrier, door, mcp, log } = tabled()
     const { parent } = await handled(door, mcp, 'client#1')
     expect(code(await mcp.ask('luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }, parent))).toBe('not-granted')
-    const records = (await written(carrier, log)).filter(record => record.action === 'luoshu.move')
+    const records = (await written(recording, log)).filter(record => record.action === 'luoshu.move')
     expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1']])
   })
 })

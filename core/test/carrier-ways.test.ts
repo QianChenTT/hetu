@@ -137,10 +137,10 @@ describe('ports bound by closure', () => {
     const { carrier, connect, pluginsManager } = harness()
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    pluginsManager.installed('watchdog')
+    pluginsManager.installed('luoshu')
     pluginsManager.human.all = { messagesPerSecond: 2, floodFactor: 1000 }
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: watchdog.handle.post }]
+    const luoshu = hostHalf(carrier, host('luoshu'))
+    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: luoshu.handle.post }]
     for (const half of posts) for (let i = 0; i < 4; i++) half.post({ v: 1, kind: 'pong' })
     await tick(30)
     expect(pluginsManager.lifecycle.filter(entry => entry.kind === 'alive')).toEqual([])
@@ -387,15 +387,15 @@ describe('the window way in', () => {
 })
 
 describe('the carrier\'s imports', () => {
-  it('imports nothing from boot, so the state store and the log arrive only through its header', () => {
+  it('imports nothing from boot, so the state store and the log arrive only through its header, flood control and recording only through their doors', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
-    expect(files.sort()).toEqual(['audit.ts', 'bus.ts', 'carrier.ts', 'header.ts', 'limits.ts', 'records.ts'])
+    expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'header.ts', 'limits.ts'])
     for (const name of files) {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])
       expect(specifiers.filter(specifier => specifier.includes('/boot/') || specifier.includes('/events/'))).toEqual([])
-      expect(specifiers.every(specifier => specifier.startsWith('node:') || specifier.startsWith('./') || specifier.startsWith('../../api/') || specifier.startsWith('../../lib/'))).toBe(true)
+      expect(specifiers.every(specifier => specifier.startsWith('node:') || specifier.startsWith('./') || specifier.startsWith('../../api/') || specifier.startsWith('../../lib/') || specifier === '../flood-control/header.ts' || specifier === '../recording/header.ts')).toBe(true)
     }
   })
 })

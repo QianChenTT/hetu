@@ -44,11 +44,11 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const runtime = new FakeRuntime()
   // The core modules are the ones the core makes, started on the data folder as the plugins manager starts and closed
   // at its shutdown
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })

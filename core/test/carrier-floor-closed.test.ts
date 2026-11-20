@@ -20,12 +20,12 @@ describe('the floor\'s core branch', () => {
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    pluginsManager.installed('watchdog')
+    pluginsManager.installed('luoshu')
     const way = windowWay(carrier, { 'editor-1': editor, trusted })
     const replies = [
       await connect(worker('search')).ask('core.ghost'),
       await connect(host('mcp-http-handler')).ask('core.ghost'),
-      await hostHalf(carrier, host('watchdog')).ask('core.ghost'),
+      await hostHalf(carrier, host('luoshu')).ask('core.ghost'),
       await way.ask('editor-1', 'core.ghost'),
       await way.ask('trusted', 'core.ghost'),
     ]

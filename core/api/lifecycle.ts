@@ -23,9 +23,9 @@ export const stopReasons = frozen([
   'unresponsive', 'port-taken', 'bind-failed',
   // held back because the log or the install list failed and hetu stopped
   'control-failed',
-  // who stopped it: the human's switch, the watchdog, the human, the core's own shutdown, an update or a removal. A core
-  // plugin Recover reset waits for Restart hetu
-  'off', 'watchdog', 'human', 'shutdown', 'update', 'removed', 'restart-hetu',
+  // who stopped it: the human's switch, the human, the core's own shutdown, an update or a removal. A core plugin
+  // Recover reset waits for Restart hetu
+  'off', 'human', 'shutdown', 'update', 'removed', 'restart-hetu',
 ] as const)
 export type StopReason = typeof stopReasons[number]
 

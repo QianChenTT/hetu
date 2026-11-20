@@ -32,9 +32,9 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id and
-// the watchdog by the core plugin of its id. The log is the core's own
-export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
+// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id. The
+// log is the core's own
+export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
 
 // The core module or core plugin that serves each provider namespace
 export const providers = table({
@@ -48,7 +48,7 @@ export const providers = table({
 } as const)
 
 // Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
-export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
+export const coreNamespaces = frozen(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
 // The actions a guard may hook: each one that changes a note
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)
@@ -60,20 +60,32 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The security controls: the policy job holders and every guard core/api expects. Switching one off widens what
-// plugins may do. The log is the core's own and the providers serve powers without limiting anyone, so neither is one
+// The core modules whose switch is a security control's though they judge no call: flood control, which bounds what
+// plugins and windows may cost main, recording, which keeps what happened and the security view, which holds each
+// change that widens for the human's Confirm
+export const guardingModuleIds = frozen(['flood-control', 'recording', 'security-view'] as const)
+
+// The core modules whose off widens though they are no security control: the heartbeat, off leaving a hang unwatched.
+// Switching one off waits for one Confirm with no typed word and switching it on applies at once
+export const watchingModuleIds = frozen(['heartbeat'] as const)
+
+// The security controls: the policy job holders, every guard core/api expects and the guarding modules. Switching one
+// off widens what plugins may do and is typed. The log is the core's own and the providers serve powers without
+// limiting anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
   return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+    || (guardingModuleIds as readonly string[]).includes(id)
 }
 
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
-// their own and no incarnation. Each keeps its off switch in the state and its id reserved
-export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const)
+// their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
+// start in this order, the ones after them have no start of their own
+export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
 // Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the
-// editor page. The watchdog, leases and net are designed and not built
-export const corePluginIds = frozen(['watchdog', 'leases', 'mcp-http-handler', 'net', 'hidden-marks'] as const)
+// editor page. Leases and net are designed and not built
+export const corePluginIds = frozen(['leases', 'mcp-http-handler', 'net', 'hidden-marks'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half

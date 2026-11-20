@@ -1,11 +1,12 @@
 // The trusted window's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
 // function that draws a screen as text. Every word on it is the core's or this file's, a plugin's only as an id or a
 // quoted scope
-import type { HeldRequest, ListedAgent, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
+import { stoppedCause, type HeldRequest, type ListedAgent, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
+import { watchingModuleIds } from '../../api/ids.ts'
 
 export type Bridge = {
   send(message: unknown): void
@@ -36,6 +37,8 @@ export type Screen = {
     id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[], switches: Switch[]
   }[]
   switches: Switch[]
+  // Dev mode's settings: the hash checks skipped, which plugins load unhashed and the unsigned builds trusted
+  dev: Switch[]
   limits: Limit[]
   luoshu: string
   install: string
@@ -79,7 +82,7 @@ function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
 // which only its installer puts back
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   const log = mode.control === 'log'
-  const lines = [log ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out']
+  const lines = [stoppedCause(mode)]
   if (mode.again) lines.push('hetu already started again once after a failure, so it didn’t start again on its own')
   lines.push(log
     ? 'Free space or fix the data folder’s permissions, or stop recording to start without the log'
@@ -88,23 +91,28 @@ function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   return { control: mode.control, lines, choices }
 }
 
-// The stopped mode's switch-off as the change it asks for: the log goes off by stopping recording. Quit is no change
+// The stopped mode's switch-off as the change it asks for: the log goes off by switching recording off. Quit is no change
 export function choiceChange(control: string, choice: Choice): Change | null {
-  return choice === 'switch-off' && control === 'log' ? { kind: 'recordNothing', on: true } : null
+  return choice === 'switch-off' && control === 'log' ? { kind: 'plugin.off', plugin: 'recording' } : null
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
-// policy job. One it couldn't give counts as 4
-function pluginLine(plugin: ListedPlugin): string {
+// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off
+function pluginLine(plugin: ListedPlugin, locked: boolean): string {
   const from = plugin.from === 'folder' ? 'plugin folder' : 'ships with hetu'
   const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
   const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
-  return [plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known].join(' · ')
+  return [
+    plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known, ...(locked ? ['locked while the security view is off'] : []),
+    ...(plugin.from === 'core' && (watchingModuleIds as readonly string[]).includes(plugin.id) ? ['its off waits for a Confirm'] : []),
+  ].join(' · ')
 }
 
-// A core module has its switch alone: it restarts nothing and Recover doesn't reset it
-function actionsOf(plugin: ListedPlugin): PluginAction[] {
+// A core module has its switch alone: it restarts nothing and Recover doesn't reset it. A security control can't be
+// switched off while the security view is off, since nothing asks for its typed word
+function actionsOf(plugin: ListedPlugin, locked: boolean): PluginAction[] {
   const actions: PluginAction[] = []
+  if (locked) return []
   if (plugin.from === 'core') return [plugin.on ? 'switch-off' : 'switch-on']
   if (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new') return ['approve', 'remove']
   actions.push(plugin.on ? 'switch-off' : 'switch-on')
@@ -134,28 +142,34 @@ function itemsOf(plugin: ListedPlugin): Screen['plugins'][number]['items'] {
 
 const state = (on: boolean) => (on ? 'on' : 'off')
 
-// The switches for all of hetu, each with the change its button asks for, then the per-plugin ones that are on. Unsigned
-// builds get a button with plugin provenance, which names them
+// The switches for all of hetu, each with the change its button asks for, then the plugins any command is on for
 function switchesOf(list: SecurityList): Switch[] {
   const { switches } = list
   const rows: Switch[] = [
     { line: `Confirm off for this window: ${state(switches.confirmOff)}`, change: { kind: 'confirmOff', on: !switches.confirmOff } },
-    { line: `Verification skipped: ${state(switches.skipVerification)}`, change: { kind: 'skipVerification', on: !switches.skipVerification } },
-    { line: `Record nothing: ${state(switches.recordNothing)}`, change: { kind: 'recordNothing', on: !switches.recordNothing } },
   ]
-  if (switches.devMode.length > 0) rows.push({ line: `dev mode: ${switches.devMode.join(', ')}`, change: null })
   if (switches.execAnyCommand.length > 0) rows.push({ line: `any command: ${switches.execAnyCommand.join(', ')}`, change: null })
+  return rows
+}
+
+// The Dev group: the hash checks skipped, dev mode for each plugin-folder plugin, which then loads unhashed and the
+// unsigned builds trusted, which a button with plugin provenance names
+function devOf(list: SecurityList): Switch[] {
+  const { switches } = list
+  const rows: Switch[] = [
+    { line: `Verification skipped: ${state(switches.skipVerification)}`, change: { kind: 'skipVerification', on: !switches.skipVerification } },
+  ]
+  for (const plugin of list.plugins.filter(one => one.from === 'folder')) {
+    const on = switches.devMode.includes(plugin.id)
+    rows.push({ line: `dev mode for ${plugin.id}: ${state(on)}`, change: { kind: 'devMode', plugin: plugin.id, on: !on } })
+  }
   if (switches.allowUnsigned.length > 0) rows.push({ line: `unsigned builds trusted: ${switches.allowUnsigned.length}`, change: null })
   return rows
 }
 
-// Dev mode for a plugin-folder plugin, which it loads unhashed, and any command for one holding exec
+// Any command for a plugin holding exec
 function pluginSwitches(plugin: ListedPlugin, list: SecurityList): Switch[] {
   const rows: Switch[] = []
-  if (plugin.from === 'folder') {
-    const on = list.switches.devMode.includes(plugin.id)
-    rows.push({ line: `dev mode: ${state(on)}`, change: { kind: 'devMode', plugin: plugin.id, on: !on } })
-  }
   if (plugin.items.some(item => item.capability.type === 'exec')) {
     const on = list.switches.execAnyCommand.includes(plugin.id)
     rows.push({ line: `any command: ${state(on)}`, change: { kind: 'exec.anyCommand', plugin: plugin.id, on: !on } })
@@ -185,14 +199,19 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
 }
 
 export function screen(list: SecurityList): Screen {
+  const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
     request: list.requests[0] === undefined ? null : requestOf(list.requests[0]),
     behind: Math.max(0, list.requests.length - 1),
-    plugins: list.plugins.map(plugin => ({
-      id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
-    })),
+    plugins: list.plugins.map(plugin => {
+      const locked = viewOff && plugin.security && plugin.on
+      return {
+        id: plugin.id, line: pluginLine(plugin, locked), actions: actionsOf(plugin, locked), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
+      }
+    }),
     switches: switchesOf(list),
+    dev: devOf(list),
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
     install: INSTALL_LINE,

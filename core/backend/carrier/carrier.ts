@@ -7,8 +7,7 @@ import {
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, policyJobIds,
-  type GuardableAction,
+  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, type GuardableAction,
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
@@ -16,15 +15,14 @@ import { pathProblem } from '../../api/scope.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
   agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
-  type Sample, type Scope, type PolicyJobState,
+  type Scope, type PolicyJobState,
 } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
-import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
-import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
-import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './header.ts'
+import type { CarrierOptions, PluginInfo, Port, Served } from './header.ts'
+import type { Admitted, Charged, Counted, Held } from '../flood-control/header.ts'
+import type { CallRecord, Join, Recording } from '../recording/header.ts'
 
 type Send = (message: unknown) => void
 
@@ -40,7 +38,8 @@ type Way = {
   close: (() => void) | null
   open: boolean
   ownClose: boolean
-  rate: Rate
+  // What flood control counts the way's messages by, one object for the way's life
+  counted: Counted
   // Calls this way made, by the caller's own id
   made: Map<number, Pending>
   // Calls delivered to this way, by call id. Replies, parents and filterReadable look only here
@@ -73,8 +72,8 @@ type Pending = {
   // The deadline on the clock no change of the wall clock moves. The steps check it before they hand a call on, since
   // a gate or a guard can run past it before the timer gets a turn
   due: number
-  bytes: number
-  charged: [string, string | null][]
+  // Gives the call's room back to the flood control that took it, null when none did
+  release: (() => void) | null
   children: Set<Pending>
   callee: Way | null
   timer: ReturnType<typeof setTimeout> | null
@@ -221,15 +220,10 @@ export class Carrier {
   private readonly now: () => number
   private readonly clock: () => number
   private readonly limits: Limits
-  private readonly lane: CoreRecordLane
-  private readonly coalesced: Coalesced
-  private readonly queue: AuditQueue
-  // The core's own writer of the audit queue, none with no log
-  private readonly writer: AuditWriter | null
-  private readonly logReads: Served | undefined
+  // Recording, none with no log
+  private readonly recording: Recording | null
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
-  private readonly inflight = new Map<string, { calls: number, bytes: number }>()
   // The gate's time filterReadable took in the current second for each caller of a live call, by principal
   private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
@@ -239,57 +233,14 @@ export class Carrier {
   private closed = false
   // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   private shutting = false
-  // The once a second look, and the log's health it last saw
-  private readonly looking: ReturnType<typeof setInterval>
-  private logHealthy: boolean | undefined
-  private toldLog = false
-  // Drained for recording to go off: the writer writes nothing more until the switch applies or resume is called
-  private paused = false
 
   constructor(options: CarrierOptions) {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
     this.limits = new Limits(() => options.pluginsManager.limits())
-    this.lane = new CoreRecordLane(options.log, {
-      bound: () => this.limits.of(null, 'floorBacklog'),
-      muted: () => this.muted(),
-      retryMs: options.coreRecordRetryMs ?? 5000,
-      // Windows read core.status again, which says whether the log takes appends
-      noticed: () => {
-        if (!this.closed && !this.shutting) this.bus.emit('core.status')
-      },
-    })
-    this.coalesced = new Coalesced(this.lane)
-    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
-    const log = options.log
-    // A batch the log refused while healthy is let go and counted, one record a batch
-    // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
-    // and is the last record written. Between the drain and the switch nothing is written, so no call record
-    // lands after the switch's own
-    const source = {
-      next: (max: number) => {
-        if (this.muted()) {
-          this.queue.clear()
-          this.paused = false
-          return []
-        }
-        return this.paused ? [] : this.queue.next(max)
-      },
-      ack: (seq: number) => this.queue.ack(seq),
-    }
-    this.writer = log === null ? null : new AuditWriter(source, log, {
-      everyMs: options.auditEveryMs ?? 100,
-      refused: count => {
-        void this.lane.write('audit.dropped', { why: 'refused', count })
-      },
-    })
-    this.writer?.start()
-    this.logReads = log === null ? undefined : async call => (call.action === 'log.segments' ? log.history() : log.verify())
+    this.recording = options.recording
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
-    this.logHealthy = options.log?.healthy
-    this.looking = setInterval(() => this.look(), 1000)
-    this.looking.unref?.()
     this.bus = new Bus({
       state: () => this.busState(),
       canList: (caller, path) => this.listable(caller, path),
@@ -298,11 +249,11 @@ export class Carrier {
       // Coalesced, since a publisher's pace or a subscriber's own can make them
       // Shutdown takes the gate down on its way out, which is no failure, so the bus records nothing then
       dropped: (caller, why) => {
-        if (!this.shutting) this.coalesced.hit('events.dropped', { ...whoOf(caller), why })
+        if (!this.shutting) this.coalesced('events.dropped', { ...whoOf(caller), why })
       },
       // One record each, since a change of the gate or the grants makes them
       changed: (caller, change, topics) => {
-        if (!this.shutting) this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) })
+        if (!this.shutting) this.recorded(recording => recording.coreRecord(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }))
       },
     })
   }
@@ -321,28 +272,9 @@ export class Carrier {
     return this.shutting ? 'stopped' : code
   }
 
-  // A core record from the core: boot, the plugins manager and the carrier itself
-  coreRecord(event: string, fields: Record<string, Field> = {}): void {
-    this.lane.write(event, fields)
-  }
-
-  // A core record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
-  // frame of its that navigated
-  coreRecordCoalesced(event: string, fields: Record<string, Field>): void {
-    if (!this.closed) this.coalesced.hit(event, fields)
-  }
-
-  // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
-  // hears it while its policy job is on. The page counts a second's worth before it reports
-  sample(sample: Sample): void {
-    if (this.closed || this.policyJob('watchdog') !== 'on') return
-    const watchdog = this.holder(() => this.options.watchdog())
-    if (watchdog === null) return
-    try {
-      watchdog.sample(frozen(sample))
-    } catch {
-      this.fault('watchdog', 'sample')
-    }
+  // Recording saw the log's health change: windows read core.status again, which says whether the log takes appends
+  status(): void {
+    if (!this.closed && !this.shutting) this.bus.emit('core.status')
   }
 
   // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
@@ -357,31 +289,6 @@ export class Carrier {
   publishCore(owner: string, topic: string, path: string): void {
     if (this.closed || pathProblem(path) !== null || dotted(path)) return
     this.bus.publish(`${owner}.${topic}`, path)
-  }
-
-  // Writes what the audit queue holds, then the core record backlog: for a log that came back and for Quit, before close and
-  // after it. Never throws
-  async flush(): Promise<void> {
-    await this.writer?.flush()
-    await this.lane.flush()
-  }
-
-  // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
-  // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
-  async drain(ms: number): Promise<number> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const deadline = new Promise<void>(resolve => {
-      timer = setTimeout(resolve, ms)
-    })
-    await Promise.race([this.flush(), deadline])
-    clearTimeout(timer)
-    this.paused = true
-    return this.queue.size + this.lane.waiting
-  }
-
-  // Recording didn't go off after a drain, so the writer goes on
-  resume(): void {
-    this.paused = false
   }
 
   // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
@@ -481,27 +388,18 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the plugins manager: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
-  // still waiting when signal aborts comes out and settles lost
-  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
-    return this.lane.write(event, fields, signal)
-  }
-
   // For the plugins manager: a limit as the carrier enforces it for one plugin, so the plugins manager's start and stop
   // deadlines follow the same values
   limit(plugin: string, name: LimitName): number {
     return this.limits.of(plugin, name)
   }
 
-  // The records of the calls it stops stay queued for the flush after close. What the log can't take by then is lost
-  // with the run and a count of it couldn't land either
+  // The records of the calls it stops stay queued for the flush after close, then recording takes nothing more in. What
+  // the log can't take by then is lost with the run and a count of it couldn't land either
   close(): void {
     this.closed = true
-    clearInterval(this.looking)
-    this.writer?.stop()
     for (const way of [...this.ways.values()]) this.end(way.caller)
-    this.coalesced.close()
-    this.lane.close()
+    this.recorded(recording => recording.close())
   }
 
   private bindable(caller: Caller): Caller {
@@ -530,7 +428,7 @@ export class Carrier {
       close,
       open: true,
       ownClose: false,
-      rate: newRate(),
+      counted: Object.freeze({ plugin }),
       made: new Map(),
       delivered: new Map(),
     }
@@ -549,10 +447,11 @@ export class Carrier {
         this.options.pluginsManager.heard(way.caller, 'alive')
       } catch {}
     }
-    const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
+    const verdict = this.admit(way)
     // Closing a window's way would lock the human out, so a window only ever drops
     if (verdict === 'flood' && way.via !== 'window') return this.flood(way)
-    if (verdict !== 'pass') return this.dropped(way)
+    // One over the rate gets no reply
+    if (verdict !== 'pass') return
     // A message that throws while it is read is dropped like one that can't be read
     try {
       const kind = kindOf(message)
@@ -567,20 +466,21 @@ export class Carrier {
     } catch {}
   }
 
-  // One over the rate gets no reply. The watchdog hears at most once a second per way, with the count since
-  private dropped(way: Way): void {
-    way.rate.dropped++
-    const now = this.clock()
-    if (now - way.rate.toldAt < 1000 || this.policyJob('watchdog') !== 'on') return
-    const watchdog = this.holder(() => this.options.watchdog())
-    if (watchdog === null) return
-    const count = way.rate.dropped
-    way.rate.dropped = 0
-    way.rate.toldAt = now
+  // Flood control's verdict on one message, pass while it is off. A throw or an answer outside the list drops that one
+  // message, so a broken count never lets one through
+  private admit(way: Way): Admitted {
+    const flood = this.holder(() => this.options.floodControl())
+    const verdict = flood === null ? 'pass' : this.flooded('admit', () => flood.admit(way.counted))
+    return verdict === 'pass' || verdict === 'flood' ? verdict : 'drop'
+  }
+
+  // A step of flood control, undefined with a fault recorded when it throws, which no answer of its is
+  private flooded(step: string, run: () => unknown): unknown {
     try {
-      watchdog.sample(frozen({ kind: 'dropped', caller: way.caller, count }))
+      return run()
     } catch {
-      this.fault('watchdog', 'sample')
+      this.fault('flood-control', step)
+      return undefined
     }
   }
 
@@ -621,6 +521,8 @@ export class Carrier {
   // Nothing escapes: a call no step could take is dropped and one in flight fails
   private async call(way: Way, message: unknown, answer: Send): Promise<void> {
     let pending: Pending | null = null
+    // The room flood control charged, given back here when the call throws before it is in flight
+    let release: (() => void) | null = null
     try {
       const started = this.now()
       const callId = newId()
@@ -628,11 +530,13 @@ export class Carrier {
       if (!shaped.ok) return this.early(way, answer, callId, shaped, shaped.no, started)
       const kind = this.floorOf(way, shaped.target, shaped.args, shaped.agent)
       if ('code' in kind) return this.early(way, answer, callId, shaped, kind, started)
-      pending = this.admit(way, answer, callId, shaped, kind, started)
-      if (pending === null) return this.early(way, answer, callId, shaped, { code: 'throttled' }, started)
+      const charged = this.charge(way, shaped.parent, shaped.bytes)
+      if (!('release' in charged)) return this.early(way, answer, callId, shaped, charged, started)
+      release = charged.release
+      pending = this.admitted(way, answer, callId, shaped, kind, started, release)
       await this.run(pending, shaped.target, shaped.args, kind)
     } catch (err) {
-      if (pending === null) return
+      if (pending === null) return release?.()
       this.debugOf(pending, null, err)
       this.finish(pending, no('failed'))
     }
@@ -703,7 +607,7 @@ export class Carrier {
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
-  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
+  // 3 floor: who may call a core action, security.* included, the trusted window held to core actions,
   // the agent host held to the door's calls past its own, an agent's chain held to the tool table and the free actions
   // that skip the gate. Never asks the gate
   private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
@@ -725,7 +629,6 @@ export class Carrier {
       const admitted = from === 'any'
         || (from === 'windows' && caller.kind === 'window')
         || (from === 'trusted' && trusted)
-        || (from === 'watchdog' && this.isWatchdog(way) && this.watchable(field(args, 'plugin')))
         || (from === 'http' && this.isDoor(way))
         // The agent host under a live call from the door, so the agent it asks for is that call's and no other
         || (from === 'agent' && host && agent !== undefined)
@@ -761,14 +664,6 @@ export class Carrier {
     return { kind: 'power', capability: 'plugin.call', scope: frozen({ target: target.target }) }
   }
 
-  // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
-  // only while the policy job is on: starting, failed and absent act as off and off makes no restarts. The handle
-  // can outlive that, minted before start and kept through a stop grace
-  private isWatchdog(way: Way): boolean {
-    const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
-    return holder && this.policyJob('watchdog') === 'on'
-  }
-
   // mcp-http-handler's host half in its utility process: a way register made, so a port the plugins manager minted, bound to plugin mcp-http-handler's
   // host half, with mcp-http-handler placed utility as the plugins manager reads it now. A worker of mcp-http-handler matches the id, the way and the
   // place, so the half is named too. The incarnation is not compared: the plugins manager ends every way of an incarnation in
@@ -777,13 +672,6 @@ export class Carrier {
     const { caller } = way
     const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'mcp-http-handler' && caller.half === 'host'
     return half && this.info('mcp-http-handler')?.place === 'utility'
-  }
-
-  // watchdog.* acts only on sandboxed plugins holding no policy job or guard role
-  private watchable(plugin: unknown): boolean {
-    if (typeof plugin !== 'string' || isOne(policyJobIds, plugin)) return false
-    if (guardableActions.some(action => this.guardsFor(action).includes(plugin))) return false
-    return this.info(plugin)?.place === 'sandboxed'
   }
 
   // 3 floor for events.*, which keeps identity rather than limits, so it holds with the gate off too. A plugin publishes
@@ -816,58 +704,41 @@ export class Carrier {
     }
   }
 
-  // 4 ceiling: calls and bytes in flight, charged to the caller and to the root of its parent links
-  private admit(way: Way, answer: Send, callId: string, shaped: Extract<Shaped, { ok: true }>, kind: Kind, started: number): Pending | null {
-    const { parent, bytes } = shaped
+  // 4 ceiling: flood control's yes or no on the call's bytes, charged to the caller and to the root of its parent
+  // links. With flood control off nothing is charged. A no is throttled. A throw, or an acquire of the wrong shape, fails
+  // the call, as a provider's throw does
+  private charge(way: Way, parent: Pending | null, bytes: number): { release: (() => void) | null } | No {
+    const flood = this.holder(() => this.options.floodControl())
+    if (flood === null) return { release: null }
+    const root = parent?.root ?? way
+    const charged = (one: Root | Way): Charged => Object.freeze({ principal: one.principal, plugin: one.plugin })
+    const held = this.flooded('acquire', () => flood.acquire(charged(way), charged(root), bytes))
+    if (held === null) return { code: 'throttled' }
+    if (typeof held !== 'object') return { code: 'failed' }
+    return { release: () => this.flooded('release', () => flood.release(held as Held)) }
+  }
+
+  // The call in flight once the ceiling took it, its deadline shrinking along parent
+  private admitted(
+    way: Way, answer: Send, callId: string, shaped: Extract<Shaped, { ok: true }>, kind: Kind, started: number, release: (() => void) | null,
+  ): Pending {
+    const { parent, target } = shaped
     const root: Root = parent?.root ?? { principal: way.principal, plugin: way.plugin, caller: way.caller }
-    const charged: [string, string | null][] = [[way.principal, way.plugin]]
-    if (root.principal !== way.principal) charged.push([root.principal, root.plugin])
-    for (const [principal, plugin] of charged) {
-      const load = this.inflight.get(principal) ?? { calls: 0, bytes: 0 }
-      if (load.calls + 1 > this.limits.of(plugin, 'callsInFlight')) return null
-      if (load.bytes + bytes > this.limits.of(plugin, 'bytesInFlight')) return null
-    }
-    for (const [principal] of charged) {
-      const load = this.inflight.get(principal) ?? { calls: 0, bytes: 0 }
-      load.calls++
-      load.bytes += bytes
-      this.inflight.set(principal, load)
-    }
-    const { target } = shaped
     // Never past the longest delay a timer takes, so a raised deadline can't fire at once and stays a safe integer
     const ownDeadline = started + Math.min(this.limits.of(way.plugin, 'callDeadlineMs'), MAX_TIMER_MS)
     // Shrinks along parent, so no sub-call outlives the call it serves
     const deadline = Math.min(ownDeadline, parent?.deadline ?? ownDeadline)
     const left = Math.max(0, deadline - this.now())
     const pending: Pending = {
-      callId,
-      id: shaped.id,
-      way,
-      answer,
-      caller: way.caller,
-      onBehalf: shaped.onBehalf,
-      agent: shaped.agent,
-      lends: shaped.lends,
-      action: shaped.action,
-      parent,
-      root,
-      depth: (parent?.depth ?? 0) + 1,
-      deadline,
-      due: this.clock() + left,
-      bytes,
-      charged,
-      children: new Set(),
-      callee: null,
-      timer: null,
-      done: false,
-      started,
-      gate: this.policyJob('gate'),
+      callId, id: shaped.id, way, answer, caller: way.caller, onBehalf: shaped.onBehalf, agent: shaped.agent, lends: shaped.lends,
+      action: shaped.action, parent, root, depth: (parent?.depth ?? 0) + 1, deadline, due: this.clock() + left, release,
+      children: new Set(), callee: null, timer: null, done: false, started, gate: this.policyJob('gate'),
       // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
       // no path. A plugin call's target is already the plugin's id
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
       refusedScope: undefined,
       coalesce: target.kind === 'core'
-        ? !shaped.action.startsWith('security.') && !shaped.action.startsWith('watchdog.')
+        ? !shaped.action.startsWith('security.')
         : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
       filtering: null,
     }
@@ -911,7 +782,7 @@ export class Carrier {
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
     if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
-    if (this.muted() || !this.logFailing()) return 'pass'
+    if (!this.logFailing()) return 'pass'
     return this.down('policy-down')
   }
 
@@ -995,25 +866,20 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'editor.reach') return this.finish(pending, this.reach(args))
-    if (pending.action === 'log.segments' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    if (pending.action === 'log.segments' || pending.action === 'log.verify') {
+      const { recording } = this
+      return this.serve(pending, recording === null ? undefined : call => recording.serve(call), args)
+    }
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. Its reads answer
     const { caller } = pending
     if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !this.armed(caller)) {
       return this.finish(pending, no('throttled'))
     }
-    if (pending.action === 'watchdog.limit') {
-      const plugin = field(args, 'plugin') as string
-      this.limits.lower(plugin, field(args, 'constant') as LimitName, field(args, 'value') as number)
-      try {
-        this.options.limited?.(plugin)
-      } catch {}
-      return this.finish(pending, { ok: true, result: null })
-    }
     // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
     // a second
     if (pending.action === 'core.agentRefused') {
-      this.coalesced.hit('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
+      this.coalesced('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
       return this.finish(pending, { ok: true, result: null })
     }
     return this.serve(pending, this.options.core, args)
@@ -1159,7 +1025,7 @@ export class Carrier {
       pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
       if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
       // Counted per half, since the topics are the plugin's to pick
-      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
+      this.coalesced('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
     }
     this.finish(pending, { ok: true, result: { standing } })
   }
@@ -1433,7 +1299,7 @@ export class Carrier {
     const space = spaceOf(pending.caller)
     const key = field(args, 'key')
     if (space === null || typeof key !== 'string') return
-    this.coalesced.hit('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
+    this.coalesced('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
   }
 
   // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
@@ -1522,13 +1388,7 @@ export class Carrier {
     pending.done = true
     for (const child of [...pending.children]) this.stop(child, 'stopped')
     if (pending.timer !== null) clearTimeout(pending.timer)
-    for (const [principal] of pending.charged) {
-      const load = this.inflight.get(principal)
-      if (load === undefined) continue
-      load.calls--
-      load.bytes -= pending.bytes
-      if (load.calls <= 0) this.inflight.delete(principal)
-    }
+    pending.release?.()
     pending.way.made.delete(pending.id)
     pending.parent?.children.delete(pending)
     pending.callee?.delivered.delete(pending.callId)
@@ -1572,39 +1432,31 @@ export class Carrier {
     }
   }
 
-  // One audit record per call, which the writer takes to the log. Nothing while recording is off or with no log. One
-  // past the queue's bound is dropped and counted
-  private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
-    if (this.writer === null || this.muted()) return
-    if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
-    this.checkLog()
+  // 11 record: one audit record per call into recording's queue, never blocking the reply. A throw loses that record
+  private recordCall(record: CallRecord, coalesce: boolean): void {
+    this.recorded(recording => recording.call(record, coalesce))
   }
 
-  // Tells the plugins manager that the log failed, as records queue and once a second, whatever the gate's state, until the
-  // plugins manager takes it
-  private checkLog(): void {
-    if (this.toldLog || this.muted() || !this.logFailing()) return
+  // Recording took a record or let it go. A throw is that record lost and hetu runs on
+  private recorded(take: (recording: Recording) => void): void {
+    if (this.recording === null) return
     try {
-      if (this.options.logFailed?.() !== false) this.toldLog = true
+      take(this.recording)
     } catch {}
   }
 
-  // Once a second, so windows hear when the log's health changed through an audit write, which the core record lane doesn't see
-  private look(): void {
-    if (this.closed || this.shutting) return
-    this.checkLog()
-    const healthy = this.options.log?.healthy
-    if (healthy === this.logHealthy) return
-    this.logHealthy = healthy
-    this.bus.emit('core.status')
+  private coalesced(event: string, fields: Record<string, Field>, keyed?: Parameters<Recording['coalesced']>[2], weight?: number): void {
+    this.recorded(recording => recording.coalesced(event, fields, keyed, weight))
   }
 
-  // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
-  // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
-  // count. The plugins manager then quits hetu to start it again, and meanwhile the gate off refuses a call with power
+  // The core's log failing, as recording reads it, for the gate off to refuse calls with power until fail-stop. One it
+  // can't say counts as failing
   private logFailing(): boolean {
-    const oldest = this.queue.oldest()
-    return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')
+    try {
+      return this.recording?.failing() === true
+    } catch {
+      return true
+    }
   }
 
   private callOf(pending: Pending, args: unknown): Call {
@@ -1617,7 +1469,7 @@ export class Carrier {
   }
 
   private fault(plugin: string, step: string): void {
-    this.coalesced.hit('fault', { plugin, step })
+    this.coalesced('fault', { plugin, step })
   }
 
   // plugin is whose code threw, so the text can go to that plugin's own debug and not the caller's
@@ -1669,14 +1521,6 @@ export class Carrier {
   private armed(caller: Caller): boolean {
     try {
       return this.options.armed?.(caller) === true
-    } catch {
-      return false
-    }
-  }
-
-  private muted(): boolean {
-    try {
-      return this.options.pluginsManager.recordNothing() === true
     } catch {
       return false
     }

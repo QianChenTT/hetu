@@ -4,7 +4,7 @@ import type {
   ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
 import {
-  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, mustType, withdrawnWith, type AgentAsk, type Change,
+  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, withdrawnWith, type AgentAsk, type Change,
   type ClassRaised,
 } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
@@ -25,6 +25,7 @@ import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capa
 import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
+import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
 import { agentItems } from '../lib/agent-items.ts'
@@ -37,8 +38,9 @@ import {
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
-import type { Runtime } from '../runtime/header.ts'
-import type { CarrierLink } from './header.ts'
+import type { Beating } from '../heartbeat/header.ts'
+import type { Failure, Runtime } from '../runtime/header.ts'
+import type { CarrierLink, PluginsRecording } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
@@ -51,6 +53,8 @@ export type PluginsManagerOptions = {
   // packaged build does inside app.asar
   listDir?: string
   link: CarrierLink
+  // Recording, which the plugins manager calls only while the human has it on
+  recording: PluginsRecording
   runtime: Runtime
   // The core's own modules, which the plugins manager starts, hands each change and switches as the human does
   modules: CoreModules
@@ -74,11 +78,6 @@ export type PluginsManagerOptions = {
   // waits. performance.now unless a test names another
   clock?: () => number
 }
-
-// What the runtime does about the log failing while hetu ran
-export type Failure =
-  | { action: 'relaunch', control: string, reason: string }
-  | { action: 'stopped', mode: StoppedMode }
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -107,8 +106,8 @@ type Live = {
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
   stop: { done: Promise<void>, end: () => void, reason: string } | null
-  // The worker's heartbeat: pings sent with no pong since and the timer that sends the next
-  beat: { timer: ReturnType<typeof setInterval>, misses: number, waiting: boolean } | null
+  // The incarnation as the heartbeat watches it, from its ready on
+  beating: Beating | null
   // The running plugins that stop with this one, named when its stop is decided, since they stop before it does
   with: string[]
   over: boolean
@@ -185,7 +184,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
 }
 
 // The order core plugins start in, each after the core modules. A requirement still starts before its dependent
-export const bootOrder = frozen(['watchdog', 'net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
+export const bootOrder = frozen(['net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
 
 const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at
@@ -269,6 +268,7 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
 // decides no grant
 export class PluginsManager implements Seam {
   private readonly link: CarrierLink
+  private readonly recording: PluginsRecording
   private readonly runtime: Runtime
   private readonly modules: CoreModules
   private readonly store: StateStore
@@ -307,7 +307,8 @@ export class PluginsManager implements Seam {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
   private readonly onFailure: PluginsManagerOptions['onFailure']
-  private readonly limited: PluginsManagerOptions['limited']
+  // The runtime's limited, which never throws here
+  private readonly limited: (plugin: string) => void
   // starting until the install list is read and the core modules started, all from then on, stopped once the install
   // list or the log failed
   private phase: 'starting' | 'all' | 'stopped' = 'starting'
@@ -328,6 +329,7 @@ export class PluginsManager implements Seam {
   constructor(options: PluginsManagerOptions) {
     const { booted } = options
     this.link = options.link
+    this.recording = options.recording
     this.runtime = options.runtime
     this.modules = options.modules
     this.store = booted.store
@@ -338,7 +340,11 @@ export class PluginsManager implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
-    this.limited = options.limited
+    this.limited = plugin => {
+      try {
+        options.limited?.(plugin)
+      } catch {}
+    }
     this.clock = options.clock ?? (() => performance.now())
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -363,10 +369,11 @@ export class PluginsManager implements Seam {
         if (change.kind === 'agent.connect') this.connects.cancelled(change)
         return Promise.resolve()
       },
-      record: (event, fields, signal) => this.link.record(event, fields, signal),
+      record: (event, fields, signal) => this.record(event, fields, signal),
+      view: () => this.modules.securityView(),
+      fault: step => this.note('fault', { plugin: 'security-view', step }),
       confirmOff: () => this.state.switches.confirmOff,
-      drain: ms => this.link.drain(ms),
-      resume: () => this.link.resume(),
+      recording: this.recording,
       changed: () => this.refresh(),
       clock: () => this.clock(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
@@ -393,7 +400,7 @@ ${capabilityKey(change.capability)}`)
 
   // A policy job or guard role: the gate and the grant risk classifier as their core modules read, starting until the
   // modules are started, off only by the human's switch and failed while the module's last push threw or once the
-  // stopped mode closed it. Nothing that runs holds the watchdog policy job or a guard role, so each is absent
+  // stopped mode closed it. Nothing that runs holds a guard role, so each is absent
   policyJob(id: string): PolicyJobState {
     if (id !== 'gate' && id !== 'grant-risk-classifier') return 'absent'
     const state = this.modules.state(id)
@@ -420,10 +427,6 @@ ${capabilityKey(change.capability)}`)
 
   limits(): HumanLimits {
     return this.state.switches.limits
-  }
-
-  recordNothing(): boolean {
-    return this.state.switches.recordNothing
   }
 
   // For the carrier, which refuses the door's call for a revoked label before the agent host sees it: the marks on the
@@ -454,9 +457,8 @@ ${capabilityKey(change.capability)}`)
     } else if (kind === 'stopped' && live.stop !== null) {
       run.stopped = true
       if ([...live.halves.values()].every(half => half.stopped)) this.finished(k, live)
-    } else if ((kind === 'pong' || kind === 'alive') && live.beat !== null) {
-      live.beat.misses = 0
-      live.beat.waiting = false
+    } else if ((kind === 'pong' || kind === 'alive') && live.beating !== null) {
+      this.modules.heartbeat()?.heard(live.beating)
       if (k.state === 'unresponsive') {
         k.state = 'ready'
         this.refresh()
@@ -466,9 +468,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- what else the core asks of the plugins manager
 
-  // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
-  // has checked that the caller is a window, or holds the watchdog policy job and names a sandboxed plugin holding no policy job or
-  // guard role
+  // The core actions the carrier's core seam takes, each once the floor let its caller through
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
     if (call.action === 'core.views') return this.views()
@@ -502,7 +502,7 @@ ${capabilityKey(change.capability)}`)
         if (k.place !== 'sandboxed' && k.place !== 'utility') throw { code: 'not-granted' }
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
-        if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
+        if (call.action === 'core.restart' && k.held?.state === 'stopped' && k.held.reason === 'human' && !trusted) throw { code: 'not-granted' }
         // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
         // ended, so it is the human's in the trusted window alone, as its stop is. The place is the plugins manager's to know,
         // so the rule is here and not in the floor, which sees only that a window asked
@@ -520,15 +520,7 @@ ${capabilityKey(change.capability)}`)
         return null
       }
     }
-    const target = (call.args as { plugin?: unknown } | null)?.plugin
-    if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
-    const k = typeof target === 'string' ? this.known.get(target) : undefined
-    if (k === undefined || k.place !== 'sandboxed') throw { code: 'not-found' }
-    // The human's stop outranks the watchdog's policy
-    if (call.action === 'watchdog.restart' && this.stoppedByHuman(k)) throw { code: 'not-granted' }
-    if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
-    else await this.restart(k.id, 'watchdog')
-    return null
+    throw { code: 'unavailable' }
   }
 
   // Each plugin that declares views or a theme, whatever its state, so the views menu lists a view whose plugin is down.
@@ -546,10 +538,6 @@ ${capabilityKey(change.capability)}`)
       })
     }
     return { plugins }
-  }
-
-  private stoppedByHuman(k: Known): boolean {
-    return k.held?.state === 'stopped' && k.held.reason === 'human'
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core
@@ -584,14 +572,14 @@ ${capabilityKey(change.capability)}`)
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: mustType(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
+        type: this.requests.typed(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
       }
     })
     return {
       plugins,
       switches: {
         devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
-        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
+        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff,
       },
       limits: {
         all: { ...switches.limits.all },
@@ -1023,7 +1011,7 @@ ${capabilityKey(change.capability)}`)
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
-      recordNothing: switches.recordNothing,
+      modulesOff: coreModuleIds.filter(id => !isOne(policyJobIds, id) && this.modules.state(id) === 'off'),
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
@@ -1061,6 +1049,12 @@ ${capabilityKey(change.capability)}`)
       readyMs: id => this.limitOf(id, 'readyMs'),
       fault: (id, step) => this.note('fault', { plugin: id, step }),
       changed: (id, change, reason) => this.note('module.state', { module: id, state: change, reason }),
+      heartbeat: {
+        ping: plugin => this.link.send(plugin.caller, { v: VERSION, kind: 'ping' }),
+        unresponsive: plugin => this.missed(plugin, true),
+        kill: plugin => this.missed(plugin, false),
+        limit: (plugin, name) => this.limitOf(plugin, name),
+      },
     })
     this.phase = 'all'
     this.replan()
@@ -1076,9 +1070,13 @@ ${capabilityKey(change.capability)}`)
     if (!this.closing) this.note('core.ready', Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])))
   }
 
-  // The stopped mode hetu is in, null while it runs
+  // The stopped mode hetu is in, null while it runs, and whether the native box shows it with quit only, since the
+  // security view that holds its choices is off
   stopped(): StoppedMode | null {
     return this.stoppedMode
+  }
+  stoppedBox(): boolean {
+    return this.modules.securityView() === null
   }
 
   // The stopped mode: every plugin stops and none starts, then the core modules close in the reverse of their start, the
@@ -1094,18 +1092,18 @@ ${capabilityKey(change.capability)}`)
     this.replan()
   }
 
-  // The core's log failed while hetu ran. The first time, the restart marker goes down and the runtime quits with an
+  // The core's log failed while hetu ran, the one failure that stops hetu. The first time, the restart marker goes down and the runtime quits with an
   // error to start hetu again. When the run before already restarted for a failure, hetu stops in the stopped mode
   // instead, so a log failing again and again can't restart it forever. A marker that can't be written stops it too,
   // since nothing would then bound the restarts. One failure is enough, the ones after it change nothing. Answers
   // whether it took the failure, so a failure told while hetu starts or stops can be told again
-  controlFailed(control: string, reason: string): boolean {
+  controlFailed(control: 'log', reason: 'log-failing'): boolean {
     if (this.closing || this.phase !== 'all' || this.failing) return false
     this.failing = true
     this.note('core.failed', { control, reason })
     const stop = (again: boolean) => {
       const mode: StoppedMode = { control, why: 'failed', reason, again }
-      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode }))
+      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode, box: this.stoppedBox() }))
     }
     if (this.failedBefore !== null) {
       stop(true)
@@ -1668,7 +1666,7 @@ ${capabilityKey(change.capability)}`)
     const n = (this.minted.get(k.id) ?? 0) + 1
     this.minted.set(k.id, n)
     k.incarnations = n
-    const live: Live = { n, halves: new Map(), readyTimer: null, stopTimer: null, stop: null, beat: null, with: [], over: false, deps: '' }
+    const live: Live = { n, halves: new Map(), readyTimer: null, stopTimer: null, stop: null, beating: null, with: [], over: false, deps: '' }
     k.live = live
     k.state = 'starting'
     k.reason = null
@@ -1752,7 +1750,10 @@ ${capabilityKey(change.capability)}`)
     k.previousVersion = null
     this.versions.delete(k.id)
     this.note('plugin.started', { plugin: k.id, incarnation: live.n })
-    this.beat(k, live)
+    // The heartbeat watches the worker's half or the utility half, whose every message main hears answers a beat
+    const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
+    live.beating = pinged === undefined ? null : frozen({ plugin: k.id, caller: pinged.caller, utility: k.place === 'utility' })
+    if (live.beating !== null) this.modules.heartbeat()?.started(live.beating)
     this.replan()
   }
 
@@ -1835,35 +1836,20 @@ ${capabilityKey(change.capability)}`)
     this.die(k, killed ? 'killed' : 'exited')
   }
 
-  // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
-  // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
-  // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
-  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
-  // heard from a utility half answers a beat, a message dropped for its rate included
-  private beat(k: Known, live: Live): void {
-    const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
-    if (pinged === undefined) return
-    const misses = this.limitOf(k.id, 'heartbeatMisses')
-    const timer = setInterval(() => {
-      const beat = live.beat
-      if (beat === null || live.over) return
-      if (beat.waiting) beat.misses++
-      if (beat.misses >= misses && k.place === 'utility' && live.stop === null) return this.die(k, 'unresponsive')
-      if (beat.misses >= misses && k.state === 'ready' && live.stop === null) {
-        k.state = 'unresponsive'
-        this.note('plugin.unresponsive', { plugin: k.id, incarnation: live.n })
-        this.refresh()
-      }
-      beat.waiting = true
-      this.link.send(pinged.caller, { v: VERSION, kind: 'ping' })
-    }, this.limitOf(k.id, 'heartbeatMs'))
-    timer.unref?.()
-    live.beat = { timer, misses: 0, waiting: false }
+  // The heartbeat's ask once a plugin missed its beats. A worker reads unresponsive until it answers: calls to it time out
+  // at once and nothing is closed. A hung utility half still holds what it opened, so it is killed and reads crashed
+  private missed(plugin: Beating, worker: boolean): void {
+    const found = this.runOf(plugin.caller)
+    if (found === null || found.live.stop !== null) return
+    if (!worker) return this.die(found.k, 'unresponsive')
+    if (found.k.state !== 'ready') return
+    found.k.state = 'unresponsive'
+    this.note('plugin.unresponsive', { plugin: found.k.id, incarnation: found.live.n })
+    this.refresh()
   }
 
   private retire(k: Known, live: Live): void {
-    if (live.beat !== null) clearInterval(live.beat.timer)
-    live.beat = null
+    if (live.beating !== null && !live.over) this.modules.heartbeat()?.stopped(live.beating)
     live.over = true
     if (live.readyTimer !== null) clearTimeout(live.readyTimer)
     if (live.stopTimer !== null) clearTimeout(live.stopTimer)
@@ -1894,10 +1880,10 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // ---- stops and restarts the watchdog or the human asked for
+  // ---- stops and restarts the human asked for
 
   // Stops a plugin and its dependents, dependents first. It stays stopped until a restart
-  async stop(id: string, by: 'watchdog' | 'human'): Promise<void> {
+  async stop(id: string, by: 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
     if (k.held === null) k.held = { kind: 'held', state: 'stopped', reason: by }
@@ -1907,7 +1893,7 @@ ${capabilityKey(change.capability)}`)
 
   // A new incarnation from the bytes already verified. A running one stops first with its dependents, which start again
   // once it is ready
-  async restart(id: string, by: 'watchdog' | 'human'): Promise<void> {
+  async restart(id: string, by: 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
     if (this.closing) throw { code: 'stopped' }
@@ -1922,8 +1908,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the state
 
-  // A security request from a window: a narrowing change applies at once, a widening or destroying one waits for the
-  // trusted window's Confirm. The carrier has checked the caller is a window
+  // A security request from a window, which the security view decides. The carrier has checked the caller is a window
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
@@ -2038,9 +2023,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.writeSwitches({ ...this.state.switches, skipVerification: change.on })
       case 'confirmOff':
         return this.writeSwitches({ ...this.state.switches, confirmOff: change.on })
-      // Step 14 writes the change's own record before recording stops and after it starts again
-      case 'recordNothing':
-        return this.writeSwitches({ ...this.state.switches, recordNothing: change.on })
       case 'allowUnsigned':
         return this.writeSwitches({ ...this.state.switches, allowUnsigned: toggled(this.state.switches.allowUnsigned, change.hash, change.on) })
       case 'limit.set': {
@@ -2051,11 +2033,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
         await this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
         // A raise as well as a lowering, so a half paces itself to what the carrier now counts it against
-        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) {
-          try {
-            this.limited?.(id)
-          } catch {}
-        }
+        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) this.limited(id)
         return
       }
       case 'luoshu.pick': {
@@ -2384,6 +2362,13 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier
       // started. One bump, so the grants snapshot grows by one for the change
       this.bump()
+      // Flood control paces every running half's messages, so each paces itself as it now stands
+      if (id === 'flood-control') for (const known of this.known.keys()) this.limited(known)
+      // The heartbeat on watches every plugin that runs. Off, nothing reads unresponsive, so a call fails on its own deadline
+      for (const k of id === 'heartbeat' ? this.known.values() : []) {
+        if (on && k.live?.beating && !k.live.over) this.modules.heartbeat()?.started(k.live.beating)
+        else if (!on && k.state === 'unresponsive') k.state = 'ready'
+      }
       if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
         void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
       }
@@ -2602,11 +2587,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return Math.min(value, MAX_TIMER_MS)
   }
 
-  // Nothing goes to the carrier while the human turned recording off. What waited on a record applies at once
-  private record(event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
-    if (this.state.switches.recordNothing) return Promise.resolve('muted')
+  // Nothing goes to recording while the human has it off. What waited on a record applies at once. A record recording
+  // threw on counts as one that did not land
+  private record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<'landed' | 'muted' | 'lost'> {
+    if (this.modules.state('recording') === 'off') return Promise.resolve('muted')
     try {
-      return Promise.resolve(this.link.record(event, fields)).catch(() => 'lost' as const)
+      return Promise.resolve(this.recording.record(event, fields, signal)).catch(() => 'lost' as const)
     } catch {
       return Promise.resolve('lost')
     }
@@ -2616,7 +2602,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // the change queue behind it. Past that the wait gives up and the record counts as lost: the lane takes it out if
   // it still waits, so the log never shows a change that didn't apply. One whose write was under way may land late
   private async landing(plugin: string, event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
-    if (this.state.switches.recordNothing) return 'muted'
     const giveUp = new AbortController()
     let timer: ReturnType<typeof setTimeout> | null = null
     const due = new Promise<'lost'>(resolve => {
@@ -2627,7 +2612,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       timer.unref?.()
     })
     try {
-      return await Promise.race([Promise.resolve(this.link.record(event, fields, giveUp.signal)).catch(() => 'lost' as const), due])
+      return await Promise.race([this.record(event, fields, giveUp.signal), due])
     } catch {
       return 'lost'
     } finally {

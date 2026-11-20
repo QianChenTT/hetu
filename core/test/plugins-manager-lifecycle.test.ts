@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
+import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import {
   cleanup, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, reasonOf, stateOf, tick, until, workerManifest, type Files,
   type Harness,
@@ -11,10 +12,10 @@ const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
 const wkr = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 
-// A watchdog call on the core seam, as the carrier hands one from the plugin holding the watchdog policy job. Nothing
-// that runs holds it now, so the seam is where its stops and restarts are reached
-const watchdog = (made: Harness, action: 'watchdog.stop' | 'watchdog.restart', plugin: string) =>
-  made.pluginsManager.serve({ callId: 'w', caller: wkr('watchdog'), action, args: { plugin }, deadline: Date.now() + 1000 })
+// The human's Stop or Restart on the core seam, as the carrier hands one from the trusted window
+const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
+const human = (made: Harness, action: 'core.stop' | 'core.restart', plugin: string) =>
+  made.pluginsManager.serve({ callId: 'w', caller: trusted, action, args: { plugin }, deadline: Date.now() + 1000 })
 
 describe('dependencies and turning down', () => {
   it('leaves a plugin whose requirement is missing waiting with its reason, never started', async () => {
@@ -164,7 +165,7 @@ describe('a dead incarnation', () => {
     await made.pluginsManager.start()
     made.runtime.half('mapper').crash()
     await until(() => stateOf(made.pluginsManager, 'mapper') === 'crashed')
-    await expect(watchdog(made, 'watchdog.restart', 'mapper')).resolves.toBe(null)
+    await expect(human(made, 'core.restart', 'mapper')).resolves.toBe(null)
     await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready')
     expect(made.pluginsManager.plugin('mapper')?.incarnation).toBe(2)
     made.pluginsManager.heard(wkr('mapper', 1), 'stopped')
@@ -191,7 +192,7 @@ describe('a planned stop', () => {
       limits: { stopGraceMs: 120 },
     })
     await made.pluginsManager.start()
-    await expect(watchdog(made, 'watchdog.stop', 'alpha')).resolves.toBe(null)
+    await expect(human(made, 'core.stop', 'alpha')).resolves.toBe(null)
     const stops = made.link.timeline.filter(line => line.startsWith('stop ')).map(line => line.slice(5))
     expect(stops).toEqual(['gamma', 'delta', 'beta', 'alpha'])
     // Each one after every plugin that requires it
@@ -200,7 +201,7 @@ describe('a planned stop', () => {
     }
     expect(made.link.sentTo('alpha', 'stop')).toEqual([{ v: 1, kind: 'stop', graceMs: 120 }])
     expect(made.link.events('plugin.stopped').find(fields => fields.plugin === 'alpha')).toEqual({
-      plugin: 'alpha', incarnation: 1, reason: 'watchdog', with: 'beta,delta,gamma',
+      plugin: 'alpha', incarnation: 1, reason: 'human', with: 'beta,delta,gamma',
     })
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
     expect(reasonOf(made.pluginsManager, 'beta')).toBe('dependency:alpha:stopped')
@@ -223,7 +224,7 @@ describe('a planned stop', () => {
     expect(made.pluginsManager.list().find(row => row.id === 'alpha')).toMatchObject({ state: 'stopped', reason: 'human' })
   })
 
-  // Only the watchdog or the human stops or restarts a plugin
+  // Only the human stops or restarts a plugin
   it('changes nothing for a stopped no stop asked for', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
@@ -253,7 +254,7 @@ describe('a planned stop', () => {
 })
 
 describe('restarts', () => {
-  it('come from watchdog.restart and run the bytes already verified as a new incarnation on a new port', async () => {
+  it('come from the human\'s Restart and run the bytes already verified as a new incarnation on a new port', async () => {
     const made = await harness({
       folder: { mapper: worker('mapper'), tagger: worker('tagger', { requires: ['mapper'] }) },
       entries: { mapper: signed(), tagger: signed() },
@@ -262,7 +263,7 @@ describe('restarts', () => {
     const first = made.runtime.started.find(start => start.id === 'mapper')!.code
     made.runtime.half('mapper').crash()
     await until(() => stateOf(made.pluginsManager, 'tagger') === 'waiting')
-    await watchdog(made, 'watchdog.restart', 'mapper')
+    await human(made, 'core.restart', 'mapper')
     await until(() => stateOf(made.pluginsManager, 'tagger') === 'ready')
     const second = made.runtime.started.filter(start => start.id === 'mapper')
     expect(second.map(start => start.incarnation)).toEqual([1, 2])
@@ -279,7 +280,7 @@ describe('restarts', () => {
       entries: { mapper: signed(), tagger: signed() },
     })
     await made.pluginsManager.start()
-    await watchdog(made, 'watchdog.restart', 'mapper')
+    await human(made, 'core.restart', 'mapper')
     await until(() => stateOf(made.pluginsManager, 'tagger') === 'ready' && made.pluginsManager.plugin('tagger')?.incarnation === 2)
     const lines = made.link.timeline.filter(line => /^(stop|init) (mapper|tagger)$/.test(line))
     expect(lines).toEqual(['init mapper', 'init tagger', 'stop tagger', 'stop mapper', 'init mapper', 'init tagger'])
@@ -297,13 +298,14 @@ describe('restarts', () => {
     await expect(made.pluginsManager.restart('nobody', 'human')).rejects.toEqual({ code: 'not-found' })
   })
 
-  it('serves watchdog.stop and watchdog.restart on the core seam and refuses a change outside the schema', async () => {
+  it('serves core.stop on the core seam and refuses a change outside the schema and an action it does not serve', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
-    const call = (action: string, args: unknown) => ({ callId: 'c', caller: wkr('watchdog'), action, args, deadline: Date.now() + 1000 })
+    const call = (action: string, args: unknown) => ({ callId: 'c', caller: trusted, action, args, deadline: Date.now() + 1000 })
     await expect(made.pluginsManager.serve(call('security.request', { change: {} }))).rejects.toEqual({ code: 'invalid' })
-    await expect(made.pluginsManager.serve(call('watchdog.stop', { plugin: 'gate' }))).rejects.toEqual({ code: 'not-found' })
-    await expect(made.pluginsManager.serve(call('watchdog.stop', { plugin: 'alpha' }))).resolves.toBe(null)
+    await expect(made.pluginsManager.serve(call('core.stop', { plugin: 'gate' }))).rejects.toEqual({ code: 'not-found' })
+    await expect(made.pluginsManager.serve(call('watchdog.stop', { plugin: 'alpha' }))).rejects.toEqual({ code: 'unavailable' })
+    await expect(made.pluginsManager.serve(call('core.stop', { plugin: 'alpha' }))).resolves.toBe(null)
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
   })
 })
@@ -338,6 +340,58 @@ describe('the heartbeat', () => {
     await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
     const reply = await made.runtime.half('outline').ask('mapper.query', {}, 200)
     expect((reply?.refusal as { code: string }).code).toBe('timeout')
+  })
+
+  it('pings nothing and marks nothing while the human has it off, so a silent plugin stays ready', async () => {
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, switches: { off: ['heartbeat'] },
+      limits: { heartbeatMs: 10, heartbeatMisses: 2 },
+    })
+    await made.pluginsManager.start()
+    made.runtime.behave.mapper = { pong: false }
+    await tick(80)
+    expect(made.link.sentTo('mapper', 'ping')).toEqual([])
+    expect(stateOf(made.pluginsManager, 'mapper')).toBe('ready')
+  })
+
+  it('reads an unresponsive plugin ready once switched off and pings it again once switched on', async () => {
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, limits: { heartbeatMs: 10, heartbeatMisses: 2 },
+    })
+    await made.pluginsManager.start()
+    made.runtime.behave.mapper = { pong: false }
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'heartbeat' })
+    expect(stateOf(made.pluginsManager, 'mapper')).toBe('ready')
+    expect(made.modules.state('heartbeat')).toBe('off')
+    const pinged = made.link.sentTo('mapper', 'ping').length
+    await tick(60)
+    expect(made.link.sentTo('mapper', 'ping')).toHaveLength(pinged)
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'heartbeat' })
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
+  })
+
+  it('skips a beat the heartbeat threw on with a fault recorded and goes on', async () => {
+    const heartbeat = createHeartbeat()
+    const heard = heartbeat.heard
+    heartbeat.heard = () => { throw new Error('broken') }
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, modules: { heartbeat }, limits: { heartbeatMs: 10, heartbeatMisses: 3 },
+    })
+    await made.pluginsManager.start()
+    await until(() => made.link.events('fault').some(fields => fields.plugin === 'heartbeat' && fields.step === 'heard'))
+    heartbeat.heard = heard
+    expect(stateOf(made.pluginsManager, 'mapper')).not.toBe('crashed')
+  })
+
+  it('pings an incarnation no more once it stopped', async () => {
+    const made = await harness({ folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, limits: { heartbeatMs: 10 } })
+    await made.pluginsManager.start()
+    await until(() => made.link.sentTo('mapper', 'ping').length > 0)
+    await made.pluginsManager.stop('mapper', 'human')
+    const pinged = made.link.sentTo('mapper', 'ping').length
+    await tick(60)
+    expect(made.link.sentTo('mapper', 'ping')).toHaveLength(pinged)
   })
 
   it('pings no core module', async () => {

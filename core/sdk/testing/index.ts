@@ -9,6 +9,10 @@ import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpe
 import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
+import { Limits } from '../../backend/carrier/limits.ts'
+import { createFloodControl } from '../../backend/flood-control/flood-control.ts'
+import type { Recording } from '../../backend/recording/header.ts'
+import { createRecording } from '../../backend/recording/recording.ts'
 import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/header.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -127,10 +131,10 @@ class FakePluginsManager implements PluginsManager {
     this.all = all
   }
 
-  // The grant risk classifier and watchdog policy jobs read off, as with the human's switch
+  // The grant risk classifier policy job reads off, as with the human's switch
   policyJob(id: string): PolicyJobState {
     if (id === 'gate') return this.gateState
-    return id === 'grant-risk-classifier' || id === 'watchdog' ? 'off' : 'absent'
+    return id === 'grant-risk-classifier' ? 'off' : 'absent'
   }
 
   view(): number {
@@ -143,10 +147,6 @@ class FakePluginsManager implements PluginsManager {
 
   limits(): HumanLimits {
     return { all: { ...this.all }, plugins: {} }
-  }
-
-  recordNothing(): boolean {
-    return false
   }
 
   // No agent's label is revoked here
@@ -237,6 +237,7 @@ export class FakeCore {
   private readonly pluginsManager: FakePluginsManager
   private readonly gate: ModeGate
   private readonly carrier: Carrier
+  private readonly recording: Recording
   private readonly memory: MemoryLuoshu
   private readonly storage: MemoryStorage
   private readonly luoshuWay: Way
@@ -270,14 +271,11 @@ export class FakeCore {
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
-    this.carrier = new Carrier({
-      pluginsManager: this.pluginsManager,
-      gate: () => this.gate,
-      guards: () => null,
-      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
-      watchdog: () => null,
-      core: call => this.served(call),
-      // Core records are kept and the call records are taken and dropped, so calls pass unlogged
+    // Flood control counts by the limits the fake core was given, as the core's does by the human's
+    const limits = new Limits(() => this.pluginsManager.limits())
+    const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock: () => performance.now() })
+    // Core records are kept and the call records are taken and dropped, so calls pass unlogged
+    this.recording = createRecording({
       log: {
         append: async (event, fields = {}) => { this.coreRecords.push({ event, fields }) },
         appendMany: async () => {},
@@ -285,6 +283,18 @@ export class FakeCore {
         verify: async () => ({ ok: true }),
         healthy: true,
       },
+      off: () => false,
+      limit: name => limits.of(null, name),
+      hash: () => '',
+    })
+    this.carrier = new Carrier({
+      pluginsManager: this.pluginsManager,
+      floodControl: () => floodControl,
+      gate: () => this.gate,
+      guards: () => null,
+      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
+      core: call => this.served(call),
+      recording: this.recording,
     })
     this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
     this.luoshu = {
@@ -411,7 +421,7 @@ export class FakeCore {
 
   async close(): Promise<void> {
     this.carrier.close()
-    await this.carrier.flush()
+    await this.recording.flush()
     for (const port of this.ports.splice(0)) port.close()
   }
 

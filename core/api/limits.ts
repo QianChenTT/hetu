@@ -2,9 +2,9 @@ import { frozen, table } from './frozen.ts'
 
 const MiB = 1024 * 1024
 
-// Fixed constants that protect main, starting values until they are measured in Electron. The watchdog may lower one
-// per plugin and only the human may set one, per plugin or for all, raised or lowered with a Confirm, since a lower value
-// can starve hetu's own controls or its audit. A window's own way never runs below these
+// Fixed constants that protect main, starting values until they are measured in Electron. Only the human may set one,
+// per plugin or for all, raised or lowered with a Confirm, since a lower value can starve hetu's own controls or its
+// audit. A window's own way never runs below these
 export const defaultLimits = table({
   messagesPerSecond: 1000, // per port
   bytesPerSecond: 4 * MiB, // per port, what a worker's messages may weigh in a second, see weigh in rate.ts
@@ -25,7 +25,7 @@ export const defaultLimits = table({
   auditQueue: 10000, // records
   // How long the oldest record the audit queue holds may wait to be written before the core's log counts as failed:
   // six of the event log's 5 s retries after a failed write, so a disk locked for a moment costs nothing. The human may
-  // raise it for all, the watchdog can't lower it, since it is no plugin's
+  // raise it for all, since it is no plugin's
   logFailMs: 30000,
   floorBacklog: 1000, // records
   floodFactor: 10, // the flood cap: this many times the message rate

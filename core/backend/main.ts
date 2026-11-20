@@ -4,14 +4,18 @@ import { boot, type Booted } from './boot/boot.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
-import type { Failure, PluginsManager } from './plugins-manager/plugins-manager.ts'
+import { pacedLimit } from './flood-control/flood-control.ts'
+import type { CoreModules } from './modules/header.ts'
+import type { Recording } from './recording/header.ts'
+import type { PluginsManager } from './plugins-manager/plugins-manager.ts'
+import type { Failure } from './runtime/header.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
@@ -112,15 +116,20 @@ async function start(): Promise<void> {
     // The carrier and the plugins manager exist once the core is wired, before any worker starts
     let carrier: Carrier | null = null
     let pluginsManager: PluginsManager | null = null
-    const limit = (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name]
+    let modules: CoreModules | null = null
+    let recording: Recording | null = null
+    // What paces a plugin's messages before main reads them follows flood control: with it off nothing paces them
+    const limit = pacedLimit(
+      (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name],
+      () => modules?.state('flood-control') === 'off',
+    )
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
     const renderer = new WorkerRenderers(group => new WorkerRenderer({
       open: () => openWorkersRenderer(BrowserWindow, sessions.workers, workersPreload, LOCKED, group),
-      record: (event, fields) => carrier?.coreRecord(event, fields),
+      record: (event, fields) => recording?.coreRecord(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => pluginsManager?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
-      sample: sample => carrier?.sample(sample),
     }))
     workers = renderer
     // A port between each worker holding a ui item and the editor page's drawer, made again for each page load
@@ -172,6 +181,8 @@ async function start(): Promise<void> {
         app.quit()
       },
       showTrusted: () => trusted.show(),
+      // Modal, so the quit follows once the human closed it
+      showBox: mode => void dialog.showMessageBoxSync({ type: 'error', buttons: ['Quit'], defaultId: 0, ...stoppedBox(mode) }),
       closeEditors,
       packaged: LOCKED,
       env: process.env,
@@ -205,7 +216,7 @@ async function start(): Promise<void> {
           if (call.action === 'editor.frameGone') {
             const { url, navigated } = call.args as { url: string, navigated: boolean }
             const gone = views.gone(url)
-            if (gone !== null && navigated) carrier?.coreRecordCoalesced('frame.navigated', { plugin: gone.plugin })
+            if (gone !== null && navigated) recording?.coalesced('frame.navigated', { plugin: gone.plugin })
             return null
           }
           if (call.action === 'security.open') trusted.show()
@@ -221,9 +232,11 @@ async function start(): Promise<void> {
     })
     carrier = wired.carrier
     pluginsManager = wired.pluginsManager
+    modules = wired.modules
+    recording = wired.recording
     pluginsManagerOf = wired.pluginsManager
     carrierOf = wired.carrier
-    parts = { pluginsManager: wired.pluginsManager, carrier: wired.carrier, release: booted.release }
+    parts = { pluginsManager: wired.pluginsManager, carrier: wired.carrier, recording: wired.recording, release: booted.release }
 
     // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
     // load's preload listens
@@ -266,7 +279,7 @@ async function start(): Promise<void> {
     app.on('second-instance', () => {
       if (quitting !== null) return
       if (wired.pluginsManager.stopped() !== null) {
-        trusted.show()
+        if (!wired.pluginsManager.stoppedBox()) trusted.show()
         return
       }
       if (editor === null || editor.isDestroyed()) {
@@ -281,8 +294,9 @@ async function start(): Promise<void> {
     freezeIntrinsics()
     await wired.pluginsManager.start()
     if (quitting !== null) return
-    // The install list didn't check out: only the trusted window opens
-    if (wired.pluginsManager.stopped() !== null) trusted.show()
+    // The install list didn't check out: only the trusted window opens, or the native box with the security view off
+    const stopped = wired.pluginsManager.stopped()
+    if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
     else editor = show(editorWindow())
   } catch (err) {
     tell(err)

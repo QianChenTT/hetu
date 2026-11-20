@@ -182,7 +182,7 @@ async function checked(dataDir: string, dev: boolean, platform: string, release:
   let healthy = opened !== null
   // With recording off nothing goes in, boot's core records included. Only switches that checked out can turn it off
   // and the defaults record, so a wipe or an edit is still recorded
-  if (!state.switches.recordNothing) {
+  if (!state.switches.off.includes('recording')) {
     for (const check of checks) {
       const fields: Record<string, string> = { check: check.check, result: check.result }
       if (check.id !== undefined) fields.id = check.id

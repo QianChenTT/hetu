@@ -52,14 +52,14 @@ describe('the carrier as the plugins manager\'s link', () => {
 
   it('gives record the core record lane\'s landing', async () => {
     const log = new FakeLog()
-    const { carrier, pluginsManager } = harness({ log })
-    expect(await carrier.record('plugin.copied', { plugin: 'git' })).toBe('landed')
+    const { recording, carrier, pluginsManager } = harness({ log })
+    expect(await recording.record('plugin.copied', { plugin: 'git' })).toBe('landed')
     pluginsManager.nothing = true
-    expect(await carrier.record('plugin.copied', { plugin: 'mcp' })).toBe('muted')
+    expect(await recording.record('plugin.copied', { plugin: 'mcp' })).toBe('muted')
     expect(log.records.map(record => [record.event, record.fields.plugin])).toEqual([['plugin.copied', 'git']])
   })
 
-  it('takes a limit from the human for the plugin, then for all, then the fixed value, lowered by the watchdog', async () => {
+  it('takes a limit from the human for the plugin, then for all, then the fixed value', () => {
     const { carrier, pluginsManager } = harness()
     pluginsManager.sandboxed('search')
     expect(carrier.limit('search', 'readyMs')).toBe(10000)
@@ -67,9 +67,6 @@ describe('the carrier as the plugins manager\'s link', () => {
     expect(carrier.limit('search', 'readyMs')).toBe(20000)
     pluginsManager.human.plugins.search = { readyMs: 15000 }
     expect(carrier.limit('search', 'readyMs')).toBe(15000)
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'readyMs', value: 5000 })).ok).toBe(true)
-    expect(carrier.limit('search', 'readyMs')).toBe(5000)
   })
 })
 

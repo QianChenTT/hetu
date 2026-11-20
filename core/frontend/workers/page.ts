@@ -29,5 +29,4 @@ window.addEventListener('message', event => {
   else if (data?.hetu === 'drawer') host.drawer(data.id, data.incarnation, asPort(event.ports[0]))
 })
 
-setInterval(() => host.flush(), 1000)
 toMain({ kind: 'ready' })

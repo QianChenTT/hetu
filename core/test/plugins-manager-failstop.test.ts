@@ -3,7 +3,10 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Failure } from '../backend/plugins-manager/plugins-manager.ts'
+import type { Failure } from '../backend/runtime/header.ts'
+import { createFloodControl } from '../backend/flood-control/flood-control.ts'
+import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, fakeHistory, filesFor, harness, hostManifest, stateOf, until, workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
@@ -132,7 +135,8 @@ describe('the log failing while hetu runs', () => {
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
     const mode = { control: 'log', why: 'failed', reason: 'log-failing', again: true }
-    expect(failures).toEqual([{ action: 'stopped', mode }])
+    expect(failures).toEqual([{ action: 'stopped', mode, box: false }])
+    expect(made.pluginsManager.stoppedBox()).toBe(false)
     expect(made.pluginsManager.stopped()).toEqual(mode)
     await made.pluginsManager.settled()
     expect(stateOf(made.pluginsManager, 'alpha')).not.toBe('ready')
@@ -148,6 +152,49 @@ describe('the log failing while hetu runs', () => {
     expect(failures).toEqual([])
     expect(made.link.events('core.failed')).toEqual([])
     expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+  })
+
+  // The security view holds the stopped mode's choices, so with it off nothing could take one: the native box names
+  // the cause with quit only
+  it('stops in the native box when the security view is off', async () => {
+    const failures: Failure[] = []
+    const made = await harness({
+      ...plugins(),
+      switches: { off: ['security-view'] },
+      pluginsManager: { onFailure: failure => { failures.push(failure) } },
+      before: async ({ dataDir }) => writeFile(path.join(dataDir, 'failed-once'), 'log'),
+    })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stoppedBox()).toBe(true)
+    made.pluginsManager.controlFailed('log', 'log-failing')
+    await until(() => failures.length > 0)
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: true }])
+  })
+
+  // Only the log stops hetu: every other core module that throws is refused for that one thing and hetu runs on
+  it('never stops for flood control, the heartbeat, the security view or recording throwing', async () => {
+    const failures: Failure[] = []
+    const thrown = () => { throw new Error('broken') }
+    const floodControl = createFloodControl({ limit: () => 1000, clock: () => 0 })
+    floodControl.acquire = thrown
+    const heartbeat = createHeartbeat()
+    heartbeat.started = thrown
+    heartbeat.heard = thrown
+    const securityView = createSecurityView()
+    securityView.asked = thrown
+    const made = await harness({
+      ...plugins(), modules: { floodControl, heartbeat, securityView },
+      limits: { heartbeatMs: 10 }, pluginsManager: { onFailure: failure => { failures.push(failure) } },
+    })
+    await made.pluginsManager.start()
+    made.link.landing = () => { throw new Error('broken') }
+    await made.pluginsManager.request({ kind: 'skipVerification', on: true }, { kind: 'window', role: 'trusted', n: 1 }).catch(() => {})
+    expect((await made.runtime.half('alpha').ask('luoshu.read', { path: 'a.md' }))?.refusal).toMatchObject({ code: 'failed' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(failures).toEqual([])
+    expect(made.pluginsManager.stopped()).toBe(null)
+    expect(made.link.events('core.failed')).toEqual([])
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
@@ -178,7 +225,7 @@ describe('the restart marker, after the review', () => {
     await made.pluginsManager.start()
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
-    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true } }])
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: false }])
   })
 
   it('stops hetu instead of starting it again when the marker can\u2019t be written', async () => {
@@ -190,7 +237,7 @@ describe('the restart marker, after the review', () => {
     await writeFile(path.join(made.dataDir, 'failed-once', 'x'), '')
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
-    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }])
+    expect(failures).toEqual([{ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: false }, box: false }])
   })
 
   it('makes shutdown wait for its write', async () => {

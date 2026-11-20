@@ -65,12 +65,12 @@ async function world(folders: Record<string, Capability[]>) {
   const luoshu = createLuoshu({ settleMs: 50 })
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
@@ -146,7 +146,7 @@ describe.runIf(process.platform === 'win32')('the write that finds the name take
     // Another plugin's new note lands once beta's version check found none, as a write under another key can
     hook.onTemp = () => writeFile(path.join(folder, 'box', 'secretnote.md'), 'ALPHA')
     const reply = await parts.connect(worker('beta')).ask('luoshu.write', { path: 'box/SECRET~1.MD', text: 'BETA' })
-    await parts.carrier.flush()
+    await parts.recording.flush()
     expect(reply).toMatchObject({ ok: false, refusal: { code: 'stale' } })
     expect(await readFile(path.join(folder, 'box', 'secretnote.md'), 'utf8')).toBe('ALPHA')
     expect(await readdir(path.join(folder, 'box'))).toEqual(['secretnote.md'])

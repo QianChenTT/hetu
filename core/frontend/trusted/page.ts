@@ -142,6 +142,12 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     switches.append(element('p', 'hetu recommends keeping every security plugin on'))
     parts.push(switches)
 
+    // Dev mode is a group of settings, each loosening what loads
+    const dev = element('section')
+    dev.append(element('h2', 'Dev'))
+    for (const row of shown.dev) dev.append(switchLine(page, row))
+    parts.push(dev)
+
     const luoshu = element('section')
     luoshu.className = 'luoshu'
     luoshu.append(element('h2', 'Notes'))

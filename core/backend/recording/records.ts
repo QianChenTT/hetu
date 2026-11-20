@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { AuditRecord } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { CoreRecordLog, Landing } from './header.ts'
+import type { CoreRecordLog, Join, Landing } from './header.ts'
 
 // landed settles the promise its write gave back. core-records.dropped, which the lane writes itself, has none. writing is
 // set while its append is under way, when it can no longer be taken out. withdrawn is a waiter that gave up meanwhile,
@@ -170,9 +170,6 @@ export class CoreRecordLane {
   }
 }
 
-// Joins a later hit's fields into the fields the record at the end of the second carries, null before the first later hit
-export type Join = (held: Record<string, Field> | null, next: Record<string, Field>) => Record<string, Field>
-
 // Core records a plugin can trigger, one per event and key per second with a count: the first at once and the rest
 // when its second is over. The key is the whole fields unless the caller names one. A plugin that picks part of the
 // fields, such as the topics of a subscribe, would otherwise make a key per message, so those name a key without it
@@ -219,7 +216,7 @@ export class Coalesced {
 
 const callerKey = (caller: Caller) => JSON.stringify(caller)
 
-// queued is when the record went into the queue on the carrier's clock, which a failing log is timed from
+// queued is when the record went into the queue on recording's clock, which a failing log is timed from
 type Entry = { record: AuditRecord, key: string | null, queued: number }
 
 // Audit records wait here for the core's audit writer, which takes them with next and lets go of them with ack once
@@ -236,7 +233,7 @@ export class AuditQueue {
   // Records dropped since the queue was made, for the core record
   dropped = 0
 
-  // clock is the carrier's, which no change of the wall clock moves
+  // clock is recording's, which no change of the wall clock moves
   constructor(bound: () => number, clock: () => number = () => performance.now()) {
     this.bound = bound
     this.clock = clock

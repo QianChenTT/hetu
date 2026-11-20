@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeKinds, classRaised, mustType, type ClassRaised } from '../api/changes.ts'
+import { change, changeKinds, classRaised, type ClassRaised } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
+
+const { mustType } = createSecurityView()
 
 const HASH = 'a'.repeat(64)
 const one = (input: unknown) => change.parse(input)
@@ -23,7 +26,6 @@ const everyKind = [
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'skipVerification', on: false },
   { kind: 'confirmOff', on: true },
-  { kind: 'recordNothing', on: true },
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'agent.revoke', agent: 'client#1' },
@@ -102,9 +104,15 @@ describe("the core's words for a change", () => {
 
   it('recommends keeping a security plugin on whenever one is switched off, and only then', () => {
     const recommends = (input: unknown) => describeChange(one(input)).notes.some(note => note.includes('recommends'))
-    for (const plugin of ['gate', 'grant-risk-classifier', 'watchdog']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
+    for (const plugin of ['gate', 'grant-risk-classifier']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
     expect(recommends({ kind: 'plugin.off', plugin: 'search' })).toBe(false)
     expect(recommends({ kind: 'plugin.on', plugin: 'gate' })).toBe(false)
+  })
+
+  it('says what goes unwatched once the heartbeat is off, with no recommendation since it is no security control', () => {
+    expect(describeChange(one({ kind: 'plugin.off', plugin: 'heartbeat' }))).toEqual({
+      text: 'Switch heartbeat off', notes: ['Nothing then pings a plugin or ends a utility process that hangs, so a call to a hung plugin waits its whole deadline'],
+    })
   })
 
   it('says any command lets the plugin run anything the user can', () => {
@@ -116,18 +124,19 @@ describe("the core's words for a change", () => {
 describe('typing to prove attention', () => {
   it("asks for a security control's id to switch it off", () => {
     expect(mustType(one({ kind: 'plugin.off', plugin: 'gate' }))).toBe('gate')
-    expect(mustType(one({ kind: 'plugin.off', plugin: 'watchdog' }))).toBe('watchdog')
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }))).toBe('grant-risk-classifier')
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'flood-control' }))).toBe('flood-control')
   })
 
-  it('asks for log to stop recording', () => {
-    expect(mustType(one({ kind: 'recordNothing', on: true }))).toBe('log')
+  it('asks for recording to stop recording', () => {
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'recording' }))).toBe('recording')
   })
 
   it('asks for nothing anywhere else', () => {
     const asked = everyKind.filter(input => mustType(one(input)) !== null).map(input => input.kind)
-    expect(asked).toEqual(['plugin.off', 'recordNothing'])
+    expect(asked).toEqual(['plugin.off'])
     expect(mustType(one({ kind: 'plugin.off', plugin: 'search' }))).toBeNull()
-    expect(mustType(one({ kind: 'recordNothing', on: false }))).toBeNull()
+    expect(mustType(one({ kind: 'plugin.on', plugin: 'recording' }))).toBeNull()
   })
 })
 

@@ -105,11 +105,11 @@ describe('a move judged on both ends', () => {
   })
 
   it('records the move with both canonical ends in its scope', async () => {
-    const { carrier, connect, gate, log, luoshu } = harness()
+    const { recording, carrier, connect, gate, log, luoshu } = harness()
     gate.grants.sorter = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'a')
     expect((await connect(worker('sorter')).ask('luoshu.move', { from: 'a.md', to: 'b.md' })).ok).toBe(true)
-    await carrier.flush()
+    await recording.flush()
     const record = log.events('audit.call').find(entry => entry.fields.action === 'luoshu.move')
     expect(record?.fields).toMatchObject({ paths: '["a.md","b.md"]', pathCount: 2, code: null })
   })

@@ -1,6 +1,9 @@
 import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
 import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { FloodControl } from '../flood-control/header.ts'
+import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
+import type { SecurityView } from '../security-view/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
@@ -12,6 +15,11 @@ import {
 // The order the modules close in, the reverse of their start, so history closes before the luoshu it reads from and
 // the gate closes last
 const closing = [...coreModuleIds].reverse()
+
+// The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
+// human's way back in needs them: flood control, recording, which writes the last records and the security view, which
+// holds the stopped mode's choices for the Confirm
+const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
@@ -28,6 +36,12 @@ export class CoreModules implements Holder {
   private readonly luoshuOf: Luoshu
   private readonly historyOf: History
   private readonly execOf: Exec
+  private readonly floodControlOf: FloodControl
+  private readonly heartbeatOf: HeartbeatModule
+  // The heartbeat as the plugins manager tells it, each thing kept from throwing: a throw skips that beat with a fault.
+  // Made once, since it is told on every message heard from a plugin
+  private readonly heartbeatTold: Heartbeat
+  private readonly securityViewOf: SecurityView
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
@@ -46,6 +60,7 @@ export class CoreModules implements Holder {
   private halted = false
 
   constructor(options: CoreModulesOptions) {
+    this.off = new Set(options.off ?? [])
     this.dataDir = options.dataDir
     this.installDir = options.installDir
     this.trash = options.trash
@@ -55,6 +70,17 @@ export class CoreModules implements Holder {
     this.luoshuOf = options.luoshu
     this.historyOf = options.history
     this.execOf = options.exec
+    this.floodControlOf = options.floodControl
+    this.heartbeatOf = options.heartbeat
+    const told = (step: keyof Heartbeat) => (plugin: Beating) => {
+      try {
+        this.heartbeatOf[step](plugin)
+      } catch {
+        this.fault('heartbeat', step)
+      }
+    }
+    this.heartbeatTold = Object.freeze({ started: told('started'), heard: told('heard'), stopped: told('stopped') })
+    this.securityViewOf = options.securityView
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -90,6 +116,20 @@ export class CoreModules implements Holder {
 
   storage(): StorageRole | null {
     return this.serving('storage') ? this.storageOf : null
+  }
+
+  // Flood control and the security view have no start of their own, so each serves from the first call on unless the
+  // human has it off, the stopped mode at start included
+  floodControl(): FloodControl | null {
+    return this.off.has('flood-control') ? null : this.floodControlOf
+  }
+
+  securityView(): SecurityView | null {
+    return this.off.has('security-view') ? null : this.securityViewOf
+  }
+
+  heartbeat(): Heartbeat | null {
+    return this.serving('heartbeat') ? this.heartbeatTold : null
   }
 
   // The provider serving a namespace, cache through storage. leases and net have no module and answer null. A module
@@ -169,16 +209,16 @@ export class CoreModules implements Holder {
   }
 
   // Shutdown, once every plugin stopped: exec and history end what runs, the luoshu's watch ends and storage serves no
-  // more, in that order. The gate and the grant risk classifier answer to the end
+  // more, in that order. The gate, the grant risk classifier and the lasting modules answer to the end
   close(): void {
     if (this.closed) return
     this.closed = true
-    for (const id of closing) if (id !== 'gate' && id !== 'grant-risk-classifier') this.halt(id, 'shutdown')
+    for (const id of closing) if (id !== 'gate' && id !== 'grant-risk-classifier' && !lasting.has(id)) this.halt(id, 'shutdown')
   }
 
   // The stopped mode, once every plugin stopped: every module closed in the reverse of its start, the gate last, so
-  // nothing acts while nothing can be recorded. Modules not yet started never start. off is the human's switches as
-  // they stand, so a module switched off keeps reading off
+  // nothing acts while nothing can be recorded. The lasting modules run on. Modules not yet started never start. off is
+  // the human's switches as they stand, so a module switched off keeps reading off
   stop(off: readonly string[]): void {
     if (this.halted) return
     // Once shutdown began, the gate and the grant risk classifier answer to its end
@@ -186,7 +226,7 @@ export class CoreModules implements Holder {
     this.halted = true
     this.closed = true
     this.off = new Set(off)
-    for (const id of closing) if (!shutdown || (id !== 'gate' && id !== 'grant-risk-classifier')) this.halt(id, 'stopped-mode')
+    for (const id of closing) if (!lasting.has(id) && (!shutdown || (id !== 'gate' && id !== 'grant-risk-classifier'))) this.halt(id, 'stopped-mode')
   }
 
   private opening(): Opening {
@@ -228,6 +268,7 @@ export class CoreModules implements Holder {
     if (id === 'storage') return this.storageOf.open(this.dataDir)
     if (id === 'history') return this.historyOf.start(this.dataDir)
     if (id === 'exec') return this.execOf.start(this.dataDir)
+    if (id === 'heartbeat' && this.handed !== null) this.heartbeatOf.open(this.handed.heartbeat, step => this.fault('heartbeat', step))
   }
 
   // readyMs as the human set it for the module or for all, the default when it can't be read
@@ -267,6 +308,7 @@ export class CoreModules implements Holder {
       if (id === 'luoshu') this.luoshuOf.close()
       else if (id === 'history') this.historyOf.close()
       else if (id === 'exec') this.execOf.close()
+      else if (id === 'heartbeat') this.heartbeatOf.close()
     } catch {
       this.fault(id, 'close')
     }

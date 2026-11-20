@@ -3,7 +3,7 @@ import { measurePlain } from './measure.ts'
 
 // One way in's messages against its rate and its flood cap, in fixed windows of a second and of floodMs. floodCap is
 // the cap the flood window started with
-export type Rate = { second: number, inSecond: number, floodStart: number, inFlood: number, floodCap: number, dropped: number, toldAt: number }
+export type Rate = { second: number, inSecond: number, floodStart: number, inFlood: number, floodCap: number }
 
 export function newRate(): Rate {
   return {
@@ -12,8 +12,6 @@ export function newRate(): Rate {
     floodStart: Number.NEGATIVE_INFINITY,
     inFlood: 0,
     floodCap: 0,
-    dropped: 0,
-    toldAt: Number.NEGATIVE_INFINITY,
   }
 }
 

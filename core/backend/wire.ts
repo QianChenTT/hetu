@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto'
 import type { Caller } from '../api/envelope.ts'
-import type { LimitName } from '../api/limits.ts'
+import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
-import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/header.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/header.ts'
+import type { Asks, CarrierOptions, Debug, HumanLimits, Port, Served } from './carrier/header.ts'
+import { Limits } from './carrier/limits.ts'
+import { createFloodControl } from './flood-control/flood-control.ts'
+import { createHeartbeat } from './heartbeat/heartbeat.ts'
+import type { Recording } from './recording/header.ts'
+import { createRecording } from './recording/recording.ts'
+import { createSecurityView } from './security-view/security-view.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
 import { createGate } from './policy/gate/gate.ts'
@@ -13,9 +19,9 @@ import { createExec } from './providers/exec/exec.ts'
 import { createHistory } from './providers/history/history.ts'
 import { createLuoshu } from './providers/luoshu/luoshu.ts'
 import { createStorage } from './providers/storage/store.ts'
-import { PluginsManager, type Failure } from './plugins-manager/plugins-manager.ts'
+import { PluginsManager } from './plugins-manager/plugins-manager.ts'
 import type { CarrierLink } from './plugins-manager/header.ts'
-import type { Runtime } from './runtime/header.ts'
+import type { Failure, Runtime } from './runtime/header.ts'
 
 export type WireOptions = {
   booted: Booted
@@ -27,7 +33,7 @@ export type WireOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
-  // watchdog.limit lowered one of this plugin's constants or the human set one, for the runtime to pass on
+  // The human set one of this plugin's constants, for the runtime to pass on
   limited?: (plugin: string) => void
   // The windows' own actions the runtime serves, opening the trusted window, Quit and Restart hetu, and whether the
   // trusted window is past its input delay
@@ -39,15 +45,16 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec'>>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat' | 'securityView'>>
 }
 
-// The six core modules made and held: each the real one unless a test hands its own, the luoshu publishing through
-// publish for its two topics alone
+// The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
+// for its two topics alone and flood control counting by limit, the fixed values unless one is handed
 export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
   publish: (topic: string, path: string) => void
+  limit?: (plugin: string | null, name: LimitName) => number
 }): CoreModules {
-  const { publish, ...given } = options
+  const { publish, limit, ...given } = options
   return new CoreModules({
     ...given,
     gate: given.gate ?? createGate(),
@@ -56,6 +63,12 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish(publish) }),
     history: given.history ?? createHistory(),
     exec: given.exec ?? createExec(),
+    floodControl: given.floodControl ?? createFloodControl({
+      limit: limit ?? ((_plugin, name) => defaultLimits[name]),
+      clock: () => performance.now(),
+    }),
+    heartbeat: given.heartbeat ?? createHeartbeat(),
+    securityView: given.securityView ?? createSecurityView(),
   })
 }
 
@@ -84,10 +97,6 @@ export class LinkToCarrier implements CarrierLink {
     this.to.send(caller, message)
   }
 
-  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
-    return this.to.record(event, fields, signal)
-  }
-
   changed(): void {
     this.to.changed()
   }
@@ -96,59 +105,70 @@ export class LinkToCarrier implements CarrierLink {
     this.to.stopping()
   }
 
-  drain(ms: number): Promise<number> {
-    return this.to.drain(ms)
-  }
-
-  resume(): void {
-    this.to.resume()
-  }
-
   limit(plugin: string, name: LimitName): number {
     return this.to.limit(plugin, name)
   }
 }
 
-// What the carrier asks for: the gate and every provider from the core modules, no guard and no watchdog, since nothing
-// that runs holds either, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
+// What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
+// that runs holds one, with the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
 // both build the carrier from it, so the tests run the wiring that ships
 export function carrierOptions(
   pluginsManager: PluginsManager,
   modules: Holder,
-  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
+  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'floodControl'>,
 ): CarrierOptions {
   return {
     pluginsManager,
     gate: () => modules.gate(),
     guards: () => null,
     providers: id => modules.provider(id),
-    watchdog: () => null,
+    floodControl: () => modules.floodControl(),
     core: pluginsManager.serve,
     asks: pluginsManager.asks,
     ...rest,
   }
 }
 
-// The core joined in its order: the link, the core modules publishing through it, then the plugins manager holding both,
-// then the carrier asking the modules for the gate and the providers, then the link pointed at the carrier. The log is
-// the one EventLog boot opened, which the carrier writes its core records and its audit queue through and serves
-// log.segments and log.verify from
-export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder } {
+// SHA-256 as hex, which recording is handed so it reaches no Node built-in
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+
+// The core joined in its order: the link, the core modules publishing through it, recording over the one EventLog boot
+// opened, then the plugins manager holding the modules and recording, then the carrier asking the modules for the gate,
+// the providers and flood control and handing each call's record to recording, then the link pointed at the carrier
+export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder, recording: Recording } {
   const link = new LinkToCarrier()
-  // The six made here, the one place that builds the parts. The luoshu publishes only once started, which is after the
-  // carrier is attached
+  // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the carrier does
+  const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
+  const limits = new Limits(() => human.limits())
+  // The modules made here, the one place that builds the parts. The luoshu publishes only once started, which is after
+  // the carrier is attached
   const modules = buildModules({
+    off: options.booted.state.switches.off,
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
     ...options.modules,
     publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path),
+    limit: (plugin, name) => limits.of(plugin, name),
+  })
+  // The log failing is told to the plugins manager, which quits hetu to start it again, once it exists. Windows hear
+  // the log's health through the carrier
+  const parts: { pluginsManager: PluginsManager | null } = { pluginsManager: null }
+  const recording = createRecording({
+    log: options.booted.log,
+    off: () => modules.state('recording') === 'off',
+    limit: name => limits.of(null, name),
+    hash: sha256,
+    noticed: () => link.carrier?.status(),
+    failed: () => parts.pluginsManager?.controlFailed('log', 'log-failing') ?? false,
   })
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
     ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
     link,
+    recording,
     runtime: options.runtime,
     modules,
     logWrites: () => options.booted.log.healthy,
@@ -157,17 +177,17 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
+  human.limits = () => pluginsManager.limits()
+  parts.pluginsManager = pluginsManager
   const { windows } = options
   const carrier = new Carrier(carrierOptions(pluginsManager, modules, {
-    log: options.booted.log,
+    recording,
     core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : pluginsManager.serve(call)),
-    logFailed: () => pluginsManager.controlFailed('log', 'log-failing'),
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),
-    ...(options.limited !== undefined ? { limited: options.limited } : {}),
   }))
   link.carrier = carrier
-  return { pluginsManager, carrier, modules }
+  return { pluginsManager, carrier, modules, recording }
 }

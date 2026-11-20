@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
 import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
-import { isSecurityControl, pluginId } from './ids.ts'
+import { isSecurityControl, pluginId, watchingModuleIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { agentDoor, agentHost } from './policy-jobs.ts'
 
@@ -22,7 +22,7 @@ const pluginKinds = [
 ] as const
 const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as const
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
-const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
+const switches = ['skipVerification', 'confirmOff'] as const
 
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
@@ -134,6 +134,9 @@ export type ChangeKind = Change['kind']
 // widening one waits for the human's Confirm in the trusted window and so does one that destroys data
 export type ChangeEffect = 'narrows' | 'widens' | 'destroys'
 
+// A security control, or a core module that watches though it is none, whose off widens
+const guards = (id: string) => isSecurityControl(id) || (watchingModuleIds as readonly string[]).includes(id)
+
 // Read from the change's structure alone, never from what a plugin says about it or from the state, so no change
 // applied meanwhile can move it. A security control switched off widens and switched back on narrows, every other plugin
 // the other way round. A switch that weakens a check widens when it goes on. A limit waits for the Confirm either way:
@@ -157,14 +160,13 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'plugin.reset':
       return 'destroys'
     case 'plugin.on':
-      return isSecurityControl(change.plugin) ? 'narrows' : 'widens'
+      return guards(change.plugin) ? 'narrows' : 'widens'
     case 'plugin.off':
-      return isSecurityControl(change.plugin) ? 'widens' : 'narrows'
+      return guards(change.plugin) ? 'widens' : 'narrows'
     case 'devMode':
     case 'exec.anyCommand':
     case 'skipVerification':
     case 'confirmOff':
-    case 'recordNothing':
     case 'allowUnsigned':
       return change.on ? 'widens' : 'narrows'
     case 'limit.set':
@@ -189,13 +191,4 @@ export function lapseOf(change: Change): number | null {
 export function withdrawnWith(change: Change): readonly string[] {
   if (change.kind === 'agent.connect') return [agentDoor.plugin]
   return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
-}
-
-// What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to
-// stop recording, the moments protection goes away. Every other Confirm has the input delay alone, so typing doesn't
-// become a habit
-export function mustType(change: Change): string | null {
-  if (change.kind === 'plugin.off' && isSecurityControl(change.plugin)) return change.plugin
-  if (change.kind === 'recordNothing' && change.on) return 'log'
-  return null
 }

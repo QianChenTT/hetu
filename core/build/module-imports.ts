@@ -14,11 +14,17 @@ export const moduleFolders: Readonly<Record<CoreModuleId, string>> = {
   luoshu: 'backend/providers/luoshu',
   history: 'backend/providers/history',
   exec: 'backend/providers/exec',
+  'flood-control': 'backend/flood-control',
+  heartbeat: 'backend/heartbeat',
+  recording: 'backend/recording',
+  'security-view': 'backend/security-view',
 }
 
 // The Node built-ins each core module may reach, by the exact name it imports. The gate and the grant risk
 // classifier judge from what they are handed and touch nothing. Storage reads and writes its files. The luoshu watches
-// and writes the notes folder. History and exec run git and the commands a plugin was granted
+// and writes the notes folder. History and exec run git and the commands a plugin was granted. Flood control counts
+// what it is handed, the heartbeat asks the core through what it is handed and recording writes through the log and
+// hashes with what it is handed. The security view decides from what it is handed
 export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> = {
   gate: [],
   'grant-risk-classifier': [],
@@ -26,6 +32,10 @@ export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> =
   luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
   history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
   exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+  'flood-control': [],
+  heartbeat: [],
+  recording: [],
+  'security-view': [],
 }
 
 const named = (specifier: string) => (specifier.startsWith('node:') ? specifier : `node:${specifier}`)

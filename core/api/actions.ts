@@ -3,7 +3,7 @@ import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type Capability
 import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
-import { limitNames, type LimitName } from './limits.ts'
+import type { LimitName } from './limits.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
@@ -51,11 +51,10 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, the watchdog policy job's holder, mcp-http-handler's host
-// half in its utility process or the agent host under a live call from that door, which names the agent. The floor
-// decides these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses
-// every caller
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'watchdog' | 'http' | 'agent'
+// Who may call a core action: any caller, a hetu window, the trusted window, mcp-http-handler's host half in its
+// utility process or the agent host under a live call from that door, which names the agent. The floor decides these
+// and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses every caller
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'http' | 'agent'
 
 // Why mcp-http-handler refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
@@ -156,14 +155,6 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
-  // Only on sandboxed plugins that hold no guard or policy job role
-  'watchdog.stop': { from: 'watchdog', args: target },
-  'watchdog.restart': { from: 'watchdog', args: target },
-  // Lowers one constant for one plugin. A value above the human's or the fixed value has no effect
-  'watchdog.limit': {
-    from: 'watchdog',
-    args: z.strictObject({ plugin: pluginId, constant: z.enum(limitNames), value: z.int().positive() }),
-  },
   // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as http.refused coalesced
   // by reason
   'core.agentRefused': {
@@ -349,7 +340,12 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // Why hetu stopped: the install list didn't check out at start or the event log failed while hetu ran, with the
 // lifecycle reason. again says the run before already restarted hetu after a failure, so it didn't restart a second
 // time
-export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
+export type StoppedMode = { control: string, why: 'tampered' | 'failed', reason: string | null, again: boolean }
+
+// The words that name why hetu stopped, the same in the trusted window and in the native box
+export function stoppedCause(mode: StoppedMode): string {
+  return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
+}
 
 // One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the install
 // or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the
@@ -389,7 +385,6 @@ export type SecurityList = {
     skipVerification: boolean
     allowUnsigned: string[]
     confirmOff: boolean
-    recordNothing: boolean
   }
   // The values the human set, for all plugins and for each one. A constant not named runs at the fixed value
   limits: { all: Partial<Record<LimitName, number>>, plugins: Record<string, Partial<Record<LimitName, number>>> }
@@ -410,7 +405,8 @@ export type CoreStatus = {
   devMode: string[]
   allowUnsigned: number
   skipVerification: boolean
-  recordNothing: boolean
+  // The core modules the human switched off, in their order, each but a policy job, whose state shows already
+  modulesOff: string[]
   logWrites: boolean
   luoshuPicked: boolean
   // The in-page core plugins that are ready, which the editor window applies: hidden-marks

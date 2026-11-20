@@ -14,7 +14,7 @@ const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
 
 const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   plugins: [],
-  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
   limits: { all: {}, plugins: {} },
   luoshu: null,
   requests: [],
@@ -107,20 +107,53 @@ describe('what the trusted window draws', () => {
   it('gives each switch for all of hetu its state and the change its button asks for', () => {
     expect(screen(calm()).switches).toEqual([
       { line: 'Confirm off for this window: off', change: { kind: 'confirmOff', on: true } },
-      { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
-      { line: 'Record nothing: off', change: { kind: 'recordNothing', on: true } },
     ])
     const drawn = screen(calm({
-      switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true, recordNothing: true },
+      switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true },
     }))
     expect(drawn.switches).toEqual([
       { line: 'Confirm off for this window: on', change: { kind: 'confirmOff', on: false } },
-      { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
-      { line: 'Record nothing: on', change: { kind: 'recordNothing', on: false } },
-      { line: 'dev mode: search', change: null },
       { line: 'any command: git', change: null },
+    ])
+  })
+
+  // Dev mode is a group of settings, not a part of its own: which plugins load unhashed, the hash checks skipped and the
+  // unsigned builds trusted
+  it('draws a Dev group with each folder plugin\'s dev mode, the hash checks skipped and the unsigned builds trusted', () => {
+    expect(screen(calm({ plugins: [plugin({ id: 'search' }), plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null })] })).dev).toEqual([
+      { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
+      { line: 'dev mode for search: off', change: { kind: 'devMode', plugin: 'search', on: true } },
+    ])
+    const drawn = screen(calm({
+      plugins: [plugin({ id: 'search' })],
+      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: false },
+    }))
+    expect(drawn.dev).toEqual([
+      { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
+      { line: 'dev mode for search: on', change: { kind: 'devMode', plugin: 'search', on: false } },
       { line: 'unsigned builds trusted: 1', change: null },
     ])
+  })
+
+  // With the security view off nothing asks for a control's typed word, so no control's switch can be pressed off
+  it('draws each security control locked while the security view is off, and the view itself with its switch', () => {
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
+        plugin({ id: 'security-view', from: 'core', place: 'core', security: true, class: null, on: false, state: 'off', reason: 'off' }),
+        plugin({ id: 'storage', from: 'core', place: 'core', class: null }),
+      ],
+    }))
+    expect(drawn.plugins.map(row => [row.id, row.actions])).toEqual([['gate', []], ['security-view', ['switch-on']], ['storage', ['switch-off']]])
+    expect(drawn.plugins[0].line).toContain('locked while the security view is off')
+    const on = screen(calm({ plugins: [plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null })] }))
+    expect(on.plugins[0].actions).toEqual(['switch-off'])
+  })
+
+  it('says the heartbeat\'s off waits for a Confirm, though it is no security control', () => {
+    const drawn = screen(calm({ plugins: [plugin({ id: 'heartbeat', from: 'core', place: 'core', class: null }), plugin({ id: 'storage', from: 'core', place: 'core', class: null })] }))
+    expect(drawn.plugins[0].line).toBe('heartbeat · ships with hetu · core · ready · its off waits for a Confirm')
+    expect(drawn.plugins[1].line).toBe('storage · ships with hetu · core · ready')
   })
 
   it('says the macOS install is not protected from programs running as the human', () => {
@@ -132,7 +165,7 @@ describe('what the trusted window draws', () => {
     expect(screen(calm({ luoshu: '/Users/someone/notes' })).luoshu).toBe('Notes folder: /Users/someone/notes')
   })
 
-  it('gives a folder plugin its dev mode switch and a plugin holding exec its any command switch', () => {
+  it('gives a plugin holding exec its any command switch, its dev mode drawn in the Dev group', () => {
     const exec = { type: 'exec', commands: [['git', 'status']], env: [] } as unknown as ListedPlugin['items'][number]['capability']
     const drawn = screen(calm({
       plugins: [
@@ -140,14 +173,11 @@ describe('what the trusted window draws', () => {
         plugin({ id: 'git', items: [{ capability: exec, off: false, firstUse: false }] }),
         plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
       ],
-      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
     }))
     expect(drawn.plugins.map(row => row.switches)).toEqual([
-      [{ line: 'dev mode: on', change: { kind: 'devMode', plugin: 'search', on: false } }],
-      [
-        { line: 'dev mode: off', change: { kind: 'devMode', plugin: 'git', on: true } },
-        { line: 'any command: off', change: { kind: 'exec.anyCommand', plugin: 'git', on: true } },
-      ],
+      [],
+      [{ line: 'any command: off', change: { kind: 'exec.anyCommand', plugin: 'git', on: true } }],
       [],
     ])
   })
@@ -279,7 +309,7 @@ describe('what the trusted window draws', () => {
     })
 
     it('turns each choice into the change it asks for', () => {
-      expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'recordNothing', on: true })
+      expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'plugin.off', plugin: 'recording' })
       expect(choiceChange('log', 'quit')).toBe(null)
       expect(choiceChange('install', 'quit')).toBe(null)
     })
@@ -385,14 +415,14 @@ describe('the trusted page', () => {
   // With confirmOff on a choice applied through the request and hetu stayed stopped
   it('starts hetu again once a choice in the stopped mode applied at once', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
-    page.ask({ kind: 'recordNothing', on: true })
+    page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { applied: true }))
     expect(sent.map(message => message.action)).toContain('core.relaunch')
   })
 
   it('starts nothing again for a choice that waits for its Confirm', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
-    page.ask({ kind: 'recordNothing', on: true })
+    page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { held: 'r1' }))
     expect(sent.map(message => message.action)).not.toContain('core.relaunch')
   })

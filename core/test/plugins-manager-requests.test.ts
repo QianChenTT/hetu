@@ -5,6 +5,7 @@ import { capabilityKey, type Capability } from '../api/capabilities.ts'
 import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import { allowAll, cleanup, entryFor, filesFor, harness, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
 
@@ -201,13 +202,13 @@ describe('typing to prove attention', () => {
     expect(made.pluginsManager.policyJob('gate')).toBe('off')
   })
 
-  it('confirms recording off only with log typed', async () => {
+  it('confirms recording off only with its id typed', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     expect(await code(made.pluginsManager.confirm(id, { typed: 'gate' }))).toBe('invalid')
-    await made.pluginsManager.confirm(id, { typed: 'log' })
-    expect(made.pluginsManager.recordNothing()).toBe(true)
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
   })
 })
 
@@ -230,7 +231,7 @@ describe('confirmOff', () => {
     const made = await harness({ switches: { confirmOff: true } })
     await made.pluginsManager.start()
     held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
-    held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, trusted))
+    held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, trusted))
     expect(made.pluginsManager.policyJob('gate')).toBe('on')
   })
 
@@ -328,12 +329,12 @@ describe('recording off and on', () => {
     const made = await harness()
     await made.pluginsManager.start()
     made.link.waiting = 2
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
-    await made.pluginsManager.confirm(id, { typed: 'log' })
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
     const at = made.link.timeline.indexOf('drain')
     expect(at).toBeGreaterThan(-1)
     expect(made.link.timeline.indexOf('record security.confirm')).toBeGreaterThan(at)
-    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'recordNothing', unwritten: 2 }])
+    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'plugin.off', target: 'recording', unwritten: 2 }])
   })
 
   it('drains nothing for any other change', async () => {
@@ -345,14 +346,14 @@ describe('recording off and on', () => {
   })
 
   it('switches recording back on before its record, so that record is the first one written again', async () => {
-    const made = await harness({ switches: { recordNothing: true } })
+    const made = await harness({ switches: { off: ['recording'] } })
     await made.pluginsManager.start()
     let recording: boolean | null = null
     made.link.landing = event => {
-      if (event === 'security.applied') recording = !made.pluginsManager.recordNothing()
+      if (event === 'security.applied') recording = made.modules.state('recording') !== 'off'
       return 'landed'
     }
-    expect(await made.pluginsManager.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'recording' }, editor)).toEqual({ applied: true })
     expect(recording).toBe(true)
     // Only recording going off drains
     expect(made.link.timeline).not.toContain('drain')
@@ -444,9 +445,9 @@ describe('requests the core raises itself', () => {
 describe('the wiring', () => {
   it('hands the carrier the plugins manager\'s asks unless a test names others', async () => {
     const made = await harness()
-    expect(carrierOptions(made.pluginsManager, made.modules, { log: null }).asks).toBe(made.pluginsManager.asks)
+    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null }).asks).toBe(made.pluginsManager.asks)
     const other = { raise: () => 'req-1' }
-    expect(carrierOptions(made.pluginsManager, made.modules, { log: null, asks: other }).asks).toBe(other)
+    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null, asks: other }).asks).toBe(other)
   })
 })
 
@@ -491,7 +492,7 @@ describe('the core actions the plugins manager serves', () => {
       id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', agent: null,
     }])
     expect(list.switches).toEqual({
-      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
+      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false,
     })
     expect(list.limits).toEqual({ all: {}, plugins: {} })
     expect(list.luoshu).toBe(null)
@@ -532,13 +533,11 @@ describe('the core actions the plugins manager serves', () => {
   })
 
   // The human stops a plugin from the trusted window, so only the trusted window starts it again
-  it('restarts a plugin the human stopped only from the trusted window, never from the editor or the watchdog', async () => {
+  it('restarts a plugin the human stopped only from the trusted window, never from the editor', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
     expect(await code(made.pluginsManager.serve(call(editor, 'core.restart', { plugin: 'alpha' })))).toBe('not-granted')
-    const watchdog = { kind: 'plugin' as const, id: 'watchdog', half: 'host', incarnation: 1 }
-    expect(await code(made.pluginsManager.serve(call(watchdog, 'watchdog.restart', { plugin: 'alpha' })))).toBe('not-granted')
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
     await made.pluginsManager.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
     await made.pluginsManager.settled()
@@ -675,18 +674,162 @@ describe('stopping recording with the log down', () => {
   it('applies though its own record was lost, since the log is what it switches off', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     made.link.landing = () => 'lost'
-    await made.pluginsManager.confirm(id, { typed: 'log' })
-    expect(made.pluginsManager.recordNothing()).toBe(true)
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
+  })
+
+  it('applies though the drain before its record threw, with how much waited unknown', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
+    made.link.drain = async () => { throw new Error('broken') }
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
+    expect(made.link.events('security.confirm')).toMatchObject([{ target: 'recording', unwritten: null }])
   })
 
   it('lets the audit writer go again when the switch can\u2019t be written', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     made.store.writeSwitches = async () => { throw new Error('read-only') }
-    expect(await code(made.pluginsManager.confirm(id, { typed: 'log' }))).toBe('failed')
+    expect(await code(made.pluginsManager.confirm(id, { typed: 'recording' }))).toBe('failed')
     expect(made.link.timeline.slice(-2)).toEqual(expect.arrayContaining(['resume']))
+  })
+})
+
+// A record recording throws on counts as one that didn't land, so a change that waits on it applies nothing
+describe('a record recording throws on', () => {
+  const call = (caller: Caller, action: string) => ({ callId: 'c1', caller, action, args: undefined, deadline: Date.now() + 30_000 })
+
+  it('fails the Confirm and applies nothing', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    made.link.landing = () => { throw new Error('broken') }
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).switches.skipVerification).toBe(false)
+  })
+})
+
+// The security view is a core module in the path of every held change. Off, every change applies unasked and the
+// editor window may only switch it on again. A throw applies nothing
+describe('the security view', () => {
+  const list = async (made: Awaited<ReturnType<typeof harness>>) =>
+    (await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 })) as SecurityList
+
+  it('is a row of its own, a security control switched off only in a Confirm with its id typed', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    expect((await list(made)).plugins.find(row => row.id === 'security-view')).toMatchObject({ from: 'core', state: 'ready', security: true, on: true })
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'security-view' }, trusted))
+    expect((await list(made)).requests.find(request => request.id === id)?.type).toBe('security-view')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('invalid')
+    await made.pluginsManager.confirm(id, { typed: 'security-view' })
+    expect(made.modules.state('security-view')).toBe('off')
+  })
+
+  it('applies a widening change from the trusted window unasked once off, its record landing first', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, trusted)).toEqual({ applied: true })
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
+    const at = made.link.timeline.indexOf('record security.confirm')
+    expect(at).toBeGreaterThan(-1)
+    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'skipVerification', by: 'view-off' }])
+    expect(made.pluginsManager.pending()).toEqual([])
+  })
+
+  it('takes from the editor window only the change that switches it on again once off, which applies at once', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))).toBe('not-granted')
+    expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin: 'search' }, editor))).toBe('not-granted')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'security-view' }, editor)).toEqual({ applied: true })
+    expect(made.modules.state('security-view')).toBe('on')
+  })
+
+  it('counts a Confirm of a notice the core raised with no delay and no word once off', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, switches: { off: ['security-view'] }, pluginsManager: { confirmDelayMs: 60_000 } })
+    await made.pluginsManager.start()
+    const [notice] = made.pluginsManager.pending()
+    expect(notice).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
+    await made.pluginsManager.confirm(notice.id, {})
+    expect((await stateIn(made.dataDir)).plugins.alpha).toBeDefined()
+    expect(made.pluginsManager.pending()).toEqual([])
+  })
+
+  // No security control goes off while nothing asks for its typed word
+  it('refuses switching any security control off once off, from either window, and still switches itself on again', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    for (const plugin of ['gate', 'grant-risk-classifier', 'flood-control', 'recording', 'security-view']) {
+      for (const from of [trusted, editor]) {
+        expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin }, from))).toBe('not-granted')
+      }
+    }
+    expect(made.modules.state('gate')).toBe('on')
+    expect(made.modules.state('recording')).toBe('on')
+    expect(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'storage' }, trusted)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'security-view' }, trusted)).toEqual({ applied: true })
+    expect(made.modules.state('security-view')).toBe('on')
+  })
+
+  it('keeps a security control\'s off held, typed or not, once the view went off', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const gate = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'security-view' })
+    expect(await code(made.pluginsManager.confirm(gate, { typed: 'gate' }))).toBe('not-granted')
+    expect(made.modules.state('gate')).toBe('on')
+    expect(await code(made.pluginsManager.confirm(gate, {}))).toBe('not-granted')
+    expect(made.pluginsManager.pending().map(request => request.id)).toContain(gate)
+  })
+
+  // The heartbeat is no security control, but switching it off leaves a hang unwatched, so it waits for one Confirm
+  it('holds the heartbeat\'s off for one Confirm with no word, from either window, and switches it on again at once', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, trusted))
+    expect((await list(made)).requests.find(request => request.id === id)?.type).toBe(null)
+    await made.pluginsManager.confirm(id, {})
+    expect(made.modules.state('heartbeat')).toBe('off')
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'heartbeat' }, editor)).toEqual({ applied: true })
+    expect(made.modules.state('heartbeat')).toBe('on')
+  })
+
+  it('applies the heartbeat\'s off unasked from the trusted window once the view is off', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, editor))).toBe('not-granted')
+    expect(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, trusted)).toEqual({ applied: true })
+    expect(made.modules.state('heartbeat')).toBe('off')
+  })
+
+  it('applies nothing and answers failed for a change it throws on, with the fault recorded', async () => {
+    const securityView = createSecurityView()
+    securityView.asked = () => { throw new Error('broken') }
+    const made = await harness({ modules: { securityView } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))).toBe('failed')
+    expect(await code(made.pluginsManager.request({ kind: 'confirmOff', on: false }, editor))).toBe('failed')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(made.pluginsManager.pending()).toEqual([])
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'security-view', step: 'asked' })
+  })
+
+  it('applies nothing and answers failed for a Confirm it throws on', async () => {
+    const securityView = createSecurityView()
+    securityView.confirms = () => { throw new Error('broken') }
+    const made = await harness({ modules: { securityView } })
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'security-view', step: 'confirms' })
   })
 })

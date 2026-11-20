@@ -21,9 +21,7 @@ export type PortLike = {
 // The plugin's limits as the carrier applies them, sent with its start
 export type Limits = RelayLimits
 
-export type Report =
-  | { kind: 'errors' | 'dropped', id: string, incarnation: number, count: number }
-  | { kind: 'cutoff', id: string, incarnation: number, reason: 'malformed' | 'flood' }
+export type Report = { kind: 'cutoff', id: string, incarnation: number, reason: 'malformed' | 'flood' }
 
 export type HostOptions = {
   // Runs first in every worker, in the same script as the plugin's bytes
@@ -50,8 +48,6 @@ type Running = {
   cap: number
   rate: Rate
   budget: Budget
-  errors: number
-  dropped: number
   drawer: Drawer | null
 }
 
@@ -72,11 +68,11 @@ function startOf(value: unknown): { id: string, incarnation: number, code: Uint8
   return { id, incarnation: incarnation as number, code, limits: checked }
 }
 
-// Starts each worker from the bytes main sent and relays its messages to main, ends it when main says and counts its
-// errors. Every message from a worker is checked before main has to read it, since main reads a message whole before
-// any check of its own: only text within the cap passes, at the carrier's rate and within the text budget. A worker
-// that sends anything else, or floods, is cut off: ended at once, then main is told why. Main's port stays open for
-// the carrier to close, so the reason can't be lost to a close that arrives first
+// Starts each worker from the bytes main sent, relays its messages to main and ends it when main says. Every message
+// from a worker is checked before main has to read it, since main reads a message whole before any check of its own:
+// only text within the cap passes, at the carrier's rate and within the text budget. A worker that sends anything
+// else, or floods, is cut off: ended at once, then main is told why. Main's port stays open for the carrier to close,
+// so the reason can't be lost to a close that arrives first
 export class WorkerHost {
   private readonly running = new Map<string, Running>()
   private readonly prelude: Uint8Array
@@ -104,12 +100,9 @@ export class WorkerHost {
     const limit = (name: LimitName) => start.limits[name as keyof Limits]
     const run: Running = {
       id: start.id, incarnation: start.incarnation, worker, own, main, limits: start.limits, cap: messageCap(limit),
-      rate: newRate(), budget: newBudget(), errors: 0, dropped: 0, drawer: null,
+      rate: newRate(), budget: newBudget(), drawer: null,
     }
-    worker.addEventListener('error', event => {
-      run.errors++
-      event.preventDefault()
-    })
+    worker.addEventListener('error', event => event.preventDefault())
     own.onmessage = event => this.fromWorker(run, event.data, event.ports.length)
     own.onmessageerror = () => this.cut(run, 'malformed')
     // The worker's end closes when the worker closed itself or died. Main's port closes in turn, which the carrier reads
@@ -149,7 +142,7 @@ export class WorkerHost {
     run.worker.postMessage({ v: 1, kind: 'drawer' }, [theirs])
   }
 
-  // The watchdog lowered one of the plugin's limits, which the relay applies from the next message on
+  // The human set one of the plugin's limits, which the relay applies from the next message on
   relimit(id: unknown, incarnation: unknown, given: unknown): void {
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
     const run = this.running.get(key(id, incarnation))
@@ -169,16 +162,6 @@ export class WorkerHost {
     this.end(run)
   }
 
-  // Each worker's errors and drops since the last flush, which the page calls once a second
-  flush(): void {
-    for (const run of this.running.values()) {
-      if (run.errors > 0) this.options.report({ kind: 'errors', id: run.id, incarnation: run.incarnation, count: run.errors })
-      if (run.dropped > 0) this.options.report({ kind: 'dropped', id: run.id, incarnation: run.incarnation, count: run.dropped })
-      run.errors = 0
-      run.dropped = 0
-    }
-  }
-
   private fromWorker(run: Running, data: unknown, ports: number): void {
     if (this.running.get(key(run.id, run.incarnation)) !== run) return
     if (typeof data !== 'string' || ports > 0) return this.cut(run, 'malformed')
@@ -187,10 +170,7 @@ export class WorkerHost {
     const now = this.now()
     const verdict = countMessage(run.rate, now, name => run.limits[name as keyof Limits])
     if (verdict === 'flood') return this.cut(run, 'flood')
-    if (verdict === 'drop' || !spend(run.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) {
-      run.dropped++
-      return
-    }
+    if (verdict === 'drop' || !spend(run.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) return
     run.main.postMessage(data)
   }
 
@@ -203,10 +183,7 @@ export class WorkerHost {
     const now = this.now()
     const verdict = countMessage(drawer.rate, now, name => run.limits[name as keyof Limits])
     if (verdict === 'flood') return this.cut(run, 'flood')
-    if (verdict === 'drop' || !spend(drawer.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) {
-      run.dropped++
-      return
-    }
+    if (verdict === 'drop' || !spend(drawer.budget, now, weighed.weight, run.limits.bytesPerSecond, run.cap)) return
     drawer.outer.postMessage(data)
   }
 

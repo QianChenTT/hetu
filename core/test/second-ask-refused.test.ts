@@ -50,7 +50,7 @@ async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: strin
     },
   }
   const reply = await parts.connect(worker('search')).ask(action, action === 'luoshu.read' ? { path: `plain/${name}` } : { path: `plain/${name}`, text: 'x' })
-  await parts.carrier.flush()
+  await parts.recording.flush()
   luoshu.close()
   const records = parts.log.events('audit.call').map(record => record.fields as Record<string, unknown>)
   return { reply, records }
@@ -112,7 +112,7 @@ describe('the record of a second ask', () => {
     const reply = await parts.connect(worker('search')).ask('luoshu.read', { path: 'notes/a.md' })
     expect(answers).toEqual([null, { code: 'not-granted' }])
     expect(reply.ok).toBe(false)
-    await parts.carrier.flush()
+    await parts.recording.flush()
     expect(parts.log.events('audit.call').map(record => record.fields)).toMatchObject([{ paths: '["secret/2.md"]', code: 'not-granted' }])
   })
 
@@ -124,7 +124,7 @@ describe('the record of a second ask', () => {
       throw (call as Call & { judge?: Judge }).judge!(['notes/a.md', 'notes/b.md'])
     }
     await parts.connect(worker('search')).ask('luoshu.read', { path: 'notes/a.md' })
-    await parts.carrier.flush()
+    await parts.recording.flush()
     expect(parts.log.events('audit.call').map(record => record.fields)).toMatchObject([{ paths: '["notes/a.md"]', code: 'failed' }])
   })
 })
@@ -158,7 +158,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     const reply = await parts.connect(worker('search')).ask('history.commit', { paths: ['box/n.md'], message: 'mine' })
     history.close()
     expect(refusal(reply)).toBe(code)
-    await parts.carrier.flush()
+    await parts.recording.flush()
     expect(parts.log.events('audit.call').map(record => record.fields)).toMatchObject([{ action: 'history.commit', paths: '["box/N.md"]', code }])
   }, 20_000)
 })

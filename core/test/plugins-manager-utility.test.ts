@@ -95,6 +95,29 @@ describe('the heartbeat of a utility half', () => {
     expect(stateOf(made.pluginsManager, 'tool')).toBe('waiting')
   })
 
+  it('kills no utility half in its planned stop for missed beats, its stop ending as the human\'s', async () => {
+    const made = await harness({
+      install: install(), behave: { 'mcp-http-handler': { stopped: false } }, limits: { heartbeatMs: 10, heartbeatMisses: 2, stopGraceMs: 200 },
+    })
+    await made.pluginsManager.start()
+    made.runtime.behave['mcp-http-handler'] = { pong: false, stopped: false }
+    const began = Date.now()
+    await made.pluginsManager.stop('mcp-http-handler', 'human')
+    // The whole grace, which a kill would have cut short
+    expect(Date.now() - began).toBeGreaterThanOrEqual(180)
+    expect(made.link.events('plugin.crashed')).toEqual([])
+    expect(reasonOf(made.pluginsManager, 'mcp-http-handler')).toBe('human')
+  })
+
+  it('kills no utility half while the human has the heartbeat off', async () => {
+    const made = await harness({ install: install(), switches: { off: ['heartbeat'] }, limits: { heartbeatMs: 10, heartbeatMisses: 2 } })
+    await made.pluginsManager.start()
+    made.runtime.behave['mcp-http-handler'] = { pong: false }
+    await tick(80)
+    expect(made.runtime.killed).toEqual([])
+    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
+  })
+
   // Everything main hears from it counts as alive, noted before its rate. Held far over the rate its pongs are dropped
   // and it still lives while it sends, then dies once silent
   it('keeps one over its rate whose pongs are dropped while main hears anything from it and kills it once it is silent', async () => {
@@ -226,13 +249,6 @@ describe('stops and restarts of a utility half', () => {
     expect(made.runtime.started.filter(start => start.id === 'mcp-http-handler').map(start => start.incarnation)).toEqual([1, 2])
   })
 
-  it('is out of the watchdog\'s reach, which acts on sandboxed plugins only', async () => {
-    const made = await harness({ install: install() })
-    await made.pluginsManager.start()
-    const call = { callId: 'c', caller: { kind: 'plugin', id: 'watchdog', half: 'host', incarnation: 1 } as Caller, action: 'watchdog.stop', args: { plugin: 'mcp-http-handler' }, deadline: Date.now() + 1000 }
-    await expect(made.pluginsManager.serve(call)).rejects.toEqual({ code: 'not-found' })
-    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
-  })
 })
 
 describe('a utility half whose bind failed', () => {

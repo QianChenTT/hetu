@@ -89,13 +89,13 @@ async function world(granted: Record<string, string[]>) {
     },
   }
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   const junctions: string[] = []
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     // A junction first, so the removal never follows one into the folder it leads to

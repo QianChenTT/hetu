@@ -3,15 +3,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../lib/event-log.ts'
-import { AuditQueue, CoreRecordLane } from '../backend/carrier/records.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions, CoreLog, CoreRecordLog, Landing } from '../backend/carrier/header.ts'
+import type { CoreLog, CoreRecordLog, Landing, Recording } from '../backend/recording/header.ts'
+import { AuditQueue, CoreRecordLane } from '../backend/recording/records.ts'
 import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
 // http reaches mcp and search, the two serving one action each
-function plugins(over: Partial<CarrierOptions> = {}) {
+function plugins(over: Parameters<typeof harness>[0] = {}) {
   const parts = harness(over)
   const { pluginsManager, gate, connect } = parts
   pluginsManager.sandboxed('search', { query: {} })
@@ -21,8 +20,8 @@ function plugins(over: Partial<CarrierOptions> = {}) {
 }
 
 // What the core's writer put in the log as audit.call lines, once the queue is flushed
-async function written(carrier: Carrier, log: FakeLog) {
-  await carrier.flush()
+async function written(recording: Recording, log: FakeLog) {
+  await recording.flush()
   return log.events('audit.call').map(record => record.fields)
 }
 
@@ -38,7 +37,7 @@ function answering(side: Side) {
 
 describe('audit records', () => {
   it('writes one audit.call line per call with the caller, onBehalf, root, action, canonical scope, code and gate state, never args or results', async () => {
-    const { carrier, connect, gate, pluginsManager, log } = harness()
+    const { recording, carrier, connect, gate, pluginsManager, log } = harness()
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('mcp', { handle: {} })
     gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp'] }]
@@ -51,7 +50,7 @@ describe('audit records', () => {
     expect(write.ok).toBe(true)
     mcp.answer(parent.callId, { said: 'secret result' })
     await http.reply(id)
-    const records = await written(carrier, log)
+    const records = await written(recording, log)
     expect(records).toHaveLength(2)
     expect(records[0]).toMatchObject({
       caller: 'mcp/worker#1', onBehalf: 'agent-a#1', root: 'mcp-http-handler/host#1', action: 'luoshu.write',
@@ -64,29 +63,29 @@ describe('audit records', () => {
   })
 
   it('records a refusal with its code and the gate\'s state', async () => {
-    const { carrier, connect, pluginsManager, log } = harness()
+    const { recording, carrier, connect, pluginsManager, log } = harness()
     pluginsManager.policyJobs.gate = 'failed'
     await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })
-    expect(await written(carrier, log)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
+    expect(await written(recording, log)).toMatchObject([{ action: 'luoshu.read', code: 'policy-down', gate: 'failed', count: 1 }])
   })
 
   // The caller's own text is no canonical scope, so a call refused at precheck records no path
   it('records no path for a call refused before prepare and the canonical one once prepare ran', async () => {
     let clock = 1_000_000
-    const { carrier, connect, gate, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, gate, log } = harness({ now: () => clock })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'secret/a.md' }))).toBe('not-granted')
     clock += 1000
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     expect(code(await search.ask('luoshu.read', { path: 'GIT~1/config' }))).toBe('not-granted')
-    const records = await written(carrier, log)
+    const records = await written(recording, log)
     expect(records.map(record => [record.code, record.paths])).toEqual([['not-granted', undefined], ['not-granted', '[".git/config"]']])
     expect('paths' in records[0]).toBe(false)
   })
 
   it('names onBehalf and the root of a live parent for a call refused before the ceiling took it', async () => {
-    const { carrier, http, mcp, pluginsManager, log } = plugins()
+    const { recording, carrier, http, mcp, pluginsManager, log } = plugins()
     pluginsManager.human.plugins['mcp-http-handler'] = { callsInFlight: 1 }
     http.call('mcp.handle', {}, { onBehalf: 'agent-a' })
     const parent = await mcp.delivered('mcp.handle')
@@ -95,7 +94,7 @@ describe('audit records', () => {
     expect(code(await mcp.ask('luoshu.read', { path: '' }, under))).toBe('invalid')
     expect(code(await mcp.ask('security.request', { change: { kind: 'plugin.on', plugin: 'search' } }, under))).toBe('not-granted')
     expect(code(await mcp.ask('core.self', undefined, under))).toBe('throttled')
-    const refused = (await written(carrier, log)).filter(record => record.code !== null)
+    const refused = (await written(recording, log)).filter(record => record.code !== null)
     expect(refused.map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])).toEqual([
       ['luoshu.read', 'invalid', 'mcp/worker#1', 'mcp-http-handler/worker#1', 'agent-a'],
       ['security.request', 'not-granted', 'mcp/worker#1', 'mcp-http-handler/worker#1', 'agent-a'],
@@ -105,21 +104,21 @@ describe('audit records', () => {
 
   it('records the gate\'s state for a call without power and a state outside the list as failed', async () => {
     let clock = 1_000_000
-    const { carrier, connect, pluginsManager, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, pluginsManager, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     pluginsManager.policyJobs.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
     clock += 1000
     pluginsManager.policyJobs.gate = 'ON' as never
     await search.ask('storage.get', { key: 'k' })
-    expect((await written(carrier, log)).map(record => [record.action, record.code, record.gate])).toEqual([
+    expect((await written(recording, log)).map(record => [record.action, record.code, record.gate])).toEqual([
       ['storage.get', null, 'failed'], ['storage.get', null, 'failed'],
     ])
   })
 
   it('coalesces reads and refusals per caller per second, and keeps writes one record each', async () => {
     let clock = 1_000_000
-    const { carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
+    const { recording, carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.write', paths: ['notes/**'] }]
     for (const name of ['a', 'b', 'c']) luoshu.files.set(`notes/${name}.md`, name)
     const search = connect(worker('search'))
@@ -131,7 +130,7 @@ describe('audit records', () => {
     await search.ask('storage.get', { key: 'other' })
     clock += 1000
     await search.ask('luoshu.read', { path: 'notes/a.md' })
-    const records = (await written(carrier, log)).map(record => [record.action, record.code, record.count])
+    const records = (await written(recording, log)).map(record => [record.action, record.code, record.count])
     expect(records).toEqual([
       ['luoshu.read', null, 3],
       ['luoshu.read', 'not-granted', 4],
@@ -144,7 +143,7 @@ describe('audit records', () => {
 
   it('coalesces free calls between a plugin\'s own halves and keeps calls to other plugins one each', async () => {
     const clock = 1_000_000
-    const { carrier, connect, pluginsManager, gate, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, pluginsManager, gate, log } = harness({ now: () => clock })
     pluginsManager.sandboxed('search', { query: {} })
     pluginsManager.sandboxed('git', { log: {} })
     gate.grants.search = [{ type: 'plugin.call', targets: ['git'] }]
@@ -163,20 +162,20 @@ describe('audit records', () => {
       await answerGit(i)
       await search.reply(id)
     }
-    expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
+    expect((await written(recording, log)).map(record => [record.action, record.count])).toEqual([
       ['search.query', 3], ['git.log', 1], ['git.log', 1],
     ])
   })
 
   it('stops coalescing into a record once the writer has taken it', async () => {
     const clock = 1_000_000
-    const { carrier, connect, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     await search.ask('core.self')
-    await carrier.flush()
+    await recording.flush()
     await search.ask('core.self')
     await search.ask('core.self')
-    expect((await written(carrier, log)).map(record => record.count)).toEqual([1, 2])
+    expect((await written(recording, log)).map(record => record.count)).toEqual([1, 2])
   })
 
   // Only the interval is faked, so the ports and their timers run as they do
@@ -201,11 +200,11 @@ describe('audit records', () => {
   })
 
   it('drops a record past the bound, counts it in a core record and still answers the call', async () => {
-    const { carrier, connect, pluginsManager, log } = harness()
+    const { recording, carrier, connect, pluginsManager, log } = harness()
     pluginsManager.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
     for (let i = 0; i < 4; i++) expect((await search.ask('storage.set', { key: `k${i}`, value: i })).ok).toBe(true)
-    expect(await written(carrier, log)).toHaveLength(2)
+    expect(await written(recording, log)).toHaveLength(2)
     carrier.close()
     await tick()
     expect(log.events('audit.dropped').map(record => record.fields)).toEqual([
@@ -214,126 +213,126 @@ describe('audit records', () => {
   })
 
   it('frees the bound once a batch is written', async () => {
-    const { carrier, connect, pluginsManager, log } = harness()
+    const { recording, carrier, connect, pluginsManager, log } = harness()
     pluginsManager.human.all = { auditQueue: 2 }
     const search = connect(worker('search'))
     for (const key of ['a', 'b']) await search.ask('storage.set', { key, value: 1 })
-    await carrier.flush()
+    await recording.flush()
     for (const key of ['c', 'd']) await search.ask('storage.set', { key, value: 1 })
-    expect(await written(carrier, log)).toHaveLength(4)
+    expect(await written(recording, log)).toHaveLength(4)
     expect(log.events('audit.dropped')).toEqual([])
   })
 
   it('keeps a batch while the log can\'t write and writes it once, in order, when the log is back', async () => {
-    const { carrier, connect, log } = harness()
+    const { recording, carrier, connect, log } = harness()
     const search = connect(worker('search'))
     log.failing = true
     for (let i = 0; i < 3; i++) await search.ask('storage.set', { key: `k${i}`, value: i })
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('audit.call')).toEqual([])
     log.failing = false
     await search.ask('storage.set', { key: 'k3', value: 3 })
-    expect((await written(carrier, log)).map(record => record.record)).toEqual([1, 2, 3, 4])
+    expect((await written(recording, log)).map(record => record.record)).toEqual([1, 2, 3, 4])
     expect(log.batches).toEqual([{ id: 'audit:1-3', size: 3 }, { id: 'audit:4-4', size: 1 }])
   })
 
   // A healthy log refused what the batch holds and trying it again would hold back every record after it
   it('lets go of a batch a healthy log refused and counts its records in audit.dropped', async () => {
-    const { carrier, connect, log } = harness()
+    const { recording, carrier, connect, log } = harness()
     const search = connect(worker('search'))
     log.refuses.add('audit.call')
     await search.ask('core.self')
     await search.ask('storage.get', { key: 'k' })
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('audit.call')).toEqual([])
     expect(log.events('audit.dropped').map(record => record.fields)).toEqual([{ why: 'refused', count: 2 }])
     log.refuses.clear()
     await search.ask('storage.get', { key: 'k' })
-    expect((await written(carrier, log)).map(record => record.action)).toEqual(['storage.get'])
+    expect((await written(recording, log)).map(record => record.action)).toEqual(['storage.get'])
   })
 
   it('coalesces refused writes and calls refused at shape', async () => {
     const clock = 1_000_000
-    const { carrier, connect, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     for (let i = 0; i < 3; i++) await search.ask('luoshu.write', { path: 'a.md', text: 'x' })
     for (let i = 0; i < 3; i++) await search.ask('luoshu.read', { path: '' })
-    expect((await written(carrier, log)).map(record => [record.action, record.code, record.count])).toEqual([
+    expect((await written(recording, log)).map(record => [record.action, record.code, record.count])).toEqual([
       ['luoshu.write', 'not-granted', 3], ['luoshu.read', 'invalid', 3],
     ])
   })
 
-  it('keeps each security request and each watchdog action one record', async () => {
+  it('keeps each security request one record, from the editor and the trusted window alike', async () => {
     const clock = 1_000_000
-    const { carrier, pluginsManager, log } = harness({ now: () => clock, core: async () => null })
+    const { recording, carrier, pluginsManager, log } = harness({ now: () => clock, core: async () => null, armed: () => true })
     pluginsManager.sandboxed('search')
     const way = windowWay(carrier, { 'editor-1': editor })
     const change = { kind: 'plugin.on', plugin: 'search' }
     await way.ask('editor-1', 'security.request', { change })
     await way.ask('editor-1', 'security.request', { change })
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    await watchdog.ask('watchdog.stop', { plugin: 'search' })
-    await watchdog.ask('watchdog.stop', { plugin: 'search' })
-    expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
-      ['security.request', 1], ['security.request', 1], ['watchdog.stop', 1], ['watchdog.stop', 1],
+    const trustedWay = windowWay(carrier, { trusted })
+    await trustedWay.ask('trusted', 'security.request', { change })
+    await trustedWay.ask('trusted', 'security.request', { change })
+    expect((await written(recording, log)).map(record => [record.action, record.count])).toEqual([
+      ['security.request', 1], ['security.request', 1], ['security.request', 1], ['security.request', 1],
     ])
   })
 
   // A record joins only calls that share every field it names, the A-05 case of two agents behind one MCP among them
   it('keeps two agents behind one caller apart', async () => {
     const clock = 1_000_000
-    const { carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
+    const { recording, carrier, connect, gate, log, luoshu } = harness({ now: () => clock })
     gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'x')
     const mcp = connect(worker('mcp'))
     await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-a' })
     await mcp.ask('luoshu.read', { path: 'a.md' }, { onBehalf: 'agent-b' })
-    expect((await written(carrier, log)).map(record => [record.onBehalf, record.count])).toEqual([['agent-a', 1], ['agent-b', 1]])
+    expect((await written(recording, log)).map(record => [record.onBehalf, record.count])).toEqual([['agent-a', 1], ['agent-b', 1]])
   })
 
   it('keeps calls with different roots apart', async () => {
     const clock = 1_000_000
-    const { carrier, http, log, mcp } = plugins({ now: () => clock })
+    const { recording, carrier, http, log, mcp } = plugins({ now: () => clock })
     http.call('mcp.handle')
     const parent = await mcp.delivered('mcp.handle')
     await mcp.ask('core.self', undefined, { parent: parent.callId })
     await mcp.ask('core.self')
-    const selves = (await written(carrier, log)).filter(record => record.action === 'core.self')
+    const selves = (await written(recording, log)).filter(record => record.action === 'core.self')
     expect(selves.map(record => [record.root, record.count])).toEqual([['mcp-http-handler/worker#1', 1], ['mcp/worker#1', 1]])
   })
 
   it('keeps calls under different gate states apart', async () => {
     const clock = 1_000_000
-    const { carrier, connect, pluginsManager, log } = harness({ now: () => clock })
+    const { recording, carrier, connect, pluginsManager, log } = harness({ now: () => clock })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
     pluginsManager.policyJobs.gate = 'failed'
     await search.ask('storage.get', { key: 'k' })
-    expect((await written(carrier, log)).map(record => [record.gate, record.count])).toEqual([['on', 1], ['failed', 1]])
+    expect((await written(recording, log)).map(record => [record.gate, record.count])).toEqual([['on', 1], ['failed', 1]])
   })
 
   it('keeps two callers under one root apart', async () => {
     const clock = 1_000_000
-    const { carrier, http, log, mcp, search } = plugins({ now: () => clock })
+    const { recording, carrier, http, log, mcp, search } = plugins({ now: () => clock })
     http.call('mcp.handle')
     http.call('search.query')
     const one = await mcp.delivered('mcp.handle')
     const two = await search.delivered('search.query')
     await mcp.ask('core.self', undefined, { parent: one.callId })
     await search.ask('core.self', undefined, { parent: two.callId })
-    const selves = (await written(carrier, log)).filter(record => record.action === 'core.self')
+    const selves = (await written(recording, log)).filter(record => record.action === 'core.self')
     expect(selves.map(record => [record.caller, record.count])).toEqual([['mcp/worker#1', 1], ['search/worker#1', 1]])
   })
 
   // Quit flushes, closes and flushes again, so the calls close stops still leave their records
   it('writes on the flush after close the records of the calls close stopped', async () => {
-    const { carrier, http, log, mcp } = plugins()
+    const { recording, carrier, http, log, mcp } = plugins()
     http.call('mcp.handle')
     await mcp.delivered('mcp.handle')
-    await carrier.flush()
+    await recording.flush()
     carrier.stopping()
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('audit.call').map(record => [record.fields.action, record.fields.code])).toEqual([['mcp.handle', 'stopped']])
   })
 })
@@ -374,10 +373,10 @@ describe('the core record lane', () => {
     dir = await mkdtemp(path.join(tmpdir(), 'hetu-carrier-'))
     const log = new EventLog(dir)
     await log.open()
-    const { carrier } = harness({ log })
-    carrier.coreRecord('plugin.found', { plugin: 'search' })
-    carrier.coreRecord('plugin.checked', { plugin: 'search', ok: true })
-    await carrier.flush()
+    const { recording, carrier } = harness({ log })
+    recording.coreRecord('plugin.found', { plugin: 'search' })
+    recording.coreRecord('plugin.checked', { plugin: 'search', ok: true })
+    await recording.flush()
     const lines = (await readFile(path.join(dir, 'events', 'events-1.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line))
     expect(lines.map(line => [line.event, line.plugin])).toEqual([['plugin.found', 'search'], ['plugin.checked', 'search']])
   })
@@ -402,39 +401,39 @@ describe('the core record lane', () => {
 
   it('tells windows to read core.status again when the log stops writing and when it writes again', async () => {
     const log = new FakeLog()
-    const { carrier } = harness({ log })
+    const { recording, carrier } = harness({ log })
     const way = windowWay(carrier, { editor })
     await way.ask('editor', 'events.subscribe', { topics: ['core.status'] })
     log.failing = true
-    carrier.coreRecord('plugin.found', { plugin: 'a' })
+    recording.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     expect(way.events().map(event => event.topic)).toEqual(['core.status'])
     log.failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(way.events().map(event => event.topic)).toEqual(['core.status', 'core.status'])
   })
 
   it('keeps records in a backlog while the log can not write and lands them in order once an append works', async () => {
     const log = new FakeLog()
-    const { carrier } = harness({ log })
+    const { recording, carrier } = harness({ log })
     log.failing = true
-    for (const plugin of ['a', 'b', 'c']) carrier.coreRecord('plugin.found', { plugin })
+    for (const plugin of ['a', 'b', 'c']) recording.coreRecord('plugin.found', { plugin })
     await tick()
     expect(log.records).toEqual([])
     log.failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(log.records.map(record => record.fields.plugin)).toEqual(['a', 'b', 'c'])
   })
 
   it('bounds the backlog, counts what it dropped and writes the count once the backlog has landed', async () => {
     const log = new FakeLog()
-    const { carrier, pluginsManager } = harness({ log })
+    const { recording, carrier, pluginsManager } = harness({ log })
     pluginsManager.human.all = { floorBacklog: 3 }
     log.failing = true
-    for (const plugin of ['a', 'b', 'c', 'd', 'e']) carrier.coreRecord('plugin.found', { plugin })
+    for (const plugin of ['a', 'b', 'c', 'd', 'e']) recording.coreRecord('plugin.found', { plugin })
     await tick()
     log.failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(log.records.map(record => [record.event, record.fields.plugin ?? record.fields.count])).toEqual([
       ['plugin.found', 'a'], ['plugin.found', 'b'], ['plugin.found', 'c'], ['core-records.dropped', 2],
     ])
@@ -442,9 +441,9 @@ describe('the core record lane', () => {
 
   it('tries the backlog again on its own once the log comes back', async () => {
     const log = new FakeLog()
-    const { carrier } = harness({ log, coreRecordRetryMs: 20 })
+    const { recording, carrier } = harness({ log, coreRecordRetryMs: 20 })
     log.failing = true
-    carrier.coreRecord('plugin.found', { plugin: 'a' })
+    recording.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     log.failing = false
     for (let i = 0; i < 50 && log.records.length === 0; i++) await tick(5)
@@ -453,11 +452,11 @@ describe('the core record lane', () => {
 
   it('skips and counts a record a healthy log refuses, so it can not hold back the ones after it', async () => {
     const log = new FakeLog()
-    const { carrier } = harness({ log })
+    const { recording, carrier } = harness({ log })
     log.refuses.add('bad')
-    carrier.coreRecord('bad', {})
-    carrier.coreRecord('plugin.found', { plugin: 'a' })
-    await carrier.flush()
+    recording.coreRecord('bad', {})
+    recording.coreRecord('plugin.found', { plugin: 'a' })
+    await recording.flush()
     await tick()
     expect(log.records.map(record => record.event)).toEqual(['plugin.found', 'core-records.dropped'])
   })
@@ -477,9 +476,9 @@ describe('the core record lane', () => {
       }
       return append(event, fields)
     }
-    const { carrier } = harness({ log })
-    carrier.coreRecord('bad', {})
-    await carrier.flush()
+    const { recording, carrier } = harness({ log })
+    recording.coreRecord('bad', {})
+    await recording.flush()
     expect(appends).toBe(2)
   })
 
@@ -496,24 +495,24 @@ describe('the core record lane', () => {
       history: async () => [],
       verify: async () => ({ ok: true }),
     }
-    const { carrier } = harness({ log })
-    carrier.coreRecord('plugin.found', { plugin: 'a' })
+    const { recording, carrier } = harness({ log })
+    recording.coreRecord('plugin.found', { plugin: 'a' })
     await tick()
     failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(records).toEqual(['plugin.found'])
   })
 
   it('keeps the core record fields as they were when written', async () => {
     const log = new FakeLog()
     log.failing = true
-    const { carrier } = harness({ log })
+    const { recording, carrier } = harness({ log })
     const fields = { plugin: 'a' }
-    carrier.coreRecord('plugin.found', fields)
+    recording.coreRecord('plugin.found', fields)
     await tick()
     fields.plugin = 'b'
     log.failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(log.records.map(record => record.fields)).toEqual([{ plugin: 'a' }])
   })
 
@@ -584,9 +583,9 @@ describe('the core record lane', () => {
   })
 
   it('coalesces the core records main writes for a plugin, such as a frame of its that navigated', async () => {
-    const { carrier, log } = harness()
-    for (let i = 0; i < 3; i++) carrier.coreRecordCoalesced('frame.navigated', { plugin: 'kanban' })
-    carrier.coreRecordCoalesced('frame.navigated', { plugin: 'board' })
+    const { recording, carrier, log } = harness()
+    for (let i = 0; i < 3; i++) recording.coalesced('frame.navigated', { plugin: 'kanban' })
+    recording.coalesced('frame.navigated', { plugin: 'board' })
     await tick()
     expect(log.events('frame.navigated').map(record => record.fields)).toEqual([{ plugin: 'kanban', count: 1 }, { plugin: 'board', count: 1 }])
     carrier.close()
@@ -629,15 +628,15 @@ describe('the core record lane', () => {
 describe('record nothing', () => {
   it('writes no core record and no audit record while the human turned recording off', async () => {
     const log = new FakeLog()
-    const { carrier, connect, pluginsManager, gate } = harness({ log })
+    const { recording, carrier, connect, pluginsManager, gate } = harness({ log })
     pluginsManager.nothing = true
     gate.decision = () => { throw new Error('broken') }
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
-    carrier.coreRecord('plugin.found', { plugin: 'search' })
-    await carrier.flush()
+    recording.coreRecord('plugin.found', { plugin: 'search' })
+    await recording.flush()
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     expect(log.records).toEqual([])
   })
 
@@ -657,37 +656,19 @@ describe('record nothing', () => {
 
   it('records again once recording is back on, with nothing from the gap', async () => {
     const log = new FakeLog()
-    const { carrier, connect, pluginsManager } = harness({ log })
+    const { recording, carrier, connect, pluginsManager } = harness({ log })
     const search = connect(worker('search'))
     pluginsManager.nothing = true
     await search.ask('core.self')
-    carrier.coreRecord('plugin.found', { plugin: 'during' })
+    recording.coreRecord('plugin.found', { plugin: 'during' })
     pluginsManager.nothing = false
     await search.ask('storage.get', { key: 'k' })
-    carrier.coreRecord('plugin.found', { plugin: 'after' })
-    await carrier.flush()
+    recording.coreRecord('plugin.found', { plugin: 'after' })
+    await recording.flush()
     expect(log.events('audit.call').map(record => record.fields.action)).toEqual(['storage.get'])
     expect(log.events('plugin.found').map(record => record.fields.plugin)).toEqual(['after'])
   })
 
-  // Only the human's own switch mutes, so a plugins manager that throws or answers something truthy keeps every record and the
-  // log rule with the gate off
-  it.each([
-    ['throws', () => { throw new Error('no state') }],
-    ['answers 1', () => 1],
-  ])('keeps recording and the log rule when recordNothing %s', async (_name, nothing) => {
-    let now = 0
-    const { carrier, connect, pluginsManager, log } = harness({ clock: () => now })
-    pluginsManager.recordNothing = nothing as unknown as () => boolean
-    const search = connect(worker('search'))
-    await search.ask('core.self')
-    await carrier.flush()
-    expect(log.events('audit.call')).toHaveLength(1)
-    pluginsManager.policyJobs.gate = 'off'
-    await search.ask('core.self')
-    now = 30_000
-    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
-  })
 })
 
 describe('a core record\'s landing', () => {
@@ -856,7 +837,7 @@ describe('a core record\'s landing', () => {
 
 describe('a failing log', () => {
   // A carrier on a clock the test moves, since the wait is timed on the carrier's own clock, with a log that can't write
-  function failing(over: Partial<CarrierOptions> = {}) {
+  function failing(over: Parameters<typeof harness>[0] = {}) {
     let now = 0
     const parts = harness({ clock: () => now, ...over })
     parts.log.failing = true
@@ -877,25 +858,25 @@ describe('a failing log', () => {
   })
 
   it('lets them pass again once the records are written', async () => {
-    const { at, carrier, connect, pluginsManager, log } = failing()
+    const { recording, at, carrier, connect, pluginsManager, log } = failing()
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('luoshu.read', { path: 'notes/a.md' })
     at(30_000)
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
     log.failing = false
-    await carrier.flush()
+    await recording.flush()
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
   })
 
   it('starts the wait again from the oldest record still held once a batch is written', async () => {
-    const { at, carrier, connect, pluginsManager, log } = failing()
+    const { recording, at, carrier, connect, pluginsManager, log } = failing()
     log.failing = false
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
     at(20_000)
-    await carrier.flush()
+    await recording.flush()
     at(25_000)
     await search.ask('storage.set', { key: 'b', value: 2 })
     at(54_999)
@@ -1027,37 +1008,37 @@ describe('a failing log', () => {
 describe('recording going off', () => {
   it('drains the audit queue and the core record backlog and says nothing still waits', async () => {
     const log = new FakeLog()
-    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const { recording, carrier, connect } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
-    carrier.coreRecord('plugin.found', { plugin: 'alpha' })
-    expect(await carrier.drain(1000)).toBe(0)
+    recording.coreRecord('plugin.found', { plugin: 'alpha' })
+    expect(await recording.drain(1000)).toBe(0)
     expect(log.events('audit.call')).toHaveLength(1)
     expect(log.events('plugin.found')).toHaveLength(1)
   })
 
   it('stops waiting at its deadline and counts what still waits on a log that can\'t write', async () => {
     const log = new FakeLog()
-    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const { recording, carrier, connect } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
     log.failing = true
     await search.ask('storage.get', { key: 'k' })
     await search.ask('storage.set', { key: 'k', value: 1 })
-    carrier.coreRecord('plugin.found', { plugin: 'alpha' })
+    recording.coreRecord('plugin.found', { plugin: 'alpha' })
     const started = performance.now()
-    expect(await carrier.drain(50)).toBe(3)
+    expect(await recording.drain(50)).toBe(3)
     expect(performance.now() - started).toBeLessThan(1000)
   })
 
   it('lets go of audit records still queued once recording is off, so none lands after the switch', async () => {
     const log = new FakeLog()
-    const { carrier, connect, pluginsManager } = harness({ log, auditEveryMs: 60_000 })
+    const { recording, carrier, connect, pluginsManager } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
     pluginsManager.nothing = true
-    await carrier.flush()
+    await recording.flush()
     pluginsManager.nothing = false
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('audit.call')).toEqual([])
   })
 })
@@ -1066,14 +1047,14 @@ describe('recording going off', () => {
 describe('the writer while recording goes off', () => {
   it('writes nothing more once drained until it resumes, then writes what waited', async () => {
     const log = new FakeLog()
-    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const { recording, carrier, connect } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
-    expect(await carrier.drain(1000)).toBe(0)
+    expect(await recording.drain(1000)).toBe(0)
     await search.ask('storage.get', { key: 'k' })
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('audit.call')).toEqual([])
-    carrier.resume()
-    await carrier.flush()
+    recording.resume()
+    await recording.flush()
     expect(log.events('audit.call')).toHaveLength(1)
   })
 
@@ -1081,11 +1062,44 @@ describe('the writer while recording goes off', () => {
     const log = new FakeLog()
     log.appendMany = () => new Promise(() => {})
     log.append = () => new Promise(() => {})
-    const { carrier, connect } = harness({ log, auditEveryMs: 60_000 })
+    const { recording, carrier, connect } = harness({ log, auditEveryMs: 60_000 })
     const search = connect(worker('search'))
     await search.ask('storage.get', { key: 'k' })
     const started = performance.now()
-    expect(await carrier.drain(50)).toBe(1)
+    expect(await recording.drain(50)).toBe(1)
     expect(performance.now() - started).toBeLessThan(1000)
+  })
+})
+
+// Recording is a core module: a throw in it is that record lost and the carrier runs on
+describe('recording that throws', () => {
+  function broken(over: Partial<Recording> = {}): Recording {
+    const thrown = () => { throw new Error('broken') }
+    return {
+      coreRecord: thrown, coalesced: thrown, record: thrown, call: thrown, failing: () => false, flush: async () => {}, drain: async () => 0,
+      resume: () => {}, serve: thrown, close: thrown, ...over,
+    }
+  }
+
+  it('answers each call though its record threw and closes', async () => {
+    const { carrier, connect, pluginsManager } = harness({ recording: broken() })
+    pluginsManager.sandboxed('search')
+    const search = connect(worker('search'))
+    expect((await search.ask('core.self')).ok).toBe(true)
+    expect(code(await search.ask('storage.get', { key: 'a', extra: 1 }))).toBe('invalid')
+    expect(() => carrier.close()).not.toThrow()
+  })
+
+  it('counts a log it can\'t read as failing, so the gate off refuses a call with power and passes the rest', async () => {
+    const { connect, pluginsManager } = harness({ recording: broken({ failing: () => { throw new Error('broken') } }) })
+    pluginsManager.policyJobs.gate = 'off'
+    const search = connect(worker('search'))
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
+    expect((await search.ask('core.self')).ok).toBe(true)
+  })
+
+  it('answers log.segments failed when it throws', async () => {
+    const { carrier } = harness({ recording: broken() })
+    expect(code(await windowWay(carrier, { trusted }).ask('trusted', 'log.segments'))).toBe('failed')
   })
 })

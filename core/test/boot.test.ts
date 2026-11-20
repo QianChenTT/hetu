@@ -346,7 +346,7 @@ describe('the tombstones', () => {
 describe('recording off', () => {
   async function recordingOff() {
     const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, recordNothing: true })
+    await first.store.writeSwitches({ ...noSwitches, off: ['recording'] })
     await first.store.writeLuoshu(notes)
     await stopped(first)
   }
@@ -356,7 +356,7 @@ describe('recording off', () => {
     await writeFile(stateFile('luoshu.json'), 'tampered')
     const before = await records()
     const booted = await started()
-    expect(booted.state.switches.recordNothing).toBe(true)
+    expect(booted.state.switches.off).toEqual(['recording'])
     expect(booted.suspect).toBe(true)
     expect(booted.logHealthy).toBe(true)
     expect(await records()).toEqual(before)
@@ -373,7 +373,7 @@ describe('recording off', () => {
     await recordingOff()
     await spoil()
     const booted = await started()
-    expect(booted.state.switches.recordNothing).toBe(false)
+    expect(booted.state.switches.off).toEqual([])
     expect((await bootRecords()).slice(3)).toContainEqual({ event: 'boot.suspect' })
   })
 })

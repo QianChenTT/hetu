@@ -15,10 +15,13 @@ const quoted = (value: string) => JSON.stringify(value)
 const whileOff: Readonly<Record<string, string>> = Object.freeze({
   gate: 'Calls with power then pass unchecked. The per-item switches lapse too, since allowing all means all. Exec still refuses a command whose item is off',
   'grant-risk-classifier': 'Plugins then go unclassified and nothing asks at its first use until it is on again',
-  watchdog: 'Nothing then stops or slows a plugin that misbehaves',
+  'flood-control': 'Nothing then limits how fast a plugin or a window sends or how many calls it keeps in flight and no plugin is cut off for a flood',
+  recording: 'hetu then writes nothing to its event log, this switch last, so no security change made after it can be traced',
+  'security-view': 'Security changes then apply with no Confirm, no security control can be switched off and the editor window can only switch it on again',
 })
 
 const RECOMMEND = 'hetu recommends keeping every security plugin on'
+const HEARTBEAT_OFF = 'Nothing then pings a plugin or ends a utility process that hangs, so a call to a hung plugin waits its whole deadline'
 
 export function describeChange(change: Change): Described {
   switch (change.kind) {
@@ -29,6 +32,7 @@ export function describeChange(change: Change): Described {
     case 'plugin.on':
       return { text: `Switch ${change.plugin} on`, notes: [] }
     case 'plugin.off':
+      if (change.plugin === 'heartbeat') return { text: 'Switch heartbeat off', notes: [HEARTBEAT_OFF] }
       if (!isSecurityControl(change.plugin)) return { text: `Switch ${change.plugin} off`, notes: ['The plugins that need it stop with it'] }
       return { text: `Switch ${change.plugin} off`, notes: [whileOff[change.plugin] ?? `Writes then pass without ${change.plugin}'s check`, RECOMMEND] }
     case 'plugin.remove':
@@ -68,10 +72,6 @@ export function describeChange(change: Change): Described {
       return change.on
         ? { text: 'Apply changes made in this window without a Confirm', notes: ['A request from any other window still opens this window'] }
         : { text: 'Ask for a Confirm in this window again', notes: [] }
-    case 'recordNothing':
-      return change.on
-        ? { text: 'Stop recording', notes: ['hetu writes nothing to its event log from here, this switch last', 'No security change made after it can be traced'] }
-        : { text: 'Record again', notes: [] }
     case 'allowUnsigned':
       return change.on
         ? { text: `Trust the unsigned build ${change.hash}`, notes: [] }

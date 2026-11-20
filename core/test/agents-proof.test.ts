@@ -66,11 +66,11 @@ async function world(
     const runtime = new FakeRuntime()
     // The core modules the core makes, closed at the plugins manager's shutdown
     const modules = grantRiskClassifier === undefined ? {} : { grantRiskClassifier }
-    const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+    const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
     const stop = async () => {
       await pluginsManager.shutdown().catch(() => {})
       carrier.close()
-      await carrier.flush()
+      await recording.flush()
       for (const port of runtime.ports) port.close()
       await booted.release()
     }

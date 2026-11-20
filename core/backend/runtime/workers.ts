@@ -1,5 +1,4 @@
 import type { BrowserWindow, MessagePortMain, Session } from 'electron'
-import type { Sample } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { firstPartyIds } from '../../api/ids.ts'
 import type { WorkerStart } from './header.ts'
@@ -27,8 +26,6 @@ export type WorkerRendererOptions = {
   limits(id: string): Readonly<Record<string, number>>
   // The page cut a worker off: it ended the worker and the plugin crashed for reason
   cutoff(id: string, incarnation: number, reason: 'malformed' | 'flood'): void
-  // For the watchdog: a worker's errors, its drops in the relay and its cutoff
-  sample(sample: Sample): void
   // How long an ended worker still counts as held for a renderer that dies. Its ports close a few ms before Electron
   // tells the renderer is gone, and the plugins manager ends the plugin on that close
   endingMs?: number
@@ -130,7 +127,7 @@ export class WorkerRenderer {
     })
   }
 
-  // watchdog.limit lowered one of the plugin's constants, so each of its running workers' relays gets them again
+  // The human set one of the plugin's constants, so each of its running workers' relays gets them again
   limited(id: string): void {
     for (const run of this.running.values()) {
       if (run.id === id) this.renderer?.post('hetu:limits', { id, incarnation: run.incarnation, limits: this.options.limits(id) })
@@ -154,23 +151,17 @@ export class WorkerRenderer {
 
   private heard(message: unknown): void {
     if (typeof message !== 'object' || message === null) return
-    const { kind, id, incarnation, count, reason } = message as Record<string, unknown>
+    const { kind, id, incarnation, reason } = message as Record<string, unknown>
     if (kind === 'ready' && !this.ready) {
       this.ready = true
       for (const start of this.queue.splice(0)) this.send(start)
       return
     }
     if (typeof id !== 'string' || typeof incarnation !== 'number') return
-    const caller = { kind: 'plugin' as const, id, half: 'worker' as const, incarnation }
     // The page already ended the worker, so the plugins manager's end that follows has nothing to send
     if (kind === 'cutoff' && (reason === 'malformed' || reason === 'flood') && this.running.delete(key(id, incarnation))) {
       this.options.cutoff(id, incarnation, reason)
-      this.options.sample({ kind: 'cutoff', caller, reason })
-      return
     }
-    if (kind !== 'errors' && kind !== 'dropped') return
-    if (!Number.isSafeInteger(count) || (count as number) <= 0 || !this.running.has(key(id, incarnation))) return
-    this.options.sample({ kind, caller, count: count as number })
   }
 
   private gone(reason: string): void {

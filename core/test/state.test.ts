@@ -39,7 +39,6 @@ const noSwitches = {
   removed: [],
   execAnyCommand: [],
   limits: { all: {}, plugins: {} },
-  recordNothing: false,
 }
 // Most switches away from the defaults, so a field the code drops or mixes up shows
 const switchesIn = {
@@ -51,7 +50,6 @@ const switchesIn = {
   removed: ['git'],
   execAnyCommand: ['search'],
   limits: { all: { callsInFlight: 128 }, plugins: { search: { messagesPerSecond: 2000, readyMs: 20000 } } },
-  recordNothing: false,
 }
 // Absolute by the rules of the platform the tests run on
 const notes = onWindows ? 'C:\\Users\\han\\notes' : '/home/han/notes'
@@ -527,7 +525,7 @@ describe('writing', () => {
       ['limits for a namespace no plugin holds', limits({ plugins: { events: { readyMs: 1 } } })],
       ['limits for constructor', limits({ plugins: { constructor: { readyMs: 1 } } })],
       ['limits for more plugins than a map holds', limits({ plugins: Object.fromEntries(tooMany.map(id => [id, {}])) })],
-      ['__proto__ at the top of the switches', () => store.writeSwitches(Object.assign(proto('{"__proto__":{"recordNothing":true}}'), switchesIn))],
+      ['__proto__ at the top of the switches', () => store.writeSwitches(Object.assign(proto('{"__proto__":{"confirmOff":true}}'), switchesIn))],
       ['__proto__ inside the limits', switches({ limits: proto('{"all":{},"plugins":{},"__proto__":{}}') })],
       ['__proto__ in the limits for all plugins', limits({ all: proto('{"__proto__":{"readyMs":1}}') })],
       ['__proto__ as a plugin in the limits', limits({ plugins: proto('{"__proto__":{"readyMs":1}}') })],
@@ -660,7 +658,7 @@ const kinds: Kind[] = [
     file: switchesPath,
     valid: { format: 2, ...switchesIn },
     seed: () => store.writeSwitches(switchesIn),
-    edit: text => text.replace('"recordNothing": false', '"recordNothing": true'),
+    edit: text => text.replace('"confirmOff": true', '"confirmOff": false'),
     result: loaded => result(loaded, 'switches'),
     absent: 'absent',
     seeded: loaded => expect(loaded.state.switches).toEqual(switchesIn),
@@ -672,7 +670,7 @@ const kinds: Kind[] = [
       ['the guard list of format 1', switchesText({ guardsOff: [] })],
       ['dev mode as the boolean of format 1', switchesText({ devMode: true })],
       ['confirmOff that is not a boolean', switchesText({ confirmOff: 1 })],
-      ['recordNothing that is not a boolean', switchesText({ recordNothing: 'no' })],
+      ['the retired recordNothing that is not a boolean', switchesText({ recordNothing: 'no' })],
       ['skipVerification that is not a boolean', switchesText({ skipVerification: 1 })],
       ['off as a string', switchesText({ off: 'gate' })],
       ['a first-party id in off', switchesText({ off: ['search'] })],
@@ -765,7 +763,7 @@ describe.each(kinds)('the $name file', kind => {
     ['a BOM', `\ufeff${validText}`],
     ['a duplicate top level key', validText.replace('{"format":2', '{"format":3,"format":2')],
     ['a duplicate key hidden by an escape', validText.replace('{"format":2', '{"format":3,"\\u0066ormat":2')],
-    ['__proto__ at the top', validText.replace('{"format":2', '{"__proto__":{"recordNothing":true},"format":2')],
+    ['__proto__ at the top', validText.replace('{"format":2', '{"__proto__":{"confirmOff":true},"format":2')],
     ['nesting too deep to parse', `${'['.repeat(200000)}${']'.repeat(200000)}`],
     ['format 1, which no reader takes', validText.replace('{"format":2', '{"format":1')],
     ['format 0', validText.replace('{"format":2', '{"format":0')],
@@ -965,13 +963,43 @@ describe('newer formats', () => {
   })
 })
 
+// recordNothing, from before recording was a core module, reads once as recording switched off and is never written again
+describe('the retired recordNothing', () => {
+  it('reads true as recording in off and false as nothing, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate'], recordNothing: true }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.switches).toEqual({ ...noSwitches, off: ['gate', 'recording'] })
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('recordNothing')
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['recording'], recordNothing: true }))
+    expect((await store.load()).state.switches.off).toEqual(['recording'])
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, recordNothing: false }))
+    expect((await store.load()).state.switches).toEqual(noSwitches)
+  })
+})
+
+// The watchdog, a core plugin before it was dropped, may still be switched off in a file: read with the id dropped
+describe('the dropped watchdog', () => {
+  it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate', 'watchdog', 'leases'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('watchdog')
+  })
+})
+
 // The limits the design accepts: detect only against a program that knows hetu, threats 24, 25 and 55
 describe('what the hash does not catch', () => {
   it('accepts an edit whose hash was rewritten too', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, recordNothing: true }))
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, confirmOff: true }))
     const loaded = await store.load()
-    expect(loaded.state.switches.recordNothing).toBe(true)
+    expect(loaded.state.switches.confirmOff).toBe(true)
     expect(loaded.suspect).toBe(false)
   })
 

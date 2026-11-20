@@ -1,9 +1,9 @@
 import path from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SecurityList } from '../api/actions.ts'
+import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Failure } from '../backend/plugins-manager/plugins-manager.ts'
+import type { Failure } from '../backend/runtime/header.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, reasonOf, stateOf, until,
   workerManifest, type Files,
@@ -49,7 +49,7 @@ describe('a core module\'s start', () => {
   it('records each module started once the core starts, one switched off off and nothing for one that never ran', async () => {
     const made = await harness({ switches: { off: ['history'] } })
     await made.pluginsManager.start()
-    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec'].map(module => ({ module, state: 'started', reason: null })))
+    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'].map(module => ({ module, state: 'started', reason: null })))
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'exec' })
     expect(changes(made).at(-1)).toEqual({ module: 'exec', state: 'stopped', reason: 'off' })
   })
@@ -119,6 +119,44 @@ describe('the grants snapshot', () => {
   })
 })
 
+describe('flood control as a core module', () => {
+  it('is a row of its own with its switch, a security control switched off only with its id typed', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    expect((await rows(made)).find(row => row.id === 'flood-control')).toMatchObject({
+      from: 'core', place: 'core', state: 'ready', security: true, on: true,
+    })
+    expect(made.modules.floodControl()).not.toBe(null)
+    const held = await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'flood-control' }, trusted) as { held: string }
+    const listed = (await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList
+    expect(listed.requests.find(request => request.id === held.held)?.type).toBe('flood-control')
+  })
+
+  it('reads off once switched off, so the carrier asks nothing, handing every running plugin its limits again each way', async () => {
+    const limited: string[] = []
+    const made = await harness({ ...needing('alpha', 'luoshu'), pluginsManager: { limited: plugin => void limited.push(plugin) } })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'flood-control' })
+    expect(made.modules.state('flood-control')).toBe('off')
+    expect(made.modules.floodControl()).toBe(null)
+    expect(limited).toEqual(['alpha'])
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'flood-control' })
+    expect(made.modules.floodControl()).not.toBe(null)
+    expect(limited).toEqual(['alpha', 'alpha'])
+  })
+})
+
+describe('the banner', () => {
+  // A policy job switched off shows as its state already, so the list names the other modules
+  it('names each core module the human switched off but the policy jobs', async () => {
+    const made = await harness({ switches: { off: ['gate', 'flood-control', 'heartbeat', 'recording', 'security-view', 'exec'] } })
+    await made.pluginsManager.start()
+    const status = await made.pluginsManager.serve(call(trusted, 'core.status')) as CoreStatus
+    expect(status.modulesOff).toEqual(['exec', 'flood-control', 'heartbeat', 'recording', 'security-view'])
+    expect(status.policyJobs.gate).toBe('off')
+  })
+})
+
 describe('the core modules in the stopped mode', () => {
   it('never start when the install list fails its check, so nothing judges or serves', async () => {
     const luoshu = fakeLuoshu()
@@ -152,7 +190,7 @@ describe('the core modules in the stopped mode', () => {
     const started = changes(made).length
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
-    expect(changes(made).slice(started)).toEqual(['exec', 'history', 'luoshu', 'storage', 'grant-risk-classifier', 'gate'].map(module => ({
+    expect(changes(made).slice(started)).toEqual(['heartbeat', 'exec', 'history', 'luoshu', 'storage', 'grant-risk-classifier', 'gate'].map(module => ({
       module, state: 'stopped', reason: 'stopped-mode',
     })))
     const timeline = made.link.timeline

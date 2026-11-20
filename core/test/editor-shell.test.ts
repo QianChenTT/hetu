@@ -5,12 +5,12 @@ import { settle } from './editor-fakes.ts'
 import { bannerLines, noticeText, Shell, type Notice } from '../frontend/editor/shell.ts'
 
 const calm: CoreStatus = {
-  policyJobs: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'on' },
+  policyJobs: { gate: 'on', 'grant-risk-classifier': 'on' },
   crashed: [],
   devMode: [],
   allowUnsigned: 0,
   skipVerification: false,
-  recordNothing: false,
+  modulesOff: [],
   logWrites: true,
   luoshuPicked: true,
   page: [],
@@ -26,12 +26,12 @@ describe('the banner', () => {
 
   it('names each policy job not on, the plugins down, each switch that weakens a check and a luoshu not picked', () => {
     expect(bannerLines({
-      policyJobs: { gate: 'off', 'grant-risk-classifier': 'on', watchdog: 'absent' },
+      policyJobs: { gate: 'off', 'grant-risk-classifier': 'absent' },
       crashed: ['git', 'search'],
       devMode: ['notes'],
       allowUnsigned: 2,
       skipVerification: true,
-      recordNothing: true,
+      modulesOff: ['flood-control', 'heartbeat', 'recording', 'security-view'],
       logWrites: false,
       luoshuPicked: false,
       page: [],
@@ -40,8 +40,9 @@ describe('the banner', () => {
       suspect: ['switches', 'plugins'],
     })).toEqual([
       'state files that failed their check at start: switches, plugins',
-      'gate: off', 'watchdog: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
-      'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',
+      'gate: off', 'grant-risk-classifier: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
+      'verification skipped', 'flood-control off', 'heartbeat off', 'recording off', 'security-view off', "the log can't write",
+      'pick a luoshu folder',
     ])
   })
 })

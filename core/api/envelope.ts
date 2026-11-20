@@ -57,7 +57,7 @@ export const request = z.strictObject({ ...requestFields, args: plainData(defaul
 export type Request = z.infer<typeof request>
 
 // The same envelope with args left unread. The carrier measures args against the caller's own cap, which the human may
-// raise and the watchdog may lower
+// set
 export const callEnvelope = z.strictObject({ ...requestFields, args: z.unknown() })
 
 // A caller giving up on a call of its own, named by the id it sent

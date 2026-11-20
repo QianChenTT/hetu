@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
-import { countMessage, newRate } from '../api/rate.ts'
 import { Limits } from '../backend/carrier/limits.ts'
+import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { HumanLimits, Port } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, harness, host, hostHalf, tick, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, harness, tick, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -37,17 +37,6 @@ describe('limits', () => {
     const limits = new Limits(() => { throw new Error('no state') })
     expect(limits.of('search', 'resultBytes')).toBe(defaultLimits.resultBytes)
   })
-
-  it('lets the watchdog lower a plugin\'s value, take a lowering back and never raise past the human\'s or the fixed value', () => {
-    const limits = human({ plugins: { search: { callsInFlight: 100 } } })
-    limits.lower('search', 'callsInFlight', 10)
-    expect(limits.of('search', 'callsInFlight')).toBe(10)
-    limits.lower('search', 'callsInFlight', 5000)
-    expect(limits.of('search', 'callsInFlight')).toBe(100)
-    limits.lower('git', 'callsInFlight', 5000)
-    expect(limits.of('git', 'callsInFlight')).toBe(64)
-    expect(limits.of(null, 'callsInFlight')).toBe(64)
-  })
 })
 
 // A window that lowered a value for all locked the trusted window out of every request. The values for all
@@ -73,64 +62,6 @@ describe('the limits a window runs on', () => {
 
   it('still give a plugin the lowered value for all', () => {
     expect(human({ argumentBytes: 8 }).of('search', 'argumentBytes')).toBe(8)
-  })
-})
-
-describe('the message count', () => {
-  const at = (perSecond: number, floodMs = 5000, floodFactor = 10) =>
-    (name: string) => ({ messagesPerSecond: perSecond, floodMs, floodFactor } as Record<string, number>)[name]
-
-  it('passes the rate, drops one over it and starts again each second', () => {
-    const rate = newRate()
-    const limit = at(3)
-    expect([0, 1, 2, 3].map(() => countMessage(rate, 1000, limit))).toEqual(['pass', 'pass', 'pass', 'drop'])
-    expect(countMessage(rate, 1999, limit)).toBe('drop')
-    expect(countMessage(rate, 2000, limit)).toBe('pass')
-  })
-
-  it('calls more than the flood factor times the rate across the flood window a flood', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 10)
-    const verdicts = Array.from({ length: 21 }, () => countMessage(rate, 5000, limit))
-    expect(verdicts.slice(0, 20).includes('flood')).toBe(false)
-    expect(verdicts[20]).toBe('flood')
-  })
-
-  it('starts both windows again when the clock goes back', () => {
-    const rate = newRate()
-    const limit = at(1)
-    expect(countMessage(rate, 5000, limit)).toBe('pass')
-    expect(countMessage(rate, 4000, limit)).toBe('pass')
-  })
-
-  // A flood cap of 2 in the cases below, so only the flood window decides
-  it('starts the flood window again when the clock goes back', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 1)
-    expect([5000, 5000, 4999].map(now => countMessage(rate, now, limit))).toEqual(['pass', 'pass', 'pass'])
-  })
-
-  it('ends the flood window after exactly floodMs', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 1)
-    expect([5000, 5000, 6000].map(now => countMessage(rate, now, limit))).toEqual(['pass', 'pass', 'pass'])
-  })
-
-  it('judges a flood window against the cap it started with, so a lowered rate drops at once and floods only from the next window', () => {
-    const rate = newRate()
-    const limits: Record<string, number> = { messagesPerSecond: 200, floodMs: 5000, floodFactor: 10 }
-    const limit = (name: string) => limits[name]
-    // 600 messages over 3 s, under every rate in force when each was sent
-    for (const now of [0, 1000, 2000]) {
-      for (let i = 0; i < 200; i++) expect(countMessage(rate, now, limit)).toBe('pass')
-    }
-    limits.messagesPerSecond = 10
-    expect(countMessage(rate, 2500, limit)).toBe('drop')
-    expect(countMessage(rate, 3000, limit)).toBe('pass')
-    // The next window takes the cap of 10 times 10 a second for 5 s
-    const verdicts = Array.from({ length: 501 }, () => countMessage(rate, 5000, limit))
-    expect(verdicts.slice(0, 500).includes('flood')).toBe(false)
-    expect(verdicts[500]).toBe('flood')
   })
 })
 
@@ -241,22 +172,21 @@ describe('the ceiling', () => {
 })
 
 describe('the rate', () => {
-  it('drops one over the rate with no reply and tells the watchdog at most once a second with the count', async () => {
+  it('drops one over the rate with no reply and starts again each second', async () => {
     let clock = 1_000_000
-    const { connect, pluginsManager, samples } = harness({ clock: () => clock })
+    const { connect, pluginsManager } = harness({ clock: () => clock })
     pluginsManager.human.plugins.search = { messagesPerSecond: 5 }
     const search = connect(worker('search'))
     const ids = Array.from({ length: 8 }, () => search.call('core.self'))
     await search.reply(ids[4])
     await tick(20)
     expect(ids.map(id => search.repliesTo(id).length)).toEqual([1, 1, 1, 1, 1, 0, 0, 0])
-    expect(samples).toEqual([{ kind: 'dropped', caller: worker('search'), count: 1 }])
     clock += 1000
     const more = Array.from({ length: 6 }, () => search.call('core.self'))
     await search.reply(more[4])
     await tick(20)
     expect(search.repliesTo(more[5])).toEqual([])
-    expect(samples.at(-1)).toEqual({ kind: 'dropped', caller: worker('search'), count: 3 })
+    expect(more.slice(0, 5).map(id => search.repliesTo(id).length)).toEqual([1, 1, 1, 1, 1])
   })
 
   it('counts a message that could not be read against the rate', async () => {
@@ -278,19 +208,6 @@ describe('the rate', () => {
     expect(sent).toEqual([])
   })
 
-  it('records a watchdog that throws on a sample', async () => {
-    const clock = 1_000_000
-    const { carrier, connect, pluginsManager, log } = harness({ clock: () => clock, watchdog: () => ({ sample: () => { throw new Error('broken') } }) })
-    pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
-    const search = connect(worker('search'))
-    await search.ask('core.self')
-    search.call('core.self')
-    await tick(20)
-    carrier.close()
-    await tick()
-    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'watchdog', step: 'sample', count: 1 }])
-  })
-
   it('counts every message, not only calls', async () => {
     const clock = 1_000_000
     const { connect, pluginsManager } = harness({ clock: () => clock })
@@ -304,25 +221,6 @@ describe('the rate', () => {
     expect(search.repliesTo(id)).toEqual([])
   })
 
-  it('tells no watchdog while the policy job is not on and keeps the count for later', async () => {
-    let clock = 1_000_000
-    const { connect, pluginsManager, samples } = harness({ clock: () => clock })
-    pluginsManager.policyJobs.watchdog = 'off'
-    pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
-    const search = connect(worker('search'))
-    search.call('core.self')
-    search.call('core.self')
-    search.call('core.self')
-    await tick(20)
-    expect(samples).toEqual([])
-    pluginsManager.policyJobs.watchdog = 'on'
-    clock += 1000
-    search.call('core.self')
-    search.call('core.self')
-    await tick(20)
-    expect(samples).toEqual([{ kind: 'dropped', caller: worker('search'), count: 3 }])
-  })
-
   // Past the fixed flood cap too, since a window's way is never closed and a value for all can't lower its rate
   it('drops a window\'s messages over the rate but never closes its way in', async () => {
     const clock = 1_000_000
@@ -334,6 +232,17 @@ describe('the rate', () => {
     await tick(50)
     expect(way.replies).toHaveLength(defaultLimits.messagesPerSecond)
     expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
+    expect(pluginsManager.crashes).toEqual([])
+  })
+
+  it('keeps a window\'s way in open past the fixed flood cap and answers it once the windows start again', async () => {
+    let clock = 1_000_000
+    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    const way = windowWay(carrier, { 'editor-1': editor })
+    const cap = defaultLimits.messagesPerSecond * defaultLimits.floodFactor * defaultLimits.floodMs / 1000
+    for (let i = 0; i <= cap + 10; i++) way.post('editor-1', { v: 1, kind: 'pong' })
+    clock += defaultLimits.floodMs + 1000
+    expect((await way.ask('editor-1', 'core.self')).ok).toBe(true)
     expect(pluginsManager.crashes).toEqual([])
   })
 })
@@ -370,9 +279,9 @@ describe('the flood cap', () => {
   })
 
   // A lowering is a throttle. Messages sent under the rate in force when each was sent never make a flood
-  it('closes no port for what it sent before the watchdog lowered its rate', async () => {
+  it('closes no port for what it sent before the human lowered its rate', async () => {
     let clock = 1_000_000
-    const { carrier, connect, pluginsManager } = harness({ clock: () => clock })
+    const { connect, pluginsManager } = harness({ clock: () => clock })
     pluginsManager.human.plugins.search = { messagesPerSecond: 200 }
     pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
@@ -381,8 +290,7 @@ describe('the flood cap', () => {
       for (let i = 0; i < 200; i++) search.post({ v: 1, kind: 'pong' })
       for (let i = 0; i < 200 && pluginsManager.lifecycle.length < (second + 1) * 200; i++) await tick(5)
     }
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 })).ok).toBe(true)
+    pluginsManager.human.plugins.search = { messagesPerSecond: 10 }
     clock = 1_002_500
     search.post({ v: 1, kind: 'pong' })
     await tick(20)
@@ -391,63 +299,116 @@ describe('the flood cap', () => {
   })
 })
 
-describe('watchdog.limit', () => {
-  it('lowers a sandboxed plugin\'s constant and never raises one', async () => {
-    const { carrier, connect, pluginsManager } = harness()
+// The carrier asks flood control and acts on its answer: drops a message, closes a way or throttles a call. Flood
+// control off answers yes to everything, for plugins and windows alike
+describe('flood control in the path', () => {
+  it('drops nothing, closes nothing and throttles nothing while flood control is off', async () => {
+    const clock = 1_000_000
+    const { carrier, connect, pluginsManager } = harness({ clock: () => clock, floodControl: () => null })
     pluginsManager.policyJobs.gate = 'off'
-    pluginsManager.sandboxed('search')
     pluginsManager.sandboxed('git', { log: {} })
-    const watchdog = hostHalf(carrier, host('watchdog'))
+    pluginsManager.human.all = { messagesPerSecond: 1, floodMs: 1000, floodFactor: 1, callsInFlight: 1 }
     const search = connect(worker('search'))
     connect(worker('git'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'callsInFlight', value: 1 })).ok).toBe(true)
+    const ids = Array.from({ length: 5 }, () => search.call('core.self'))
+    await search.reply(ids[4])
+    expect(ids.map(id => search.repliesTo(id).length)).toEqual([1, 1, 1, 1, 1])
+    search.call('git.log')
     search.call('git.log')
     await tick(10)
-    expect(code(await search.ask('git.log'))).toBe('throttled')
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'callsInFlight', value: 100000 })).ok).toBe(true)
-    const many = Array.from({ length: 63 }, () => search.call('git.log'))
-    await tick(20)
-    expect(many.filter(id => search.repliesTo(id).length > 0)).toHaveLength(0)
-    expect(code(await search.ask('git.log'))).toBe('throttled')
+    expect((await search.ask('core.self')).ok).toBe(true)
+    const way = windowWay(carrier, { 'editor-1': editor })
+    const sent = defaultLimits.messagesPerSecond + 10
+    for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
+    await tick(50)
+    expect(way.replies).toHaveLength(sent)
+    expect(pluginsManager.crashes).toEqual([])
   })
 
-  it.each([
-    ['a constant outside the list', { plugin: 'search', constant: 'gateBypass', value: 1 }],
-    ['a value that is not a positive whole number', { plugin: 'search', constant: 'callsInFlight', value: 0 }],
-  ])('refuses %s', async (_name, args) => {
-    const { carrier, pluginsManager } = harness()
-    pluginsManager.sandboxed('search')
-    expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.limit', args))).toBe('invalid')
+  it('drops the one message whose count throws and records the fault, the next counted again', async () => {
+    let broken = true
+    const { connect, log, carrier } = harness({
+      floodControl: () => ({
+        admit: () => { if (broken) throw new Error('broken'); return 'pass' },
+        acquire: () => ({ principals: [], bytes: 0 }),
+        release: () => {},
+      }),
+    })
+    const search = connect(worker('search'))
+    const first = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(first)).toEqual([])
+    broken = false
+    expect((await search.ask('core.self')).ok).toBe(true)
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'admit', count: 1 }])
+  })
+
+  it('drops a message counted with an answer outside the list', async () => {
+    const { connect } = harness({
+      floodControl: () => ({ admit: () => 'maybe' as never, acquire: () => ({ principals: [], bytes: 0 }), release: () => {} }),
+    })
+    const search = connect(worker('search'))
+    const id = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(id)).toEqual([])
+  })
+
+  it('answers failed for a call whose acquire throws and records the fault, asking no gate', async () => {
+    const { connect, log, carrier, gate } = harness({
+      floodControl: () => ({ admit: () => 'pass', acquire: () => { throw new Error('broken') }, release: () => {} }),
+    })
+    const search = connect(worker('search'))
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('failed')
+    expect(gate.asked).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'acquire', count: 1 }])
+  })
+
+  it('answers a call whose release throws and records the fault', async () => {
+    const { connect, log, carrier } = harness({
+      floodControl: () => ({ admit: () => 'pass', acquire: () => ({ principals: [], bytes: 0 }), release: () => { throw new Error('broken') } }),
+    })
+    const search = connect(worker('search'))
+    expect((await search.ask('core.self')).ok).toBe(true)
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'release', count: 1 }])
+  })
+
+  it('gives a call\'s release to the flood control that acquired it, though it was switched off meanwhile', async () => {
+    const real = createFloodControl({ limit: (_plugin, name) => (name === 'callsInFlight' ? 1 : defaultLimits[name]), clock: () => 0 })
+    let on = true
+    const { connect, pluginsManager } = harness({ floodControl: () => (on ? real : null) })
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    const search = connect(worker('search'))
+    const git = connect(worker('git'))
+    const first = search.call('git.log')
+    const got = await git.delivered('git.log')
+    on = false
+    git.answer(got.callId, null)
+    await search.reply(first)
+    on = true
+    const second = search.call('git.log')
+    await git.delivered('git.log')
+    expect(search.repliesTo(second)).toEqual([])
   })
 })
 
-describe('samples from the runtime', () => {
-  it('hands the watchdog a worker\'s errors, its drops in the page and its cutoff, while the watchdog policy job is on', () => {
-    const { carrier, pluginsManager, samples } = harness()
-    carrier.sample({ kind: 'errors', caller: worker('search'), count: 2 })
-    carrier.sample({ kind: 'dropped', caller: worker('search'), count: 5 })
-    carrier.sample({ kind: 'cutoff', caller: worker('search'), reason: 'flood' })
-    expect(samples).toEqual([
-      { kind: 'errors', caller: worker('search'), count: 2 },
-      { kind: 'dropped', caller: worker('search'), count: 5 },
-      { kind: 'cutoff', caller: worker('search'), reason: 'flood' },
-    ])
-    pluginsManager.policyJobs.watchdog = 'off'
-    carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })
-    expect(samples).toHaveLength(3)
-  })
-
-  it('goes on past a watchdog that throws on a sample', () => {
-    const { carrier } = harness({ watchdog: () => ({ sample: () => { throw new Error('broken') } }) })
-    expect(() => carrier.sample({ kind: 'errors', caller: worker('search'), count: 1 })).not.toThrow()
-  })
-
-  it('tells the runtime whose limits watchdog.limit lowered, so the relay in the page applies them too', async () => {
-    const limited: string[] = []
-    const { carrier, pluginsManager } = harness({ limited: plugin => { limited.push(plugin) } })
-    pluginsManager.sandboxed('search')
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'messagesPerSecond', value: 10 })).ok).toBe(true)
-    expect(limited).toEqual(['search'])
+// The room a call took goes back however the call ends, one that threw while it was built included
+describe('a call that throws while it is built', () => {
+  it('gives back the room flood control charged it, so the caller is not throttled after', async () => {
+    const flood = createFloodControl({ limit: (_plugin, name) => (name === 'callsInFlight' ? 1 : defaultLimits[name]), clock: () => 0 })
+    let reads = 0
+    // The call reads the clock when it starts and again while it is built, which throws for the first call alone
+    const { connect } = harness({ floodControl: () => flood, now: () => { reads++; if (reads === 2) throw new Error('broken'); return Date.now() } })
+    const search = connect(worker('search'))
+    const first = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(first)).toEqual([])
+    expect((await search.ask('core.self')).ok).toBe(true)
   })
 })

@@ -33,7 +33,7 @@ function judging(paths: (prepared: Prepared) => readonly string[]) {
 }
 
 const written = async (parts: ReturnType<typeof harness>) => {
-  await parts.carrier.flush()
+  await parts.recording.flush()
   return parts.log.events('audit.call').map(record => record.fields)
 }
 

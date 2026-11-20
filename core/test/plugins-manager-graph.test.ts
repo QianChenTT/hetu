@@ -42,7 +42,7 @@ describe('the requires graph', () => {
     ['outside the API range', [node('luoshu', [], { kind: 'refused', reason: 'api' })], 'api'],
     ['crashed', [node('luoshu', [], { kind: 'held', state: 'crashed', reason: 'closed' })], 'crashed'],
     ['failed', [node('luoshu', [], { kind: 'held', state: 'failed', reason: 'start-timeout' })], 'failed'],
-    ['stopped', [node('luoshu', [], { kind: 'held', state: 'stopped', reason: 'watchdog' })], 'stopped'],
+    ['stopped', [node('luoshu', [], { kind: 'held', state: 'stopped', reason: 'human' })], 'stopped'],
   ])('leaves a dependent waiting with dependency:<id>:<why> when its requirement is %s', (_name, others, why) => {
     expect(verdict([...others, node('search', ['luoshu'])], 'search')).toEqual({ kind: 'waiting', reason: `dependency:luoshu:${why}` })
   })

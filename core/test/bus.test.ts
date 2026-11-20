@@ -1,3 +1,4 @@
+import type { Recording } from '../backend/recording/header.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
@@ -907,17 +908,15 @@ describe('subscribing', () => {
     expect(code(await panel.ask('events.subscribe', { topics: ['git.b'] }))).toBe('invalid')
   })
 
-  it('takes the human\'s raised topic cap and the watchdog\'s lowered one', async () => {
-    const { carrier, pluginsManager, gate, git } = setup()
-    pluginsManager.installed('watchdog')
+  it('takes the human\'s raised topic cap and a lowered one', async () => {
+    const { pluginsManager, gate, git } = setup()
     const topics = Array.from({ length: 64 }, (_, i) => `t${i}.indexed`)
     gate.grants.git = [{ type: 'events.subscribe', topics: [...topics, 'u1.indexed', 'u2.indexed'] }]
     expect((await git.ask('events.subscribe', { topics })).ok).toBe(true)
     expect(code(await git.ask('events.subscribe', { topics: ['u1.indexed'] }))).toBe('invalid')
     pluginsManager.human.all = { topicsPerHalf: 65 }
     expect((await git.ask('events.subscribe', { topics: ['u1.indexed'] })).ok).toBe(true)
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'git', constant: 'topicsPerHalf', value: 1 })).ok).toBe(true)
+    pluginsManager.human.plugins.git = { topicsPerHalf: 1 }
     expect(code(await git.ask('events.subscribe', { topics: ['u2.indexed'] }))).toBe('invalid')
   })
 
@@ -1555,8 +1554,8 @@ describe('failing subscribers', () => {
 })
 
 // What the core's writer put in the log as audit.call lines once the queue is flushed. idOf reads a line's caller id
-async function written(carrier: Carrier, log: FakeLog) {
-  await carrier.flush()
+async function written(recording: Recording, log: FakeLog) {
+  await recording.flush()
   return log.events('audit.call').map(record => record.fields)
 }
 const idOf = (fields: Record<string, unknown>) => String(fields.caller).split('/')[0]
@@ -1564,10 +1563,10 @@ const idOf = (fields: Record<string, unknown>) => String(fields.caller).split('/
 describe('records', () => {
   it('keeps a subscribe one audit record with its topics as scope and the gate\'s state', async () => {
     const clock = 1_000_000
-    const { carrier, log, search } = setup({ now: () => clock })
+    const { recording, carrier, log, search } = setup({ now: () => clock })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    const records = await written(carrier, log)
+    const records = await written(recording, log)
     expect(records.map(record => [record.action, record.topics, record.code, record.gate, record.count])).toEqual([
       ['events.subscribe', '["luoshu.changed"]', null, 'on', 1],
       ['events.subscribe', '["luoshu.changed"]', null, 'on', 1],
@@ -1578,9 +1577,9 @@ describe('records', () => {
   // decides about it is recorded with the topics
   it('records what stands apart from the call, then what asking again started, held back or ended, with the topics', async () => {
     const clock = 1_000_000
-    const { carrier, pluginsManager, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
+    const { recording, carrier, pluginsManager, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    const before = (await written(carrier, log)).length
+    const before = (await written(recording, log)).length
     pluginsManager.policyJobs.gate = 'failed'
     carrier.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
@@ -1590,7 +1589,7 @@ describe('records', () => {
     await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })
     // Its own topic goes live with no power and the luoshu's stands
     await panel.ask('events.subscribe', { topics: ['search.indexed', 'luoshu.changed'] })
-    const records = (await written(carrier, log)).slice(before)
+    const records = (await written(recording, log)).slice(before)
     expect(records.map(record => [idOf(record), record.topics, record.code, record.gate, record.count])).toEqual([
       ['scribe', undefined, null, 'failed', 1],
       ['ghost', undefined, null, 'failed', 2],
@@ -1658,10 +1657,10 @@ describe('records', () => {
 
   it('coalesces publishes, free subscribes and unsubscribes per caller per second and records no delivery or ack', async () => {
     const clock = 1_000_000
-    const { carrier, connect, git, indexed, log } = setup({ now: () => clock })
+    const { recording, carrier, connect, git, indexed, log } = setup({ now: () => clock })
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
-    const before = (await written(carrier, log)).length
+    const before = (await written(recording, log)).length
     for (let i = 0; i < 3; i++) await indexed()
     await panel.ask('events.subscribe', { topics: ['search.indexed'] })
     await panel.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -1669,7 +1668,7 @@ describe('records', () => {
     await until(() => git.events().length === 3)
     git.ack(3)
     await settle()
-    const records = (await written(carrier, log)).slice(before)
+    const records = (await written(recording, log)).slice(before)
     expect(records.map(record => [record.action, idOf(record), record.count])).toEqual([
       ['events.publish', 'search', 3], ['events.subscribe', 'search', 2], ['events.unsubscribe', 'git', 1],
     ])
@@ -1695,14 +1694,14 @@ describe('records', () => {
   })
 
   it('writes one events.ended record per subscriber with the count each change ended', async () => {
-    const { carrier, pluginsManager, gate, log, search, way } = setup()
+    const { recording, carrier, pluginsManager, gate, log, search, way } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
     gate.grants.search = []
     gate.decision = access => access.caller.kind === 'window' ? { allow: false, code: 'not-granted', view: 2 } : gate.granted(access)
     pluginsManager.current = 2
     carrier.changed()
-    await carrier.flush()
+    await recording.flush()
     expect(log.events('events.ended').map(record => record.fields)).toEqual([
       { plugin: 'search', half: 'worker', topics: 'luoshu.changed luoshu.outside', count: 2 },
       { window: 'editor', topics: 'luoshu.changed', count: 1 },
@@ -1710,7 +1709,7 @@ describe('records', () => {
   })
 
   it('records nothing of the bus while the human turned recording off, and no count from the gap lands later', async () => {
-    const { carrier, pluginsManager, gate, log, git, search, indexed } = setup()
+    const { recording, carrier, pluginsManager, gate, log, git, search, indexed } = setup()
     pluginsManager.nothing = true
     pluginsManager.human.plugins.git = { eventCredits: 1 }
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -1722,7 +1721,7 @@ describe('records', () => {
     await until(() => signals(search.events(), 'events.ended').length === 1)
     pluginsManager.nothing = false
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     expect(log.records).toEqual([])
   })
 })

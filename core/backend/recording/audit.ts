@@ -1,16 +1,7 @@
-import { createHash } from 'node:crypto'
 import type { Caller } from '../../api/envelope.ts'
-import type { AuditRecord, LogSegment, LogVerification } from '../../api/policy-jobs.ts'
+import type { AuditRecord } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-
-// The EventLog's part the writer writes through and log.segments and log.verify read. healthy still true after a failed
-// append means the log refused that batch, not that the log is down
-export type AuditLog = {
-  appendMany(batch: readonly { event: string, fields: Record<string, Field> }[], options?: { id?: string }): Promise<void>
-  history(): Promise<LogSegment[]>
-  verify(): Promise<LogVerification>
-  readonly healthy?: boolean
-}
+import type { AuditLog } from './header.ts'
 
 // The audit queue's pair the writer takes records through and lets go of them
 export type AuditSource = { next(max: number): AuditRecord[], ack(seq: number): void }
@@ -61,8 +52,8 @@ function commandListed(command: readonly string[]): string {
 // An audit record as the log's fields, every value within what the log takes. record is the queue's seq, which tells a
 // record written twice from two calls and shows the order within a run. at is the time the call started, which the
 // line's own at is not. The caller and root as text, the scope as JSON lists with how many there were. Never arguments
-// or results, which the record doesn't hold
-export function auditFields(record: AuditRecord): Record<string, Field> {
+// or results, which the record doesn't hold. hash is SHA-256 as hex
+export function auditFields(record: AuditRecord, hash: (text: string) => string): Record<string, Field> {
   const fields: Record<string, Field> = { record: record.seq, caller: callerText(record.caller) }
   if (record.onBehalf !== undefined) fields.onBehalf = cut(record.onBehalf)
   fields.root = callerText(record.root)
@@ -78,7 +69,7 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
   if (scope?.command !== undefined) {
     fields.command = commandListed(scope.command)
     fields.commandArgs = scope.command.length
-    fields.commandHash = createHash('sha256').update(JSON.stringify(scope.command)).digest('hex')
+    fields.commandHash = hash(JSON.stringify(scope.command))
   }
   if (scope?.target !== undefined) fields.target = cut(scope.target)
   if (scope?.topics !== undefined) {
@@ -97,6 +88,8 @@ export function auditFields(record: AuditRecord): Record<string, Field> {
 export type Written = 'written' | 'empty' | 'failed' | 'dropped'
 
 export type AuditWriterOptions = {
+  // SHA-256 as hex, for an exec command's commandHash
+  hash: (text: string) => string
   // Records a batch takes at most
   max?: number
   // How often a started writer writes
@@ -117,16 +110,18 @@ export class AuditWriter {
   private readonly max: number
   private readonly everyMs: number
   private readonly refused: (count: number) => void
+  private readonly hash: (text: string) => string
   private held: AuditRecord[] | null = null
   private running: Promise<Written> | null = null
   private timer: ReturnType<typeof setInterval> | null = null
 
-  constructor(source: AuditSource, log: AuditLog, options: AuditWriterOptions = {}) {
+  constructor(source: AuditSource, log: AuditLog, options: AuditWriterOptions) {
     this.source = source
     this.log = log
     this.max = options.max ?? 256
     this.everyMs = options.everyMs ?? 100
     this.refused = options.refused ?? (() => {})
+    this.hash = options.hash
   }
 
   start(): void {
@@ -162,7 +157,7 @@ export class AuditWriter {
   private async append(batch: AuditRecord[]): Promise<Written> {
     const last = batch[batch.length - 1].seq
     try {
-      await this.log.appendMany(batch.map(record => ({ event: 'audit.call', fields: auditFields(record) })), { id: `audit:${batch[0].seq}-${last}` })
+      await this.log.appendMany(batch.map(record => ({ event: 'audit.call', fields: auditFields(record, this.hash) })), { id: `audit:${batch[0].seq}-${last}` })
     } catch {
       if (this.log.healthy !== true) {
         this.held = batch

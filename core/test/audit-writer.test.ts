@@ -4,8 +4,10 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
 import type { AuditRecord } from '../api/policy-jobs.ts'
-import { AuditWriter, auditFields, type AuditLog } from '../backend/carrier/audit.ts'
-import { AuditQueue } from '../backend/carrier/records.ts'
+import { AuditWriter, auditFields } from '../backend/recording/audit.ts'
+import type { AuditLog } from '../backend/recording/header.ts'
+import { AuditQueue } from '../backend/recording/records.ts'
+import { sha256 } from './carrier-fakes.ts'
 import { EventLog } from '../lib/event-log.ts'
 
 const alpha: Caller = { kind: 'plugin', id: 'alpha', half: 'worker', incarnation: 2 }
@@ -60,21 +62,21 @@ describe('a record as log fields', () => {
       seq: 9, at: AT, caller: editor, onBehalf: 'agent', root: alpha, action: 'luoshu.read', scope: { paths: ['a.md', 'b c.md'] },
       code: 'not-granted', ms: 12, gate: 'off', count: 3,
     }
-    expect(auditFields(record)).toEqual({
+    expect(auditFields(record, sha256)).toEqual({
       record: 9, caller: 'window/editor#3', onBehalf: 'agent', root: 'alpha/worker#2', action: 'luoshu.read', paths: '["a.md","b c.md"]',
       pathCount: 2, code: 'not-granted', ms: 12, gate: 'off', count: 3, calledAt: '2026-11-07T12:00:00.000Z',
     })
-    expect(auditFields({ ...record, scope: { target: 'search' }, onBehalf: undefined, code: null })).toMatchObject({ target: 'search', code: null })
-    expect(auditFields({ ...record, scope: { topics: ['luoshu.changed'] } })).toMatchObject({ topics: '["luoshu.changed"]', topicCount: 1 })
+    expect(auditFields({ ...record, scope: { target: 'search' }, onBehalf: undefined, code: null }, sha256)).toMatchObject({ target: 'search', code: null })
+    expect(auditFields({ ...record, scope: { topics: ['luoshu.changed'] } }, sha256)).toMatchObject({ topics: '["luoshu.changed"]', topicCount: 1 })
   })
 
   it('keeps each value within 4096 characters, listing the paths that fit with how many there were', () => {
     const paths = Array.from({ length: 40 }, (_, i) => `${'folder'.repeat(30)}/${i}.md`)
-    const fields = auditFields({ seq: 1, at: AT, caller: alpha, root: alpha, action: 'leases.acquire', scope: { paths }, code: null, ms: 1, gate: 'on', count: 1 })
+    const fields = auditFields({ seq: 1, at: AT, caller: alpha, root: alpha, action: 'leases.acquire', scope: { paths }, code: null, ms: 1, gate: 'on', count: 1 }, sha256)
     expect((fields.paths as string).length).toBeLessThanOrEqual(4096)
     expect(JSON.parse(fields.paths as string)).toEqual(paths.slice(0, (JSON.parse(fields.paths as string) as string[]).length))
     expect(fields.pathCount).toBe(40)
-    const long = auditFields({ seq: 1, at: AT, caller: alpha, onBehalf: 'x'.repeat(5000), root: alpha, action: 'a.b', code: null, ms: 1, gate: 'on', count: 1 })
+    const long = auditFields({ seq: 1, at: AT, caller: alpha, onBehalf: 'x'.repeat(5000), root: alpha, action: 'a.b', code: null, ms: 1, gate: 'on', count: 1 }, sha256)
     expect((long.onBehalf as string).length).toBe(4096)
   })
 })
@@ -92,7 +94,7 @@ describe('the core\'s audit writer', () => {
       history: () => log.history(),
       verify: () => log.verify(),
     }
-    const writer = new AuditWriter(queue, watched)
+    const writer = new AuditWriter(queue, watched, { hash: sha256 })
     expect(await writer.write()).toBe('written')
     expect((await lines()).map(line => [line.event, line.action, line.record])).toEqual([
       ['audit.call', 'luoshu.read', 1], ['audit.call', 'luoshu.write', 2],
@@ -107,7 +109,7 @@ describe('the core\'s audit writer', () => {
     for (const n of [1, 2, 3, 4, 5]) push(`a.n${n}`)
     const { front, sizes, state } = flaky(true)
     state.failing = false
-    const writer = new AuditWriter(queue, front, { max: 2 })
+    const writer = new AuditWriter(queue, front, { hash: sha256, max: 2 })
     await writer.flush()
     expect(sizes).toEqual([2, 2, 1])
     expect((await lines()).map(line => line.action)).toEqual(['a.n1', 'a.n2', 'a.n3', 'a.n4', 'a.n5'])
@@ -119,7 +121,7 @@ describe('the core\'s audit writer', () => {
     push('a.one')
     push('a.two')
     const { front, ids, sizes, state } = flaky(false)
-    const writer = new AuditWriter(queue, front)
+    const writer = new AuditWriter(queue, front, { hash: sha256 })
     expect(await writer.write()).toBe('failed')
     push('a.three')
     expect(await writer.write()).toBe('failed')
@@ -138,7 +140,7 @@ describe('the core\'s audit writer', () => {
     push('a.one')
     const { front, state } = flaky(undefined)
     const refused: number[] = []
-    const writer = new AuditWriter(queue, front, { refused: count => refused.push(count) })
+    const writer = new AuditWriter(queue, front, { hash: sha256, refused: count => refused.push(count) })
     expect(await writer.write()).toBe('failed')
     state.failing = false
     await writer.flush()
@@ -152,7 +154,7 @@ describe('the core\'s audit writer', () => {
     push('a.two')
     const { front, state } = flaky(true)
     const refused: number[] = []
-    const writer = new AuditWriter(queue, front, { max: 1, refused: count => refused.push(count) })
+    const writer = new AuditWriter(queue, front, { hash: sha256, max: 1, refused: count => refused.push(count) })
     expect(await writer.write()).toBe('dropped')
     expect(refused).toEqual([1])
     state.failing = false
@@ -164,7 +166,7 @@ describe('the core\'s audit writer', () => {
   it('keeps writing when the count of a refused batch throws', async () => {
     push('a.one')
     const { front } = flaky(true)
-    const writer = new AuditWriter(queue, front, { refused: () => { throw new Error('boom') } })
+    const writer = new AuditWriter(queue, front, { hash: sha256, refused: () => { throw new Error('boom') } })
     expect(await writer.write()).toBe('dropped')
     expect(queue.size).toBe(0)
   })
@@ -185,7 +187,7 @@ describe('the core\'s audit writer', () => {
       history: () => log.history(),
       verify: () => log.verify(),
     }
-    const writer = new AuditWriter(queue, slow)
+    const writer = new AuditWriter(queue, slow, { hash: sha256 })
     const first = writer.write()
     push('a.two')
     const second = writer.write()
@@ -201,7 +203,7 @@ describe('the core\'s audit writer', () => {
   it('flushes until the queue is empty and stops at a failure without throwing', async () => {
     for (const n of [1, 2, 3]) push(`a.n${n}`)
     const { front, sizes, state } = flaky(false)
-    const writer = new AuditWriter(queue, front, { max: 1 })
+    const writer = new AuditWriter(queue, front, { hash: sha256, max: 1 })
     await expect(writer.flush()).resolves.toBeUndefined()
     expect(sizes).toEqual([1])
     state.failing = false
@@ -219,7 +221,7 @@ describe('the core\'s audit writer', () => {
       history: () => log.history(),
       verify: () => log.verify(),
     }
-    const writer = new AuditWriter(queue, quick, { everyMs: 100 })
+    const writer = new AuditWriter(queue, quick, { hash: sha256, everyMs: 100 })
     writer.start()
     push('a.one')
     push('a.two')
@@ -247,7 +249,7 @@ describe('the core\'s audit writer', () => {
       history: () => log.history(),
       verify: () => log.verify(),
     }
-    const writer = new AuditWriter(big, quick)
+    const writer = new AuditWriter(big, quick, { hash: sha256 })
     writer.start()
     await vi.advanceTimersByTimeAsync(100)
     expect(sizes).toEqual([256])

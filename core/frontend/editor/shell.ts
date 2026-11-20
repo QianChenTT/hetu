@@ -5,7 +5,7 @@ import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import type { CoreLink } from './link.ts'
 
 // What the banner says: the state files that failed their check, each policy job not on, the plugins down, each switch that
-// weakens a check and a luoshu not picked. Nothing while all is well
+// weakens a check, each core module switched off and a luoshu not picked. Nothing while all is well
 export function bannerLines(status: CoreStatus): string[] {
   const lines: string[] = []
   if (status.suspect.length > 0) lines.push(`state files that failed their check at start: ${status.suspect.join(', ')}`)
@@ -14,7 +14,7 @@ export function bannerLines(status: CoreStatus): string[] {
   if (status.devMode.length > 0) lines.push(`dev mode: ${status.devMode.join(', ')}`)
   if (status.allowUnsigned > 0) lines.push(`unsigned builds allowed: ${status.allowUnsigned}`)
   if (status.skipVerification) lines.push('verification skipped')
-  if (status.recordNothing) lines.push('recording off')
+  for (const id of status.modulesOff) lines.push(`${id} off`)
   if (!status.logWrites) lines.push("the log can't write")
   if (!status.luoshuPicked) lines.push('pick a luoshu folder')
   return lines

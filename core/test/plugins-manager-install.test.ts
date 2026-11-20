@@ -129,10 +129,10 @@ describe('core plugins', () => {
     expect(pluginsManager.stopped()).toBe(null)
   })
 
-  it('reads the watchdog absent, which nothing holds, and the gate and the grant risk classifier from their modules', async () => {
+  it('reads a guard role absent, which nothing holds, with the gate and the grant risk classifier from their modules', async () => {
     const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })
     await pluginsManager.start()
-    expect(pluginsManager.policyJob('watchdog')).toBe('absent')
+    expect(pluginsManager.policyJob('leases')).toBe('absent')
     expect(pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
     expect(pluginsManager.policyJob('gate')).toBe('on')
   })
@@ -214,12 +214,12 @@ describe('core plugins', () => {
   // Only a host half in main could hold a policy job, a provider or a guard, and the core runs none
   it('refuses a policy job, provider or guard id with place, whatever its entries, and stops nothing', async () => {
     const { pluginsManager, runtime } = await harness({
-      install: { ...coreInstall(), watchdog: host('watchdog'), net: { files: filesFor(workerManifest('net')) }, leases: host('leases') },
+      install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, leases: host('leases') },
       pluginsManager: { guardsFor: () => ['leases'] },
     })
     await pluginsManager.start()
-    for (const id of ['watchdog', 'net', 'leases']) expect(reasonOf(pluginsManager, id)).toBe('place')
-    expect(pluginsManager.policyJob('watchdog')).toBe('absent')
+    for (const id of ['net', 'leases']) expect(reasonOf(pluginsManager, id)).toBe('place')
+    expect(pluginsManager.policyJob('leases')).toBe('absent')
     expect(pluginsManager.stopped()).toBe(null)
     expect(runtime.order()).toEqual([])
   })
