@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { PendingRequest } from '../../api/actions.ts'
 import { lapseOf, type Change, type ChangeEffect } from '../../api/changes.ts'
+import { isSecurityControl } from '../../api/ids.ts'
 import type { Caller } from '../../api/envelope.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { Asked, Confirmed, InLine, SecurityView } from '../security-view/header.ts'
@@ -79,6 +80,9 @@ function fieldsOf(change: Change, key: string): Record<string, Field> {
 }
 
 const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.kind)
+
+// A security control switched off, which waits for the security view's typed word
+const controlOff = (change: Change) => change.kind === 'plugin.off' && isSecurityControl(change.plugin)
 
 // Security requests: the security view decides whether a change applies at once with its record, lands its record and
 // applies or waits under a core id with the fingerprint of the state it read, until the trusted window's Confirm or
@@ -204,6 +208,8 @@ export class Requests {
       const head = this.head
       const inLine: InLine = head === null || head.id !== id ? null : { waited: this.host.clock() - head.at, delayMs: this.host.delayMs }
       const confirmed = this.confirmed(one.change, inLine, options.typed)
+      // A control's off waits for the view to be on again, where its word is asked
+      if (confirmed === 'locked') throw { code: 'not-granted' }
       if (confirmed !== 'ok') throw { code: confirmed }
       const fields = { ...fieldsOf(one.change, one.key), window: 'trusted' }
       if (await this.host.fingerprint(one.change) !== await one.fingerprint) {
@@ -221,15 +227,16 @@ export class Requests {
     })
   }
 
-  // The security view's word on a change a window asked for. Off, a narrowing one applies at once and every other one
-  // unasked, while the editor window may send only the change that switches it on again. A throw, or a word outside the
-  // list, applies nothing
+  // The security view's word on a change a window asked for. Off, no security control goes off, a narrowing change
+  // applies at once and every other one unasked, while the editor window may send only the change that switches the view
+  // on again. A throw, or a word outside the list, applies nothing
   private asked(change: Change, from: Caller): Asked | 'unasked' {
     const effect = this.host.effect(change)
     const view = this.host.view()
     if (view === null) {
       const editor = from.kind === 'window' && from.role === 'editor'
       if (editor && !(change.kind === 'plugin.on' && change.plugin === 'security-view')) throw { code: 'not-granted' }
+      if (controlOff(change)) throw { code: 'not-granted' }
       return effect === 'narrows' ? 'apply' : 'unasked'
     }
     let asked: unknown
@@ -241,10 +248,11 @@ export class Requests {
     throw { code: 'failed' }
   }
 
-  // Whether a Confirm counts, at once while the view is off. A throw, or a word outside the list, counts nothing
-  private confirmed(change: Change, inLine: InLine, typed: string | undefined): Confirmed | 'failed' {
+  // Whether a Confirm counts, at once while the view is off unless it switches a security control off, which nothing
+  // can while no word is asked. A throw, or a word outside the list, counts nothing
+  private confirmed(change: Change, inLine: InLine, typed: string | undefined): Confirmed | 'failed' | 'locked' {
     const view = this.host.view()
-    if (view === null) return 'ok'
+    if (view === null) return controlOff(change) ? 'locked' : 'ok'
     let confirmed: unknown
     try {
       confirmed = view.confirms(change, inLine, typed)

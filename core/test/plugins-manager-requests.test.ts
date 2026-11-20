@@ -752,6 +752,33 @@ describe('the security view', () => {
     expect(made.pluginsManager.pending()).toEqual([])
   })
 
+  // No security control goes off while nothing asks for its typed word
+  it('refuses switching any security control off once off, from either window, and still switches itself on again', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    for (const plugin of ['gate', 'grant-risk-classifier', 'flood-control', 'recording', 'security-view']) {
+      for (const from of [trusted, editor]) {
+        expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin }, from))).toBe('not-granted')
+      }
+    }
+    expect(made.modules.state('gate')).toBe('on')
+    expect(made.modules.state('recording')).toBe('on')
+    expect(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'storage' }, trusted)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'security-view' }, trusted)).toEqual({ applied: true })
+    expect(made.modules.state('security-view')).toBe('on')
+  })
+
+  it('keeps a security control\'s off held, typed or not, once the view went off', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const gate = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'security-view' })
+    expect(await code(made.pluginsManager.confirm(gate, { typed: 'gate' }))).toBe('not-granted')
+    expect(made.modules.state('gate')).toBe('on')
+    expect(await code(made.pluginsManager.confirm(gate, {}))).toBe('not-granted')
+    expect(made.pluginsManager.pending().map(request => request.id)).toContain(gate)
+  })
+
   it('applies nothing and answers failed for a change it throws on, with the fault recorded', async () => {
     const securityView = createSecurityView()
     securityView.asked = () => { throw new Error('broken') }

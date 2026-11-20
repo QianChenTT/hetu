@@ -17,7 +17,7 @@ const whileOff: Readonly<Record<string, string>> = Object.freeze({
   'grant-risk-classifier': 'Plugins then go unclassified and nothing asks at its first use until it is on again',
   'flood-control': 'Nothing then limits how fast a plugin or a window sends or how many calls it keeps in flight and no plugin is cut off for a flood',
   recording: 'hetu then writes nothing to its event log, this switch last, so no security change made after it can be traced',
-  'security-view': 'Every security change then applies with no Confirm, from the trusted window and from requests hetu raises, while the editor window can only switch it on again',
+  'security-view': 'Security changes then apply with no Confirm, no security control can be switched off and the editor window can only switch it on again',
 })
 
 const RECOMMEND = 'hetu recommends keeping every security plugin on'

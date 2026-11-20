@@ -96,17 +96,21 @@ export function choiceChange(control: string, choice: Choice): Change | null {
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
-// policy job. One it couldn't give counts as 4
-function pluginLine(plugin: ListedPlugin): string {
+// policy job. One it couldn't give counts as 4. A security control is locked on while the security view is off
+function pluginLine(plugin: ListedPlugin, locked: boolean): string {
   const from = plugin.from === 'folder' ? 'plugin folder' : 'ships with hetu'
   const state = plugin.reason !== null ? `${plugin.state} (${plugin.reason})` : plugin.state
   const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
-  return [plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known].join(' · ')
+  return [
+    plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known, ...(locked ? ['locked while the security view is off'] : []),
+  ].join(' · ')
 }
 
-// A core module has its switch alone: it restarts nothing and Recover doesn't reset it
-function actionsOf(plugin: ListedPlugin): PluginAction[] {
+// A core module has its switch alone: it restarts nothing and Recover doesn't reset it. A security control can't be
+// switched off while the security view is off, since nothing asks for its typed word
+function actionsOf(plugin: ListedPlugin, locked: boolean): PluginAction[] {
   const actions: PluginAction[] = []
+  if (locked) return []
   if (plugin.from === 'core') return [plugin.on ? 'switch-off' : 'switch-on']
   if (plugin.from === 'folder' && plugin.state === 'found' && plugin.reason === 'new') return ['approve', 'remove']
   actions.push(plugin.on ? 'switch-off' : 'switch-on')
@@ -193,13 +197,17 @@ export function limitChange(constant: LimitName, typed: string, plugin: string |
 }
 
 export function screen(list: SecurityList): Screen {
+  const viewOff = list.plugins.some(plugin => plugin.id === 'security-view' && plugin.from === 'core' && !plugin.on)
   return {
     stopped: list.stopped === null ? null : stoppedScreen(list.stopped),
     request: list.requests[0] === undefined ? null : requestOf(list.requests[0]),
     behind: Math.max(0, list.requests.length - 1),
-    plugins: list.plugins.map(plugin => ({
-      id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
-    })),
+    plugins: list.plugins.map(plugin => {
+      const locked = viewOff && plugin.security && plugin.on
+      return {
+        id: plugin.id, line: pluginLine(plugin, locked), actions: actionsOf(plugin, locked), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
+      }
+    }),
     switches: switchesOf(list),
     dev: devOf(list),
     limits: limitsOf(list),

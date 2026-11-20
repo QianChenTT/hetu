@@ -135,6 +135,21 @@ describe('what the trusted window draws', () => {
     ])
   })
 
+  // With the security view off nothing asks for a control's typed word, so no control's switch can be pressed off
+  it('draws each security control locked while the security view is off, and the view itself with its switch', () => {
+    const drawn = screen(calm({
+      plugins: [
+        plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
+        plugin({ id: 'security-view', from: 'core', place: 'core', security: true, class: null, on: false, state: 'off', reason: 'off' }),
+        plugin({ id: 'storage', from: 'core', place: 'core', class: null }),
+      ],
+    }))
+    expect(drawn.plugins.map(row => [row.id, row.actions])).toEqual([['gate', []], ['security-view', ['switch-on']], ['storage', ['switch-off']]])
+    expect(drawn.plugins[0].line).toContain('locked while the security view is off')
+    const on = screen(calm({ plugins: [plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null })] }))
+    expect(on.plugins[0].actions).toEqual(['switch-off'])
+  })
+
   it('says the macOS install is not protected from programs running as the human', () => {
     expect(screen(calm()).install).toBe('On macOS, programs running as you can change hetu’s install')
   })
