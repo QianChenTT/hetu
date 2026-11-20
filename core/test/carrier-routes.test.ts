@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { coreActions, eventActions, providerActions } from '../api/actions.ts'
 import { capabilityTypes } from '../api/capabilities.ts'
 import { namespaces, policyJobIds, providers, serverOf } from '../api/ids.ts'
-import type { Call } from '../api/policy-jobs.ts'
+import type { Call, LiveCall } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -31,9 +31,8 @@ function stringsOf(source: string): string[] {
 }
 
 // Words the router still writes that a namespace, a part or an action spells the same: the capability types it asks the
-// gate about, plugin among what a caller is, the policy jobs, whose states it reads by id until their doors say them,
-// and the window role the editor's reach answers for, until the gate serves its own actions
-const kept = new Set<string>([...capabilityTypes, 'plugin', ...policyJobIds, 'editor'])
+// gate about, plugin among what a caller is and the policy jobs, whose states it reads by id until their doors say them
+const kept = new Set<string>([...capabilityTypes, 'plugin', ...policyJobIds])
 
 describe('the namespace table', () => {
   it('gives every action of the contract a server, by the route its table takes', () => {
@@ -100,5 +99,38 @@ describe('the namespace table', () => {
     expect(Object.entries(coreActions).filter(([, spec]) => spec.reads === true).map(([action]) => action).sort()).toEqual([
       'core.self', 'core.status', 'gate.filterReadable', 'gate.reach', 'log.segments', 'log.verify', 'security.list',
     ])
+  })
+
+  // The gate's own actions are the gate module's, handed in as any part is. The router resolves the live call
+  // gate.filterReadable names on the caller's own way and hands a view of it with the call, never the call itself
+  it("hands the gate a view of the live call gate.filterReadable names, on the asking callee's own way only", async () => {
+    const seen: Call[] = []
+    const parts = harness()
+    const { carrier, connect, pluginsManager, gate } = parts
+    carrier.serve('gate', async call => { seen.push(call); return [] })
+    pluginsManager.sandboxed('search', { query: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['search'] }]
+    const scribe = connect(worker('scribe'))
+    const search = connect(worker('search'))
+    const id = scribe.call('search.query', { text: 'x' })
+    const got = await search.delivered('search.query')
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] })).result).toEqual([])
+    expect(code(await scribe.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(code(await search.ask('gate.filterReadable', { call: 'a'.repeat(22), paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(seen).toHaveLength(1)
+    const live = seen[0].live as LiveCall
+    expect([seen[0].caller, live.caller, live.agent, live.door, live.open()]).toEqual([worker('search'), worker('scribe'), undefined, false, true])
+    expect(Object.keys(live).sort()).toEqual(['caller', 'door', 'open', 'plugin', 'principal'])
+    search.answer(got.callId, [])
+    await scribe.reply(id)
+    expect(live.open()).toBe(false)
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(seen).toHaveLength(1)
+  })
+
+  it("answers unavailable for the gate's actions while no gate part was handed in", async () => {
+    const { carrier } = harness({ gateActions: false })
+    const way = windowWay(carrier, { 'editor-1': editor })
+    expect(code(await way.ask('editor-1', 'gate.reach', { plugin: 'search', path: 'notes/a.md' }))).toBe('unavailable')
   })
 })

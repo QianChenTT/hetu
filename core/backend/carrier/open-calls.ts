@@ -1,7 +1,7 @@
 import { cancel as cancelSchema, VERSION, type Refusal, type RefusalCode } from '../../api/envelope.ts'
 import { MAX_TIMER_MS } from '../../api/limits.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
-import type { Call } from '../../api/policy-jobs.ts'
+import type { Call, LiveCall } from '../../api/policy-jobs.ts'
 import type { Charged, Held } from '../flood-control/header.ts'
 import { no, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
 
@@ -54,7 +54,7 @@ export function admitted(c: Context,
     coalesce: target.kind === 'action'
       ? !target.each
       : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
-    filtering: null,
+    live: null,
   }
   way.made.set(pending.id, pending)
   parent?.children.add(pending)
@@ -150,12 +150,24 @@ function refusalOf(action: string, refused: No): Refusal {
   }
 }
 
-export function callOf(pending: Pending, args: unknown): Call {
+export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
   return frozen({
     callId: pending.callId, caller: pending.caller,
     ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
     ...(pending.parent !== null ? { parent: pending.parent.callId } : {}),
-    action: pending.action, args, deadline: pending.deadline,
+    action: pending.action, args, deadline: pending.deadline, ...(live !== undefined ? { live } : {}),
   })
+}
+
+// The view of a live call a part gets with an action that names it, the same object for the call's life. The door's
+// own call lends its label with no agent of its own
+export function liveOf(pending: Pending): LiveCall {
+  pending.live ??= frozen({
+    caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin,
+    ...(pending.lends !== undefined ? { agent: pending.lends } : {}),
+    door: pending.lends !== undefined && pending.agent === undefined,
+    open: () => !pending.done,
+  })
+  return pending.live
 }
 

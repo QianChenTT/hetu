@@ -1,11 +1,10 @@
 import type { EventAction } from '../../api/actions.ts'
-import { capabilityTypes, scopedUiTypes } from '../../api/capabilities.ts'
-import { answer as answerSchema, calleeRefusalCodes, VERSION, type Caller, type RefusalCode } from '../../api/envelope.ts'
+import { answer as answerSchema, calleeRefusalCodes, VERSION, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
-import { hashOf, no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
-import { charge, admitted, stop, result, thrown, finish, early, callOf } from './open-calls.ts'
-import { gateOpen, judge, judgeAll, askable, provide, secondOf } from './provide.ts'
+import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Target, type Kind } from './context.ts'
+import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf } from './open-calls.ts'
+import { gateOpen, judge, judgeAll, askable, provide } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
 
 // The entry of every call through its steps, then 6 route by the namespace table: the parts handed in under their
@@ -39,10 +38,7 @@ async function run(c: Context, pending: Pending, target: Target, args: unknown, 
   // A call for an agent goes on only while the gate is on, a free one or a core action with nothing to judge included,
   // so no call for an agent runs while the agent's grant can't be judged. The door's own call lends its label, so it is
   // refused here before mcp sees any of the agent's request. A call with power is judged at decideFor too
-  if (pending.lends !== undefined) {
-    const open = gateOpen(c, pending.lends)
-    if (open !== 'decide') return finish(c, pending, no(open as RefusalCode))
-  }
+  if (pending.lends !== undefined && !lent(c, pending, pending.lends)) return
   // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
   if (target.kind === 'bus') return events(c, pending, target.spec, args, kind)
   // 5 precheck, for calls with power only
@@ -51,117 +47,11 @@ async function run(c: Context, pending: Pending, target: Target, args: unknown, 
     if (refused !== null) return finish(c, pending, { ok: false, ...refused })
   }
   // 6 route, then 7 to 10 by the route
-  if (target.kind === 'action' || target.kind === 'served') return serve(c, pending, c.served.get(target.part), args)
+  if (target.kind === 'action' || target.kind === 'served') {
+    return serve(c, pending, c.served.get(target.part), args, target.kind === 'action' && target.spec.live === true)
+  }
   if (target.kind === 'provider') return provide(c, pending, target.provider, args, kind)
   return deliver(c, pending, target, args, kind)
-}
-
-// The gate's two actions, served here until the gate module serves them: filterReadable names a live call, reach a
-// plugin. A refusal is thrown, as a part handed in refuses
-export function gateActions(c: Context): Served {
-  return async call => {
-    const way = c.ways.get(keyOf(call.caller))
-    if (way === undefined) throw { code: 'invalid' }
-    const outcome = field(call.args, 'call') !== undefined ? filterReadable(c, way, call.args) : reach(c, call.args)
-    if (!outcome.ok) throw { code: outcome.code, ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}) }
-    return outcome.result
-  }
-}
-
-// What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
-// anything about the note: read it, write it, list its name and the ui items it holds, from the gate with the plugin as the caller at
-// the canonical stage. A write whose item still asks at first use counts as none, since the bridge raises no prompt.
-// Everything with the gate off while a record can still land, policy-down while it starts or is down, as for any call
-function reach(c: Context, args: unknown): Outcome {
-  const plugin = field(args, 'plugin') as string
-  const path = field(args, 'path') as string | undefined
-  const state = c.policyJob('gate')
-  if (state === 'off') {
-    const open = gateOpen(c)
-    if (open !== 'pass') return no(open as RefusalCode)
-    const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
-    const any = path !== undefined
-    return { ok: true, result: { read: any, edit: any, uiRead: any, list: any, verbs } }
-  }
-  const gate = state === 'on' ? c.holder(() => c.options.gate()) : null
-  if (gate === null) return no(c.down('policy-down'))
-  const caller: Caller = frozen({ kind: 'plugin', id: plugin, half: 'worker', incarnation: 1 })
-  try {
-    const held = gate.verbs(plugin, 'editor')
-    const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-    if (path === undefined) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
-    const read = gate.canRead(caller, path) === true
-    const list = gate.canList(caller, path) === true
-    // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
-    // only for a note the human opened
-    const allows = (action: string, capability: 'ui.edit' | 'ui.read') => {
-      const decision = gate.decide(frozen({ stage: 'canonical', caller, action, capability, scope: frozen({ paths: [path] }) }))
-      return 'allow' in decision && decision.allow === true
-    }
-    const edit = allows('editor.edit', 'ui.edit')
-    const uiRead = allows('editor.read', 'ui.read')
-    return { ok: true, result: { read, edit, uiRead, list, verbs } }
-  } catch {
-    c.fault('gate', 'reach')
-    return no('policy-down')
-  }
-}
-
-// Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-// read too, every path with the gate off and policy-down while the gate is starting or failed. A path a callee read is
-// taken as it is, a dot segment included, since a store from an older build may hold one: the gate's matcher matches
-// no such path and with the gate off the callee gets back only what it gave. One message asks the gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
-// slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
-// a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
-// so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
-// gate or the grants snapshot changed, so no answer from before a narrowing stands
-// For a live call that acts for an agent, the paths the agent may read too, and none at all while the gate isn't on.
-// The door's own call names mcp-http-handler as its caller, which reads nothing and passes the answer on to the agent, so there the
-// agent's grant stands in for the caller's
-function filterReadable(c: Context, way: Way, args: unknown): Outcome {
-  const live = way.delivered.get(field(args, 'call') as string)
-  const paths = field(args, 'paths') as string[]
-  if (live === undefined || live.done) return no('invalid')
-  const agent = live.lends
-  const door = agent !== undefined && live.agent === undefined
-  if (agent !== undefined) {
-    const open = gateOpen(c, agent)
-    if (open !== 'decide') return no(open as RefusalCode)
-  }
-  const state = c.policyJob('gate')
-  if (state === 'off') return { ok: true, result: paths }
-  const gate = state === 'on' ? c.holder(() => c.options.gate()) : null
-  if (gate === null) return no(c.down('policy-down'))
-  const budget = c.limits.of(live.way.plugin, 'filterMsPerSecond')
-  const spent = secondOf(c, live.way.principal)
-  const started = c.clock()
-  if (spent.spent >= budget) return no('throttled')
-  const view = c.view()
-  const before = live.filtering
-  live.filtering = null
-  const progress: Filtering = before !== null && before.gate === gate && before.view === view && before.hash === hashOf(paths)
-    ? before
-    : { hash: '', gate, view, asked: 0, kept: [] }
-  try {
-    while (progress.asked < paths.length) {
-      const path = paths[progress.asked]
-      const kept = gate.canRead(way.caller, path, agent) === true && (door || gate.canRead(live.caller, path) === true)
-      if (kept) progress.kept.push(progress.asked)
-      progress.asked++
-      if (progress.asked < paths.length && spent.spent + c.clock() - started >= budget) break
-    }
-  } catch {
-    c.fault('gate', 'canRead')
-    return no('policy-down')
-  } finally {
-    spent.spent += c.clock() - started
-  }
-  if (progress.asked < paths.length) {
-    if (progress.hash === '') progress.hash = hashOf(paths)
-    live.filtering = progress
-    return no('throttled')
-  }
-  return { ok: true, result: progress.kept.map(at => paths[at]) }
 }
 
 // 6 route to the bus, then for a subscribe 5 precheck and 8 decide on the topics the gate holds, then 10 perform. A
@@ -211,11 +101,24 @@ function events(c: Context, pending: Pending, spec: EventAction, args: unknown, 
   finish(c, pending, { ok: true, result: { standing } })
 }
 
-async function serve(c: Context, pending: Pending, served: Served | undefined, args: unknown): Promise<void> {
+// A call for an agent goes on only while the gate can judge the agent. Otherwise the call ends with the gate's code
+function lent(c: Context, pending: Pending, agent: string): boolean {
+  const open = gateOpen(c, agent)
+  if (open !== 'decide') finish(c, pending, no(open as RefusalCode))
+  return open === 'decide'
+}
+
+// 6 route to a part handed in, then 10 perform by it. An action that names a live call goes on only while that call
+// is open and was delivered on the caller's own way, and the part gets a view of it. A live call that acts for an
+// agent is let on only while the gate can judge the agent
+async function serve(c: Context, pending: Pending, served: Served | undefined, args: unknown, names: boolean): Promise<void> {
   if (served === undefined) return finish(c, pending, no('unavailable'))
+  const named = names ? pending.way.delivered.get(field(args, 'call') as string) : undefined
+  if (names && (named === undefined || named.done)) return finish(c, pending, no('invalid'))
+  if (named?.lends !== undefined && !lent(c, pending, named.lends)) return
   let given: unknown
   try {
-    given = await served(callOf(pending, args))
+    given = await served(callOf(pending, args, named === undefined ? undefined : liveOf(named)))
   } catch (err) {
     return thrown(c, pending, null, 'perform', err)
   }

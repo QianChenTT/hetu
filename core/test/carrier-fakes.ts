@@ -13,6 +13,7 @@ import { Limits } from '../backend/carrier/limits.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { CoreLog, Recording } from '../backend/recording/header.ts'
 import { createRecording } from '../backend/recording/recording.ts'
+import { createGateActions } from '../backend/policy/gate/actions.ts'
 import type { Asks, CarrierOptions, Served } from '../backend/carrier/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
@@ -375,10 +376,11 @@ export type RecordingOver = { log?: CoreLog | null, coreRecordRetryMs?: number, 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
 // The carrier's options with what a test hands in through its door in place of the plugins manager's
-export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, drawer?: Served, asks?: Asks }
+// gateActions false hands the carrier no gate part and no count of the gate's time
+export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, drawer?: Served, asks?: Asks, gateActions?: false }
 
 export function harness(given: HarnessOptions = {}) {
-  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, drawer, asks: asksGiven, ...over } = given
+  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, drawer, asks: asksGiven, gateActions: withGate, ...over } = given
   const pluginsManager = new FakePluginsManager()
   const gate = new FakeGate(pluginsManager)
   const luoshu = new FakeLuoshu()
@@ -394,7 +396,7 @@ export function harness(given: HarnessOptions = {}) {
   const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock })
   // Recording over the log, off while the fake plugins manager says nothing. Audit records land only on flush unless a
   // test names how often the writer writes, so a test decides when the writer takes them
-  const parts: { carrier: Carrier | null } = { carrier: null }
+  const parts: { carrier: Carrier | null, recording: Recording | null } = { carrier: null, recording: null }
   const recording: Recording | null = log === null ? null : createRecording({
     log,
     off: () => pluginsManager.nothing,
@@ -407,7 +409,17 @@ export function harness(given: HarnessOptions = {}) {
     noticed: () => parts.carrier?.status(),
     ...(logFailed !== undefined ? { failed: logFailed } : {}),
   })
+  // The gate module's actions over the gate the carrier asks, as wire.ts makes them
+  const gateActions = createGateActions({
+    gate: () => (over.gate ?? (() => gate))(),
+    table: () => pluginsManager,
+    passes: () => parts.recording?.failing() !== true,
+    limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
+    clock,
+    fault: step => parts.recording?.coalesced('fault', { plugin: 'gate', step }),
+  })
   const carrier = new Carrier({
+    ...(withGate === false ? {} : { gateTime: gateActions.time }),
     floodControl: () => floodControl,
     gate: () => gate,
     guards: id => guards[id] ?? null,
@@ -449,6 +461,8 @@ export function harness(given: HarnessOptions = {}) {
   const handed = over.recording !== undefined ? over.recording : recording
   if (handed !== recording) recording?.close()
   if (handed !== null) carrier.serve('recording', call => handed.serve(call))
+  parts.recording = handed
+  if (withGate !== false) carrier.serve('gate', gateActions.serve)
   return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log: log as FakeLog, debug, asks, connect, recording: handed as Recording }
 }
 

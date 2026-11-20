@@ -33,6 +33,29 @@ export type Call = {
   // provider would act on now, one for each path prepare gave. A provider asks when a look at the disk after the first
   // judgement reads a path otherwise. null lets the call go on on those paths
   readonly judge?: (paths: readonly string[]) => ProviderRefusal | null
+  // For an action that names a live call delivered to its caller: a view of that call, the same object for as long as
+  // the call lives
+  readonly live?: LiveCall
+}
+
+// A live call as the router hands it on with an action that names it, never the call itself: its own caller, whose
+// principal and plugin its gate time counts against, the agent it lends to, whether it is the door's own call and
+// whether it is still open
+export type LiveCall = {
+  readonly caller: Caller
+  readonly principal: string
+  readonly plugin: string | null
+  readonly agent?: string
+  readonly door: boolean
+  open(): boolean
+}
+
+// The gate's time a caller may spend in a second, filterMsPerSecond of it, counted by the gate module for
+// gate.filterReadable and for the listings the router filters through the gate alike. principal is the caller's plugin
+// across its halves and incarnations or its window, plugin the one whose limit applies, null for a window
+export type GateTime = {
+  spent(principal: string, plugin: string | null): boolean
+  charge(principal: string, ms: number): void
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it

@@ -11,6 +11,7 @@ import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
 import { Limits } from '../../backend/carrier/limits.ts'
 import { createFloodControl } from '../../backend/flood-control/flood-control.ts'
+import { createGateActions } from '../../backend/policy/gate/actions.ts'
 import type { Recording } from '../../backend/recording/header.ts'
 import { createRecording } from '../../backend/recording/recording.ts'
 import type { HumanLimits, PluginInfo, PluginTable } from '../../api/policy-jobs.ts'
@@ -288,7 +289,17 @@ export class FakeCore {
       limit: name => limits.of(null, name),
       hash: () => '',
     })
+    // The gate's own actions as the core makes them, over the fake core's gate
+    const gateActions = createGateActions({
+      gate: () => this.gate,
+      table: () => this.pluginsManager,
+      passes: () => true,
+      limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
+      clock: () => performance.now(),
+      fault: () => {},
+    })
     this.carrier = new Carrier({
+      gateTime: gateActions.time,
       floodControl: () => floodControl,
       gate: () => this.gate,
       guards: () => null,
@@ -298,6 +309,7 @@ export class FakeCore {
     this.carrier.read(this.pluginsManager)
     this.carrier.serve('plugins-manager', call => this.served(call))
     this.carrier.serve('recording', call => this.recording.serve(call))
+    this.carrier.serve('gate', gateActions.serve)
     this.carrier.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
     this.carrier.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
     this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })

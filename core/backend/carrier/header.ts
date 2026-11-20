@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction, Part } from '../../api/ids.ts'
-import type { Access, Call, Gate, Guard, PluginTable, Provider } from '../../api/policy-jobs.ts'
+import type { Access, Call, Gate, GateTime, Guard, PluginTable, Provider } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Recording } from '../recording/header.ts'
 
@@ -72,6 +72,9 @@ export type CarrierOptions = {
   providers: (id: string) => Provider | null
   // Flood control while the human has it on, else null, which counts nothing and says yes to everything
   floodControl: () => FloodControl | null
+  // The gate module's count of the gate's time each caller spends in a second, which a listing spends too. None counts
+  // nothing
+  gateTime?: GateTime
   // Recording, which takes each call's record, the carrier's own core records and log.segments and log.verify. null
   // records nothing and serves no log
   recording: Recording | null

@@ -13,6 +13,7 @@ import { createRecording } from './recording/recording.ts'
 import { createSecurityView } from './security-view/security-view.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
+import { createGateActions } from './policy/gate/actions.ts'
 import { createGate } from './policy/gate/gate.ts'
 import { createGrantRiskClassifier } from './policy/grant-risk-classifier/grant-risk-classifier.ts'
 import { createExec } from './providers/exec/exec.ts'
@@ -117,18 +118,29 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     noticed: () => parts.carrier?.status(),
     failed: () => parts.pluginsManager?.controlFailed('log', 'log-failing') ?? false,
   })
+  // The gate's own actions and the gate's time each caller spends in a second, which listings spend too
+  const gateActions = createGateActions({
+    gate: () => modules.gate(),
+    table: () => parts.pluginsManager,
+    passes: () => recording.failing() !== true,
+    limit: plugin => limits.of(plugin, 'filterMsPerSecond'),
+    clock: () => performance.now(),
+    fault: step => recording.coalesced('fault', { plugin: 'gate', step }),
+  })
   const { windows } = options
   const carrier = new Carrier(carrierOptions(modules, {
     recording,
+    gateTime: gateActions.time,
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
   }))
   parts.carrier = carrier
   // The runtime serves the windows' own actions, since only it opens windows and dialogs, ends the process and serves
-  // frames. Recording serves the log's reads
+  // frames. Recording serves the log's reads and the gate its own two actions
   if (windows !== undefined) carrier.serve('runtime', windows.serve)
   carrier.serve('recording', call => recording.serve(call))
+  carrier.serve('gate', gateActions.serve)
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,

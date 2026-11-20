@@ -1,9 +1,9 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
-import { pluginStates, policyJobStates, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
+import { pluginStates, policyJobStates, type GateTime, type LiveCall, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
@@ -71,14 +71,9 @@ export type Pending = {
   // records in place of scope
   refusedScope: Scope | undefined
   coalesce: boolean
-  // How far a throttled filterReadable for this call got, so the next try goes on from there
-  filtering: Filtering | null
+  // The view of this call a part gets with an action that names it, made once, so a part can keep what it needs with it
+  live: LiveCall | null
 }
-
-// The paths by their hash, the gate and grants snapshot the answers came from, how many were asked about and the indexes kept
-export type Filtering = { hash: string, gate: object, view: number | null, asked: number, kept: number[] }
-
-export const hashOf = (paths: readonly string[]) => createHash('sha256').update(JSON.stringify(paths)).digest('hex')
 
 // Where a call goes, by the route the namespace table gives its namespace: the part serving it with the contract's entry
 // for the action, or a plugin. each: every call is an audit record of its own
@@ -174,8 +169,6 @@ export class Context {
   readonly recording: Recording | null
   readonly ways = new Map<string, Way>()
   readonly ports = new WeakSet<object>()
-  // The gate's time filterReadable took in the current second for each caller of a live call, by principal
-  readonly filtered = new Map<string, { second: number, spent: number }>()
   readonly guardsFor: (action: GuardableAction) => readonly string[]
   readonly bus: Bus
   // The grants snapshot number core.security last went out for
@@ -294,6 +287,26 @@ export class Context {
       return this.tableOf().revoked(label) !== false
     } catch {
       return true
+    }
+  }
+
+  // The gate module's count of the gate's time, null with none handed in. A throw counts nothing
+  gateTime(): GateTime | null {
+    const time = this.options.gateTime
+    if (time === undefined) return null
+    return {
+      spent: (principal, plugin) => {
+        try {
+          return time.spent(principal, plugin) === true
+        } catch {
+          return false
+        }
+      },
+      charge: (principal, ms) => {
+        try {
+          time.charge(principal, ms)
+        } catch {}
+      },
     }
   }
 

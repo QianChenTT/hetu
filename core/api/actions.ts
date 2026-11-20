@@ -75,8 +75,9 @@ export const MAX_REFUSAL_COUNT = 1_000_000
 // The most labels one core.agents call names in each list
 export const MAX_AGENTS_ASKED = 64
 // reads: the trusted window may send it inside its input delay, since it only reads. Anything else the trusted window
-// sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on
-export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true }
+// sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on. live: args.call names a
+// live call delivered to the caller on the same way in, which the part serving the action gets a view of
+export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true, readonly live?: true }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
 // leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
@@ -132,6 +133,7 @@ const coreTable = {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
     reads: true,
+    live: true,
   },
   // What a window's banner shows, read again whenever core.status is sent
   'core.status': { from: 'windows', args: nothing, reads: true },

@@ -313,7 +313,7 @@ function tampered(c: Context, pending: Pending, part: string, args: unknown): vo
 // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
 // caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
 // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
-// the caller's second as filterReadable's does
+// the caller's second of the gate's time as gate.filterReadable's does
 function listerOf(c: Context, pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
   const off = c.policyJob('gate') === 'off'
   const gate = off ? null : c.holder(() => c.options.gate())
@@ -336,7 +336,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
     charge: () => {
       if (charged) return
       charged = true
-      secondOf(c, pending.way.principal).spent += c.clock() - started
+      c.gateTime()?.charge(pending.way.principal, c.clock() - started)
     },
   }
 }
@@ -362,17 +362,6 @@ function listed(c: Context, lister: { canList: (path: string) => boolean, threw:
 function listingRefused(c: Context, pending: Pending): RefusalCode | null {
   if (c.policyJob('gate') === 'off') return null
   if (!askable(c)) return c.down('policy-down')
-  return secondOf(c, pending.way.principal).spent >= c.limits.of(pending.way.plugin, 'filterMsPerSecond') ? 'throttled' : null
-}
-
-// The gate's time spent on behalf of one principal in the current second of the carrier's clock
-export function secondOf(c: Context, principal: string): { second: number, spent: number } {
-  const now = c.clock()
-  let spent = c.filtered.get(principal)
-  if (spent === undefined || now - spent.second >= 1000 || now < spent.second) {
-    spent = { second: now, spent: 0 }
-    c.filtered.set(principal, spent)
-  }
-  return spent
+  return c.gateTime()?.spent(pending.way.principal, pending.way.plugin) === true ? 'throttled' : null
 }
 
