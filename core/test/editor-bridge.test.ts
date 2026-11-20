@@ -69,11 +69,11 @@ function port() {
   return { port: made, sent, call, events: () => sent.filter(message => message.kind === 'event') }
 }
 
-// The gate's answers for each plugin, which editor.reach gives back
+// The gate's answers for each plugin, which gate.reach gives back
 function started(reach: Record<string, Reach>, notes = [note('n1', 'a.md', 'hello world')], clock?: () => number) {
   const core = fakeCore({
     'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
-    'editor.reach': args => {
+    'gate.reach': args => {
       const { plugin, path } = args as { plugin: string, path?: string }
       const held = reach[plugin]
       if (held === undefined) return { ok: false, refusal: { code: 'policy-down' } }
@@ -304,12 +304,12 @@ describe('the selection and the viewport', () => {
     expect(alpha.events()).toEqual([opened, range('n1', 0, 0, 9), opened, range('n1', 1, 0, 9)])
   })
 
-  // The core's answers to editor.reach held while hold says so, each given as the gate stood when asked
+  // The core's answers to gate.reach held while hold says so, each given as the gate stood when asked
   const holding = (core: ReturnType<typeof started>['core'], hold: (args: { path?: string }) => boolean) => {
-    const answer = core.answers['editor.reach']
+    const answer = core.answers['gate.reach']
     const held: (() => void)[] = []
     let on = true
-    core.answers['editor.reach'] = (args, sent) => {
+    core.answers['gate.reach'] = (args, sent) => {
       const got = answer(args, sent)
       if (!on || !hold(args as { path?: string })) return got
       return new Promise(resolve => held.push(() => resolve(got)))
@@ -857,12 +857,12 @@ describe("the bridge's drawer end", () => {
     drawer.connect('alpha', 1, alpha.port)
     await alpha.call('editor.decorate', { instance: 'n1', version: 0, set: 's', marks: [{ kind: 'hide', from: 0, to: 1 }] })
     await alpha.call('editor.bind', { bindings: [{ key: 'Mod-k', command: 'kill' }] })
-    const asked = core.calls('editor.reach').length
+    const asked = core.calls('gate.reach').length
     reach.alpha = { read: [], verbs: [] }
     core.event('core.security')
     await settle()
     await settle()
-    expect(core.calls('editor.reach').length).toBeGreaterThan(asked)
+    expect(core.calls('gate.reach').length).toBeGreaterThan(asked)
     expect(made.marks.has('alpha')).toBe(false)
     expect(drawer.key('n1', 'Mod-k')).toBe(false)
     expect(await alpha.call('editor.read', { instance: 'n1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })

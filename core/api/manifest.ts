@@ -23,7 +23,7 @@ export type ApiChange = {
 export const apiChanges: Readonly<Record<number, ApiChange>> = table({
   2: { added: ['ui.view', 'ui.layout'], removed: ['ui.panel', 'ui.statusBar'], reshaped: [], actionsChanged: true },
   // editor.edit takes ui.edit in place of luoshu.write and editor.open needs a read, which an older plugin meets as a
-  // refusal. editor.reach changed, which only windows call
+  // refusal. gate.reach changed, which only windows call
   3: { added: ['ui.edit', 'ui.read'], removed: [], reshaped: [], actionsChanged: false },
 })
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap

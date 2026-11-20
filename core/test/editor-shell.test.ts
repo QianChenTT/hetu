@@ -121,7 +121,7 @@ describe('the shell', () => {
     expect(sent.slice(2)).toEqual([])
     now.at = 6000
     shell.open('r1')
-    expect(sent.slice(2)).toEqual([expect.objectContaining({ action: 'security.open', args: { requestId: 'r1' } })])
+    expect(sent.slice(2)).toEqual([expect.objectContaining({ action: 'app.openSecurity', args: { requestId: 'r1' } })])
   })
 
   it('opens nothing for a notice it never drew', () => {
@@ -133,6 +133,6 @@ describe('the shell', () => {
   it('opens the plugin list from its own button at once', () => {
     const { sent, shell } = started()
     shell.open()
-    expect(sent.slice(2)).toEqual([expect.objectContaining({ action: 'security.open', args: undefined })])
+    expect(sent.slice(2)).toEqual([expect.objectContaining({ action: 'app.openSecurity', args: undefined })])
   })
 })

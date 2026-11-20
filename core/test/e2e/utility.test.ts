@@ -172,7 +172,7 @@ describe('a utility half', () => {
     await until(() => !alive(pid))
     expect((await ask(editor, 'core.status')).ok).toBe(true)
     expect(await ask(editor, 'core.restart', { plugin: 'mcp-http-handler' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
-    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    expect((await ask(editor, 'app.openSecurity')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
     // Past the trusted window's input delay, inside which a request counts for nothing
     await new Promise(resolve => setTimeout(resolve, 2000))
@@ -186,7 +186,7 @@ describe('a utility half', () => {
   it('paces itself to a rate the human lowers while it runs and is never cut off for it', async () => {
     const { app, editor, worker, dataDir } = await started({ heartbeatMs: 2000, messagesPerSecond: 50 }, { confirmOff: true })
     const { pid } = await call<Facts>(worker, 'hello')
-    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    expect((await ask(editor, 'app.openSecurity')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
     // Past the trusted window's input delay, inside which a request counts for nothing
     await new Promise(resolve => setTimeout(resolve, 2000))

@@ -476,6 +476,13 @@ export class FakeCore {
 
   // core.bindFailed from the half that runs ends it as failed with the reason before any answer, as the plugins manager does
   private async served(call: Call): Promise<unknown> {
+    // The plugins manager's own core.self and core.agentRefused, the second written as http.refused coalesced by reason
+    if (call.action === 'core.self') return call.caller
+    if (call.action === 'core.agentRefused') {
+      const { reason, count } = call.args as { reason: string, count: number }
+      this.recording.coalesced('http.refused', { reason }, undefined, count)
+      return null
+    }
     this.coreCalls.push({ action: call.action, args: call.args, caller: call.caller })
     const live = this.live
     if (call.action !== 'core.bindFailed') throw { code: 'unavailable' }

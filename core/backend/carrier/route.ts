@@ -59,11 +59,10 @@ async function run(c: Context, pending: Pending, target: Target, args: unknown, 
   return deliver(c, pending, target, args, kind)
 }
 
-// Core actions: the carrier serves its own and hands the rest to the plugins manager and the runtime
+// Core actions: the carrier serves the gate's two and hands the rest to recording, the plugins manager and the runtime
 async function coreAction(c: Context, pending: Pending, args: unknown): Promise<void> {
-  if (pending.action === 'core.self') return finish(c, pending, { ok: true, result: pending.caller })
-  if (pending.action === 'core.filterReadable') return finish(c, pending, filterReadable(c, pending.way, args))
-  if (pending.action === 'editor.reach') return finish(c, pending, reach(c, args))
+  if (pending.action === 'gate.filterReadable') return finish(c, pending, filterReadable(c, pending.way, args))
+  if (pending.action === 'gate.reach') return finish(c, pending, reach(c, args))
   if (pending.action === 'log.segments' || pending.action === 'log.verify') {
     const { recording } = c
     return serve(c, pending, recording === null ? undefined : call => recording.serve(call), args)
@@ -73,12 +72,6 @@ async function coreAction(c: Context, pending: Pending, args: unknown): Promise<
   const { caller } = pending
   if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !c.armed(caller)) {
     return finish(c, pending, no('throttled'))
-  }
-  // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
-  // a second
-  if (pending.action === 'core.agentRefused') {
-    c.coalesced('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
-    return finish(c, pending, { ok: true, result: null })
   }
   return serve(c, pending, c.options.core, args)
 }

@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
-  ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
+  ActionResults, CoreStatus, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
 import {
   AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, withdrawnWith, type AgentAsk, type Change,
@@ -43,6 +43,7 @@ import type { Failure, Runtime } from '../runtime/header.ts'
 import type { CarrierLink, PluginsRecording } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
+import { viewsOf } from './reads.ts'
 
 export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore and
@@ -470,8 +471,9 @@ ${capabilityKey(change.capability)}`)
 
   // The core actions the carrier's core seam takes, each once the floor let its caller through
   readonly serve: Served = async call => {
+    if (call.action === 'core.self') return call.caller
     if (call.action === 'core.status') return this.banner()
-    if (call.action === 'core.views') return this.views()
+    if (call.action === 'core.views') return viewsOf(this.known.values())
     const args = (call.args ?? {}) as Record<string, unknown>
     switch (call.action) {
       case 'security.request':
@@ -495,6 +497,12 @@ ${capabilityKey(change.capability)}`)
         return { handle: this.connects.ask(args as ConnectAsked) }
       case 'core.agentConnected':
         return { answer: this.connects.answer(args.handle as string) }
+      // Coalesced by reason with the counts added up. A throw in recording is that record lost
+      case 'core.agentRefused':
+        try {
+          this.recording.coalesced('http.refused', { reason: args.reason as string }, undefined, args.count as number)
+        } catch {}
+        return null
       case 'core.stop':
       case 'core.restart': {
         const k = this.known.get(args.plugin as string)
@@ -521,23 +529,6 @@ ${capabilityKey(change.capability)}`)
       }
     }
     throw { code: 'unavailable' }
-  }
-
-  // Each plugin that declares views or a theme, whatever its state, so the views menu lists a view whose plugin is down.
-  // Not one whose bytes failed their check or whose manifest is refused, since its text can't be trusted
-  private views(): ActionResults['core.views'] {
-    const plugins: CoreViewsPlugin[] = []
-    for (const k of this.known.values()) {
-      const manifest = k.read.manifest
-      if (manifest === null || k.read.problem !== null || k.state === 'refused') continue
-      const views = manifest.views ?? {}
-      if (Object.keys(views).length === 0 && manifest.theme === undefined) continue
-      plugins.push({
-        plugin: k.id, name: manifest.name, running: k.state === 'ready', worker: manifest.entries.worker !== undefined,
-        views: { ...views }, theme: manifest.theme ?? null,
-      })
-    }
-    return { plugins }
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core

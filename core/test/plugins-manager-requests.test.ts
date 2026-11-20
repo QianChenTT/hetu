@@ -557,7 +557,7 @@ describe('the core actions the plugins manager serves', () => {
   it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    for (const action of ['security.open', 'core.quit', 'core.relaunch']) {
+    for (const action of ['app.openSecurity', 'app.quit', 'app.relaunch']) {
       expect(await code(made.pluginsManager.serve(call(editor, action)))).toBe('unavailable')
     }
   })

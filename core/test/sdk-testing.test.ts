@@ -668,7 +668,7 @@ describe("the fake drawer's ranges and commands", () => {
     const selections = new Map<string, { anchor: number, head: number }[]>()
     const core = editorCore({
       'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
-      'editor.reach': args => {
+      'gate.reach': args => {
         const { path: asked } = args as { path?: string }
         return { ok: true, result: { read: asked !== undefined && asked.startsWith('notes/'), edit: false, uiRead: false, list: false, verbs: ['ui.command'] } }
       },

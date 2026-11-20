@@ -162,7 +162,7 @@ describe('the door', () => {
     await new Promise<void>(resolve => holder.listen({ host: '127.0.0.1', port: PORT, exclusive: true }, resolve))
     const { app, editor, dataDir } = await started(true)
     await until(() => logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler', reason: 'port-taken' }))
-    expect((await ask(editor, 'security.open')).ok).toBe(true)
+    expect((await ask(editor, 'app.openSecurity')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
     const row = trusted.locator('div.plugin', { hasText: 'mcp-http-handler · ships with hetu' })
     await until(async () => (await row.locator('p').first().textContent()) === 'mcp-http-handler · ships with hetu · utility · failed (port-taken)')

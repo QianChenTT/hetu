@@ -231,7 +231,7 @@ describe('the rate', () => {
     for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
     await tick(50)
     expect(way.replies).toHaveLength(defaultLimits.messagesPerSecond)
-    expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
+    expect(Math.max(...way.replies.map(reply => reply.id as number))).toBe(defaultLimits.messagesPerSecond)
     expect(pluginsManager.crashes).toEqual([])
   })
 

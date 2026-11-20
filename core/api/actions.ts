@@ -37,7 +37,7 @@ const readPath = z.string().min(1).max(MAX_SCOPE_LENGTH)
 const nothing = z.strictObject({}).optional()
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
 
-// Paths core.filterReadable takes in one call
+// Paths gate.filterReadable takes in one call
 export const MAX_FILTER_PATHS = 1024
 // Paths one lease takes
 export const MAX_LEASE_PATHS = 64
@@ -125,7 +125,7 @@ const coreTable = {
   'core.self': { from: 'any', args: nothing },
   // Only for a live call delivered to the caller on the same way in. Gives back the paths both the caller and the
   // call's own caller may read
-  'core.filterReadable': {
+  'gate.filterReadable': {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
   },
@@ -142,20 +142,20 @@ const coreTable = {
   'security.cancel': { from: 'trusted', args: z.strictObject({ requestId: token }) },
   // Opens the trusted window, at the named request or else at the plugin list, and focuses one already open. Only a
   // human's click on a core control sends it, a notice's included
-  'security.open': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
+  'app.openSecurity': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
   // What the trusted window draws: the plugin list, the switches, the requests waiting and the stopped mode
   'security.list': { from: 'trusted', args: nothing },
   // The human's stop of a sandboxed plugin, from the plugin list only. A restart widens nothing, so any window may
   'core.stop': { from: 'trusted', args: target },
   'core.restart': { from: 'windows', args: target },
-  'core.quit': { from: 'windows', args: nothing },
-  'core.relaunch': { from: 'trusted', args: nothing },
+  'app.quit': { from: 'windows', args: nothing },
+  'app.relaunch': { from: 'trusted', args: nothing },
   // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
   // which waits for the Confirm
-  'core.pickFolder': { from: 'trusted', args: nothing },
+  'app.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
   // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
-  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
+  'gate.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
   // Each plugin's declared views and theme with whether it runs, which the drawer reads again on core.status and
   // core.security
   'core.views': { from: 'windows', args: nothing },
@@ -430,7 +430,7 @@ export type ActionResults = {
   'core.status': CoreStatus
   'security.list': SecurityList
   'security.request': { applied: true } | { held: string }
-  'core.filterReadable': string[]
+  'gate.filterReadable': string[]
   'core.agentRefused': null
   'core.bindFailed': null
   'core.agentAsk': { asked: 'waiting' | 'granted' }
@@ -448,8 +448,8 @@ export type ActionResults = {
   'luoshu.remove': null
   'luoshu.move': null
   'luoshu.list': { paths: string[], next: string | null }
-  'core.pickFolder': string | null
-  'editor.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
+  'app.pickFolder': string | null
+  'gate.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null

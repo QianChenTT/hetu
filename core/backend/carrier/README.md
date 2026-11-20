@@ -5,7 +5,7 @@ The carrier: the one path every call and event takes and the enforcement point o
 - `bus.ts`: subscriptions, credits and delivery. An event is a topic and maybe a path, never content. A path reaches a subscriber only when the gate's `canRead` says so on that delivery
 - it asks flood control, a core module, for each message's verdict before it reads it (`admit`) and for each call's room once it parsed (`acquire`), gives the room back in `finish` (`release`), drops, closes and throttles on the answers and counts nothing while flood control is off. A throw drops that message or fails that call
 - it hands each call's record and its own core records to recording, a core module, routes `log.segments` and `log.verify` to it and reads its failing state, so with the gate off and the log failing a call with power is refused until fail-stop. A throw in recording is that record lost
-- the carrier answers `editor.reach` itself and filters a `luoshu.list` page and its `next` before they leave (`lister`, `listed` and `Call.canList`)
+- the carrier answers `gate.reach` itself and filters a `luoshu.list` page and its `next` before they leave (`lister`, `listed` and `Call.canList`)
 - `limits.ts`: the limits as they apply to one plugin with the human's values
 - `header.ts`: what the later parts give it, each a small interface the tests fake: the plugins manager, the gate, the providers and flood control from the core modules, recording, the guards, which nothing holds yet, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
 

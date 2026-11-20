@@ -15,7 +15,7 @@ import type { Versions } from './versions.ts'
 // The drawer's end of each plugin's port: the editor bridge as the editor window serves it. Main hands the page one
 // port per running plugin holding a ui item, named with the plugin and its incarnation, so no plugin sets the owner of
 // what arrives. Every message is text the relay in the worker host page already held to the plugin's cap and rate.
-// Before serving anything about a note the drawer asks the core what the plugin reaches there, through editor.reach,
+// Before serving anything about a note the drawer asks the core what the plugin reaches there, through gate.reach,
 // and keeps the answers until core.security or core.status says something changed. The drawer holds no power of its
 // own: a plugin reaches through it only what the gate gives that plugin. Views and the layout's skeleton come on the
 // same port, served by UiPort
@@ -328,7 +328,7 @@ export class Drawer {
     const key = path === undefined ? plugin : `${plugin}\u0000${path}`
     let asked = this.reaches.get(key)
     if (asked === undefined) {
-      asked = this.link.call('editor.reach', path === undefined ? { plugin } : { plugin, path }).then(got => {
+      asked = this.link.call('gate.reach', path === undefined ? { plugin } : { plugin, path }).then(got => {
         if (!got.ok) return none
         const { read, edit, uiRead, list, verbs } = got.result as Reach
         return {

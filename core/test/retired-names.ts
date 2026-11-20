@@ -99,4 +99,11 @@ export const retiredNames: readonly RetiredName[] = [
     pattern: /\brecordNothing\b/g,
     allowed: [{ place: 'core/backend/boot/state.ts', why: 'a switches file from before recording was a core module still holds it, read once as recording in off' }],
   },
+  // The core actions renamed into the namespace of the part that serves them
+  { name: 'core.filterReadable', now: 'gate.filterReadable', pattern: /\bcore\.filterReadable\b/g, allowed: [] },
+  { name: 'editor.reach', now: 'gate.reach', pattern: /\beditor\.reach\b/g, allowed: [] },
+  { name: 'core.quit', now: 'app.quit', pattern: /\bcore\.quit\b/g, allowed: [] },
+  { name: 'core.relaunch', now: 'app.relaunch', pattern: /\bcore\.relaunch\b/g, allowed: [] },
+  { name: 'core.pickFolder', now: 'app.pickFolder', pattern: /\bcore\.pickFolder\b/g, allowed: [] },
+  { name: 'security.open', now: 'app.openSecurity', pattern: /\bsecurity\.open\b/g, allowed: [] },
 ]

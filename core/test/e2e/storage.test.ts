@@ -78,7 +78,7 @@ describe('the storage plugin in the install', () => {
   it('gives the trusted window no space at all', async () => {
     const dataDir = await data()
     const { app, page } = await started(dataDir)
-    await ask(page, 'security.open')
+    await ask(page, 'app.openSecurity')
     const trusted = await pageAt(app, 'hetu://trusted/')
     await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
     // Past the input delay, so the refusal is the floor's and not the delay's

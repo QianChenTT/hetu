@@ -48,7 +48,7 @@ export const providers = table({
 } as const)
 
 // Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
-export const coreNamespaces = frozen(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
+export const coreNamespaces = frozen(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app'] as const)
 
 // The actions a guard may hook: each one that changes a note
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)

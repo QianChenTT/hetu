@@ -41,7 +41,7 @@ const files: CoreViewsPlugin = {
 function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> = {}, clock?: () => number) {
   const core = fakeCore({
     'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
-    'editor.reach': args => {
+    'gate.reach': args => {
       const { plugin, path } = args as { plugin: string, path?: string }
       const held = reach[plugin]
       if (held === undefined) return { ok: false, refusal: { code: 'policy-down' } }

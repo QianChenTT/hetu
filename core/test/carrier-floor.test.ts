@@ -123,12 +123,12 @@ describe('the floor', () => {
     ['security.request', { change: { kind: 'plugin.on', plugin: 'search' } }],
     ['security.confirm', { requestId: 'req-1' }],
     ['security.cancel', { requestId: 'req-1' }],
-    ['security.open', undefined],
+    ['app.openSecurity', undefined],
     ['security.list', undefined],
     ['core.stop', { plugin: 'search' }],
     ['core.restart', { plugin: 'search' }],
-    ['core.quit', undefined],
-    ['core.relaunch', undefined],
+    ['app.quit', undefined],
+    ['app.relaunch', undefined],
   ] as const
 
   it.each(securityActions)('refuses %s for every plugin, MCP and host halves included, in every gate state, without asking the gate', async (action, args) => {
@@ -155,8 +155,8 @@ describe('the floor', () => {
     }
     expect(seen).toEqual([
       'editor security.request', 'trusted security.request', 'trusted security.confirm', 'trusted security.cancel',
-      'editor security.open', 'trusted security.open', 'trusted security.list', 'trusted core.stop',
-      'editor core.restart', 'trusted core.restart', 'editor core.quit', 'trusted core.quit', 'trusted core.relaunch',
+      'editor app.openSecurity', 'trusted app.openSecurity', 'trusted security.list', 'trusted core.stop',
+      'editor core.restart', 'trusted core.restart', 'editor app.quit', 'trusted app.quit', 'trusted app.relaunch',
     ])
   })
 
@@ -659,7 +659,7 @@ describe('a path with a dot segment', () => {
     for (const path of dotted) {
       expect(code(await way.ask('editor', 'luoshu.read', { path })), path).toBe('invalid')
       expect(code(await way.ask('editor', 'luoshu.write', { path, text: 'x' })), path).toBe('invalid')
-      expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path })), path).toBe('invalid')
+      expect(code(await way.ask('editor', 'gate.reach', { plugin: 'search', path })), path).toBe('invalid')
     }
     expect(gate.asked).toEqual([])
     expect(gate.reads).toEqual([])

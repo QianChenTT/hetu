@@ -73,7 +73,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
 }
 
 // The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
-const runtimeActions = new Set(['security.open', 'core.quit', 'core.relaunch', 'core.pickFolder', 'editor.frame', 'editor.frameGone'])
+const runtimeActions = new Set(['app.openSecurity', 'app.quit', 'app.relaunch', 'app.pickFolder', 'editor.frame', 'editor.frameGone'])
 
 // The plugins manager needs its link before the carrier exists, since the carrier needs the plugins manager. Each call goes to the
 // carrier once wireCore attached it. One made before that throws

@@ -15,21 +15,21 @@ describe('the core actions', () => {
   it('names who may call each one, which the floor decides and never the gate', () => {
     expect(Object.fromEntries(Object.entries(coreActions).map(([action, spec]) => [action, spec.from]))).toEqual({
       'core.self': 'any',
-      'core.filterReadable': 'any',
+      'gate.filterReadable': 'any',
       'core.status': 'windows',
       'log.segments': 'windows',
       'log.verify': 'windows',
       'security.request': 'windows',
       'security.confirm': 'trusted',
       'security.cancel': 'trusted',
-      'security.open': 'windows',
+      'app.openSecurity': 'windows',
       'security.list': 'trusted',
       'core.stop': 'trusted',
       'core.restart': 'windows',
-      'core.quit': 'windows',
-      'core.relaunch': 'trusted',
-      'core.pickFolder': 'trusted',
-      'editor.reach': 'windows',
+      'app.quit': 'windows',
+      'app.relaunch': 'trusted',
+      'app.pickFolder': 'trusted',
+      'gate.reach': 'windows',
       'core.views': 'windows',
       'editor.frame': 'windows',
       'editor.frameGone': 'windows',
@@ -64,12 +64,12 @@ describe('the core actions', () => {
     ['core.self', undefined, true],
     ['core.self', {}, true],
     ['core.self', { as: 'gate' }, false],
-    ['core.filterReadable', { call: 'c1', paths: ['notes/a.md'] }, true],
-    ['core.filterReadable', { call: 'a b', paths: [] }, false],
-    ['core.filterReadable', { call: 'c1', paths: [''] }, false],
-    ['core.filterReadable', { call: 'c1', paths: Array.from({ length: MAX_FILTER_PATHS + 1 }, () => 'a.md') }, false],
+    ['gate.filterReadable', { call: 'c1', paths: ['notes/a.md'] }, true],
+    ['gate.filterReadable', { call: 'a b', paths: [] }, false],
+    ['gate.filterReadable', { call: 'c1', paths: [''] }, false],
+    ['gate.filterReadable', { call: 'c1', paths: Array.from({ length: MAX_FILTER_PATHS + 1 }, () => 'a.md') }, false],
     // A canonical path a link gave can hold a name outside the grammar, which the filter drops rather than refusing
-    ['core.filterReadable', { call: 'c1', paths: ['notes\\a.md', 'notes/a:b.md'] }, true],
+    ['gate.filterReadable', { call: 'c1', paths: ['notes\\a.md', 'notes/a:b.md'] }, true],
     ['security.request', { change: { kind: 'plugin.off', plugin: 'gate' } }, true],
     ['security.request', { change: { kind: 'plugin.off', plugin: 'gate' }, confirmed: true }, false],
     ['security.confirm', { requestId: 'req-1' }, true],
@@ -81,23 +81,23 @@ describe('the core actions', () => {
     ['security.confirm', { requestId: 'req-1', typed: 7 }, false],
     ['security.cancel', { requestId: 'req-1' }, true],
     ['security.cancel', {}, false],
-    ['security.open', undefined, true],
-    ['security.open', { requestId: 'req-1' }, true],
-    ['security.open', { requestId: 'a b' }, false],
+    ['app.openSecurity', undefined, true],
+    ['app.openSecurity', { requestId: 'req-1' }, true],
+    ['app.openSecurity', { requestId: 'a b' }, false],
     ['security.list', undefined, true],
     ['security.list', { all: true }, false],
     ['core.stop', { plugin: 'search' }, true],
     ['core.stop', { plugin: 'search', force: true }, false],
     ['core.restart', { plugin: 'search' }, true],
-    ['core.quit', undefined, true],
-    ['core.quit', { code: 1 }, false],
-    ['core.relaunch', undefined, true],
-    ['editor.reach', { plugin: 'search', path: 'notes/a.md' }, true],
-    ['editor.reach', { plugin: 'search', path: 'notes/../a.md' }, false],
-    ['editor.reach', { plugin: 'Search', path: 'a.md' }, false],
-    ['editor.reach', { plugin: 'search' }, true],
-    ['editor.reach', {}, false],
-    ['editor.reach', { plugin: 'search', path: 'a.md', write: true }, false],
+    ['app.quit', undefined, true],
+    ['app.quit', { code: 1 }, false],
+    ['app.relaunch', undefined, true],
+    ['gate.reach', { plugin: 'search', path: 'notes/a.md' }, true],
+    ['gate.reach', { plugin: 'search', path: 'notes/../a.md' }, false],
+    ['gate.reach', { plugin: 'Search', path: 'a.md' }, false],
+    ['gate.reach', { plugin: 'search' }, true],
+    ['gate.reach', {}, false],
+    ['gate.reach', { plugin: 'search', path: 'a.md', write: true }, false],
     ['core.views', undefined, true],
     ['core.views', { plugin: 'search' }, false],
     ['editor.frame', { plugin: 'kanban', frame: 'board' }, true],
@@ -367,5 +367,19 @@ describe('the state lists', () => {
     expect(policyJobStates).toEqual(['on', 'off', 'starting', 'failed', 'absent'])
     expect(pluginStates).toEqual(['found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed'])
     expect(Object.isFrozen(policyJobStates) && Object.isFrozen(pluginStates)).toBe(true)
+  })
+})
+
+// Each core action sits in the namespace of the part that serves it: the gate module's own, the runtime's app.* and
+// editor.frame, recording's log.* and the plugins manager's core.* and security.*
+describe('the core actions by their server', () => {
+  it('names the gate module\'s and the runtime\'s actions in their own namespaces', () => {
+    for (const action of ['gate.filterReadable', 'gate.reach', 'app.quit', 'app.relaunch', 'app.pickFolder', 'app.openSecurity']) {
+      expect(coreActions[action], action).toBeDefined()
+    }
+    for (const action of ['core.filterReadable', 'editor.reach', 'core.quit', 'core.relaunch', 'core.pickFolder', 'security.open']) {
+      expect(coreActions[action], action).toBeUndefined()
+    }
+    expect(coreNamespaces).toEqual(expect.arrayContaining(['gate', 'app']))
   })
 })

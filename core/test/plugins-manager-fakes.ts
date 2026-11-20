@@ -79,6 +79,13 @@ export class FakeLink implements CarrierLink, PluginsRecording {
     this.ports.get(keyOf(caller))?.postMessage(message)
   }
 
+  // Each record coalesced through recording, with its weight
+  readonly coalesces: { event: string, fields: Record<string, Field>, weight: number | undefined }[] = []
+
+  coalesced(event: string, fields: Record<string, Field>, _keyed?: unknown, weight?: number): void {
+    this.coalesces.push({ event, fields, weight })
+  }
+
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
     this.records.push({ event, fields })
     this.timeline.push(`record ${event}${typeof fields.plugin === 'string' ? ` ${fields.plugin}` : ''}`)

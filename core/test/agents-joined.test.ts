@@ -174,7 +174,7 @@ describe('agents through the joined core', () => {
       if (got === undefined) await tick(5)
     }
     expect(got?.onBehalf).toBe('client#1')
-    expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
+    expect((await ask(search, 'gate.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
   })
 
   it('lets agent #2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {

@@ -21,7 +21,7 @@ export const defaultLimits = table({
   heartbeatMisses: 3, // then unresponsive
   eventCredits: 256, // per subscriber
   topicsPerHalf: 64,
-  filterMsPerSecond: 100, // per plugin, the gate's time its core.filterReadable calls may take in a second
+  filterMsPerSecond: 100, // per plugin, the gate's time its gate.filterReadable calls may take in a second
   auditQueue: 10000, // records
   // How long the oldest record the audit queue holds may wait to be written before the core's log counts as failed:
   // six of the event log's 5 s retries after a failed write, so a disk locked for a moment costs nothing. The human may

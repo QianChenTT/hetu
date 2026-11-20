@@ -543,20 +543,20 @@ describe('what an agent may read and list through mcp', () => {
     const { door, mcp } = gated()
     const one = await handled(door, mcp, 'client#1')
     const two = await handled(door, mcp, 'client#2')
-    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every })).result).toEqual(['inbox/a.md'])
-    expect((await mcp.ask('core.filterReadable', { call: two.got.callId, paths: every })).result).toEqual([])
+    expect((await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every })).result).toEqual(['inbox/a.md'])
+    expect((await mcp.ask('gate.filterReadable', { call: two.got.callId, paths: every })).result).toEqual([])
     // The same asked under the door's call as its parent
-    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
+    expect((await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
   })
 
   it('filters what a search behind mcp found for the agent the chain is for, one agent apart from the other', async () => {
     const { door, mcp, search } = gated()
-    // A search_notes that hands back what core.filterReadable kept of every note it holds
+    // A search_notes that hands back what gate.filterReadable kept of every note it holds
     const searchNotes = async (label: string) => {
       const { parent } = await handled(door, mcp, label)
       const id = mcp.call('search.query', { text: 'a' }, parent)
       const atSearch = await search.waitFor(message => message.kind === 'call' && message.action === 'search.query' && message.onBehalf === label)
-      const kept = await search.ask('core.filterReadable', { call: atSearch.callId, paths: every })
+      const kept = await search.ask('gate.filterReadable', { call: atSearch.callId, paths: every })
       search.answer(atSearch.callId, kept.result)
       return (await mcp.reply(id)).result
     }
@@ -570,10 +570,10 @@ describe('what an agent may read and list through mcp', () => {
     beta.call('search.query', {})
     const plain = await search.delivered('search.query')
     pluginsManager.policyJobs.gate = 'off'
-    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
-    expect((await search.ask('core.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
+    expect(code(await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    expect((await search.ask('gate.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
     pluginsManager.policyJobs.gate = 'failed'
-    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    expect(code(await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
   })
 
   it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {
@@ -582,7 +582,7 @@ describe('what an agent may read and list through mcp', () => {
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     // What mcp and beta may both read, of which beta reads nothing
-    expect((await mcp.ask('core.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
+    expect((await mcp.ask('gate.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
   })
 
   it('lists for an agent the names both mcp and the agent may list', async () => {

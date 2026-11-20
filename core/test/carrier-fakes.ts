@@ -410,6 +410,15 @@ export function harness(given: Partial<CarrierOptions> & RecordingOver = {}) {
     recording,
     asks: { raise: (ask, access) => { asks.push({ ask, access }); return `req-${asks.length}` } },
     debug: entry => { debug.push(entry) },
+    // The plugins manager's core.self and core.agentRefused as it serves them, the second through the recording handed in
+    core: async call => {
+      if (call.action === 'core.self') return call.caller
+      if (call.action !== 'core.agentRefused') throw { code: 'unavailable' }
+      const { reason, count } = call.args as { reason: string, count: number }
+      const handed = over.recording !== undefined ? over.recording : recording
+      handed?.coalesced('http.refused', { reason }, undefined, count)
+      return null
+    },
     ...over,
   })
   parts.carrier = carrier

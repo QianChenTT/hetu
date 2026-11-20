@@ -43,7 +43,7 @@ export class Serving {
   }
 
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]> {
-    return this.request('core.filterReadable', { call: call.callId, paths: [...paths] }) as Promise<string[]>
+    return this.request('gate.filterReadable', { call: call.callId, paths: [...paths] }) as Promise<string[]>
   }
 
   async deliver(message: Record<string, unknown>): Promise<void> {

@@ -714,12 +714,12 @@ describe('the windows\' own actions', () => {
     })
     await pluginsManager.start()
     const way = windowWay(carrier, { editor, trusted })
-    for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
-    expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
+    for (const action of ['app.openSecurity', 'app.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
+    expect((await way.ask('trusted', 'app.relaunch')).ok).toBe(true)
     expect((await way.ask('editor', 'editor.frame', { plugin: 'alpha', frame: 'board' })).ok).toBe(true)
     const url = 'hetu://views/0123456789abcdef0123456789abcdef/board.html'
     expect((await way.ask('editor', 'editor.frameGone', { url, navigated: true })).ok).toBe(true)
-    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch', 'editor.frame', 'editor.frameGone'])
+    expect(served).toEqual(['app.openSecurity', 'app.quit', 'app.relaunch', 'editor.frame', 'editor.frameGone'])
     expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
   })
 
@@ -739,7 +739,7 @@ describe('the windows\' own actions', () => {
     const { carrier, pluginsManager } = await joined()
     await pluginsManager.start()
     const way = windowWay(carrier, { editor })
-    expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
+    expect((await way.ask('editor', 'app.quit')).refusal).toMatchObject({ code: 'unavailable' })
   })
 })
 

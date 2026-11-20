@@ -78,8 +78,8 @@ describe('policy jobs, providers and guards', () => {
     })
   })
 
-  it('serves core, security, events, ui, plugin, log and editor in the core', () => {
-    expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor'])
+  it('serves core, security, events, ui, plugin, log, editor, gate and app in the core', () => {
+    expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app'])
   })
 
   it('lets guards hook the luoshu\'s writes, removes and moves and expects none until leases ships', () => {
@@ -115,7 +115,7 @@ describe('policy jobs, providers and guards', () => {
 describe('reserved ids', () => {
   // Section 3: every namespace the carrier serves, every policy job, provider and install id and the ids first party keeps
   const expected = [
-    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor',
+    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
     'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',

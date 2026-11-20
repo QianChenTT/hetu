@@ -204,7 +204,7 @@ async function start(): Promise<void> {
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
-          if (call.action === 'core.pickFolder') {
+          if (call.action === 'app.pickFolder') {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
           }
           if (call.action === 'editor.frame') {
@@ -219,11 +219,11 @@ async function start(): Promise<void> {
             if (gone !== null && navigated) recording?.coalesced('frame.navigated', { plugin: gone.plugin })
             return null
           }
-          if (call.action === 'security.open') trusted.show()
-          else if (call.action === 'core.relaunch') {
+          if (call.action === 'app.openSecurity') trusted.show()
+          else if (call.action === 'app.relaunch') {
             again = relaunches({ packaged: LOCKED, env: process.env })
             app.quit()
-          } else if (call.action === 'core.quit') app.quit()
+          } else if (call.action === 'app.quit') app.quit()
           else throw { code: 'unavailable' }
           return null
         },
