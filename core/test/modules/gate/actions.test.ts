@@ -23,14 +23,14 @@ function fakeGate(readable: Record<string, string[]>): Gate & { reads: number } 
   return gate as unknown as Gate & { reads: number }
 }
 
-function made(over: { state?: PolicyJobState, gate?: Gate | null, passes?: boolean, budget?: number, clock?: () => number } = {}) {
+function made(over: { state?: PolicyJobState, gate?: Gate | null, budget?: number, clock?: () => number } = {}) {
   const faults: string[] = []
   let state = over.state ?? 'on'
   let view = 1
   const table = { policyJob: () => state, view: () => view } as unknown as PluginTable
   const gate = over.gate === undefined ? fakeGate({ search: ['notes/a.md', 'notes/b.md'], 'word-count': ['notes/a.md'] }) : over.gate
   const actions = createGateActions({
-    gate: () => gate, table: () => table, passes: () => over.passes ?? true, limit: () => over.budget ?? 100,
+    gate: () => gate, table: () => table, limit: () => over.budget ?? 100,
     clock: over.clock ?? (() => performance.now()), fault: step => { faults.push(step) },
   })
   return { actions, gate, faults, set: (next: PolicyJobState) => { state = next }, bump: () => { view++ } }
@@ -63,14 +63,11 @@ describe('the gate module\'s actions', () => {
     expect(await refusal(actions.serve(filter(['notes/a.md'], null)))).toBe('invalid')
   })
 
-  it('answers as today with the gate off: every path given back, reach everything while a record can land', async () => {
+  it('answers as today with the gate off: every path given back, reach everything', async () => {
     const { actions } = made({ state: 'off', gate: null })
     expect(await actions.serve(filter(['notes/z.md', '.git/config']))).toEqual(['notes/z.md', '.git/config'])
     expect(await actions.serve(reach('notes/a.md'))).toMatchObject({ read: true, edit: true, uiRead: true, list: true })
     expect(await actions.serve(reach())).toMatchObject({ read: false, edit: false })
-    const failing = made({ state: 'off', gate: null, passes: false })
-    expect(await refusal(failing.actions.serve(reach('notes/a.md')))).toBe('policy-down')
-    expect(await failing.actions.serve(filter(['notes/z.md']))).toEqual(['notes/z.md'])
   })
 
   it.each(['starting', 'failed', 'absent'] as const)('refuses policy-down while the gate is %s', async state => {

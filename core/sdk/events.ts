@@ -30,7 +30,7 @@ const RESENDS = 5
 type Entry = { readonly handler: EventHandler, readonly options: EventOptions, readonly topics: ReadonlySet<string> }
 
 // The bus holds one subscription per half and topic, so the handlers of a topic share one. core.* goes in a call of
-// its own, since a mixed call with the gate off and the log down is refused whole
+// its own, since a mixed call the gate refuses is refused whole
 function groups(topics: readonly string[]): string[][] {
   const core = topics.filter(topic => topic.startsWith('core.'))
   const rest = topics.filter(topic => !topic.startsWith('core.'))

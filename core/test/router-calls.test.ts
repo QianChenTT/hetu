@@ -841,8 +841,8 @@ describe('gate.reach', () => {
     expect((await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: true, list: true })
   })
 
-  // As a direct call: with the gate off, a call with power passes only while its record can land
-  it('answers policy-down with the gate off once the log has failed, and everything again with recording off', async () => {
+  // The log decides nothing of a call, so the gate off answers everything however long the log has failed
+  it('answers everything with the gate off once the log has failed', async () => {
     let now = 0
     const parts = harness({ clock: () => now })
     const way = windowWay(parts.router, { editor })
@@ -851,8 +851,7 @@ describe('gate.reach', () => {
     const search = parts.connect(worker('search'))
     await search.ask('storage.get', { key: 'index' })
     now = 30_000
-    expect(code(await way.ask('editor', 'gate.reach', { plugin: 'search', path: 'a.md' }))).toBe('policy-down')
-    parts.pluginsManager.nothing = true
+    expect(parts.recording.failing()).toBe(true)
     expect((await way.ask('editor', 'gate.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, edit: true })
   })
 

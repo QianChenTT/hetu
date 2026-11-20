@@ -453,20 +453,19 @@ describe('the gate policy job', () => {
     expect(gate.asked).toEqual([])
   })
 
-  // The log fails once a record waited logFailMs unwritten, timed on the router's clock
-  it('refuses calls with power policy-down while the gate is off and the log has failed', async () => {
+  // The log fails once a record waited logFailMs unwritten, timed on the router's clock. It decides nothing of a call
+  it('passes calls with power while the gate is off and the log has failed', async () => {
     let now = 0
-    const { connect, pluginsManager, log, luoshu } = harness({ clock: () => now })
+    const { connect, pluginsManager, log, luoshu, recording } = harness({ clock: () => now })
     pluginsManager.policyJobs.gate = 'off'
     log.failing = true
     luoshu.files.set('a.md', 'x')
     const search = connect(worker('search'))
     expect((await search.ask('storage.get', { key: 'index' })).ok).toBe(true)
     now = 30_000
-    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
-    // Free calls have no power and still pass
+    expect(recording.failing()).toBe(true)
+    expect((await search.ask('luoshu.read', { path: 'a.md' })).result).toEqual({ text: 'x' })
     expect((await search.ask('storage.get', { key: 'index' })).ok).toBe(true)
-    expect(luoshu.prepared).toEqual([])
   })
 
   it('passes calls with power while the gate is off and recording is off, the log failed', async () => {

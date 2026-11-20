@@ -158,6 +158,27 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(log.events('fault').map(record => record.fields)).toContainEqual(expect.objectContaining({ plugin: 'gate', step: 'decide' }))
   })
 
+  // The gate off lets everything pass, and the log failing decides nothing of a call
+  it('judges no open call again while the human has the gate off, the log failing included', async () => {
+    let now = 0
+    const { exec, search, gate, snapshot, pluginsManager, log, recording } = made({ clock: () => now })
+    pluginsManager.policyJobs.gate = 'off'
+    log.failing = true
+    await search.ask('storage.get', { key: 'index' })
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    now = 30_000
+    expect(recording.failing()).toBe(true)
+    const asked = gate.asked.length
+    gate.grants.search = []
+    snapshot()
+    await tick(10)
+    expect([gate.asked.length - asked, exec.signals[0].aborted]).toEqual([0, false])
+    exec.finish()
+    expect((await search.reply(id)).ok).toBe(true)
+  })
+
   it('carries a signal into perform that aborts once the call ends any other way', async () => {
     const { exec, search } = made()
     search.call('exec.run', { command: build })

@@ -11,8 +11,6 @@ export type GateActionsOptions = {
   gate: () => Gate | null
   // The plugins manager's table, for the gate's state and the grants snapshot's number, null until it is built
   table: () => PluginTable | null
-  // With the gate off by the human, whether a call may pass: the log still takes records
-  passes: () => boolean
   // filterMsPerSecond for the plugin, or for a window with null
   limit: (plugin: string | null) => number
   // A clock no change of the wall clock moves
@@ -61,14 +59,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
       return null
     }
   }
-  // A log that can't say counts as failing. A fault that can't be recorded is lost
-  const passes = () => {
-    try {
-      return options.passes() === true
-    } catch {
-      return false
-    }
-  }
+  // A fault that can't be recorded is lost
   const fault = (step: string) => {
     try {
       options.fault(step)
@@ -93,13 +84,12 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
   // anything about the note: read it, write it, list its name and the ui items it holds, from the gate with the plugin
   // as the caller at the canonical stage. A write whose item still asks at first use counts as none, since the bridge
-  // raises no prompt. Everything with the gate off while a record can still land, policy-down while it starts or is
-  // down, as for any call
+  // raises no prompt. Everything with the gate off by the human, policy-down while it starts or is down, as for any
+  // call
   function reach(args: unknown): unknown {
     const { plugin, path } = args as { plugin: string, path?: string }
     const now = state()
     if (now === 'off') {
-      if (!passes()) throw refuse('policy-down')
       const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !(scopedUiTypes as readonly string[]).includes(type))
       const any = path !== undefined
       return { read: any, edit: any, uiRead: any, list: any, verbs }

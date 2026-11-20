@@ -844,33 +844,34 @@ describe('a failing log', () => {
     return { ...parts, at: (ms: number) => { now = ms } }
   }
 
-  // Allow all, still logged: with the gate off a call with power passes only while its record can still land
-  it('refuses a call with power with the gate off once the oldest record waited 30 s unwritten', async () => {
-    const { at, connect, pluginsManager } = failing()
+  // The log decides nothing of a call: with the gate off a call with power passes however long the log has failed
+  it('counts the log failing once the oldest record waited 30 s unwritten, a call with power passing with the gate off', async () => {
+    const { at, connect, pluginsManager, recording } = failing()
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     // Past the gate to the provider, which holds no such note
     expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
     at(29_999)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    expect(recording.failing()).toBe(false)
     at(30_000)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(recording.failing()).toBe(true)
+    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
   })
 
-  it('lets them pass again once the records are written', async () => {
-    const { recording, at, router, connect, pluginsManager, log } = failing()
+  it('counts the log well again once the records are written', async () => {
+    const { recording, at, connect, pluginsManager, log } = failing()
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('luoshu.read', { path: 'notes/a.md' })
     at(30_000)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(recording.failing()).toBe(true)
     log.failing = false
     await recording.flush()
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    expect(recording.failing()).toBe(false)
   })
 
   it('starts the wait again from the oldest record still held once a batch is written', async () => {
-    const { recording, at, router, connect, pluginsManager, log } = failing()
+    const { recording, at, connect, pluginsManager, log } = failing()
     log.failing = false
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
@@ -880,9 +881,9 @@ describe('a failing log', () => {
     at(25_000)
     await search.ask('storage.set', { key: 'b', value: 2 })
     at(54_999)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('not-found')
+    expect(recording.failing()).toBe(false)
     at(55_000)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(recording.failing()).toBe(true)
   })
 
   // The human's switches: gate off and recording off pass calls with power unrecorded
@@ -962,13 +963,14 @@ describe('a failing log', () => {
   })
 
   it('takes the wait from logFailMs, which the human may set for all', async () => {
-    const { at, connect, pluginsManager } = failing()
+    const { at, connect, pluginsManager, recording } = failing()
     pluginsManager.human.all = { logFailMs: 1000 }
-    pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
     await search.ask('storage.set', { key: 'a', value: 1 })
+    at(999)
+    expect(recording.failing()).toBe(false)
     at(1000)
-    expect(code(await search.ask('luoshu.read', { path: 'notes/a.md' }))).toBe('policy-down')
+    expect(recording.failing()).toBe(true)
   })
 
   it('times a record from when it was queued, not from when its call started', () => {
@@ -1090,11 +1092,11 @@ describe('recording that throws', () => {
     expect(() => router.close()).not.toThrow()
   })
 
-  it('counts a log it can\'t read as failing, so the gate off refuses a call with power and passes the rest', async () => {
+  it('passes a call with power with the gate off when the log can\'t say whether it fails', async () => {
     const { connect, pluginsManager } = harness({ recording: broken({ failing: () => { throw new Error('broken') } }) })
     pluginsManager.policyJobs.gate = 'off'
     const search = connect(worker('search'))
-    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('not-found')
     expect((await search.ask('core.self')).ok).toBe(true)
   })
 

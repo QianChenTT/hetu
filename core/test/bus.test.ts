@@ -582,18 +582,16 @@ describe('the gate off by the human', () => {
     expect(gate.lists).toEqual([])
   })
 
-  it('answers a subscribe policy-down once the log has failed for logFailMs, as any call with power', async () => {
-    const { at, scribe } = await failing()
+  it('lets a subscribe through once the log has failed for logFailMs, as any call with power', async () => {
+    const { at, scribe, recording } = await failing()
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     at(30_000)
-    expect(code(await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] }))).toBe('policy-down')
-    // Free subscribes have no power and still pass
-    expect((await scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
+    expect(recording.failing()).toBe(true)
+    expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
   })
 
-  // canList is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
-  // power doesn't reach them, as filterReadable passes every path then too
-  it('delivers every path once the log has failed, since only calls with power need the log', async () => {
+  // canList is true with the gate off by the human whatever the log, as filterReadable passes every path then too
+  it('delivers every path once the log has failed', async () => {
     const { at, router, gate, search, edited } = await failing()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     at(30_000)

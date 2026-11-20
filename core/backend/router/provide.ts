@@ -36,18 +36,17 @@ function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
 }
 
 // The gate policy job's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-// call with power passes while its record can still land and passes unrecorded once the human turned recording off.
-// A call for an agent never passes: with the gate off nothing judges the agent's own grant, so it answers as a gate
-// that is down. Once shutdown began a call for an agent answers stopped whatever the gate's state, so the door's call
-// during a shutdown answers the same with the gate on as with it off
+// call with power passes, whatever the log's state, which decides nothing of a call. A call for an agent never passes:
+// with the gate off nothing judges the agent's own grant, so it answers as a gate that is down. Once shutdown began a
+// call for an agent answers stopped whatever the gate's state, so the door's call during a shutdown answers the same
+// with the gate on as with it off
 export function gateOpen(c: Context, agent?: string): 'decide' | 'pass' | RefusalCode {
   if (agent !== undefined && c.shutting) return 'stopped'
   const gate = c.policyJob('gate')
   if (gate === 'on') return 'decide'
   if (gate === 'starting') return 'starting'
   if (gate !== 'off' || agent !== undefined) return c.down('policy-down')
-  if (!c.logFailing()) return 'pass'
-  return c.down('policy-down')
+  return 'pass'
 }
 
 // 5 precheck at the raw stage and 8 decide at the canonical one. Only an exact allow: true on the current grants snapshot
@@ -126,8 +125,8 @@ function raise(c: Context, ask: string, access: Access): string | No | null {
 }
 
 // What the bus delivers paths under. The key holds everything a subscription the gate holds depends on, so the bus
-// asks again whenever it moves. canList is true with the gate off by the human whatever the log, since deliveries
-// are never logged, as filterReadable passes every path then. A gate that can't be asked is down
+// asks again whenever it moves. canList is true with the gate off by the human, as filterReadable passes every path
+// then. A gate that can't be asked is down
 export function busState(c: Context): { key: string, paths: Paths, view: number | null } {
   const state = c.policyJob('gate')
   const view = c.view()
@@ -274,8 +273,10 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
 // 8 decide again, for every open call with power the gate let on, on the frozen copy it judged, once a new grants
 // snapshot applied. No prompt is raised. A refused call is revoked as stale, or as policy-down when the gate can't
 // judge it, so a gate that throws stops what it can't judge. A call not yet judged is judged on the newest grants
-// snapshot when it gets there. A widened grant stops nothing
+// snapshot when it gets there. A widened grant stops nothing. With the gate off by the human nothing is judged again,
+// so every open call runs to its end
 export function rejudge(c: Context): void {
+  if (c.policyJob('gate') === 'off') return
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {
       if (pending.done || pending.judged === null) continue

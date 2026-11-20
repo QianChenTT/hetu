@@ -225,16 +225,6 @@ export class Context {
     this.recorded(recording => recording.coalesced(event, fields, keyed, weight))
   }
 
-  // The core's log failing, as recording reads it, for the gate off to refuse calls with power until fail-stop. One it
-  // can't say counts as failing
-  logFailing(): boolean {
-    try {
-      return this.recording?.failing() === true
-    } catch {
-      return true
-    }
-  }
-
   fault(plugin: string, step: string): void {
     this.coalesced('fault', { plugin, step })
   }
