@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   coreModuleIds, coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
   MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
+  failSafeControls,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -79,6 +80,15 @@ describe('policy jobs, providers and guards', () => {
       expect(coreModuleIds).toContain(id)
       expect(isSecurityControl(id)).toBe(true)
     }
+  })
+
+  // A start that throws, hangs or finds a guard missing stops hetu for these alone. The classifier, recording and the
+  // security view only guard, so hetu starts on without them
+  it('lists the controls the fail-safe at start covers: every judging module and every guard core/api expects, once each', () => {
+    expect(failSafeControls()).toEqual([...judgingModuleIds, ...new Set(Object.values(guards).flat())])
+    expect(failSafeControls()).toEqual(['gate', 'flood-control'])
+    expect(failSafeControls(() => ['leases'])).toEqual(['gate', 'flood-control', 'leases'])
+    for (const id of guardingModuleIds) expect(failSafeControls(() => ['leases'])).not.toContain(id)
   })
 
   it("names the provider of every namespace", () => {
