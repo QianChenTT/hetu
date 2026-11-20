@@ -2,12 +2,20 @@ import type { Caller } from '../api/envelope.ts'
 import type { LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
-import type { Booted } from './boot/boot.ts'
+import type { Booted } from './boot/header.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/seams.ts'
-import { CoreModules, type CoreModulesOptions } from './modules.ts'
+import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/header.ts'
+import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
+import { CoreModules, luoshuPublish } from './modules/modules.ts'
+import { createGate } from './policy/gate/gate.ts'
+import { createGrantRiskClassifier } from './policy/grant-risk-classifier/grant-risk-classifier.ts'
+import { createExec } from './providers/exec/exec.ts'
+import { createHistory } from './providers/history/history.ts'
+import { createLuoshu } from './providers/luoshu/luoshu.ts'
+import { createStorage } from './providers/storage/store.ts'
 import { PluginsManager, type Failure } from './plugins-manager/plugins-manager.ts'
-import type { CarrierLink, Runtime } from './plugins-manager/seams.ts'
+import type { CarrierLink } from './plugins-manager/header.ts'
+import type { Runtime } from './runtime/header.ts'
 
 export type WireOptions = {
   booted: Booted
@@ -31,7 +39,24 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec'>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec'>>
+}
+
+// The six core modules made and held: each the real one unless a test hands its own, the luoshu publishing through
+// publish for its two topics alone
+export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
+  publish: (topic: string, path: string) => void
+}): CoreModules {
+  const { publish, ...given } = options
+  return new CoreModules({
+    ...given,
+    gate: given.gate ?? createGate(),
+    grantRiskClassifier: given.grantRiskClassifier ?? createGrantRiskClassifier(),
+    storage: given.storage ?? createStorage(),
+    luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish(publish) }),
+    history: given.history ?? createHistory(),
+    exec: given.exec ?? createExec(),
+  })
 }
 
 // The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
@@ -89,7 +114,7 @@ export class LinkToCarrier implements CarrierLink {
 // both build the carrier from it, so the tests run the wiring that ships
 export function carrierOptions(
   pluginsManager: PluginsManager,
-  modules: CoreModules,
+  modules: Holder,
   rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
 ): CarrierOptions {
   return {
@@ -108,10 +133,11 @@ export function carrierOptions(
 // then the carrier asking the modules for the gate and the providers, then the link pointed at the carrier. The log is
 // the one EventLog boot opened, which the carrier writes its core records and its audit queue through and serves
 // log.segments and log.verify from
-export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: CoreModules } {
+export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder } {
   const link = new LinkToCarrier()
-  // The luoshu publishes only once started, which is after the carrier is attached
-  const modules = new CoreModules({
+  // The six made here, the one place that builds the parts. The luoshu publishes only once started, which is after the
+  // carrier is attached
+  const modules = buildModules({
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),

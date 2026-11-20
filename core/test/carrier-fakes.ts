@@ -6,7 +6,7 @@ import { scopeMatches } from '../api/scope.ts'
 import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/seams.ts'
+import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 export const host = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'host', incarnation })

@@ -6,4 +6,4 @@ Storage, a core module in main that serves `storage.*` and `cache.*` for every p
 - each space is held to the quotas in `core/api/storage.ts`, counted from disk on each set, so a space the plugins manager cleared counts as empty. A set past one answers `failed` with the reason `quota`
 - calls on one space run in order, and temp files a crash left are removed the first time a space is touched in a run
 
-`store.ts` holds the logic. `core/backend/modules.ts` makes it and opens it on the data folder at start. The plugins manager clears a space through it while it is on. Its tests are in `core/test/modules/storage`
+`store.ts` holds the logic. `core/backend/wire.ts` makes it and `core/backend/modules/modules.ts` opens it on the data folder at start. The plugins manager clears a space through it while it is on. Its tests are in `core/test/modules/storage`

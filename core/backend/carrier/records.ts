@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { AuditRecord } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { CoreRecordLog, Landing } from './seams.ts'
+import type { CoreRecordLog, Landing } from './header.ts'
 
 // landed settles the promise its write gave back. core-records.dropped, which the lane writes itself, has none. writing is
 // set while its append is under way, when it can no longer be taken out. withdrawn is a waiter that gave up meanwhile,

@@ -22,6 +22,7 @@
     "seed:fresh": "npm run seed -w daemon -- --fresh",
     "test": "npm test -w core -w daemon -w core-plugins/mcp-http-handler -w core-plugins/layout -w core-plugins/search --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "check:copies": "node scripts/check-copies.ts",
     "build:main": "node core/build/main.ts",
     "test:e2e": "npm run build:main && npm run test:e2e -w hetu-core",
     "package:dir": "node core/build/package.ts dir",
@@ -36,6 +37,7 @@
     "electron": "45.3.0",
     "electron-builder": "26.18.0",
     "hetu-plugins": "github:QianChenTT/hetu-plugins#1169fd132a3e4870933f80fa21bdb5bc241905c3",
+    "jscpd": "5.4.3",
     "playwright": "1.65.0"
   }
 }

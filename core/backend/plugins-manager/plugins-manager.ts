@@ -26,17 +26,19 @@ import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, Granted
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
-import { firstPartyPath, type Booted } from '../boot/boot.ts'
-import { agentItems, type FileResult, type Plugin, type SecurityState, type StateStore, type Switches } from '../boot/state.ts'
-import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/seams.ts'
-import { moduleRequires, type CoreModules } from '../modules.ts'
+import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
+import { agentItems } from '../lib/agent-items.ts'
+import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/header.ts'
+import { moduleRequires, type CoreModules } from '../modules/header.ts'
 import {
-  clear, clearFailedOnce, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled, type Installed,
+  clear, clearFailedOnce, firstPartyPath, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled,
+  type Installed,
 } from './folders.ts'
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
-import type { CarrierLink, Runtime } from './seams.ts'
+import type { Runtime } from '../runtime/header.ts'
+import type { CarrierLink } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
@@ -2379,8 +2381,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       this.state = { ...this.state, switches: next }
       await this.modules.apply(next.off)
       // The gate hears the switch at once, so with the classifier on again every item not yet classed asks from the
-      // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier started.
-      // One bump, so the grants snapshot grows by one for the change
+      // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier
+      // started. One bump, so the grants snapshot grows by one for the change
       this.bump()
       if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
         void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))

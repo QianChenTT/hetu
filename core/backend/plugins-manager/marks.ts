@@ -1,4 +1,5 @@
-import { MAX_AGENT_ITEMS, type Plugin, type Switches } from '../boot/state.ts'
+import { MAX_AGENT_ITEMS } from '../lib/agent-items.ts'
+import type { Plugin, Switches } from '../boot/header.ts'
 
 // The revoked marks: each label the human revoked whose tokens mcp-http-handler has not yet said it ended. They sit on the agent
 // host's entry while it has one and in the switches while it has none, so a Reset or a Remove of the host drops no

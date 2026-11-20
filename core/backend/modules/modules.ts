@@ -1,66 +1,13 @@
-import { coreModuleIds, providers, type CoreModuleId } from '../api/ids.ts'
-import { defaultLimits, MAX_TIMER_MS } from '../api/limits.ts'
-import { frozen } from '../api/plain.ts'
-import type {
-  ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider, StorageRole,
-} from '../api/policy-jobs.ts'
-import { createGate } from './policy/gate/gate.ts'
-import { createGrantRiskClassifier } from './policy/grant-risk-classifier/grant-risk-classifier.ts'
-import { createExec, type Exec } from './providers/exec/exec.ts'
-import { createHistory, type History } from './providers/history/history.ts'
-import { createLuoshu, type Luoshu } from './providers/luoshu/luoshu.ts'
-import { createStorage } from './providers/storage/store.ts'
-
-// A module as the core reads it: starting until it is handed what it needs and while its start runs, on, off by the
-// human's switch, failed (its last start threw or ran past readyMs, or its last push threw) or stopped (closed at
-// shutdown or in the stopped mode). Failed clears once that start or push goes through again. Nothing stops and nothing
-// restarts hetu for it
-export type ModuleState = 'starting' | 'on' | 'off' | 'failed' | 'stopped'
-
-// What a module.state record says of a change: started, failed, stopped (by its switch, at shutdown or in the stopped
-// mode) or recovered from a failed start or push
-export type ModuleChange = 'started' | 'failed' | 'stopped' | 'recovered'
-
-// The topics luoshu publishes, each as luoshu.<topic>. A publish of any other reaches nobody
-export const luoshuTopics = frozen(['changed', 'outside'] as const)
-
-// Storage as the core holds it: the provider, the clear the plugins manager runs in a space's turn and the data folder
-// it opens on
-export type StorageModule = Provider & StorageRole & { open(dataDir: string): void }
-
-export type CoreModulesOptions = {
-  dataDir: string
-  installDir: string
-  // The OS's bin the runtime gives, handed to the luoshu alone
-  trash?: (absolute: string) => Promise<void>
-  // Publishes luoshu.<topic> for a path. The join points it at the carrier
-  publish: (topic: string, path: string) => void
-  // Instances in place of the ones the core makes, for tests
-  gate?: Gate
-  grantRiskClassifier?: GrantRiskClassifier
-  storage?: StorageModule
-  luoshu?: Luoshu
-  history?: History
-  exec?: Exec
-}
-
-// What the plugins manager hands the modules at start, read again at each push: the newest grants snapshot, exec's view
-// of the grants, the notes folder picked, how long a module's start may take, where a fault goes and where each change
-// of a module's state is told
-export type Handed = {
-  grants(): GrantsSnapshot
-  exec(): ExecView
-  folder(): string | null
-  readyMs(id: CoreModuleId): number
-  fault(id: CoreModuleId, step: string): void
-  changed(id: CoreModuleId, change: ModuleChange, reason: string | null): void
-}
-
-// What each module requires, as its manifest said when it was a core plugin. History commits the notes the luoshu
-// holds, so it serves only while the luoshu does and the graph shows it waiting meanwhile
-export const moduleRequires: Readonly<Record<CoreModuleId, readonly CoreModuleId[]>> = frozen({
-  gate: [], 'grant-risk-classifier': [], storage: [], luoshu: [], history: ['luoshu'], exec: [],
-})
+import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
+import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
+import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { Exec } from '../providers/exec/header.ts'
+import type { History } from '../providers/history/header.ts'
+import type { Luoshu } from '../providers/luoshu/header.ts'
+import {
+  luoshuTopics, moduleRequires, type CoreModules as Holder, type CoreModulesOptions, type Handed, type ModuleChange, type ModuleReason,
+  type ModuleState, type StorageModule,
+} from './header.ts'
 
 // The order the modules close in, the reverse of their start, so history closes before the luoshu it reads from and
 // the gate closes last
@@ -68,10 +15,10 @@ const closing = [...coreModuleIds].reverse()
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
-// The one place the six core modules are made and held. The carrier reads the gate and the providers through here and
+// The one place the six core modules are held, made by the join. The carrier reads the gate and the providers through here and
 // the plugins manager the grant risk classifier and storage's clear, each null while its module is off or failed. A
 // module that throws is refused per call and stops nothing
-export class CoreModules {
+export class CoreModules implements Holder {
   private readonly dataDir: string
   private readonly installDir: string
   private readonly trash: CoreModulesOptions['trash']
@@ -85,7 +32,7 @@ export class CoreModules {
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
   private readonly pushFailed = new Set<CoreModuleId>()
-  // The modules whose start runs now, and each module's latest start, so a start that ran out of time and finishes late
+  // The modules whose start runs now and each module's latest start, so a start that ran out of time and finishes late
   // can tell it was not the latest
   private readonly beginning = new Set<CoreModuleId>()
   private readonly attempts = new Map<CoreModuleId, number>()
@@ -102,20 +49,12 @@ export class CoreModules {
     this.dataDir = options.dataDir
     this.installDir = options.installDir
     this.trash = options.trash
-    this.gateOf = options.gate ?? createGate()
-    this.classifierOf = options.grantRiskClassifier ?? createGrantRiskClassifier()
-    this.storageOf = options.storage ?? createStorage()
-    // Only luoshu's two topics go out. A publish that throws never fails the write that made it
-    this.luoshuOf = options.luoshu ?? createLuoshu({
-      publish: (topic, path) => {
-        if (!(luoshuTopics as readonly string[]).includes(topic)) return
-        try {
-          options.publish(topic, path)
-        } catch {}
-      },
-    })
-    this.historyOf = options.history ?? createHistory()
-    this.execOf = options.exec ?? createExec()
+    this.gateOf = options.gate
+    this.classifierOf = options.grantRiskClassifier
+    this.storageOf = options.storage
+    this.luoshuOf = options.luoshu
+    this.historyOf = options.history
+    this.execOf = options.exec
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -127,7 +66,7 @@ export class CoreModules {
 
   // Why a module reads as it does, null while on or starting: its switch, a start that threw or ran out of time, a push
   // that threw, shutdown or the stopped mode
-  reason(id: CoreModuleId): 'off' | 'start-failed' | 'state-changed' | 'shutdown' | 'stopped-mode' | null {
+  reason(id: CoreModuleId): ModuleReason {
     if (this.off.has(id)) return 'off'
     const stopped = this.stoppedFor.get(id)
     if (stopped !== undefined) return stopped
@@ -194,7 +133,7 @@ export class CoreModules {
   }
 
   // The human's switches as they now stand. A module switched off is closed where it has a close and its lookups answer
-  // null. One switched on again is started again where it has a start, given readyMs, and handed what it needs
+  // null. One switched on again is started again where it has a start (given readyMs) and handed what it needs
   async apply(off: readonly string[]): Promise<void> {
     const was = this.off
     this.off = new Set(off)
@@ -254,7 +193,7 @@ export class CoreModules {
     return { folder: this.handed?.folder() ?? null, dataDir: this.dataDir, installDir: this.installDir }
   }
 
-  // A start that throws or runs past readyMs marks the module failed until a start goes through, and hetu runs on
+  // A start that throws or runs past readyMs marks the module failed until a start goes through. hetu runs on
   // without it. History with no git to run is one, exec looking for a program on a path that stalls another. A start
   // that ran out of time and finishes late is closed again, unless a later start began meanwhile
   private async begin(id: CoreModuleId): Promise<void> {
@@ -347,7 +286,7 @@ export class CoreModules {
     return new Map(coreModuleIds.map(id => [id, this.state(id)]))
   }
 
-  // Tells each change of a module's state since before, among ids. Starting is no change of its own, and a module that
+  // Tells each change of a module's state since before, among ids. Starting is no change of its own. A module that
   // goes from starting to off or stopped never ran. Answers whether any changed
   private tell(before: ReadonlyMap<CoreModuleId, ModuleState>, why: string | null, ids: readonly CoreModuleId[] = coreModuleIds): boolean {
     let any = false
@@ -368,6 +307,17 @@ export class CoreModules {
   private fault(id: CoreModuleId, step: string): void {
     try {
       this.handed?.fault(id, step)
+    } catch {}
+  }
+}
+
+// What the luoshu publishes through: only its two topics go out. A publish that throws never fails the write that
+// made it. The join makes the luoshu with it
+export function luoshuPublish(publish: (topic: string, path: string) => void): (topic: string, path: string) => void {
+  return (topic, path) => {
+    if (!(luoshuTopics as readonly string[]).includes(topic)) return
+    try {
+      publish(topic, path)
     } catch {}
   }
 }

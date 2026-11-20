@@ -5,7 +5,7 @@ import { FIRST_PARTY_SIGNER } from '../api/install.ts'
 import { boot } from '../backend/boot/boot.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { PluginsManager } from '../backend/plugins-manager/plugins-manager.ts'
-import type { Landing } from '../backend/plugins-manager/seams.ts'
+import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
   cleanup, coreInstall, coreModules, filesFor, firstPartyEntry, harness, hashOf, plant, reasonOf, stateOf, until, wire, workerManifest,
   type Files, type Listing,

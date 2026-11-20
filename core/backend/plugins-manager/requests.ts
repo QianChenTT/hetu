@@ -3,7 +3,7 @@ import type { PendingRequest } from '../../api/actions.ts'
 import { lapseOf, mustType, type Change, type ChangeEffect } from '../../api/changes.ts'
 import type { Caller } from '../../api/envelope.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { Landing } from './seams.ts'
+import type { Landing } from './header.ts'
 
 // Requests that wait for the human at once from one sender: each window role and the core. A plugin's own asks wait
 // within its firstUseAsks. A fixed cap and not a limit, so one window can't fill the places the trusted window

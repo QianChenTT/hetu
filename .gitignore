@@ -8,3 +8,5 @@ dist/
 /.vscode/
 # What packaging makes: the stage, the packed folders and the installer
 /dist-package/
+# The glossary of hetu's names, kept local for now
+/GLOSSARY.md

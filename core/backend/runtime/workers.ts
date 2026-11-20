@@ -2,7 +2,7 @@ import type { BrowserWindow, MessagePortMain, Session } from 'electron'
 import type { Sample } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { firstPartyIds } from '../../api/ids.ts'
-import type { WorkerStart } from '../plugins-manager/seams.ts'
+import type { WorkerStart } from './header.ts'
 import { SCHEME } from './before-ready.ts'
 import { webPreferences } from './windows.ts'
 

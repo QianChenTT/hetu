@@ -3,7 +3,7 @@ import { copyFile, link, mkdir, mkdtemp, readdir, readFile, readlink, realpath, 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FuseState, FuseV1Options, pathToFuseFile } from '@electron/fuses'
-import { stateDir } from '../../backend/boot/state.ts'
+import { stateDir } from '../../backend/lib/data-dir.ts'
 import type { FuseName } from '../../build/fuses.ts'
 import { executableIn } from '../../build/package.ts'
 

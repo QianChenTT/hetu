@@ -7,7 +7,7 @@ The carrier: the one path every call and event takes and the enforcement point o
 - the carrier answers `editor.reach` itself and filters a `luoshu.list` page and its `next` before they leave (`lister`, `listed` and `Call.canList`)
 - `limits.ts`: the limits as they apply to one plugin with the human's values and the watchdog's lowering, plus the per-port rate and the flood cap
 - `records.ts`: the core record lane straight through the one `EventLog` with its bounded backlog, the coalesced core records and the bounded audit queue with `next` and `ack`
-- `seams.ts`: what the later parts give it, each a small interface the tests fake: the plugins manager, the gate and the providers from the core modules, the guards and the watchdog, which nothing holds yet, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
+- `header.ts`: what the later parts give it, each a small interface the tests fake: the plugins manager, the gate and the providers from the core modules, the guards and the watchdog, which nothing holds yet, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
 
 The bus, in the carrier:
 - `events.subscribe`, `events.unsubscribe` and `events.publish` are calls and take the eleven steps. The `event` and `ack` messages and the signals are shaped in `core/api/envelope.ts`

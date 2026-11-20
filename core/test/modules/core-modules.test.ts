@@ -4,7 +4,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../../api/envelope.ts'
 import type { Call, ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../../api/policy-jobs.ts'
-import { CoreModules, type CoreModulesOptions, type Handed, type StorageModule } from '../../backend/modules.ts'
+import { moduleRequires, type CoreModulesOptions, type Handed, type StorageModule } from '../../backend/modules/header.ts'
+import { realModules } from '../modules-fakes.ts'
 import type { Exec } from '../../backend/providers/exec/exec.ts'
 import type { History } from '../../backend/providers/history/history.ts'
 import type { Luoshu } from '../../backend/providers/luoshu/luoshu.ts'
@@ -87,12 +88,12 @@ function fakes() {
     start: async () => maybe('exec.start'),
     close: () => maybe('exec.close'),
   }
-  const options: Omit<CoreModulesOptions, 'publish'> = { dataDir: '', installDir: '', gate, storage, luoshu, history, exec }
+  const options: Partial<CoreModulesOptions> = { gate, storage, luoshu, history, exec }
   return { options, seen, throws, gate, storage, luoshu, history, exec }
 }
 
-function made(options: Partial<CoreModulesOptions> = {}) {
-  return new CoreModules({ dataDir, installDir, publish: () => {}, ...options })
+function made(options: Partial<CoreModulesOptions> & { publish?: (topic: string, path: string) => void } = {}) {
+  return realModules({ dataDir, installDir, ...options })
 }
 
 describe('the core modules', () => {
@@ -258,7 +259,7 @@ describe('the core modules', () => {
     const opened: Opening[] = []
     options.luoshu!.role.open = opening => opened.push(opening)
     const trash = async () => {}
-    const modules = new CoreModules({ ...options, dataDir, installDir, trash, publish: () => {} })
+    const modules = realModules({ ...options, dataDir, installDir, trash })
     await modules.start([], handing(notes).handed)
     expect(opened).toEqual([{ folder: notes, dataDir, installDir, trash }])
   })
@@ -281,6 +282,12 @@ describe('the core modules', () => {
     expect(modules.state('gate')).toBe('on')
   })
 
+  it('hold what each module requires frozen all the way down, as the graph and the lookups read it', () => {
+    expect(moduleRequires.history).toEqual(['luoshu'])
+    expect(Object.isFrozen(moduleRequires)).toBe(true)
+    for (const requires of Object.values(moduleRequires)) expect(Object.isFrozen(requires)).toBe(true)
+  })
+
   it('read starting before start, so the gate is no holder and reads as starting and not as on', () => {
     const modules = made(fakes().options)
     for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) {
@@ -290,7 +297,7 @@ describe('the core modules', () => {
     expect(modules.gate()).toBeNull()
   })
 
-  it('tell each module that started and each that failed at start, and nothing for one switched off', async () => {
+  it('tell each module that started and each that failed at start but nothing for one switched off', async () => {
     const { options, throws } = fakes()
     throws.add('exec.start')
     const modules = made(options)
@@ -452,7 +459,7 @@ describe('the core modules', () => {
   })
 
   describe('the stopped mode', () => {
-    it('closes every module in the reverse of its start, the gate last, and serves nothing after, the gate and the classifier included', async () => {
+    it('closes every module in the reverse of its start with the gate last and serves nothing after, the gate and the classifier included', async () => {
       const { options, seen } = fakes()
       const modules = made(options)
       const { handed, changes } = handing()

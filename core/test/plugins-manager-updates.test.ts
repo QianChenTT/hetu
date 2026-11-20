@@ -2,7 +2,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StateStore } from '../backend/boot/state.ts'
-import type { Landing } from '../backend/plugins-manager/seams.ts'
+import type { Landing } from '../backend/plugins-manager/header.ts'
 import {
   cleanup, coreInstall, entryFor, filesFor, harness, hashOf, reasonOf, stateOf, until, workerManifest, writeFolder, type Files,
 } from './plugins-manager-fakes.ts'

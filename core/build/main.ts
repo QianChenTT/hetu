@@ -108,7 +108,7 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     external: ['electron'],
     define: { __HETU_PACKAGED__: String(kind.packaged === true), __HETU_LOCKED__: String(kind.locked === true) },
   })
-  // Each core module bundled into main.js reaches only the Node built-ins on its own list (D-566)
+  // Each core module bundled into main.js reaches only the Node built-ins on its own list, as each did when it was built as its own plugin
   const reached = await checkModuleImports(main.metafile!)
   if (reached.length > 0) throw new Error(`a core module reaches past its list:\n${reached.join('\n')}`)
   // The bootstrap each utility process runs, beside main.js: it imports a utility half's verified bytes and runs them on

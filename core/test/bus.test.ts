@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
-import type { CarrierOptions } from '../backend/carrier/seams.ts'
+import type { CarrierOptions } from '../backend/carrier/header.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import {
   cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type FakeLog, type Message, type Side,

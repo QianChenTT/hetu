@@ -345,7 +345,7 @@ describe('a first-party plugin built from the community package', () => {
   })
 })
 
-describe('each core module\'s imports (D-566)', () => {
+describe('each core module\'s Node built-ins', () => {
   // A tree shaped as core/ with every module folder holding one file, each importing what files says
   async function bundled(files: Record<string, string>) {
     const root = await outDir()
@@ -360,7 +360,7 @@ describe('each core module\'s imports (D-566)', () => {
     return checkModuleImports(result.metafile, undefined, root)
   }
 
-  it('holds each module to the list D-566 names: the gate and the classifier none, storage crypto, fs/promises and path', () => {
+  it('holds each module to its own list: the gate and the classifier none, storage crypto, fs/promises and path', () => {
     expect(moduleBuiltins).toEqual({
       gate: [],
       'grant-risk-classifier': [],

@@ -24,7 +24,7 @@ import { Bus, type Paths } from './bus.ts'
 import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
 import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
-import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './seams.ts'
+import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './header.ts'
 
 type Send = (message: unknown) => void
 

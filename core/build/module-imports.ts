@@ -16,7 +16,7 @@ export const moduleFolders: Readonly<Record<CoreModuleId, string>> = {
   exec: 'backend/providers/exec',
 }
 
-// The Node built-ins each core module may reach, by the exact name it imports (D-566). The gate and the grant risk
+// The Node built-ins each core module may reach, by the exact name it imports. The gate and the grant risk
 // classifier judge from what they are handed and touch nothing. Storage reads and writes its files. The luoshu watches
 // and writes the notes folder. History and exec run git and the commands a plugin was granted
 export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> = {
