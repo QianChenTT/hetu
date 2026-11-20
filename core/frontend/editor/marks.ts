@@ -23,7 +23,8 @@ class TextWidget extends WidgetType {
   }
 }
 
-const hide = Decoration.replace({})
+const hiddenStyle = Decoration.mark({ class: 'cm-hetu-hidden' })
+const replaced = Decoration.replace({})
 const styled = new Map<string, Decoration>()
 const lined = new Map<string, Decoration>()
 
@@ -33,10 +34,14 @@ function styleOf(style: string): Decoration {
   return made
 }
 
-// The element and the edge ride on the decoration, for the rules on hidden text to read
-function hideOf(mark: Extract<Mark, { kind: 'hide' }>): Decoration {
-  if (mark.group === undefined && mark.edge === undefined) return hide
-  return Decoration.replace({ ...mark.group === undefined ? {} : { group: mark.group }, ...mark.edge === undefined ? {} : { edge: mark.edge } })
+// Text within a line is hidden with a style, so it stays in the page and an IME composing beside it reads the text
+// right. A range over a line break is replaced, since a style can't take the break away. The element and the edge ride
+// on the decoration, for the rules on hidden text to read
+function hideOf(mark: Extract<Mark, { kind: 'hide' }>, doc: Text): Decoration {
+  const across = doc.lineAt(mark.from).to < mark.to
+  if (mark.group === undefined && mark.edge === undefined) return across ? replaced : hiddenStyle
+  const spec = { ...mark.group === undefined ? {} : { group: mark.group }, ...mark.edge === undefined ? {} : { edge: mark.edge } }
+  return across ? Decoration.replace(spec) : Decoration.mark({ class: 'cm-hetu-hidden', ...spec })
 }
 
 function lineOf(style: string): Decoration {
@@ -46,8 +51,8 @@ function lineOf(style: string): Decoration {
 }
 
 // Marks as CodeMirror decorations with the drawer's own classes: styles and line styles in marks, hidden ranges and
-// widgets in hidden, which the editor also makes atomic so the cursor jumps over them. A mark reaching past the end of
-// doc is left out, since the marks a plugin sends were checked for shape and not against the text
+// widgets in hidden, which the drawer's rules for hidden text read. A mark reaching past the end of doc is left out,
+// since the marks a plugin sends were checked for shape and not against the text
 export function drawMarks(given: readonly Mark[], doc: Text): { marks: DecorationSet, hidden: DecorationSet } {
   const marks: Range<Decoration>[] = []
   const hidden: Range<Decoration>[] = []
@@ -58,7 +63,7 @@ export function drawMarks(given: readonly Mark[], doc: Text): { marks: Decoratio
     }
     if (mark.to > doc.length) continue
     if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
-    else if (mark.kind === 'hide') hidden.push(hideOf(mark).range(mark.from, mark.to))
+    else if (mark.kind === 'hide') hidden.push(hideOf(mark, doc).range(mark.from, mark.to))
     else hidden.push(Decoration.replace({ widget: new TextWidget(mark.text) }).range(mark.from, mark.to))
   }
   return { marks: Decoration.set(marks, true), hidden: Decoration.set(hidden, true) }
