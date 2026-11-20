@@ -10,7 +10,7 @@ const calm: CoreStatus = {
   devMode: [],
   allowUnsigned: 0,
   skipVerification: false,
-  recordingOff: false,
+  modulesOff: [],
   logWrites: true,
   luoshuPicked: true,
   page: [],
@@ -31,7 +31,7 @@ describe('the banner', () => {
       devMode: ['notes'],
       allowUnsigned: 2,
       skipVerification: true,
-      recordingOff: true,
+      modulesOff: ['flood-control', 'heartbeat', 'recording', 'security-view'],
       logWrites: false,
       luoshuPicked: false,
       page: [],
@@ -41,7 +41,8 @@ describe('the banner', () => {
     })).toEqual([
       'state files that failed their check at start: switches, plugins',
       'gate: off', 'grant-risk-classifier: absent', 'down: git, search', 'dev mode: notes', 'unsigned builds allowed: 2',
-      'verification skipped', 'recording off', "the log can't write", 'pick a luoshu folder',
+      'verification skipped', 'flood-control off', 'heartbeat off', 'recording off', 'security-view off', "the log can't write",
+      'pick a luoshu folder',
     ])
   })
 })

@@ -442,7 +442,7 @@ describe('core.status, for a window\'s banner', () => {
       devMode: [],
       allowUnsigned: 0,
       skipVerification: false,
-      recordingOff: false,
+      modulesOff: [],
       logWrites: true,
       luoshuPicked: false,
       page: [],

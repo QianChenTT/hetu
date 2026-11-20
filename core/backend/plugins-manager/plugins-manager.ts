@@ -1011,7 +1011,7 @@ ${capabilityKey(change.capability)}`)
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
-      recordingOff: this.modules.state('recording') === 'off',
+      modulesOff: coreModuleIds.filter(id => !isOne(policyJobIds, id) && this.modules.state(id) === 'off'),
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),

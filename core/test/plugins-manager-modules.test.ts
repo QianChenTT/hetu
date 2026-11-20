@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SecurityList } from '../api/actions.ts'
+import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/runtime/header.ts'
 import {
@@ -143,6 +143,17 @@ describe('flood control as a core module', () => {
     await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'flood-control' })
     expect(made.modules.floodControl()).not.toBe(null)
     expect(limited).toEqual(['alpha', 'alpha'])
+  })
+})
+
+describe('the banner', () => {
+  // A policy job switched off shows as its state already, so the list names the other modules
+  it('names each core module the human switched off but the policy jobs', async () => {
+    const made = await harness({ switches: { off: ['gate', 'flood-control', 'heartbeat', 'recording', 'security-view', 'exec'] } })
+    await made.pluginsManager.start()
+    const status = await made.pluginsManager.serve(call(trusted, 'core.status')) as CoreStatus
+    expect(status.modulesOff).toEqual(['exec', 'flood-control', 'heartbeat', 'recording', 'security-view'])
+    expect(status.policyJobs.gate).toBe('off')
   })
 })
 

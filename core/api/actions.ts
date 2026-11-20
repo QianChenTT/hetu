@@ -405,8 +405,8 @@ export type CoreStatus = {
   devMode: string[]
   allowUnsigned: number
   skipVerification: boolean
-  // The human has recording off
-  recordingOff: boolean
+  // The core modules the human switched off, in their order, each but a policy job, whose state shows already
+  modulesOff: string[]
   logWrites: boolean
   luoshuPicked: boolean
   // The in-page core plugins that are ready, which the editor window applies: hidden-marks
