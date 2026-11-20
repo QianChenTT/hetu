@@ -1,11 +1,14 @@
 import { deleteGroupBackward, deleteGroupForward } from '@codemirror/commands'
-import { EditorSelection, type EditorState, findClusterBreak, type TransactionSpec } from '@codemirror/state'
-import type { DecorationSet } from '@codemirror/view'
+import { EditorSelection, type EditorState, type Extension, Facet, findClusterBreak, Prec, type TransactionSpec } from '@codemirror/state'
+import { type DecorationSet, type EditorView, keymap, ViewPlugin } from '@codemirror/view'
 
 // The drawer's rules for text a plugin hid, the same for every plugin: the caret never rests inside it, arrows step over
 // it to the next character the human sees, Backspace and Delete take only characters the human sees and a selection
 // takes hidden text at its edges only with the whole element it belongs to. A widget is one character the human sees.
 // Nothing here runs during an IME composition
+
+// The hidden ranges and widgets of each source, as the drawer draws them
+export const hiddenText = Facet.define<(view: EditorView) => DecorationSet>()
 
 type Sets = readonly DecorationSet[]
 type Piece = { from: number, to: number, widget: boolean, group: string | undefined }
@@ -157,3 +160,50 @@ export function removeGroup(state: EditorState, sets: Sets, forward: boolean): T
   if (changes.length === 0) return null
   return { changes, scrollIntoView: true, userEvent: forward ? 'delete.forward' : 'delete.backward' }
 }
+
+const setsOf = (view: EditorView): Sets => view.state.facet(hiddenText).map(read => read(view))
+
+// A rule on a key, never during an IME composition. The key is taken even when the rule changes nothing, so no command
+// of CodeMirror's takes hidden text in its place
+function bound(rule: (state: EditorState, sets: Sets) => TransactionSpec | null): (view: EditorView) => boolean {
+  return view => {
+    if (view.composing) return false
+    const spec = rule(view.state, setsOf(view))
+    if (spec !== null) view.dispatch(spec)
+    return true
+  }
+}
+
+// The caret and the selection settled after each update, once it is done, so a click, a vertical move or a plugin's new
+// marks never leave the caret inside hidden text
+const settler = ViewPlugin.define(view => {
+  let queued = false
+  let gone = false
+  return {
+    update() {
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        if (gone || view.composing) return
+        const selection = settle(view.state, setsOf(view))
+        if (selection !== null) view.dispatch({ selection, userEvent: 'select' })
+      })
+    },
+    destroy() {
+      gone = true
+    },
+  }
+})
+
+export const hiddenRules: Extension = [
+  Prec.high(keymap.of([
+    { key: 'ArrowLeft', run: bound((state, sets) => move(state, sets, false, false)), shift: bound((state, sets) => move(state, sets, false, true)) },
+    { key: 'ArrowRight', run: bound((state, sets) => move(state, sets, true, false)), shift: bound((state, sets) => move(state, sets, true, true)) },
+    { key: 'Backspace', run: bound((state, sets) => remove(state, sets, false)), shift: bound((state, sets) => remove(state, sets, false)) },
+    { key: 'Delete', run: bound((state, sets) => remove(state, sets, true)) },
+    { key: 'Mod-Backspace', mac: 'Alt-Backspace', run: bound((state, sets) => removeGroup(state, sets, false)) },
+    { key: 'Mod-Delete', mac: 'Alt-Delete', run: bound((state, sets) => removeGroup(state, sets, true)) },
+  ])),
+  settler,
+]

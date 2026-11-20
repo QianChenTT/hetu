@@ -7,6 +7,7 @@ import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, type Vi
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
 import { hiddenMarks, markdownSupport } from './hidden-marks.ts'
+import { hiddenRules, hiddenText } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
 import { drawMarks } from './marks.ts'
@@ -118,9 +119,9 @@ export const pluginMarks = StateField.define<{ owned: Owned, shown: readonly Sho
       .filter(mark => mark.kind !== 'hide' || !shown.some(one => one.owner === owner && one.group === mark.group)))
     return { owned, shown, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
   },
-  // A plugin's hidden ranges are not atomic: a delete beside one takes one character, not the whole range the plugin
-  // chose. Hidden marks' own, from the install, are
+  // The drawer's rules for hidden text read the hidden ranges, so no plugin's are atomic
   provide: field => [
+    hiddenText.of(view => view.state.field(field).drawn.hidden),
     EditorView.decorations.from(field, value => value.drawn.marks),
     EditorView.decorations.from(field, value => value.drawn.hidden),
   ],
@@ -159,7 +160,7 @@ const hiddenMarksView = ViewPlugin.fromClass(class {
   provide: plugin => [
     EditorView.decorations.of(view => view.plugin(plugin)?.drawn.marks ?? Decoration.none),
     EditorView.decorations.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
-    EditorView.atomicRanges.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
+    hiddenText.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
   ],
 })
 
@@ -198,6 +199,7 @@ export class EditorViews implements Editors {
           EditorView.cspNonce.of(this.nonce),
           history(),
           markdownSupport(),
+          hiddenRules,
           EditorView.lineWrapping,
           keymap.of([...defaultKeymap, ...historyKeymap]),
           Prec.lowest(EditorView.domEventHandlers({ keydown: event => this.hooks.key(id, event) })),
