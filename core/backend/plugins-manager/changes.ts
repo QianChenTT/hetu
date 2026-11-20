@@ -8,7 +8,7 @@ import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
-import { clear, clearFailedOnce, folders, stage, swapIn } from './folders.ts'
+import { clear, clearFailedOnce, clearStartMarker, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, type Read } from './verify.ts'
@@ -56,7 +56,10 @@ export abstract class PluginsChanges extends PluginsInstall {
     switch (change.kind) {
       case 'plugin.on':
       case 'plugin.off':
-        return this.switchPlugin(change.plugin, change.kind === 'plugin.on')
+        await this.switchPlugin(change.plugin, change.kind === 'plugin.on')
+        // Started with it switched off, the control's start marker holds nothing back any more
+        if (change.kind === 'plugin.off' && this.phase === 'stopped') await clearStartMarker(this.dataDir, change.plugin).catch(() => {})
+        return
       case 'plugin.approve':
         return this.approve(change.plugin, confirm)
       case 'plugin.remove':

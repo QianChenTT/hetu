@@ -473,6 +473,36 @@ describe('the fail-safe at start', () => {
       noCall(made)
     })
 
+    it('clears the marker once the gate\'s off applied in the stopped mode, so the next launch starts with it off', async () => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), before: marked('gate') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toMatchObject({ control: 'gate', reason: START_HUNG })
+      await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trustedWindow)
+      const [held] = made.pluginsManager.pending()
+      await made.pluginsManager.confirm(held.id, { typed: 'gate' })
+      const { switches } = (await made.store.load()).state
+      expect(switches.off).toContain('gate')
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(false)
+      await made.pluginsManager.shutdown()
+      const again = await harness({ base, switches })
+      await again.pluginsManager.start()
+      expect(again.pluginsManager.stopped()).toBe(null)
+      expect(again.pluginsManager.policyJob('gate')).toBe('off')
+    })
+
+    it('keeps the marker through Quit, so the next launch lands in the fail-safe again', async () => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), before: marked('gate') })
+      await made.pluginsManager.start()
+      await made.pluginsManager.shutdown()
+      await new Ending().leave(made.pluginsManager)
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(true)
+      const again = await harness({ base })
+      await again.pluginsManager.start()
+      expect(again.pluginsManager.stopped()).toMatchObject({ control: 'gate', reason: START_HUNG })
+    })
+
     it('holds nothing back for a marker naming no control the fail-safe covers', async () => {
       const made = await harness({ ...plugins(), before: marked('storage') })
       await made.pluginsManager.start()
