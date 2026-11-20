@@ -54,6 +54,16 @@ describe('search with the grants its manifest asks for', () => {
     expect(await query(fake, 'fox', narrow)).toEqual(['public/a.md'])
   })
 
+  // A plugin may call search with no read of its own and learns no note's name from it
+  it('answers nothing to a caller with no read at all', async () => {
+    const fake = core()
+    await fake.start(search)
+    await fake.luoshu.write('notes/a.md', 'fox')
+    await finds(fake, 'fox', ['notes/a.md'])
+    const none = { grants: [{ type: 'plugin.call' as const, targets: ['search'] }] }
+    expect(await query(fake, 'fox', none)).toEqual([])
+  })
+
   it('forgets a note that is gone', async () => {
     const fake = core()
     await fake.start(search)

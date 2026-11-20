@@ -113,3 +113,20 @@ describe('the listing at start', () => {
     expect(await query(fake, 'fox')).toEqual([])
   })
 })
+
+// The shape of core/test/luoshu-joined.test.ts's vault, there read by 16 readers through the router with the log on.
+// Here search's own loop reads it through the fake core
+describe('the listing at start in a vault of 469 notes search never saw', () => {
+  it('reads every note, at most 16 at a time, and finds a word in a note no event named', async () => {
+    const line = 'A line of a note about something worth keeping, with a [[link]] and some **bold** words in it.\n'
+    const notes: Record<string, string> = {}
+    for (let i = 0; i < 469; i++) notes[`folder ${i % 23}/note ${i}.md`] = line.repeat(93) + (i === 233 ? 'quokka\n' : '')
+    const { fake } = core({ notes, latencyMs: 2 })
+    await fake.start(search)
+    await until(async () => (await query(fake, 'keeping')).length === 469, 20_000)
+    expect(await query(fake, 'quokka')).toEqual(['folder 3/note 233.md'])
+    const peak = fake.luoshu.busiest()
+    expect(peak).toBeGreaterThan(8)
+    expect(peak).toBeLessThanOrEqual(16)
+  }, 30_000)
+})
