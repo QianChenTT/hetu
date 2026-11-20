@@ -96,6 +96,13 @@ describe('a request', () => {
     ['an onBehalf with a right to left override', call({ onBehalf: 'agent\u202enimda' })],
     ['an onBehalf with a bidi isolate', call({ onBehalf: 'agent\u2067admin\u2069' })],
     ['an onBehalf over 512 characters', call({ onBehalf: 'a'.repeat(513) })],
+    // A pair's field is what the trusted window lists to revoke, so nothing in it may draw as nothing
+    ['an onBehalf with a zero-width space', call({ onBehalf: 'claude​#1' })],
+    ['an onBehalf with a zero-width joiner', call({ onBehalf: 'claude‍#1' })],
+    ['an onBehalf with a byte order mark', call({ onBehalf: '﻿claude#1' })],
+    ['an onBehalf with a line separator', call({ onBehalf: 'claude #1' })],
+    ['an onBehalf with a paragraph separator', call({ onBehalf: 'claude #1' })],
+    ['an onBehalf with a lone surrogate', call({ onBehalf: 'claude\ud800#1' })],
     // Floor rule 1, a message never names the sender
     ['a caller in the message', call({ caller: { kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 } })],
     ['an unknown field', call({ chain: [] })],

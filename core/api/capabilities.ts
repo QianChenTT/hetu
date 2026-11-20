@@ -17,6 +17,14 @@ export function screenText(max: number) {
 
 export const text = screenText(MAX_TEXT_LENGTH)
 
+// A format character, such as a zero-width one, draws as nothing and a line or paragraph separator breaks the line,
+// neither of which the quotes escape
+const unseen = /[\p{Cf}\p{Zl}\p{Zp}]/u
+// Screen text with nothing that draws as nothing either, for a name the human tells apart from another by sight
+export function seenText(max: number) {
+  return screenText(max).refine(value => value.isWellFormed() && !unseen.test(value), 'a character that draws as nothing')
+}
+
 // A variable exec passes through from hetu's own environment, by name. Never a value, and never a name that makes a
 // program load code
 const envName = z.string().max(MAX_TEXT_LENGTH, { abort: true }).superRefine((value, ctx) => {

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { folderCapability, pairCapability, screenText } from './capabilities.ts'
+import { folderCapability, pairCapability, screenText, seenText } from './capabilities.ts'
 import { label } from './envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
 import { isSecurityControl, pluginId, watchingModuleIds } from './ids.ts'
@@ -103,11 +103,8 @@ export const MAX_CLIENT_NAME_LENGTH = 128
 export const MAX_REDIRECT_LENGTH = 2048
 export const CONSENT_LAPSE_MS = 60_000
 
-// A format character, such as a zero-width one, draws as nothing and a line or paragraph separator breaks the line,
-// neither of which the quotes escape
-const unseen = /[\p{Cf}\p{Zl}\p{Zp}]/u
-// A client's name as its document gives it: screen text with nothing that draws as nothing
-export const clientName = screenText(MAX_CLIENT_NAME_LENGTH).refine(name => name.isWellFormed() && !unseen.test(name), 'a character that draws as nothing')
+// A client's name as its document gives it
+export const clientName = seenText(MAX_CLIENT_NAME_LENGTH)
 
 // A client's connect the core raises alone from core.consentAsk, never one security.request carries. plugin is the
 // plugin whose host half asked, which sets field on the calls it makes for the client once the human confirmed it,

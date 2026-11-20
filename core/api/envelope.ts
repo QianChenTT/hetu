@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { screenText } from './capabilities.ts'
+import { seenText } from './capabilities.ts'
 import { defaultLimits } from './limits.ts'
 import { localName, MAX_QUALIFIED_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { frozen, plainData } from './plain.ts'
@@ -29,8 +29,8 @@ export const token = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 
 // The caller's own label for one of the caller's clients, such as an OAuth client id, which can be a URL. The label
 // reaches the callee, guards and the audit. Under a plugin root it is the field of the chain's pair, which the gate
-// judges on the pair's own items
-export const label = screenText(MAX_LABEL_LENGTH)
+// judges on the pair's own items. The trusted window lists it to revoke, so nothing in it draws as nothing
+export const label = seenText(MAX_LABEL_LENGTH)
 
 const requestFields = {
   v: z.literal(VERSION),
