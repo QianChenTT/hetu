@@ -282,19 +282,13 @@ describe('what an agent may read and list through mcp', () => {
     expect((await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
   })
 
-  it('filters what a search behind mcp found for the agent the chain is for, one agent apart from the other', async () => {
+  it('refuses a search behind mcp for an agent holding plugin.call, a type no pair\'s item may hold, and search hears nothing', async () => {
     const { door, mcp, search } = gated()
-    // A search_notes that hands back what gate.filterReadable kept of every note it holds
-    const searchNotes = async (label: string) => {
+    for (const label of ['client#4', 'client#5']) {
       const { parent } = await handled(door, mcp, label)
-      const id = mcp.call('search.query', { text: 'a' }, parent)
-      const atSearch = await search.waitFor(message => message.kind === 'call' && message.action === 'search.query' && message.onBehalf === label)
-      const kept = await search.ask('gate.filterReadable', { call: atSearch.callId, paths: every })
-      search.answer(atSearch.callId, kept.result)
-      return (await mcp.reply(id)).result
+      expect(code(await mcp.ask('search.query', { text: 'a' }, parent))).toBe('not-granted')
     }
-    expect(await searchNotes('client#4')).toEqual(['inbox/a.md'])
-    expect(await searchNotes('client#5')).toEqual(['private/b.md'])
+    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {

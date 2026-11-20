@@ -11,7 +11,7 @@ import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
-import { cleared } from './marks.ts'
+import { cleared, marksOf } from './marks.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, type Read } from './verify.ts'
 import { PluginsInstall } from './install.ts'
@@ -255,7 +255,9 @@ export abstract class PluginsChanges extends PluginsInstall {
         agents[agent].push({ capability: structuredClone(capability), off: false, firstUse: false })
       }
     }
-    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], pairs: { [agentDoor.plugin]: agents } })
+    // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, which the gate refuses
+    const revoked = { [agentDoor.plugin]: marksOf(host ?? null, this.state.switches) }
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], pairs: { [agentDoor.plugin]: agents }, revoked })
   }
 
   // What exec checks a command against on its own, read from the grants snapshot: each plugin's exec items that are on. Exec

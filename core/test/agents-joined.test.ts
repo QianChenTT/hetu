@@ -157,19 +157,11 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
-  it('filters search\'s answer for agent #1 under its call', async () => {
+  it('refuses search under agent #1\'s call, its plugin.call item a type no pair\'s item may hold, and search hears nothing', async () => {
     const { door, mcp, search } = await joined('on')
-    const notes = ['inbox/a.md', 'private/b.md']
     const { parent } = await request(door, mcp, 'client#1')
-    const id = 5000 + next++
-    mcp.send({ v: 1, kind: 'call', id, action: 'search.query', args: { text: 'SECRET' }, parent })
-    let got: Message | undefined
-    for (let waited = 0; got === undefined && waited < 3000; waited += 5) {
-      got = search.inbox.find(message => message.kind === 'call' && message.action === 'search.query')
-      if (got === undefined) await tick(5)
-    }
-    expect(got?.onBehalf).toBe('client#1')
-    expect((await ask(search, 'gate.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
+    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }, { parent }))).toBe('not-granted')
+    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('lets agent #2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {

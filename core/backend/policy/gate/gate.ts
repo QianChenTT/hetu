@@ -1,6 +1,7 @@
 import { capabilityKey, type Capability, type CapabilityType } from '../../../api/capabilities.ts'
 import type { Caller } from '../../../api/envelope.ts'
 import { commandKey } from '../../../api/exec.ts'
+import { frozen } from '../../../api/plain.ts'
 import { compileScopes } from '../../../api/scope.ts'
 import type { Access, Decision, Gate, GrantedItem, Pair, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
 import { windowGrants } from '../../../api/windows.ts'
@@ -31,6 +32,10 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   history: 'access',
   exec: 'command',
 })
+
+// The types a pair's item may hold: reading, listing and writing notes and their history. An item of any other type a
+// pair holds covers nothing, so a call for a pair reaches no plugin, runs nothing and subscribes to nothing
+export const pairTypes = frozen(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history'] as const satisfies readonly CapabilityType[])
 
 // One item as the gate matches it, compiled once per grants snapshot. access is a history item's own
 type Compiled = { type: string, off: boolean, firstUse: boolean, key: string, access?: string, covers: (part: string) => boolean }
@@ -87,7 +92,8 @@ function partsOf(rule: Rule, scope: Scope): readonly string[] | null {
 }
 
 type Held = {
-  view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]>, pairs: Map<string, Map<string, Compiled[]>>
+  view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]>, pairs: Map<string, Map<string, Compiled[]>>,
+  revoked: Map<string, Set<string>>
 }
 
 // One list of items against one access: allowed, asking for the first item whose first use asks, switched off or not
@@ -128,10 +134,11 @@ export function createGate(): Gate {
     return []
   }
 
-  // A pair's items that are on, none for a pair the view doesn't hold. A pair's item has no first use of its own to ask
-  // about, so one switched off or asking covers nothing
+  // A pair's items that are on, none for a pair the view doesn't hold and none for one the human revoked. A pair's item
+  // has no first use of its own to ask about, so one switched off or asking covers nothing
   function pairItems(pair: Pair): readonly Compiled[] {
     if (held === null) throw new Error('no grants snapshot yet')
+    if (held.revoked.get(pair.plugin)?.has(pair.field) === true) return []
     return (held.pairs.get(pair.plugin)?.get(pair.field) ?? []).filter(on)
   }
 
@@ -142,8 +149,8 @@ export function createGate(): Gate {
 
   return {
     // A call for a pair needs the caller's own items and the pair's both to hold it. The pair's items are judged first
-    // and their refusal is not-granted, so a pair learns nothing of the caller's own items it isn't granted. The
-    // caller's answer stands once the pair's allow. An ask is only ever for the caller's own item
+    // and their refusal is not-granted, so a pair learns nothing of the caller's own items it isn't granted. A revoked
+    // pair holds none. The caller's answer stands once the pair's allow. An ask is only ever for the caller's own item
     decide(access: Access): Decision {
       const own = judgeItems(itemsOf(access.caller), access, held!.view)
       if (access.pair === undefined) return own
@@ -186,17 +193,23 @@ export function createGate(): Gate {
         windows.set(role, grants.map((capability: Capability) => compile({ capability, off: false, firstUse: false }, foldCase)))
       }
       // By the root plugin's id and then the field in Maps, so a field every object knows finds only its own items.
-      // exec's any command is a plugin's switch and lifts no pair's item
+      // exec's any command is a plugin's switch and lifts no pair's item. An item of a type off the list is dropped
       const pairs = new Map<string, Map<string, Compiled[]>>()
       for (const [plugin, fields] of Object.entries(tableOf(next.pairs, 'pairs'))) {
         const compiledFields = new Map<string, Compiled[]>()
         for (const [field, items] of Object.entries(tableOf(fields, 'pairs'))) {
           if (!Array.isArray(items)) throw new Error('a pair with no items')
-          compiledFields.set(field, items.map(item => compile(item as GrantedItem, foldCase)))
+          const listed = items.map(item => compile(item as GrantedItem, foldCase)).filter(item => (pairTypes as readonly string[]).includes(item.type))
+          compiledFields.set(field, listed)
         }
         pairs.set(plugin, compiledFields)
       }
-      held = { view: n, foldCase, plugins: compiled, windows, pairs }
+      const revoked = new Map<string, Set<string>>()
+      for (const [plugin, fields] of Object.entries(tableOf(next.revoked, 'revoked set'))) {
+        if (!Array.isArray(fields) || !fields.every(field => typeof field === 'string')) throw new Error('a revoked set the gate can\'t read')
+        revoked.set(plugin, new Set(fields))
+      }
+      held = { view: n, foldCase, plugins: compiled, windows, pairs, revoked }
     },
   }
 }

@@ -251,6 +251,7 @@ describe('agents\' items across an update of mcp and a Recover', () => {
     expect(entry.agents).toEqual(agents)
     expect(entry.revoked).toEqual(['client#5'])
     expect(gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({ 'client#1': [item(inbox)], 'client#2': [item(write)] })
+    expect(gate.seen.at(-1)!.revoked).toEqual({ 'mcp-http-handler': ['client#5'] })
   })
 
   it('drops every agent\'s items on a Recover of mcp and keeps the revoked marks, granted back to the manifest\'s', async () => {
