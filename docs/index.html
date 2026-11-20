@@ -14,7 +14,7 @@
     <div class="stack">
       <span class="eyebrow">hetu · core design</span>
       <h1>hetu Core Map</h1>
-      <p class="lede">Every component of the everything-is-a-plugin core, every flow between them and what each flow is checked by. Pick a scenario to walk a real sequence step by step, or click any box or arrow to read what it does.</p>
+      <p class="lede">Every component of hetu's core, its modules and its plugins, every flow between them and what each flow is checked by. Pick a scenario to walk a real sequence step by step, or click any box or arrow to read what it does.</p>
     </div>
     <div class="legend" aria-label="Legend">
       <span><i class="sw core"></i>Trusted base</span>
@@ -29,7 +29,7 @@
     </div>
   </header>
 
-  <p class="status"><strong>This is the design, not all of it runs today.</strong> The Electron app runs the core (boot, plugins-manager, carrier, runtime), the gate, the grant risk classifier, storage, luoshu, history and exec as host plugins, search and the layout as sandboxed plugins, the drawer with hidden marks and the trusted window. The http listener, OAuth, MCP, leases, the watchdog, net, git, the file explorer and artifacts are designed and not built. The older daemon runs apart from the core.</p>
+  <p class="status"><strong>This is the design, not all of it runs today.</strong> The Electron app runs the core (boot, plugins-manager, router, runtime) with ten core modules bundled into main: the gate, the grant risk classifier, flood control, the heartbeat, recording, the security view, storage, the luoshu, history and exec. mcp-http-handler runs its http listener in a utility process, closed while no mcp plugin exists. Search, the layout and the file explorer run as sandboxed plugins, beside the drawer with hidden marks and the trusted window. OAuth, the MCP plugin, leases, net, git and artifacts are designed and not built and the map marks them planned. The older daemon runs apart from the core.</p>
 
   <div class="scen-bar" role="toolbar" aria-label="Scenarios">
     <span class="eyebrow lbl">Scenarios</span>
@@ -41,7 +41,7 @@
   <div class="stage">
     <div>
       <div class="mapbox" id="mapbox">
-        <svg id="map" viewBox="0 0 1240 800" role="img" aria-label="Map of hetu's core: outside actors on the left. In the middle the mcp-http-handler plugin, the core with boot, plugins-manager, carrier and runtime, the core plugins and OS processes, beside the hidden plugin renderers, the editor window and the trusted window. Disk, the app install and the security state on the right, with arrows for every flow between them">
+        <svg id="map" viewBox="0 0 1240 880" role="img" aria-label="Map of hetu's core: outside actors on the left. In the middle the mcp-http-handler plugin, the core with boot, plugins-manager, router and runtime, the core modules, the planned core plugins and OS processes, beside the hidden plugin renderers, the editor window and the trusted window. Disk, the app install and the security state on the right, with arrows for every flow between them">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-def"/></marker>
             <marker id="arrOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="m-on"/></marker>
@@ -86,10 +86,12 @@
   <section class="sheet">
     <div class="hdr"><div><span class="eyebrow">Reading the map</span><h2>Rules the whole core keeps</h2></div></div>
     <div class="notes">
-      <div><strong>The core is four parts that can't be switched off.</strong> Boot sets up trust for one run. The plugins manager checks every plugin's bytes before they run, places each plugin and gives it its identity. The carrier is the one path every call and event takes. The runtime keeps the isolated places plugins run in. Everything that decides is a plugin in a policy job the carrier asks.</div>
-      <div><strong>Plugins have no power of their own.</strong> A sandboxed plugin runs in a Chromium worker or frame and holds one channel, to the carrier. The carrier names the caller, checks the shape and the floor, asks the gate and routes. The gate decides and never routes. Core plugins hold real power in Electron's main process, so they come only from the install, stay minimal and are reviewed as core.</div>
-      <div><strong>Mechanism in the core, policy in plugins.</strong> The gate, the grant risk classifier, the watchdog and leases all follow this split: the carrier enforces, a plugin decides. The log is the core's own.</div>
-      <div><strong>You can switch anything off, security included.</strong> Every switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. With the gate off, calls with power pass and are still logged. They need the log running, so a crashed log refuses them unless you switched the log off too. A gate or guard that is missing or crashed without you switching it off fails closed.</div>
+      <div><strong>The core is four parts that can't be switched off.</strong> Boot sets up trust for one run. The plugins manager checks every plugin's bytes before they run, places each plugin and gives it its identity. The router is the one path every call and event takes. The runtime keeps the isolated places plugins run in. The plugins manager calls the router and the router reaches it only through what it handed in.</div>
+      <div><strong>Plugins have no power of their own.</strong> A sandboxed plugin runs in a Chromium worker or frame and holds one channel, to the router. The router names the caller, checks the shape and the floor, asks the gate and routes. The gate decides and never routes. The real power sits in the core modules, bundled into main from the install and reviewed as core.</div>
+      <div><strong>Mechanism in the core, policy in modules.</strong> The gate, flood control, the grant risk classifier and the security view decide and the router and the plugins manager enforce. The classifier answers for every plugin a change moves and the plugins manager orders the writes. Recording writes the log and decides nothing.</div>
+      <div><strong>One rule for every control that judges yes or no.</strong> Switched off by the human, its step doesn't exist and answers yes. Crashed while hetu runs, it refuses. Failed at start, hetu stops in a fail-safe that offers Quit, Try again and Start with it switched off. The gate switched off lets every call pass and the log's state never enters a decision.</div>
+      <div><strong>You can switch anything off, security included.</strong> Each widening switch needs a Confirm click in the trusted window, lives per machine and shows a banner while off. A security control's id is typed before it goes off.</div>
+      <div><strong>Agents are no core identity.</strong> A chain of calls under a plugin root carries a pair: the root plugin's id plus its onBehalf field. The gate judges every call under the root call on the caller's items and the pair's. A pair may only read, list and write notes and their history, holds its items in memory for one run and a revoke lasts the run. A window's onBehalf is attribution and is never judged.</div>
       <div><strong>A program that targets hetu is out of scope.</strong> Plugins and MCP agents can't change the security state, since only hetu writes it and only after your Confirm click in the trusted window. A program running as you can edit the files. hetu checks each against the hash it recorded at its last write and a plugin or setting whose hash differs doesn't load. That catches careless edits but not a program that rewrites the hash too. hetu assumes the machine has no such program, which could already read and edit your notes directly.</div>
       <div><strong>Start narrow, widen on demand.</strong> The capability list and the editor API only grow with a core API version. Adding breaks nobody, removing breaks every plugin.</div>
     </div>
