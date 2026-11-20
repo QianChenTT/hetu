@@ -399,3 +399,30 @@ describe('the carrier\'s imports', () => {
     }
   })
 })
+
+describe('the carrier and the plugins manager', () => {
+  it('names nothing of the plugins manager, which it reads through the contract\'s plugin table and hears from through its door', () => {
+    const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
+    for (const name of readdirSync(folder).filter(file => file.endsWith('.ts'))) {
+      const source = readFileSync(path.join(folder, name), 'utf8')
+      expect(source, name).not.toMatch(/plugins-manager|PluginsManager|pluginsManager/)
+    }
+  })
+
+  it('tells every way-closed listener before it answers a call the closed plugin held', async () => {
+    const { carrier, connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('search', { query: {} })
+    const search = connect(worker('search'))
+    const way = windowWay(carrier, { 'editor-1': editor })
+    way.post('editor-1', { v: 1, kind: 'call', id: 1, action: 'search.query', args: {} })
+    await search.delivered('search.query')
+    const heard: number[] = []
+    carrier.onWayClosed(() => { heard.push(way.replies.length) })
+    carrier.onWayClosed(() => { heard.push(way.replies.length) })
+    search.port.close()
+    for (let i = 0; i < 100 && way.replies.length === 0; i++) await tick(2)
+    expect(heard).toEqual([0, 0])
+    expect(way.replies.map(reply => (reply.refusal as { code: string }).code)).toEqual(['crashed'])
+  })
+})

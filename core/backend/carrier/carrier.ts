@@ -2,14 +2,15 @@ import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
 import { actionPathProblem } from '../../api/actions.ts'
 import { Bus } from './bus.ts'
-import type { CarrierOptions, Port } from './header.ts'
+import type { PluginTable } from '../../api/policy-jobs.ts'
+import type { Asks, CarrierDoor, CarrierOptions, Heard, Port, Served, WayClosed } from './header.ts'
 import { topicsOf, whoOf, Context } from './context.ts'
 import { busState, listable, recheck } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
 // Policy comes from the policy jobs it asks: the gate decides and the carrier enforces
-export class Carrier {
+export class Carrier implements CarrierDoor {
   private readonly c: Context
 
   constructor(options: CarrierOptions) {
@@ -100,5 +101,26 @@ export class Carrier {
 
   close(): void {
     close(this.c)
+  }
+
+  // What the plugins manager and the runtime hand in. The carrier calls them and never the part behind them
+  read(table: PluginTable): void {
+    this.c.table = table
+  }
+
+  serve(namespace: string, served: Served): void {
+    this.c.served.set(namespace, served)
+  }
+
+  asks(asks: Asks): void {
+    this.c.asks = asks
+  }
+
+  onWayClosed(listener: WayClosed): void {
+    this.c.wayClosed.push(listener)
+  }
+
+  onHeard(listener: Heard): void {
+    this.c.heard.push(listener)
   }
 }

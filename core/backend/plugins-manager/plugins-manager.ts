@@ -20,16 +20,19 @@ import {
 } from '../../api/install.ts'
 import { bindFailures, type BindFailure, type DepState, type Init, type StopReason } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
-import { frozen, table } from '../../api/plain.ts'
+import { frozen } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
-import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, GrantsSnapshot } from '../../api/policy-jobs.ts'
+import type {
+  GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, HumanLimits, Opening, PluginInfo, PluginState, PluginTable, PolicyJobState,
+  GrantsSnapshot,
+} from '../../api/policy-jobs.ts'
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
 import { agentItems } from '../lib/agent-items.ts'
-import type { AskRefusal, Asks, HumanLimits, PluginsManager as Seam, PluginInfo, Served } from '../carrier/header.ts'
+import type { AskRefusal, Asks, CarrierDoor, Served } from '../carrier/header.ts'
 import { moduleRequires, type CoreModules } from '../modules/header.ts'
 import {
   clear, clearFailedOnce, firstPartyPath, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled,
@@ -40,10 +43,10 @@ import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
 import type { Beating } from '../heartbeat/header.ts'
 import type { Failure, Runtime } from '../runtime/header.ts'
-import type { CarrierLink, PluginsRecording } from './header.ts'
+import type { PluginsRecording } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
-import { viewsOf } from './reads.ts'
+import { infoOf, viewsOf } from './reads.ts'
 
 export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, whether the tombstones are known, the one StateStore and
@@ -53,7 +56,7 @@ export type PluginsManagerOptions = {
   // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
   // packaged build does inside app.asar
   listDir?: string
-  link: CarrierLink
+  link: CarrierDoor
   // Recording, which the plugins manager calls only while the human has it on
   recording: PluginsRecording
   runtime: Runtime
@@ -228,7 +231,6 @@ function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capabil
   })
 }
 const ok: Status = { kind: 'ok' }
-const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
 // Where the core runs a plugin, never what its manifest asks for: a core plugin core/api names runs its host entry
 // in a utility process
@@ -267,8 +269,8 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
 // by where its code came from, resolves the requires graph, mints every port and owns every lifecycle state. It starts
 // the core modules, hands them each change and switches them as the human does. It runs no plugin code itself and
 // decides no grant
-export class PluginsManager implements Seam {
-  private readonly link: CarrierLink
+export class PluginsManager implements PluginTable {
+  private readonly link: CarrierDoor
   private readonly recording: PluginsRecording
   private readonly runtime: Runtime
   private readonly modules: CoreModules
@@ -395,6 +397,11 @@ ${capabilityKey(change.capability)}`)
       },
       inUse: label => this.labelHeld(label),
     })
+    // Handed to the carrier through its door, which calls them and never names the plugins manager
+    for (const namespace of ['core', 'security']) this.link.serve(namespace, this.serve)
+    this.link.asks(this.asks)
+    this.link.onWayClosed((caller, reason) => this.crashed(caller, reason))
+    this.link.onHeard((caller, kind) => this.heard(caller, kind))
   }
 
   // ---- the carrier's seam
@@ -414,16 +421,7 @@ ${capabilityKey(change.capability)}`)
 
   plugin(id: string): PluginInfo | null {
     const k = this.known.get(id)
-    if (k === undefined) return null
-    const manifest = k.read.manifest
-    return {
-      state: k.state,
-      place: k.place,
-      incarnation: k.live?.n ?? k.incarnations,
-      serves: manifest?.entries.host !== undefined ? 'host' : 'worker',
-      actions: manifest?.provides?.actions ?? none,
-      topics: manifest?.provides?.topics ?? [],
-    }
+    return k === undefined ? null : infoOf(k)
   }
 
   limits(): HumanLimits {

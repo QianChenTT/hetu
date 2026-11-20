@@ -9,8 +9,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
-import type { CarrierLink } from '../backend/plugins-manager/header.ts'
-import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
+import type { CarrierDoor } from '../backend/carrier/header.ts'
+import { wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
@@ -103,7 +103,7 @@ function gateDeciding(decide: (access: Access, view: number) => unknown) {
 }
 
 describe('wiring the core', () => {
-  it('builds link, plugins manager and carrier so the plugins manager reaches the real carrier', async () => {
+  it('builds the carrier, then the plugins manager on its door, so the plugins manager reaches the real carrier', async () => {
     const { recording, carrier, pluginsManager, dataDir } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await pluginsManager.start()
     await recording.flush()
@@ -111,9 +111,9 @@ describe('wiring the core', () => {
     expect(events).toContain('install.checked')
     expect(events).toContain('plugin.started')
     expect(carrier.limit('gate', 'readyMs')).toBe(10000)
-    // The carrier keeps no import of the plugins manager, so the typecheck proves here that it gives the plugins manager all it needs
-    const asLink: CarrierLink = carrier
-    expect(asLink).toBe(carrier)
+    // The carrier keeps no import of the plugins manager, so the typecheck proves here that its door gives the plugins manager all it needs
+    const door: CarrierDoor = carrier
+    expect(door).toBe(carrier)
   })
 
   it('ends its start with core.ready, which holds every policy job\'s state', async () => {
@@ -143,11 +143,6 @@ describe('wiring the core', () => {
     await pluginsManager.start()
     await pluginsManager.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
     expect(heard).toEqual([['gate', 20]])
-  })
-
-  it('refuses a link call made before the carrier exists', () => {
-    const link = new LinkToCarrier()
-    expect(() => link.send(worker('search'), { v: 1, kind: 'ping' })).toThrow('carrier')
   })
 })
 

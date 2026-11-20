@@ -3,11 +3,11 @@ import type { CoreAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { guards as expectedGuards, type GuardableAction } from '../../api/ids.ts'
-import { pluginStates, policyJobStates, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
+import { pluginStates, policyJobStates, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
-import type { CarrierOptions, PluginInfo } from './header.ts'
+import type { Asks, CarrierOptions, Heard, Served, WayClosed } from './header.ts'
 import type { Counted } from '../flood-control/header.ts'
 import type { CallRecord, Join, Recording } from '../recording/header.ts'
 
@@ -181,12 +181,19 @@ export class Context {
   closed = false
   // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   shutting = false
+  // What the plugins manager handed in through the door: its table, the namespaces it serves with the runtime's, the
+  // prompt behind an ask and the listeners for what the ways in heard. Every read before the table arrives is absent
+  table: PluginTable | null = null
+  readonly served = new Map<string, Served>()
+  asks: Asks | null = null
+  readonly wayClosed: WayClosed[] = []
+  readonly heard: Heard[] = []
 
   constructor(options: CarrierOptions, bus: (c: Context) => Bus) {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
-    this.limits = new Limits(() => options.pluginsManager.limits())
+    this.limits = new Limits(() => this.tableOf().limits())
     this.recording = options.recording
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.bus = bus(this)
@@ -238,9 +245,23 @@ export class Context {
 
   // The seams are later parts of the core and a throw there must not open anything: a policy job that can't be read is
   // failed, a plugin that can't be read is absent
+  private tableOf(): PluginTable {
+    if (this.table === null) throw new Error('no plugin table yet')
+    return this.table
+  }
+
+  // Tells each listener in turn. A listener that throws stops none of the others
+  tell<A extends unknown[]>(listeners: readonly ((...args: A) => void)[], ...args: A): void {
+    for (const listener of listeners) {
+      try {
+        listener(...args)
+      } catch {}
+    }
+  }
+
   policyJob(id: string): PolicyJobState {
     try {
-      const state = this.options.pluginsManager.policyJob(id)
+      const state = this.tableOf().policyJob(id)
       return isOne(policyJobStates, state) ? state : 'failed'
     } catch {
       return 'failed'
@@ -249,7 +270,7 @@ export class Context {
 
   info(id: string): PluginInfo | null {
     try {
-      const info = this.options.pluginsManager.plugin(id)
+      const info = this.tableOf().plugin(id)
       return info !== null && typeof info === 'object' && isOne(pluginStates, info.state) ? info : null
     } catch {
       return null
@@ -258,7 +279,7 @@ export class Context {
 
   view(): number | null {
     try {
-      const view = this.options.pluginsManager.view()
+      const view = this.tableOf().view()
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
@@ -268,7 +289,7 @@ export class Context {
   // Revoked unless the plugins manager says plainly it is not, so a view that throws refuses
   revoked(label: string): boolean {
     try {
-      return this.options.pluginsManager.revoked(label) !== false
+      return this.tableOf().revoked(label) !== false
     } catch {
       return true
     }

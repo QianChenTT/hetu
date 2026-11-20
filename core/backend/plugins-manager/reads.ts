@@ -1,8 +1,26 @@
 import type { ActionResults, CoreViewsPlugin } from '../../api/actions.ts'
-import type { PluginState } from '../../api/policy-jobs.ts'
+import { table } from '../../api/plain.ts'
+import type { PluginInfo, PluginState } from '../../api/policy-jobs.ts'
 import type { Read } from './verify.ts'
+
 // What other parts read of a known plugin, built from its entry as the plugins manager holds it
 
+const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
+
+// A known plugin as the carrier reads it from the plugin table: the running incarnation's number or the last one
+type Known = Viewed & { readonly place: PluginInfo['place'], readonly live: { readonly n: number } | null, readonly incarnations: number }
+
+export function infoOf(k: Known): PluginInfo {
+  const manifest = k.read.manifest
+  return {
+    state: k.state,
+    place: k.place,
+    incarnation: k.live?.n ?? k.incarnations,
+    serves: manifest?.entries.host !== undefined ? 'host' : 'worker',
+    actions: manifest?.provides?.actions ?? none,
+    topics: manifest?.provides?.topics ?? [],
+  }
+}
 
 // A plugin as core.views reads it: its id, its state and what reading its bytes found
 type Viewed = { readonly id: string, readonly state: PluginState, readonly read: Read }

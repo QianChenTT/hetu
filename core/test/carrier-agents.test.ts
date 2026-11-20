@@ -4,13 +4,13 @@ import { createGate } from '../backend/policy/gate/gate.ts'
 import type { Access, Call, Gate } from '../api/policy-jobs.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import { cleanup, code, editor, type FakeLog, harness, type HarnessOptions, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
 // http's host half on its utility port is the door. mcp serves handle for http only, search serves query and calls on.
 // Every plugin holds what the tests reach, so a refusal comes from the rule a test is about
-function agents(over: Partial<CarrierOptions> = {}) {
+function agents(over: HarnessOptions = {}) {
   const parts = harness(over)
   const { pluginsManager, gate, connect } = parts
   pluginsManager.utility('mcp-http-handler')

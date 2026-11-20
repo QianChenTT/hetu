@@ -1,12 +1,12 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction } from '../../api/ids.ts'
-import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState } from '../../api/policy-jobs.ts'
-import type { Field } from '../../lib/event-log.ts'
+import type { Access, Call, Gate, Guard, PluginTable, Provider } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Recording } from '../recording/header.ts'
 
-// What the later parts give the carrier, each a small interface the tests fake. The carrier imports nothing from boot
+// What the later parts give the carrier and what it offers them, each a small interface the tests fake. The carrier
+// imports nothing from boot or the plugins manager
 
 // One end of a channel as the carrier holds it. Node's MessagePort fits as it is. Electron's MessagePortMain wraps the
 // data in its message event, so the Electron runtime adapts it
@@ -17,41 +17,13 @@ export type Port = {
   on(event: 'message' | 'messageerror' | 'close', listener: (value: unknown) => void): unknown
 }
 
-// A plugin as a call target. actions are the manifest's provides.actions and serves is the half that answers them.
-// topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
-export type PluginInfo = {
-  state: PluginState
-  place: 'host' | 'utility' | 'sandboxed' | 'page'
-  incarnation: number
-  serves: string
-  actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
-  topics: readonly string[]
-}
+// What a plugin half's way in told the router, which it only passes on: ready, pong and stopped, and alive for
+// anything main heard from a utility half, before its rate
+export type Heard = (caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive') => void
 
-type Values = Readonly<Partial<Record<LimitName, number>>>
-
-// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the fixed
-// value whether it raises or lowers it. One for the plugin wins over one for all
-export type HumanLimits = { all: Values, plugins: Readonly<Record<string, Values>> }
-
-// What the plugins manager owns: lifecycle, the state and the grants snapshot it pushes to the gate
-export type PluginsManager = {
-  // The state of a policy job or a guard role, as the core module or core plugin holding it reads
-  policyJob(id: string): PolicyJobState
-  // The number of the newest grants snapshot pushed to the gate
-  view(): number
-  // null for no such plugin
-  plugin(id: string): PluginInfo | null
-  limits(): HumanLimits
-  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens, from the plugins manager's state
-  revoked(label: string): boolean
-  // A way in closed under its plugin or was closed for a flood. The plugins manager moves dependents to waiting before this
-  // returns and the carrier then answers the calls the plugin held
-  crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void
-  // Lifecycle messages a plugin sends, which the carrier only passes on, and alive for anything at all main heard from a
-  // utility half, before its rate
-  heard(caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive'): void
-}
+// A way in closed under its plugin or was closed for a flood. Each listener runs before the router answers the calls
+// the plugin held, so the plugins manager moves dependents to waiting first
+export type WayClosed = (caller: Caller, reason: 'closed' | 'flood' | 'malformed') => void
 
 // Raises the prompt behind a gate's ask and names the held request, or refuses: throttled while another ask from the
 // same plugin is open, not-granted for an item that doesn't ask and with declined for one the human cancelled this run
@@ -67,8 +39,33 @@ export type Debug = (entry: { plugin: string | null, caller: Caller, action: str
 // the carrier
 export type Served = (call: Call) => Promise<unknown>
 
+// What the carrier offers the plugins manager, which calls it and is never called back but through what it handed in:
+// its table, the namespaces it serves, the prompt behind an ask and the listeners for what the ways in heard
+export type CarrierDoor = {
+  // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port
+  register(port: Port, caller: Caller): void
+  // Ends a way: a planned stop or a revoked incarnation. Its calls answer code and nothing more arrives from it
+  end(caller: Caller, code?: 'stopped' | 'crashed'): void
+  // A lifecycle message down a half's own way: init, deps, stop or ping. Dropped when the way is gone
+  send(caller: Caller, message: unknown): void
+  // A policy job state, a plugin state or the grants snapshot changed, so the carrier asks the gate about live
+  // subscriptions again
+  changed(): void
+  // Shutdown has begun. From this call on a policy job, guard or provider that is down answers stopped
+  stopping(): void
+  // A limit as the carrier enforces it for one plugin, so the start and stop deadlines follow the same values
+  limit(plugin: string, name: LimitName): number
+  // The plugin table the carrier reads plugin and policy job state from, on each call and with no copy
+  read(table: PluginTable): void
+  // The server of a namespace of core actions
+  serve(namespace: string, served: Served): void
+  // The prompt behind the gate's ask
+  asks(asks: Asks): void
+  onWayClosed(listener: WayClosed): void
+  onHeard(listener: Heard): void
+}
+
 export type CarrierOptions = {
-  pluginsManager: PluginsManager
   // The holder's interface while the policy job or role is on, else null. A provider by its namespace's holder
   gate: () => Gate | null
   guards: (id: string) => Guard | null
@@ -78,13 +75,9 @@ export type CarrierOptions = {
   // Recording, which takes each call's record, the carrier's own core records and log.segments and log.verify. null
   // records nothing and serves no log
   recording: Recording | null
-  asks?: Asks
   // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or
   // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
   armed?: (caller: Caller) => boolean
-  // Core actions the plugins manager and the runtime serve: security.* and core.* from the plugins manager, the windows'
-  // own from the runtime
-  core?: Served
   served?: { ui?: Served }
   debug?: Debug
   // ms since the epoch, for deadlines and the times records carry

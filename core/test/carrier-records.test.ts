@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventLog } from '../lib/event-log.ts'
 import type { CoreLog, CoreRecordLog, Landing, Recording } from '../backend/recording/header.ts'
 import { AuditQueue, CoreRecordLane } from '../backend/recording/records.ts'
-import { cleanup, code, editor, FakeLog, harness, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeLog, harness, type HarnessOptions, host, hostHalf, type Side, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 

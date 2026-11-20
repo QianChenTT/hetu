@@ -13,7 +13,7 @@ import { Limits } from '../../backend/carrier/limits.ts'
 import { createFloodControl } from '../../backend/flood-control/flood-control.ts'
 import type { Recording } from '../../backend/recording/header.ts'
 import { createRecording } from '../../backend/recording/recording.ts'
-import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/header.ts'
+import type { HumanLimits, PluginInfo, PluginTable } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
@@ -119,8 +119,9 @@ class Way {
   }
 }
 
-// What the carrier asks of the plugins manager, for one plugin under test and the plugins the fake core plays
-class FakePluginsManager implements PluginsManager {
+// The plugin table the carrier reads and what the ways in heard, for one plugin under test and the plugins the fake
+// core plays
+class FakePluginsManager implements PluginTable {
   readonly infos = new Map<string, PluginInfo>()
   private readonly gateState: PolicyJobState
   private readonly all: Partial<Record<LimitName, number>>
@@ -154,7 +155,7 @@ class FakePluginsManager implements PluginsManager {
     return false
   }
 
-  crashed(caller: Caller, reason: 'closed' | 'flood'): void {
+  crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void {
     for (const listener of [...this.listeners]) listener(caller, reason)
   }
 
@@ -288,14 +289,16 @@ export class FakeCore {
       hash: () => '',
     })
     this.carrier = new Carrier({
-      pluginsManager: this.pluginsManager,
       floodControl: () => floodControl,
       gate: () => this.gate,
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
-      core: call => this.served(call),
       recording: this.recording,
     })
+    this.carrier.read(this.pluginsManager)
+    for (const namespace of ['core', 'security']) this.carrier.serve(namespace, call => this.served(call))
+    this.carrier.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
+    this.carrier.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
     this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
     this.luoshu = {
       write: async (path, text, options = {}) => {

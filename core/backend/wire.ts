@@ -4,7 +4,7 @@ import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Booted } from './boot/header.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, HumanLimits, Port, Served } from './carrier/header.ts'
+import type { Asks, CarrierOptions, Debug, Served } from './carrier/header.ts'
 import { Limits } from './carrier/limits.ts'
 import { createFloodControl } from './flood-control/flood-control.ts'
 import { createHeartbeat } from './heartbeat/heartbeat.ts'
@@ -20,7 +20,6 @@ import { createHistory } from './providers/history/history.ts'
 import { createLuoshu } from './providers/luoshu/luoshu.ts'
 import { createStorage } from './providers/storage/store.ts'
 import { PluginsManager } from './plugins-manager/plugins-manager.ts'
-import type { CarrierLink } from './plugins-manager/header.ts'
 import type { Failure, Runtime } from './runtime/header.ts'
 
 export type WireOptions = {
@@ -72,60 +71,19 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
   })
 }
 
-// The core actions the runtime serves, since only it opens windows and dialogs, ends the process and serves frames
-const runtimeActions = new Set(['app.openSecurity', 'app.quit', 'app.relaunch', 'app.pickFolder', 'editor.frame', 'editor.frameGone'])
-
-// The plugins manager needs its link before the carrier exists, since the carrier needs the plugins manager. Each call goes to the
-// carrier once wireCore attached it. One made before that throws
-export class LinkToCarrier implements CarrierLink {
-  carrier: Carrier | null = null
-
-  private get to(): Carrier {
-    if (this.carrier === null) throw new Error('the carrier is not built yet')
-    return this.carrier
-  }
-
-  register(port: Port, caller: Caller): void {
-    this.to.register(port, caller)
-  }
-
-  end(caller: Caller, code?: 'stopped' | 'crashed'): void {
-    this.to.end(caller, code)
-  }
-
-  send(caller: Caller, message: unknown): void {
-    this.to.send(caller, message)
-  }
-
-  changed(): void {
-    this.to.changed()
-  }
-
-  stopping(): void {
-    this.to.stopping()
-  }
-
-  limit(plugin: string, name: LimitName): number {
-    return this.to.limit(plugin, name)
-  }
-}
+// The namespaces of core actions the runtime serves, since only it opens windows and dialogs, ends the process and
+// serves frames
+const runtimeNamespaces = ['app', 'editor'] as const
 
 // What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
-// that runs holds one, with the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
-// both build the carrier from it, so the tests run the wiring that ships
-export function carrierOptions(
-  pluginsManager: PluginsManager,
-  modules: Holder,
-  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'floodControl'>,
-): CarrierOptions {
+// that runs holds one. wireCore and the plugins manager's tests both build the carrier from it, so the tests run the
+// wiring that ships
+export function carrierOptions(modules: Holder, rest: Omit<CarrierOptions, 'gate' | 'guards' | 'providers' | 'floodControl'>): CarrierOptions {
   return {
-    pluginsManager,
     gate: () => modules.gate(),
     guards: () => null,
     providers: id => modules.provider(id),
     floodControl: () => modules.floodControl(),
-    core: pluginsManager.serve,
-    asks: pluginsManager.asks,
     ...rest,
   }
 }
@@ -133,41 +91,50 @@ export function carrierOptions(
 // SHA-256 as hex, which recording is handed so it reaches no Node built-in
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
-// The core joined in its order: the link, the core modules publishing through it, recording over the one EventLog boot
-// opened, then the plugins manager holding the modules and recording, then the carrier asking the modules for the gate,
-// the providers and flood control and handing each call's record to recording, then the link pointed at the carrier
+// The core joined in its order: the core modules, recording over the one EventLog boot opened, the carrier asking the
+// modules for the gate, the providers and flood control and handing each call's record to recording, then the plugins
+// manager, which hands the carrier what it serves and listens for through the carrier's door. The carrier reads the
+// plugins manager's table from here on and never calls the plugins manager
 export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder, recording: Recording } {
-  const link = new LinkToCarrier()
+  // The parts built after the ones that tell them something, read once they exist. The luoshu publishes only once
+  // started, which is after the carrier is built
+  const parts: { carrier: Carrier | null, pluginsManager: PluginsManager | null } = { carrier: null, pluginsManager: null }
   // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the carrier does
-  const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
-  const limits = new Limits(() => human.limits())
-  // The modules made here, the one place that builds the parts. The luoshu publishes only once started, which is after
-  // the carrier is attached
+  const limits = new Limits(() => parts.pluginsManager?.limits() ?? { all: {}, plugins: {} })
+  // The modules made here, the one place that builds the parts
   const modules = buildModules({
     off: options.booted.state.switches.off,
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
     ...options.modules,
-    publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path),
+    publish: (topic, path) => parts.carrier?.publishCore('luoshu', topic, path),
     limit: (plugin, name) => limits.of(plugin, name),
   })
-  // The log failing is told to the plugins manager, which quits hetu to start it again, once it exists. Windows hear
-  // the log's health through the carrier
-  const parts: { pluginsManager: PluginsManager | null } = { pluginsManager: null }
+  // The log failing is told to the plugins manager, which quits hetu to start it again. Windows hear the log's health
+  // through the carrier
   const recording = createRecording({
     log: options.booted.log,
     off: () => modules.state('recording') === 'off',
     limit: name => limits.of(null, name),
     hash: sha256,
-    noticed: () => link.carrier?.status(),
+    noticed: () => parts.carrier?.status(),
     failed: () => parts.pluginsManager?.controlFailed('log', 'log-failing') ?? false,
   })
+  const { windows } = options
+  const carrier = new Carrier(carrierOptions(modules, {
+    recording,
+    ...(windows !== undefined ? { armed: windows.armed } : {}),
+    ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
+    ...(options.debug !== undefined ? { debug: options.debug } : {}),
+  }))
+  parts.carrier = carrier
+  if (windows !== undefined) for (const namespace of runtimeNamespaces) carrier.serve(namespace, windows.serve)
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
     ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
-    link,
+    link: carrier,
     recording,
     runtime: options.runtime,
     modules,
@@ -177,17 +144,8 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
-  human.limits = () => pluginsManager.limits()
   parts.pluginsManager = pluginsManager
-  const { windows } = options
-  const carrier = new Carrier(carrierOptions(pluginsManager, modules, {
-    recording,
-    core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : pluginsManager.serve(call)),
-    ...(windows !== undefined ? { armed: windows.armed } : {}),
-    ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
-    ...(options.debug !== undefined ? { debug: options.debug } : {}),
-    ...(options.asks !== undefined ? { asks: options.asks } : {}),
-  }))
-  link.carrier = carrier
+  carrier.read(pluginsManager)
+  if (options.asks !== undefined) carrier.asks(options.asks)
   return { pluginsManager, carrier, modules, recording }
 }

@@ -6,7 +6,7 @@ import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
 import type { CarrierOptions } from '../backend/carrier/header.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
 import {
-  cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type FakeLog, type Message, type Side,
+  cleanup, code, editor, harness, type HarnessOptions, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type FakeLog, type Message, type Side,
 } from './carrier-fakes.ts'
 
 afterEach(cleanup)
@@ -33,7 +33,7 @@ const signals = (messages: Message[], topic: 'events.dropped' | 'events.ended') 
 // The luoshu module publishes luoshu.changed and luoshu.outside with a path through the carrier, search publishes search.indexed with none. search reads
 // notes/**, scribe reads every path and git hears search.indexed. way is the editor window and trustedWay the trusted one,
 // each holding its window grants and each with its own inbox
-function setup(over: Partial<CarrierOptions> = {}) {
+function setup(over: HarnessOptions = {}) {
   const parts = harness(over)
   const { carrier, pluginsManager, gate, connect } = parts
   pluginsManager.sandboxed('search')

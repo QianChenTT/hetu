@@ -114,7 +114,7 @@ function decideFor(c: Context, asker: Asker, stage: Access['stage'], capability:
 // A request id in the grammar, or one of the refusals the prompt may give. Anything else refuses not-granted
 function raise(c: Context, ask: string, access: Access): string | No | null {
   try {
-    const request = c.options.asks?.raise(ask, access)
+    const request = c.asks?.raise(ask, access)
     if (token.safeParse(request).success) return request as string
     if (request === null || typeof request !== 'object') return null
     if (request.code === 'throttled') return { code: 'throttled' }

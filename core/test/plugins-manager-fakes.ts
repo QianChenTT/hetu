@@ -10,7 +10,8 @@ import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
 import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
-import type { HumanLimits, Port } from '../backend/carrier/header.ts'
+import type { HumanLimits, PluginTable } from '../api/policy-jobs.ts'
+import type { Asks, CarrierDoor, Heard, Port, Served, WayClosed } from '../backend/carrier/header.ts'
 import { Limits } from '../backend/carrier/limits.ts'
 import type { CoreModules, CoreModulesOptions } from '../backend/modules/header.ts'
 import { realModules } from './modules-fakes.ts'
@@ -19,7 +20,7 @@ import type { Exec } from '../backend/providers/exec/exec.ts'
 import type { History } from '../backend/providers/history/history.ts'
 import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
-import type { CarrierLink, Landing, PluginsRecording } from '../backend/plugins-manager/header.ts'
+import type { Landing, PluginsRecording } from '../backend/plugins-manager/header.ts'
 import type { Runtime, UtilityStart, WorkerStart } from '../backend/runtime/header.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
@@ -41,10 +42,14 @@ export async function until(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-// What the plugins manager needs from the carrier and from recording, around a real carrier for the ways in. send,
-// changed, stopping and limit are the join's to build and record, drain and resume recording's, faked here
-export class FakeLink implements CarrierLink, PluginsRecording {
+// The carrier's door and recording as the plugins manager uses them, around a real carrier for the ways in. send,
+// changed, stopping and limit are recorded, drain and resume recording's, faked here. What the plugins manager hands in
+// through the door is kept, so each carrier a test builds gets it
+export class FakeLink implements CarrierDoor, PluginsRecording {
   carrier: Carrier | null = null
+  readonly handed: { served: Map<string, Served>, asks: Asks | null, wayClosed: WayClosed[], heard: Heard[] } = {
+    served: new Map(), asks: null, wayClosed: [], heard: [],
+  }
   readonly records: { event: string, fields: Record<string, Field> }[] = []
   readonly sent: { caller: Caller, message: Message }[] = []
   readonly ended: { caller: Caller, code: string }[] = []
@@ -112,6 +117,36 @@ export class FakeLink implements CarrierLink, PluginsRecording {
 
   limit(_plugin: string, name: LimitName): number {
     return this.limits[name] ?? defaultLimits[name]
+  }
+
+  read(table: PluginTable): void {
+    this.carrier?.read(table)
+  }
+
+  serve(namespace: string, served: Served): void {
+    this.handed.served.set(namespace, served)
+  }
+
+  asks(asks: Asks): void {
+    this.handed.asks = asks
+  }
+
+  onWayClosed(listener: WayClosed): void {
+    this.handed.wayClosed.push(listener)
+  }
+
+  onHeard(listener: Heard): void {
+    this.handed.heard.push(listener)
+  }
+
+  // A carrier built for the plugins manager, handed the table and what the plugins manager handed the link
+  attach(carrier: Carrier, table: PluginTable): void {
+    this.carrier = carrier
+    carrier.read(table)
+    for (const [namespace, served] of this.handed.served) carrier.serve(namespace, served)
+    if (this.handed.asks !== null) carrier.asks(this.handed.asks)
+    for (const listener of this.handed.wayClosed) carrier.onWayClosed(listener)
+    for (const listener of this.handed.heard) carrier.onHeard(listener)
   }
 
   events(name: string) {
@@ -452,9 +487,9 @@ export function coreModules(
 // A real carrier over the plugins manager and the core modules, built from the options wireCore builds it from, with no
 // core record log
 export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Carrier {
-  const carrier = new Carrier(carrierOptions(pluginsManager, modules, { recording: null }))
+  const carrier = new Carrier(carrierOptions(modules, { recording: null }))
   link.carrier?.close()
-  link.carrier = carrier
+  link.attach(carrier, pluginsManager)
   return carrier
 }
 

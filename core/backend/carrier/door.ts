@@ -147,9 +147,7 @@ function receive(c: Context, way: Way, message: unknown, answer: Send): void {
   // that can't be read counts too. A worker's messages pass its relay first, which drops some unheard, so a worker
   // keeps the heartbeat alone
   if (way.via === 'port' && way.caller.kind === 'plugin' && way.caller.half === 'host' && c.info(way.caller.id)?.place === 'utility') {
-    try {
-      c.options.pluginsManager.heard(way.caller, 'alive')
-    } catch {}
+    c.tell(c.heard, way.caller, 'alive')
   }
   const verdict = admit(c, way)
   // Closing a window's way would lock the human out, so a window only ever drops
@@ -164,7 +162,7 @@ function receive(c: Context, way: Way, message: unknown, answer: Send): void {
     else if (kind === 'cancel') cancelled(c, way, message)
     else if (kind === 'ack') acked(c, way, message)
     else if ((kind === 'ready' || kind === 'pong' || kind === 'stopped') && way.plugin !== null) {
-      c.options.pluginsManager.heard(way.caller, kind)
+      c.tell(c.heard, way.caller, kind)
     }
     // Anything else, another v and the kinds only the carrier sends included, is dropped unread
   } catch {}
@@ -199,15 +197,13 @@ function shut(way: Way): void {
 }
 
 // Its subscriptions and credits go first, so nothing the plugins manager changes on hearing of the crash is sent to the dead
-// way. The plugins manager moves dependents to waiting before crashed returns. Then the calls the plugin held answer crashed,
-// the calls it made are given up and their callees told
+// way. Every way-closed listener runs next, so the plugins manager moves dependents to waiting before the calls the
+// plugin held answer crashed. The calls it made are given up and their callees told
 function dead(c: Context, way: Way, reason: 'closed' | 'flood'): void {
   way.open = false
   if (c.ways.get(way.key) === way) c.ways.delete(way.key)
   c.bus.drop(way)
-  try {
-    c.options.pluginsManager.crashed(way.caller, reason)
-  } catch {}
+  c.tell(c.wayClosed, way.caller, reason)
   for (const pending of [...way.delivered.values()]) stop(c, pending, 'crashed')
   for (const pending of [...way.made.values()]) stop(c, pending, 'crashed')
 }

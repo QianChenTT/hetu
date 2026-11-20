@@ -1,5 +1,6 @@
 import type { Capability, CapabilityType } from './capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from './envelope.ts'
+import type { LimitName } from './limits.ts'
 import { frozen } from './plain.ts'
 
 // What a call reaches as the gate and the guards judge it. paths are luoshu paths, the caller's own text at precheck and
@@ -210,6 +211,37 @@ export const pluginStates = frozen([
   'found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed',
 ] as const)
 export type PluginState = typeof pluginStates[number]
+
+// A plugin as a call target. actions are the manifest's provides.actions and serves is the half that answers them.
+// topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
+export type PluginInfo = {
+  state: PluginState
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
+  incarnation: number
+  serves: string
+  actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
+  topics: readonly string[]
+}
+
+type LimitValues = Readonly<Partial<Record<LimitName, number>>>
+
+// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the fixed
+// value whether it raises or lowers it. One for the plugin wins over one for all
+export type HumanLimits = { all: LimitValues, plugins: Readonly<Record<string, LimitValues>> }
+
+// The plugins manager's state as the router reads it, on each call and with no copy. Read only: nothing here changes a
+// plugin, a policy job or the grants snapshot
+export type PluginTable = {
+  // The state of a policy job or a guard role, as the core module holding it reads
+  policyJob(id: string): PolicyJobState
+  // The number of the newest grants snapshot pushed to the gate
+  view(): number
+  // null for no such plugin
+  plugin(id: string): PluginInfo | null
+  limits(): HumanLimits
+  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens
+  revoked(label: string): boolean
+}
 
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a
 // call that succeeded. at, ms and scope are the first call's. scope is the canonical one prepare gave or a plugin call's

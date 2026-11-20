@@ -4,14 +4,16 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { LimitName } from '../api/limits.ts'
 import { isDotName, scopeMatches } from '../api/scope.ts'
-import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, PolicyJobState } from '../api/policy-jobs.ts'
+import type {
+  Access, Call, Decision, Gate, Guard, GuardCall, HumanLimits, LogSegment, LogVerification, PluginInfo, PluginTable, Prepared, Provider, PolicyJobState,
+} from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import { Limits } from '../backend/carrier/limits.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { CoreLog, Recording } from '../backend/recording/header.ts'
 import { createRecording } from '../backend/recording/recording.ts'
-import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/header.ts'
+import type { Asks, CarrierOptions, Served } from '../backend/carrier/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 export const host = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'host', incarnation })
@@ -22,7 +24,8 @@ export type Message = Record<string, unknown>
 
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
-export class FakePluginsManager implements PluginsManager {
+// The plugin table the carrier reads, with what the ways in told it through the carrier's door
+export class FakePluginsManager implements PluginTable {
   policyJobs: Record<string, PolicyJobState> = { gate: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
@@ -54,7 +57,7 @@ export class FakePluginsManager implements PluginsManager {
     return this.revokedLabels.has(label)
   }
 
-  crashed(caller: Caller, reason: 'closed' | 'flood'): void {
+  crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void {
     this.crashes.push({ caller, reason })
   }
 
@@ -371,8 +374,11 @@ export type RecordingOver = { log?: CoreLog | null, coreRecordRetryMs?: number, 
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
-export function harness(given: Partial<CarrierOptions> & RecordingOver = {}) {
-  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, ...over } = given
+// The carrier's options with what a test hands in through its door in place of the plugins manager's
+export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, asks?: Asks }
+
+export function harness(given: HarnessOptions = {}) {
+  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, asks: asksGiven, ...over } = given
   const pluginsManager = new FakePluginsManager()
   const gate = new FakeGate(pluginsManager)
   const luoshu = new FakeLuoshu()
@@ -402,25 +408,32 @@ export function harness(given: Partial<CarrierOptions> & RecordingOver = {}) {
     ...(logFailed !== undefined ? { failed: logFailed } : {}),
   })
   const carrier = new Carrier({
-    pluginsManager,
     floodControl: () => floodControl,
     gate: () => gate,
     guards: id => guards[id] ?? null,
     providers: id => providers[id] ?? null,
     recording,
-    asks: { raise: (ask, access) => { asks.push({ ask, access }); return `req-${asks.length}` } },
     debug: entry => { debug.push(entry) },
-    // The plugins manager's core.self and core.agentRefused as it serves them, the second through the recording handed in
-    core: async call => {
-      if (call.action === 'core.self') return call.caller
-      if (call.action !== 'core.agentRefused') throw { code: 'unavailable' }
-      const { reason, count } = call.args as { reason: string, count: number }
-      const handed = over.recording !== undefined ? over.recording : recording
-      handed?.coalesced('http.refused', { reason }, undefined, count)
-      return null
-    },
     ...over,
   })
+  // What the plugins manager and the runtime hand in through the carrier's door: the table, the core actions, the
+  // prompt behind an ask and the listeners for what the ways in heard
+  carrier.read(pluginsManager)
+  // The plugins manager's core.self and core.agentRefused as it serves them, the second through the recording handed in
+  const core: Served = coreGiven ?? (async call => {
+    if (call.action === 'core.self') return call.caller
+    if (call.action !== 'core.agentRefused') throw { code: 'unavailable' }
+    const { reason, count } = call.args as { reason: string, count: number }
+    const handed = over.recording !== undefined ? over.recording : recording
+    handed?.coalesced('http.refused', { reason }, undefined, count)
+    return null
+  })
+  for (const namespace of ['core', 'security', 'app', 'editor']) carrier.serve(namespace, core)
+  // A test that names asks as undefined has no prompt to raise
+  const raising = 'asks' in given ? asksGiven : { raise: (ask: string, access: Access) => { asks.push({ ask, access }); return `req-${asks.length}` } }
+  if (raising !== undefined) carrier.asks(raising)
+  carrier.onWayClosed((caller, reason) => pluginsManager.crashed(caller, reason))
+  carrier.onHeard((caller, kind) => pluginsManager.heard(caller, kind))
   parts.carrier = carrier
   const ports: MessagePort[] = []
   live.push({ carrier, ports })

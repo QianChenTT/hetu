@@ -2,7 +2,7 @@ import { capabilityTypes, scopedUiTypes } from '../../api/capabilities.ts'
 import { answer as answerSchema, calleeRefusalCodes, VERSION, type Caller, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
-import { hashOf, no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
+import { hashOf, no, newId, isOne, keyOf, field, namespaceOf, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf } from './open-calls.ts'
 import { gateOpen, judge, judgeAll, askable, provide, secondOf } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
@@ -73,7 +73,7 @@ async function coreAction(c: Context, pending: Pending, args: unknown): Promise<
   if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !c.armed(caller)) {
     return finish(c, pending, no('throttled'))
   }
-  return serve(c, pending, c.options.core, args)
+  return serve(c, pending, c.served.get(namespaceOf(pending.action)), args)
 }
 
 // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin

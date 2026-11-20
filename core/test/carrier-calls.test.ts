@@ -3,12 +3,12 @@ import { delivery, token, type Caller } from '../api/envelope.ts'
 import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
 import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeGuard, harness, type HarnessOptions, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
 // search serves query, git serves log and scribe serves handle for http only
-function plugins(over: Partial<CarrierOptions> = {}) {
+function plugins(over: HarnessOptions = {}) {
   const parts = harness(over)
   const { pluginsManager, gate, connect } = parts
   pluginsManager.sandboxed('search', { query: {} })
@@ -505,7 +505,7 @@ describe('deadlines and cancel', () => {
 })
 
 describe('filterReadable', () => {
-  async function incoming(over: Partial<CarrierOptions> = {}) {
+  async function incoming(over: HarnessOptions = {}) {
     const parts = plugins(over)
     const id = parts.scribe.call('search.query', { text: 'x' })
     const got = await parts.search.delivered('search.query')
@@ -582,7 +582,7 @@ describe('filterReadable', () => {
   })
 
   // Each canRead below takes a millisecond of main on the carrier's clock
-  async function timed(over: Partial<CarrierOptions> = {}) {
+  async function timed(over: HarnessOptions = {}) {
     const clock = { now: 1000 }
     const parts = await incoming({ clock: () => clock.now, ...over })
     parts.gate.readable = () => {
@@ -669,7 +669,7 @@ describe('filterReadable', () => {
 })
 
 describe('a listing', () => {
-  function listing(over: Partial<CarrierOptions> = {}) {
+  function listing(over: HarnessOptions = {}) {
     const parts = harness(over)
     for (const path of ['notes/a.md', 'projects/plan.md', 'secret/b.md', '.scratch.md']) parts.luoshu.files.set(path, 'x')
     parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.list', paths: ['projects/**'] }]
