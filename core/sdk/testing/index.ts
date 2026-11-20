@@ -127,10 +127,10 @@ class FakePluginsManager implements PluginsManager {
     this.all = all
   }
 
-  // The grant risk classifier and watchdog policy jobs read off, as with the human's switch
+  // The grant risk classifier policy job reads off, as with the human's switch
   policyJob(id: string): PolicyJobState {
     if (id === 'gate') return this.gateState
-    return id === 'grant-risk-classifier' || id === 'watchdog' ? 'off' : 'absent'
+    return id === 'grant-risk-classifier' ? 'off' : 'absent'
   }
 
   view(): number {
@@ -275,7 +275,6 @@ export class FakeCore {
       gate: () => this.gate,
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
-      watchdog: () => null,
       core: call => this.served(call),
       // Core records are kept and the call records are taken and dropped, so calls pass unlogged
       log: {

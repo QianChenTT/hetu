@@ -211,15 +211,6 @@ export const pluginStates = frozen([
 ] as const)
 export type PluginState = typeof pluginStates[number]
 
-// What the watchdog hears from the carrier: messages over a port's rate dropped since the last sample, at most once a
-// second per port. The runtime's samples come with the Electron runtime
-// What the watchdog hears about a plugin: messages dropped over its rate, by the carrier or the relay in the worker host
-// page, errors its worker threw, at most once a second, and the relay cutting its worker off
-export type Sample =
-  | { readonly kind: 'dropped' | 'errors', readonly caller: Caller, readonly count: number }
-  | { readonly kind: 'cutoff', readonly caller: Caller, readonly reason: 'malformed' | 'flood' }
-export type Watchdog = { sample(sample: Sample): void }
-
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a
 // call that succeeded. at, ms and scope are the first call's. scope is the canonical one prepare gave or a plugin call's
 // target, so a call refused before prepare has none. Never arguments or results

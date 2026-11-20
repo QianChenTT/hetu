@@ -27,7 +27,7 @@ export type WireOptions = {
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
-  // watchdog.limit lowered one of this plugin's constants or the human set one, for the runtime to pass on
+  // The human set one of this plugin's constants, for the runtime to pass on
   limited?: (plugin: string) => void
   // The windows' own actions the runtime serves, opening the trusted window, Quit and Restart hetu, and whether the
   // trusted window is past its input delay
@@ -109,20 +109,19 @@ export class LinkToCarrier implements CarrierLink {
   }
 }
 
-// What the carrier asks for: the gate and every provider from the core modules, no guard and no watchdog, since nothing
-// that runs holds either, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
+// What the carrier asks for: the gate and every provider from the core modules, no guard, since nothing that runs holds
+// one, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
 // both build the carrier from it, so the tests run the wiring that ships
 export function carrierOptions(
   pluginsManager: PluginsManager,
   modules: Holder,
-  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'watchdog'>,
+  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers'>,
 ): CarrierOptions {
   return {
     pluginsManager,
     gate: () => modules.gate(),
     guards: () => null,
     providers: id => modules.provider(id),
-    watchdog: () => null,
     core: pluginsManager.serve,
     asks: pluginsManager.asks,
     ...rest,
@@ -166,7 +165,6 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),
-    ...(options.limited !== undefined ? { limited: options.limited } : {}),
   }))
   link.carrier = carrier
   return { pluginsManager, carrier, modules }

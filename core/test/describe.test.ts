@@ -102,7 +102,7 @@ describe("the core's words for a change", () => {
 
   it('recommends keeping a security plugin on whenever one is switched off, and only then', () => {
     const recommends = (input: unknown) => describeChange(one(input)).notes.some(note => note.includes('recommends'))
-    for (const plugin of ['gate', 'grant-risk-classifier', 'watchdog']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
+    for (const plugin of ['gate', 'grant-risk-classifier']) expect(recommends({ kind: 'plugin.off', plugin })).toBe(true)
     expect(recommends({ kind: 'plugin.off', plugin: 'search' })).toBe(false)
     expect(recommends({ kind: 'plugin.on', plugin: 'gate' })).toBe(false)
   })
@@ -116,7 +116,7 @@ describe("the core's words for a change", () => {
 describe('typing to prove attention', () => {
   it("asks for a security control's id to switch it off", () => {
     expect(mustType(one({ kind: 'plugin.off', plugin: 'gate' }))).toBe('gate')
-    expect(mustType(one({ kind: 'plugin.off', plugin: 'watchdog' }))).toBe('watchdog')
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }))).toBe('grant-risk-classifier')
   })
 
   it('asks for log to stop recording', () => {

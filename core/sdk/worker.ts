@@ -83,10 +83,10 @@ export function pacedTransport(
       port.onmessage = ({ data }) => {
         if (typeof data !== 'string') {
           if (!fromPort) return
-          // The page's only message of its own: the plugin's limits, lowered
+          // The page's only message of its own: the plugin's limits as the human set them
           const sent = data as { v?: unknown, kind?: unknown, limits?: unknown } | null
-          const lowered = relayLimitsOf(sent?.limits)
-          if (sent?.v === 1 && sent.kind === 'limits' && lowered !== null) limits = lowered
+          const given = relayLimitsOf(sent?.limits)
+          if (sent?.v === 1 && sent.kind === 'limits' && given !== null) limits = given
           return
         }
         let message: unknown

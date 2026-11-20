@@ -34,7 +34,6 @@ export type CarrierLink = {
   drain(ms: number): Promise<number>
   // Recording didn't go off after a drain, so the audit writer goes on
   resume(): void
-  // A limit as it applies to one plugin: the human's value for it or for all, lowered by the watchdog. The
-  // plugins manager takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
+  // A limit as it applies to one plugin: the human's value for it or for all. The plugins manager takes readyMs and stopGraceMs from here so both follow the same values the carrier enforces
   limit(plugin: string, name: LimitName): number
 }

@@ -185,7 +185,7 @@ function sameItems(items: readonly Capability[], others: readonly Capability[] =
 }
 
 // The order core plugins start in, each after the core modules. A requirement still starts before its dependent
-export const bootOrder = frozen(['watchdog', 'net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
+export const bootOrder = frozen(['net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
 
 const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at
@@ -393,7 +393,7 @@ ${capabilityKey(change.capability)}`)
 
   // A policy job or guard role: the gate and the grant risk classifier as their core modules read, starting until the
   // modules are started, off only by the human's switch and failed while the module's last push threw or once the
-  // stopped mode closed it. Nothing that runs holds the watchdog policy job or a guard role, so each is absent
+  // stopped mode closed it. Nothing that runs holds a guard role, so each is absent
   policyJob(id: string): PolicyJobState {
     if (id !== 'gate' && id !== 'grant-risk-classifier') return 'absent'
     const state = this.modules.state(id)
@@ -466,9 +466,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- what else the core asks of the plugins manager
 
-  // core.status for a window, and watchdog.stop and watchdog.restart, as the carrier's core seam takes them. The carrier
-  // has checked that the caller is a window, or holds the watchdog policy job and names a sandboxed plugin holding no policy job or
-  // guard role
+  // The core actions the carrier's core seam takes, each once the floor let its caller through
   readonly serve: Served = async call => {
     if (call.action === 'core.status') return this.banner()
     if (call.action === 'core.views') return this.views()
@@ -520,15 +518,7 @@ ${capabilityKey(change.capability)}`)
         return null
       }
     }
-    const target = (call.args as { plugin?: unknown } | null)?.plugin
-    if (call.action !== 'watchdog.stop' && call.action !== 'watchdog.restart') throw { code: 'unavailable' }
-    const k = typeof target === 'string' ? this.known.get(target) : undefined
-    if (k === undefined || k.place !== 'sandboxed') throw { code: 'not-found' }
-    // The human's stop outranks the watchdog's policy
-    if (call.action === 'watchdog.restart' && this.stoppedByHuman(k)) throw { code: 'not-granted' }
-    if (call.action === 'watchdog.stop') await this.stop(k.id, 'watchdog')
-    else await this.restart(k.id, 'watchdog')
-    return null
+    throw { code: 'unavailable' }
   }
 
   // Each plugin that declares views or a theme, whatever its state, so the views menu lists a view whose plugin is down.
@@ -1837,7 +1827,7 @@ ${capabilityKey(change.capability)}`)
 
   // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
   // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
-  // again once it answers. Stopping it is the watchdog's or the human's call. A utility half that misses them is killed
+  // again once it answers. Stopping it is the human's call. A utility half that misses them is killed
   // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
   // heard from a utility half answers a beat, a message dropped for its rate included
   private beat(k: Known, live: Live): void {
@@ -1894,10 +1884,10 @@ ${capabilityKey(change.capability)}`)
     }
   }
 
-  // ---- stops and restarts the watchdog or the human asked for
+  // ---- stops and restarts the human asked for
 
   // Stops a plugin and its dependents, dependents first. It stays stopped until a restart
-  async stop(id: string, by: 'watchdog' | 'human'): Promise<void> {
+  async stop(id: string, by: 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
     if (k.held === null) k.held = { kind: 'held', state: 'stopped', reason: by }
@@ -1907,7 +1897,7 @@ ${capabilityKey(change.capability)}`)
 
   // A new incarnation from the bytes already verified. A running one stops first with its dependents, which start again
   // once it is ready
-  async restart(id: string, by: 'watchdog' | 'human'): Promise<void> {
+  async restart(id: string, by: 'human'): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined) throw { code: 'not-found' }
     if (this.closing) throw { code: 'stopped' }

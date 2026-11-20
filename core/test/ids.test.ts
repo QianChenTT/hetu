@@ -68,8 +68,8 @@ describe('names', () => {
 })
 
 describe('policy jobs, providers and guards', () => {
-  it('has the three policy jobs, the log being the core\'s own', () => {
-    expect(policyJobIds).toEqual(['gate', 'grant-risk-classifier', 'watchdog'])
+  it('has the two policy jobs, the log being the core\'s own', () => {
+    expect(policyJobIds).toEqual(['gate', 'grant-risk-classifier'])
   })
 
   it("names the provider of every namespace", () => {
@@ -78,8 +78,8 @@ describe('policy jobs, providers and guards', () => {
     })
   })
 
-  it('serves core, security, watchdog, events, ui, plugin, log and editor in the core', () => {
-    expect(coreNamespaces).toEqual(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'])
+  it('serves core, security, events, ui, plugin, log and editor in the core', () => {
+    expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor'])
   })
 
   it('lets guards hook the luoshu\'s writes, removes and moves and expects none until leases ships', () => {
@@ -88,7 +88,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   it('lists the core plugins, utility and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual(['watchdog', 'leases', 'mcp-http-handler', 'net', 'hidden-marks'])
+    expect(corePluginIds).toEqual(['leases', 'mcp-http-handler', 'net', 'hidden-marks'])
   })
 
   it('lists the core modules main holds apart from the core plugins', () => {
@@ -115,7 +115,7 @@ describe('policy jobs, providers and guards', () => {
 describe('reserved ids', () => {
   // Section 3: every namespace the carrier serves, every policy job, provider and install id and the ids first party keeps
   const expected = [
-    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'watchdog', 'editor',
+    'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor',
     'gate', 'grant-risk-classifier', 'log',
     'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',

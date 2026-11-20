@@ -192,7 +192,6 @@ describe('whether a change widens', () => {
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],
     ['capabilities switched off', { kind: 'plugin.off', plugin: 'grant-risk-classifier' }],
-    ['the watchdog switched off', { kind: 'plugin.off', plugin: 'watchdog' }],
     ['a grant added', { kind: 'grant.widen', plugin: 'search', capability: cap }],
     ['an item switched back on', { kind: 'item.on', plugin: 'search', capability: cap }],
     ['a new notes folder', { kind: 'luoshu.pick', folder: '/Users/han/notes' }],
@@ -211,7 +210,6 @@ describe('whether a change widens', () => {
 
   it.each([
     ['the gate switched back on', { kind: 'plugin.on', plugin: 'gate' }],
-    ['the watchdog switched back on', { kind: 'plugin.on', plugin: 'watchdog' }],
     ['a plugin switched off', { kind: 'plugin.off', plugin: 'search' }],
     ['a provider switched off', { kind: 'plugin.off', plugin: 'exec' }],
     ['a grant taken away', { kind: 'grant.narrow', plugin: 'search', capability: cap }],
@@ -242,7 +240,7 @@ describe('whether a change widens', () => {
 
 describe('the security controls', () => {
   it('are the policy job holders and the guards core/api expects, which the log is not', () => {
-    for (const id of ['gate', 'grant-risk-classifier', 'watchdog']) expect(isSecurityControl(id)).toBe(true)
+    for (const id of ['gate', 'grant-risk-classifier']) expect(isSecurityControl(id)).toBe(true)
     for (const id of ['log', 'luoshu', 'storage', 'exec', 'leases', 'editor-core', 'search', 'mcp']) expect(isSecurityControl(id)).toBe(false)
   })
 })

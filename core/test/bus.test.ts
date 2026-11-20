@@ -907,17 +907,15 @@ describe('subscribing', () => {
     expect(code(await panel.ask('events.subscribe', { topics: ['git.b'] }))).toBe('invalid')
   })
 
-  it('takes the human\'s raised topic cap and the watchdog\'s lowered one', async () => {
-    const { carrier, pluginsManager, gate, git } = setup()
-    pluginsManager.installed('watchdog')
+  it('takes the human\'s raised topic cap and a lowered one', async () => {
+    const { pluginsManager, gate, git } = setup()
     const topics = Array.from({ length: 64 }, (_, i) => `t${i}.indexed`)
     gate.grants.git = [{ type: 'events.subscribe', topics: [...topics, 'u1.indexed', 'u2.indexed'] }]
     expect((await git.ask('events.subscribe', { topics })).ok).toBe(true)
     expect(code(await git.ask('events.subscribe', { topics: ['u1.indexed'] }))).toBe('invalid')
     pluginsManager.human.all = { topicsPerHalf: 65 }
     expect((await git.ask('events.subscribe', { topics: ['u1.indexed'] })).ok).toBe(true)
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'git', constant: 'topicsPerHalf', value: 1 })).ok).toBe(true)
+    pluginsManager.human.plugins.git = { topicsPerHalf: 1 }
     expect(code(await git.ask('events.subscribe', { topics: ['u2.indexed'] }))).toBe('invalid')
   })
 

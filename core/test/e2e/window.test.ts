@@ -20,8 +20,8 @@ describe('a window\'s way in', () => {
   it('shows the banner the shell draws from core.status', async () => {
     const app = await launch(await dataWith({}))
     const page = await editorPage(app)
-    // The install holds the gate and the grant risk classifier, so only the watchdog's policy job reads absent once both started
-    const settled = ['watchdog: absent', 'pick a luoshu folder']
+    // The core holds the gate and the grant risk classifier, so once both started only the notes folder is left to pick
+    const settled = ['pick a luoshu folder']
     await until(async () => JSON.stringify(await page.locator('#banner li').allTextContents()) === JSON.stringify(settled))
     expect(await page.locator('#banner li').allTextContents()).toEqual(settled)
   })

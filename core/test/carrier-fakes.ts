@@ -3,7 +3,7 @@ import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { LimitName } from '../api/limits.ts'
 import { scopeMatches } from '../api/scope.ts'
-import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, Sample, PolicyJobState } from '../api/policy-jobs.ts'
+import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/header.ts'
@@ -18,7 +18,7 @@ export type Message = Record<string, unknown>
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
 export class FakePluginsManager implements PluginsManager {
-  policyJobs: Record<string, PolicyJobState> = { gate: 'on', watchdog: 'on', 'grant-risk-classifier': 'on' }
+  policyJobs: Record<string, PolicyJobState> = { gate: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
   current = 1
   // Writable here, so a test can set the human's limits
@@ -368,7 +368,6 @@ export function harness(over: Partial<CarrierOptions> = {}) {
   const storage = new FakeStorage()
   const guards: Record<string, FakeGuard> = {}
   const providers: Record<string, Provider> = { luoshu, storage }
-  const samples: Sample[] = []
   const log = new FakeLog()
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
@@ -377,7 +376,6 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     gate: () => gate,
     guards: id => guards[id] ?? null,
     providers: id => providers[id] ?? null,
-    watchdog: () => ({ sample: sample => { samples.push(sample) } }),
     log,
     asks: { raise: (ask, access) => { asks.push({ ask, access }); return `req-${asks.length}` } },
     debug: entry => { debug.push(entry) },
@@ -394,7 +392,7 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     carrier.register(port1, caller)
     return new Side(port2)
   }
-  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, samples, log, debug, asks, connect }
+  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log, debug, asks, connect }
 }
 
 // A window's way in with a sender check that knows one sender per window

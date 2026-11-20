@@ -137,10 +137,10 @@ describe('ports bound by closure', () => {
     const { carrier, connect, pluginsManager } = harness()
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    pluginsManager.installed('watchdog')
+    pluginsManager.installed('luoshu')
     pluginsManager.human.all = { messagesPerSecond: 2, floodFactor: 1000 }
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: watchdog.handle.post }]
+    const luoshu = hostHalf(carrier, host('luoshu'))
+    const posts = [connect(worker('search')), connect(worker('mcp-http-handler')), { post: luoshu.handle.post }]
     for (const half of posts) for (let i = 0; i < 4; i++) half.post({ v: 1, kind: 'pong' })
     await tick(30)
     expect(pluginsManager.lifecycle.filter(entry => entry.kind === 'alive')).toEqual([])

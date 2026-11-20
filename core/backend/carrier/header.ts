@@ -1,7 +1,7 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction } from '../../api/ids.ts'
-import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState, Watchdog } from '../../api/policy-jobs.ts'
+import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import type { AuditLog } from './audit.ts'
 
@@ -85,7 +85,6 @@ export type CarrierOptions = {
   gate: () => Gate | null
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null
-  watchdog: () => Watchdog | null
   log: CoreLog | null
   asks?: Asks
   // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or
@@ -94,8 +93,8 @@ export type CarrierOptions = {
   // The core's log has failed: its oldest record waited logFailMs unwritten while recording was on. Told until the
   // plugins manager takes it, which quits hetu to start it again. false says it wasn't taken, while hetu starts or stops
   logFailed?: () => boolean | void
-  // Core actions the plugins manager and the runtime serve: watchdog.stop and watchdog.restart from the plugins manager, security.* once
-  // the trusted window exists
+  // Core actions the plugins manager and the runtime serve: security.* and core.* from the plugins manager, the windows'
+  // own from the runtime
   core?: Served
   served?: { ui?: Served }
   debug?: Debug
@@ -110,6 +109,4 @@ export type CarrierOptions = {
   coreRecordRetryMs?: number
   // How often the audit writer writes the queue, 100 ms unless a test names another
   auditEveryMs?: number
-  // watchdog.limit lowered one of this plugin's constants, which the runtime passes on to the relay in the worker host page
-  limited?: (plugin: string) => void
 }

@@ -226,13 +226,6 @@ describe('stops and restarts of a utility half', () => {
     expect(made.runtime.started.filter(start => start.id === 'mcp-http-handler').map(start => start.incarnation)).toEqual([1, 2])
   })
 
-  it('is out of the watchdog\'s reach, which acts on sandboxed plugins only', async () => {
-    const made = await harness({ install: install() })
-    await made.pluginsManager.start()
-    const call = { callId: 'c', caller: { kind: 'plugin', id: 'watchdog', half: 'host', incarnation: 1 } as Caller, action: 'watchdog.stop', args: { plugin: 'mcp-http-handler' }, deadline: Date.now() + 1000 }
-    await expect(made.pluginsManager.serve(call)).rejects.toEqual({ code: 'not-found' })
-    expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('ready')
-  })
 })
 
 describe('a utility half whose bind failed', () => {

@@ -1,8 +1,7 @@
 import { dependencyReason, type DependencyWhy } from '../../api/lifecycle.ts'
 
 // A plugin as its checks and its run left it. ok passed every check and is switched on. found has no entry yet. held
-// is what happened in this run: a crash, a failed utility half or a stop by the watchdog or the human, which only a
-// restart clears
+// is what happened in this run: a crash, a failed utility half or a stop by the human, which only a restart clears
 export type Status =
   | { kind: 'ok' }
   | { kind: 'found' }

@@ -120,7 +120,6 @@ async function start(): Promise<void> {
       record: (event, fields) => carrier?.coreRecord(event, fields),
       limits: id => Object.fromEntries(RELAY_LIMITS.map(name => [name, limit(id, name)])),
       cutoff: (id, incarnation, reason) => pluginsManager?.crashed({ kind: 'plugin', id, half: 'worker', incarnation }, reason),
-      sample: sample => carrier?.sample(sample),
     }))
     workers = renderer
     // A port between each worker holding a ui item and the editor page's drawer, made again for each page load

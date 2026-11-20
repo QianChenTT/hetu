@@ -31,7 +31,7 @@ describe('hetu as an Electron app', () => {
     expect(all.filter(record => (coreModuleIds as readonly unknown[]).includes(record.plugin))).toEqual([])
     expect(all.some(record => record.event === 'plugin.waiting' && record.plugin === 'search')).toBe(false)
     expect(all.find(record => record.event === 'core.ready')).toMatchObject({
-      gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent',
+      gate: 'on', 'grant-risk-classifier': 'on',
     })
     expect(await exists(path.join(dataDir, 'electron'))).toBe(true)
   })

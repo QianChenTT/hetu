@@ -263,19 +263,19 @@ describe('audit records', () => {
     ])
   })
 
-  it('keeps each security request and each watchdog action one record', async () => {
+  it('keeps each security request one record, from the editor and the trusted window alike', async () => {
     const clock = 1_000_000
-    const { carrier, pluginsManager, log } = harness({ now: () => clock, core: async () => null })
+    const { carrier, pluginsManager, log } = harness({ now: () => clock, core: async () => null, armed: () => true })
     pluginsManager.sandboxed('search')
     const way = windowWay(carrier, { 'editor-1': editor })
     const change = { kind: 'plugin.on', plugin: 'search' }
     await way.ask('editor-1', 'security.request', { change })
     await way.ask('editor-1', 'security.request', { change })
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    await watchdog.ask('watchdog.stop', { plugin: 'search' })
-    await watchdog.ask('watchdog.stop', { plugin: 'search' })
+    const trustedWay = windowWay(carrier, { trusted })
+    await trustedWay.ask('trusted', 'security.request', { change })
+    await trustedWay.ask('trusted', 'security.request', { change })
     expect((await written(carrier, log)).map(record => [record.action, record.count])).toEqual([
-      ['security.request', 1], ['security.request', 1], ['watchdog.stop', 1], ['watchdog.stop', 1],
+      ['security.request', 1], ['security.request', 1], ['security.request', 1], ['security.request', 1],
     ])
   })
 

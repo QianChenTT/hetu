@@ -122,7 +122,7 @@ describe('wiring the core', () => {
     await carrier.flush()
     const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'core.ready')).toHaveLength(1)
-    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent' })
+    expect(records.at(-1)).toMatchObject({ event: 'core.ready', gate: 'on', 'grant-risk-classifier': 'on' })
     expect(records.at(-1)).not.toHaveProperty('log')
   })
 
@@ -437,7 +437,7 @@ describe('core.status, for a window\'s banner', () => {
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
-      policyJobs: { gate: 'on', 'grant-risk-classifier': 'on', watchdog: 'absent' },
+      policyJobs: { gate: 'on', 'grant-risk-classifier': 'on' },
       crashed: [],
       devMode: [],
       allowUnsigned: 0,

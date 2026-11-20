@@ -32,9 +32,9 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id and
-// the watchdog by the core plugin of its id. The log is the core's own
-export const policyJobIds = frozen(['gate', 'grant-risk-classifier', 'watchdog'] as const)
+// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id. The
+// log is the core's own
+export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
 
 // The core module or core plugin that serves each provider namespace
 export const providers = table({
@@ -48,7 +48,7 @@ export const providers = table({
 } as const)
 
 // Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
-export const coreNamespaces = frozen(['core', 'security', 'watchdog', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
+export const coreNamespaces = frozen(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor'] as const)
 
 // The actions a guard may hook: each one that changes a note
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)
@@ -72,8 +72,8 @@ export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage',
 export type CoreModuleId = typeof coreModuleIds[number]
 
 // Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the
-// editor page. The watchdog, leases and net are designed and not built
-export const corePluginIds = frozen(['watchdog', 'leases', 'mcp-http-handler', 'net', 'hidden-marks'] as const)
+// editor page. Leases and net are designed and not built
+export const corePluginIds = frozen(['leases', 'mcp-http-handler', 'net', 'hidden-marks'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half

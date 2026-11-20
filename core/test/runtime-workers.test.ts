@@ -48,7 +48,6 @@ function runtime(endingMs = 1000) {
   const renderers: FakeRenderer[] = []
   const records: { event: string, fields: Record<string, unknown> }[] = []
   const cutoffs: unknown[][] = []
-  const samples: unknown[] = []
   const workers = new WorkerRenderer({
     open: () => {
       const renderer = new FakeRenderer()
@@ -58,10 +57,9 @@ function runtime(endingMs = 1000) {
     record: (event, fields) => records.push({ event, fields }),
     limits: id => ({ ...LIMITS, resultBytes: id.length }),
     cutoff: (id, incarnation, reason) => cutoffs.push([id, incarnation, reason]),
-    sample: sample => samples.push(sample),
     endingMs,
   })
-  return { workers, renderers, records, cutoffs, samples }
+  return { workers, renderers, records, cutoffs }
 }
 
 const start = (id = 'search', incarnation = 1) => {
@@ -141,19 +139,15 @@ describe('the hidden renderer for workers', () => {
     expect(queued.port.closed).toBe(true)
   })
 
-  it('hands the watchdog a running worker\'s errors and drops and ignores anything else the page says', () => {
-    const { workers, renderers, records, samples } = runtime()
+  it('ignores anything the page says but ready and a cutoff', () => {
+    const { workers, renderers, records, cutoffs } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
-    const caller = { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }
     renderers[0].says({ kind: 'errors', id: 'search', incarnation: 1, count: 3 })
     renderers[0].says({ kind: 'dropped', id: 'search', incarnation: 1, count: 7 })
-    renderers[0].says({ kind: 'errors', id: 'search', incarnation: 2, count: 3 })
-    renderers[0].says({ kind: 'errors', id: 'search', incarnation: 1, count: -1 })
-    renderers[0].says({ kind: 'dropped', id: 'git', incarnation: 1, count: 1 })
     renderers[0].says({ kind: 'other' })
     renderers[0].says(null)
-    expect(samples).toEqual([{ kind: 'errors', caller, count: 3 }, { kind: 'dropped', caller, count: 7 }])
+    expect(cutoffs).toEqual([])
     expect(records).toEqual([])
   })
 
@@ -169,8 +163,8 @@ describe('the hidden renderer for workers', () => {
     ])
   })
 
-  it('hands a cutoff from the page to the plugins manager and the watchdog once, for a running worker, and has nothing left to end', () => {
-    const { workers, renderers, cutoffs, samples } = runtime()
+  it('hands a cutoff from the page to the plugins manager once, for a running worker, and has nothing left to end', () => {
+    const { workers, renderers, cutoffs } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'other' })
@@ -179,7 +173,6 @@ describe('the hidden renderer for workers', () => {
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' })
     renderers[0].says({ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'flood' })
     expect(cutoffs).toEqual([['search', 1, 'malformed']])
-    expect(samples).toEqual([{ kind: 'cutoff', caller: { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }, reason: 'malformed' }])
     workers.terminate('search', 1)
     expect(renderers[0].posted.filter(post => post.channel === 'hetu:terminate')).toEqual([])
   })
@@ -211,7 +204,6 @@ describe('a renderer per community plugin', () => {
         record: (event, fields) => records.push({ event, fields }),
         limits: () => LIMITS,
         cutoff: () => {},
-        sample: () => {},
       })
       made.push({ group, workers, renderers })
       return workers

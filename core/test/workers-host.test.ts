@@ -164,7 +164,7 @@ describe('the worker host page', () => {
     expect(main.posted).toEqual([])
   })
 
-  it('drops a message over the rate and counts it, as the carrier does', () => {
+  it('drops a message over the rate, as the carrier does', () => {
     const { own, main, page, reports, at } = running()
     at(1000)
     for (let i = 0; i < 4; i++) own.gets(text(`m${i}`))
@@ -172,8 +172,7 @@ describe('the worker host page', () => {
     at(2000)
     own.gets(text('m4'))
     expect(main.posted.at(-1)).toBe(text('m4'))
-    page.flush()
-    expect(reports).toEqual([{ kind: 'dropped', id: 'search', incarnation: 1, count: 1 }])
+    expect(reports).toEqual([])
   })
 
   it('applies a running worker\'s new limits from then on, and ignores limits that aren\'t whole and positive', () => {
@@ -263,26 +262,6 @@ describe('the worker host page', () => {
     page.start(start(), undefined)
     expect(workers).toHaveLength(0)
     expect(port.closed).toBe(true)
-  })
-
-  it('reports each worker\'s errors once flushed, and nothing for a worker it ended', () => {
-    const { page, workers, reports } = host()
-    page.start(start('search', 1), new FakePort())
-    page.start(start('git', 3), new FakePort())
-    workers[0].fail()
-    workers[0].fail()
-    workers[1].fail()
-    page.flush()
-    expect(reports).toEqual([
-      { kind: 'errors', id: 'search', incarnation: 1, count: 2 },
-      { kind: 'errors', id: 'git', incarnation: 3, count: 1 },
-    ])
-    page.flush()
-    expect(reports).toHaveLength(2)
-    workers[1].fail()
-    page.terminate('git', 3)
-    page.flush()
-    expect(reports).toHaveLength(2)
   })
 })
 

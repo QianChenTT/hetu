@@ -532,13 +532,11 @@ describe('the core actions the plugins manager serves', () => {
   })
 
   // The human stops a plugin from the trusted window, so only the trusted window starts it again
-  it('restarts a plugin the human stopped only from the trusted window, never from the editor or the watchdog', async () => {
+  it('restarts a plugin the human stopped only from the trusted window, never from the editor', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
     await made.pluginsManager.serve(call(trusted, 'core.stop', { plugin: 'alpha' }))
     expect(await code(made.pluginsManager.serve(call(editor, 'core.restart', { plugin: 'alpha' })))).toBe('not-granted')
-    const watchdog = { kind: 'plugin' as const, id: 'watchdog', half: 'host', incarnation: 1 }
-    expect(await code(made.pluginsManager.serve(call(watchdog, 'watchdog.restart', { plugin: 'alpha' })))).toBe('not-granted')
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('stopped')
     await made.pluginsManager.serve(call(trusted, 'core.restart', { plugin: 'alpha' }))
     await made.pluginsManager.settled()

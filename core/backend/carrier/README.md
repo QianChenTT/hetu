@@ -5,9 +5,9 @@ The carrier: the one path every call and event takes and the enforcement point o
 - `bus.ts`: subscriptions, credits and delivery. An event is a topic and maybe a path, never content. A path reaches a subscriber only when the gate's `canRead` says so on that delivery
 - `audit.ts`: `AuditWriter`, the core's own writer of the audit queue: every 100 ms up to 256 records, written as `audit.call` lines with one fsync, and `auditFields`, which maps a record to log fields. It also reads `log.segments` and `log.verify`
 - the carrier answers `editor.reach` itself and filters a `luoshu.list` page and its `next` before they leave (`lister`, `listed` and `Call.canList`)
-- `limits.ts`: the limits as they apply to one plugin with the human's values and the watchdog's lowering, plus the per-port rate and the flood cap
+- `limits.ts`: the limits as they apply to one plugin with the human's values
 - `records.ts`: the core record lane straight through the one `EventLog` with its bounded backlog, the coalesced core records and the bounded audit queue with `next` and `ack`
-- `header.ts`: what the later parts give it, each a small interface the tests fake: the plugins manager, the gate and the providers from the core modules, the guards and the watchdog, which nothing holds yet, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
+- `header.ts`: what the later parts give it, each a small interface the tests fake: the plugins manager, the gate and the providers from the core modules, the guards, which nothing holds yet, the prompt behind an ask and the parts that serve `ui.*` and the core actions it doesn't
 
 The bus, in the carrier:
 - `events.subscribe`, `events.unsubscribe` and `events.publish` are calls and take the eleven steps. The `event` and `ack` messages and the signals are shaped in `core/api/envelope.ts`

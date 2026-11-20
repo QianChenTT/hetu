@@ -102,8 +102,8 @@ describe('shape', () => {
     expect(code(await search.reply(0))).toBe('invalid')
   })
 
-  it('measures args against the caller\'s own cap, raised by the human and lowered by the watchdog', async () => {
-    const { carrier, connect, pluginsManager } = harness()
+  it('measures args against the caller\'s own cap, raised or lowered by the human', async () => {
+    const { connect, pluginsManager } = harness()
     pluginsManager.sandboxed('search')
     const search = connect(worker('search'))
     const big = 'x'.repeat(MiB + 10)
@@ -112,8 +112,7 @@ describe('shape', () => {
     expect((await search.ask('storage.set', { key: 'index', value: big })).ok).toBe(true)
     // Another plugin keeps the fixed cap
     expect(code(await connect(worker('git')).ask('storage.set', { key: 'index', value: big }))).toBe('invalid')
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'argumentBytes', value: 100 })).ok).toBe(true)
+    pluginsManager.human.plugins.search = { argumentBytes: 100 }
     expect((await search.ask('storage.set', { key: 'index', value: 'y'.repeat(200) })).refusal).toMatchObject({ reason: 'too-large' })
   })
 })
@@ -137,7 +136,7 @@ describe('the floor', () => {
     const { carrier, connect, gate, pluginsManager } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
     const plugins = [
       ...['mcp', 'search', 'gate'].map(id => connect(worker(id))),
-      ...['luoshu', 'gate', 'watchdog'].map(id => hostHalf(carrier, host(id))),
+      ...['luoshu', 'gate', 'exec'].map(id => hostHalf(carrier, host(id))),
     ]
     for (const state of ['on', 'off', 'failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
@@ -228,71 +227,23 @@ describe('the floor', () => {
     expect(code(await way.ask('editor-1', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } }))).toBe('failed')
   })
 
-  it('takes watchdog.* only from the watchdog\'s own handle, only on sandboxed plugins with no role', async () => {
-    const seen: Call[] = []
-    const { carrier, connect, pluginsManager, gate } = harness({
-      core: async call => { seen.push(call); return null },
-      guardsFor: () => ['guarding'],
-    })
-    pluginsManager.sandboxed('search')
-    pluginsManager.sandboxed('guarding')
-    // A policy job id never names a sandboxed plugin, but the floor doesn't rely on that
-    pluginsManager.sandboxed('grant-risk-classifier')
-    pluginsManager.installed('watchdog')
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect((await watchdog.ask('watchdog.stop', { plugin: 'search' })).ok).toBe(true)
-    expect((await watchdog.ask('watchdog.restart', { plugin: 'search' })).ok).toBe(true)
-    for (const plugin of ['luoshu', 'gate', 'log', 'grant-risk-classifier', 'guarding', 'ghost']) {
-      expect(code(await watchdog.ask('watchdog.stop', { plugin }))).toBe('not-granted')
-    }
-    // The watchdog's id on a port, or on a worker half, is not the policy job's holder
-    expect(code(await connect(host('watchdog', 2)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    expect(code(await hostHalf(carrier, worker('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    expect(code(await connect(worker('search')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    const way = windowWay(carrier, { trusted })
-    expect(code(await way.ask('trusted', 'watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    expect(seen.map(call => call.action)).toEqual(['watchdog.stop', 'watchdog.restart'])
-    expect(gate.asked).toEqual([])
-  })
-
-  it('takes watchdog.* from no other plugin\'s host handle', async () => {
-    const seen: Call[] = []
-    const { carrier, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
-    pluginsManager.sandboxed('search')
-    for (const id of ['luoshu', 'history', 'exec']) {
-      expect(code(await hostHalf(carrier, host(id)).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    }
-    expect(seen).toEqual([])
-  })
-
-  // Failed and absent act as off and off makes no restarts. The handle can outlive the policy job,
-  // minted before start and kept through a stop grace
-  it.each(['off', 'failed', 'absent'] as const)('takes no watchdog.* from the watchdog\'s handle while its policy job is %s', async state => {
+  // No part of the core serves watchdog.*, so it is a call to a plugin of that id like any other
+  it('routes watchdog.* to a plugin of that id and never to the core', async () => {
     const seen: Call[] = []
     const { carrier, connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = 'off'
-    pluginsManager.policyJobs.watchdog = state
     pluginsManager.sandboxed('search')
-    pluginsManager.sandboxed('git', { log: {} })
-    const watchdog = hostHalf(carrier, host('watchdog'))
-    expect(code(await watchdog.ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    expect(code(await watchdog.ask('watchdog.restart', { plugin: 'search' }))).toBe('not-granted')
-    expect(code(await watchdog.ask('watchdog.limit', { plugin: 'search', constant: 'callsInFlight', value: 1 }))).toBe('not-granted')
+    expect(code(await connect(worker('search')).ask('watchdog.stop', { plugin: 'search' }))).toBe('unavailable')
+    expect(code(await hostHalf(carrier, host('luoshu')).ask('watchdog.limit', { plugin: 'search' }))).toBe('unavailable')
+    expect(code(await windowWay(carrier, { trusted }).ask('trusted', 'watchdog.restart', { plugin: 'search' }))).toBe('not-granted')
     expect(seen).toEqual([])
-    // The lowering never took, so search still has room for a second call
-    const search = connect(worker('search'))
-    connect(worker('git'))
-    search.call('git.log')
-    await tick(10)
-    expect((await search.ask('core.self')).ok).toBe(true)
   })
 
   it('treats a plugin whose state is outside the list as absent', async () => {
-    const seen: Call[] = []
-    const { carrier, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
-    pluginsManager.plugins.search = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {}, topics: [] }
-    expect(code(await hostHalf(carrier, host('watchdog')).ask('watchdog.stop', { plugin: 'search' }))).toBe('not-granted')
-    expect(seen).toEqual([])
+    const { connect, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.plugins.git = { state: 'READY' as never, place: 'sandboxed', incarnation: 1, serves: 'worker', actions: { log: {} }, topics: [] }
+    expect(code(await connect(worker('search')).ask('git.log'))).toBe('unavailable')
   })
 
   it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {

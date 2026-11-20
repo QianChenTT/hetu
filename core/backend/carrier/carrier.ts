@@ -7,8 +7,7 @@ import {
 } from '../../api/envelope.ts'
 import { MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, policyJobIds,
-  type GuardableAction,
+  coreNamespaces, guardableActions, guards as expectedGuards, providers as providerIds, qualifiedName, type GuardableAction,
 } from '../../api/ids.ts'
 import { isDotName } from '../../api/names.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
@@ -16,7 +15,7 @@ import { pathProblem } from '../../api/scope.ts'
 import { spaceOf } from '../../api/storage.ts'
 import {
   agentDoor, agentHost, agentOwn, pluginStates, policyJobStates, type Access, type Call, type Gate, type GuardCall, type Prepared,
-  type Sample, type Scope, type PolicyJobState,
+  type Scope, type PolicyJobState,
 } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
@@ -332,19 +331,6 @@ export class Carrier {
     if (!this.closed) this.coalesced.hit(event, fields)
   }
 
-  // A sample from the runtime about a worker it runs: its errors, the relay's drops or the relay's cutoff. The watchdog
-  // hears it while its policy job is on. The page counts a second's worth before it reports
-  sample(sample: Sample): void {
-    if (this.closed || this.policyJob('watchdog') !== 'on') return
-    const watchdog = this.holder(() => this.options.watchdog())
-    if (watchdog === null) return
-    try {
-      watchdog.sample(frozen(sample))
-    } catch {
-      this.fault('watchdog', 'sample')
-    }
-  }
-
   // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
   quitting(): void {
     if (!this.closed) this.bus.emit('core.quitting')
@@ -552,7 +538,8 @@ export class Carrier {
     const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
     // Closing a window's way would lock the human out, so a window only ever drops
     if (verdict === 'flood' && way.via !== 'window') return this.flood(way)
-    if (verdict !== 'pass') return this.dropped(way)
+    // One over the rate gets no reply
+    if (verdict !== 'pass') return
     // A message that throws while it is read is dropped like one that can't be read
     try {
       const kind = kindOf(message)
@@ -565,23 +552,6 @@ export class Carrier {
       }
       // Anything else, another v and the kinds only the carrier sends included, is dropped unread
     } catch {}
-  }
-
-  // One over the rate gets no reply. The watchdog hears at most once a second per way, with the count since
-  private dropped(way: Way): void {
-    way.rate.dropped++
-    const now = this.clock()
-    if (now - way.rate.toldAt < 1000 || this.policyJob('watchdog') !== 'on') return
-    const watchdog = this.holder(() => this.options.watchdog())
-    if (watchdog === null) return
-    const count = way.rate.dropped
-    way.rate.dropped = 0
-    way.rate.toldAt = now
-    try {
-      watchdog.sample(frozen({ kind: 'dropped', caller: way.caller, count }))
-    } catch {
-      this.fault('watchdog', 'sample')
-    }
   }
 
   // The flood cap closes the way and reports the plugin crashed with flood. The carrier marks its own close first,
@@ -703,7 +673,7 @@ export class Carrier {
     return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
   }
 
-  // 3 floor: who may call a core action, security.* and watchdog.* included, the trusted window held to core actions,
+  // 3 floor: who may call a core action, security.* included, the trusted window held to core actions,
   // the agent host held to the door's calls past its own, an agent's chain held to the tool table and the free actions
   // that skip the gate. Never asks the gate
   private floorOf(way: Way, target: Target, args: unknown, agent: string | undefined): Kind | No {
@@ -725,7 +695,6 @@ export class Carrier {
       const admitted = from === 'any'
         || (from === 'windows' && caller.kind === 'window')
         || (from === 'trusted' && trusted)
-        || (from === 'watchdog' && this.isWatchdog(way) && this.watchable(field(args, 'plugin')))
         || (from === 'http' && this.isDoor(way))
         // The agent host under a live call from the door, so the agent it asks for is that call's and no other
         || (from === 'agent' && host && agent !== undefined)
@@ -761,14 +730,6 @@ export class Carrier {
     return { kind: 'power', capability: 'plugin.call', scope: frozen({ target: target.target }) }
   }
 
-  // The watchdog policy job's holder is the install's watchdog, whose host half has an in-process handle. It holds the policy job
-  // only while the policy job is on: starting, failed and absent act as off and off makes no restarts. The handle
-  // can outlive that, minted before start and kept through a stop grace
-  private isWatchdog(way: Way): boolean {
-    const holder = way.via === 'handle' && way.caller.kind === 'plugin' && way.caller.id === 'watchdog' && way.caller.half === 'host'
-    return holder && this.policyJob('watchdog') === 'on'
-  }
-
   // mcp-http-handler's host half in its utility process: a way register made, so a port the plugins manager minted, bound to plugin mcp-http-handler's
   // host half, with mcp-http-handler placed utility as the plugins manager reads it now. A worker of mcp-http-handler matches the id, the way and the
   // place, so the half is named too. The incarnation is not compared: the plugins manager ends every way of an incarnation in
@@ -777,13 +738,6 @@ export class Carrier {
     const { caller } = way
     const half = way.via === 'port' && caller.kind === 'plugin' && caller.id === 'mcp-http-handler' && caller.half === 'host'
     return half && this.info('mcp-http-handler')?.place === 'utility'
-  }
-
-  // watchdog.* acts only on sandboxed plugins holding no policy job or guard role
-  private watchable(plugin: unknown): boolean {
-    if (typeof plugin !== 'string' || isOne(policyJobIds, plugin)) return false
-    if (guardableActions.some(action => this.guardsFor(action).includes(plugin))) return false
-    return this.info(plugin)?.place === 'sandboxed'
   }
 
   // 3 floor for events.*, which keeps identity rather than limits, so it holds with the gate off too. A plugin publishes
@@ -867,7 +821,7 @@ export class Carrier {
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
       refusedScope: undefined,
       coalesce: target.kind === 'core'
-        ? !shaped.action.startsWith('security.') && !shaped.action.startsWith('watchdog.')
+        ? !shaped.action.startsWith('security.')
         : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
       filtering: null,
     }
@@ -1001,14 +955,6 @@ export class Carrier {
     const { caller } = pending
     if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !this.armed(caller)) {
       return this.finish(pending, no('throttled'))
-    }
-    if (pending.action === 'watchdog.limit') {
-      const plugin = field(args, 'plugin') as string
-      this.limits.lower(plugin, field(args, 'constant') as LimitName, field(args, 'value') as number)
-      try {
-        this.options.limited?.(plugin)
-      } catch {}
-      return this.finish(pending, { ok: true, result: null })
     }
     // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
     // a second
