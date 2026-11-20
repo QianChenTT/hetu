@@ -278,6 +278,18 @@ describe('audit records', () => {
     ])
   })
 
+  // Opening the trusted window, Quit and Restart hetu and picking a folder are the human's own steps, one record each
+  it('keeps each app call one record', async () => {
+    const clock = 1_000_000
+    const { recording, router, log } = harness({ now: () => clock, core: async () => null })
+    const way = windowWay(router, { 'editor-1': editor })
+    await way.ask('editor-1', 'app.openSecurity')
+    await way.ask('editor-1', 'app.openSecurity')
+    expect((await written(recording, log)).map(record => [record.action, record.code, record.count])).toEqual([
+      ['app.openSecurity', null, 1], ['app.openSecurity', null, 1],
+    ])
+  })
+
   // A record joins only calls that share every field it names, the A-05 case of two agents behind one MCP among them
   it('keeps two agents behind one caller apart', async () => {
     const clock = 1_000_000

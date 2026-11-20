@@ -56,7 +56,7 @@ export const namespaces = table({
   log: { part: 'recording', route: 'action' },
   editor: { part: 'runtime', route: 'action' },
   gate: { part: 'gate', route: 'action' },
-  app: { part: 'runtime', route: 'action' },
+  app: { part: 'runtime', route: 'action', each: true },
   luoshu: { part: 'luoshu', route: 'provider' },
   leases: { part: 'leases', route: 'provider' },
   history: { part: 'history', route: 'provider' },
