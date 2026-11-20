@@ -291,9 +291,9 @@ ${capabilityKey(change.capability)}`)
 
   // A policy job or guard role: a core module as it reads, starting until the modules are started, off only by the
   // human's switch and failed while the module's last push threw or once the stopped mode closed it. Nothing that runs
-  // holds a guard role, so each is absent
+  // holds a guard role, so an expected guard reads off by the human's switch, which the router skips, and absent otherwise
   policyJob(id: string): PolicyJobState {
-    if (!isModule(id)) return 'absent'
+    if (!isModule(id)) return isOne(this.state.switches.off, id) && this.expected().includes(id) ? 'off' : 'absent'
     const state = this.modules.state(id)
     return state === 'stopped' ? 'failed' : state
   }

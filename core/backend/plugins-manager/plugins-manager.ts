@@ -242,9 +242,10 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       return this.enterStopped({ control: 'install', why: 'tampered', reason: null, again: this.failedBefore !== null })
     }
     // The controls that judge yes or no go first and alone. Nothing the core runs holds a guard, so an expected guard the
-    // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins
+    // human hasn't switched off reads absent and stops hetu in the fail-safe before any module begins. Off is no step,
+    // read from policyJob as the router reads it
     const controls = failSafeControls(action => this.guardsFor(action))
-    const guard = controls.find(id => !isModule(id) && !isOne(this.state.switches.off, id) && this.policyJob(id) !== 'on')
+    const guard = controls.find(id => !isModule(id) && this.policyJob(id) !== 'on' && this.policyJob(id) !== 'off')
     if (guard !== undefined) return this.enterStopped({ control: guard, why: 'start-failed', reason: this.policyJob(guard), again: false })
     await this.modules.start(this.state.switches.off, {
       grants: () => this.grantsSnapshot(),
