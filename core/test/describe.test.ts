@@ -109,6 +109,12 @@ describe("the core's words for a change", () => {
     expect(recommends({ kind: 'plugin.on', plugin: 'gate' })).toBe(false)
   })
 
+  it('says what goes unwatched once the heartbeat is off, with no recommendation since it is no security control', () => {
+    expect(describeChange(one({ kind: 'plugin.off', plugin: 'heartbeat' }))).toEqual({
+      text: 'Switch heartbeat off', notes: ['Nothing then pings a plugin or ends a utility process that hangs, so a call to a hung plugin waits its whole deadline'],
+    })
+  })
+
   it('says any command lets the plugin run anything the user can', () => {
     expect(describeChange(one({ kind: 'exec.anyCommand', plugin: 'git', on: true })).notes).toEqual(['git can then run anything you can run'])
     expect(describeChange(one({ kind: 'exec.anyCommand', plugin: 'git', on: false })).notes).toEqual([])

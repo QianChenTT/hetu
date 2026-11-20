@@ -65,6 +65,10 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
 // change that widens for the human's Confirm
 export const guardingModuleIds = frozen(['flood-control', 'recording', 'security-view'] as const)
 
+// The core modules whose off widens though they are no security control: the heartbeat, off leaving a hang unwatched.
+// Switching one off waits for one Confirm with no typed word and switching it on applies at once
+export const watchingModuleIds = frozen(['heartbeat'] as const)
+
 // The security controls: the policy job holders, every guard core/api expects and the guarding modules. Switching one
 // off widens what plugins may do and is typed. The log is the core's own and the providers serve powers without
 // limiting anyone, so neither is one

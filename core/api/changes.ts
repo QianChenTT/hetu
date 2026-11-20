@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { folderCapability, screenText } from './capabilities.ts'
 import { agentLabel, MAX_AGENT_NUMBER_DIGITS, MAX_CLIENT_ID_LENGTH } from './envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from './limits.ts'
-import { isSecurityControl, pluginId } from './ids.ts'
+import { isSecurityControl, pluginId, watchingModuleIds } from './ids.ts'
 import { frozen } from './plain.ts'
 import { agentDoor, agentHost } from './policy-jobs.ts'
 
@@ -134,6 +134,9 @@ export type ChangeKind = Change['kind']
 // widening one waits for the human's Confirm in the trusted window and so does one that destroys data
 export type ChangeEffect = 'narrows' | 'widens' | 'destroys'
 
+// A security control, or a core module that watches though it is none, whose off widens
+const guards = (id: string) => isSecurityControl(id) || (watchingModuleIds as readonly string[]).includes(id)
+
 // Read from the change's structure alone, never from what a plugin says about it or from the state, so no change
 // applied meanwhile can move it. A security control switched off widens and switched back on narrows, every other plugin
 // the other way round. A switch that weakens a check widens when it goes on. A limit waits for the Confirm either way:
@@ -157,9 +160,9 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'plugin.reset':
       return 'destroys'
     case 'plugin.on':
-      return isSecurityControl(change.plugin) ? 'narrows' : 'widens'
+      return guards(change.plugin) ? 'narrows' : 'widens'
     case 'plugin.off':
-      return isSecurityControl(change.plugin) ? 'widens' : 'narrows'
+      return guards(change.plugin) ? 'widens' : 'narrows'
     case 'devMode':
     case 'exec.anyCommand':
     case 'skipVerification':

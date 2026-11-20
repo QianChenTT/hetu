@@ -779,6 +779,27 @@ describe('the security view', () => {
     expect(made.pluginsManager.pending().map(request => request.id)).toContain(gate)
   })
 
+  // The heartbeat is no security control, but switching it off leaves a hang unwatched, so it waits for one Confirm
+  it('holds the heartbeat\'s off for one Confirm with no word, from either window, and switches it on again at once', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, trusted))
+    expect((await list(made)).requests.find(request => request.id === id)?.type).toBe(null)
+    await made.pluginsManager.confirm(id, {})
+    expect(made.modules.state('heartbeat')).toBe('off')
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'heartbeat' }, editor)).toEqual({ applied: true })
+    expect(made.modules.state('heartbeat')).toBe('on')
+  })
+
+  it('applies the heartbeat\'s off unasked from the trusted window once the view is off', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, editor))).toBe('not-granted')
+    expect(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'heartbeat' }, trusted)).toEqual({ applied: true })
+    expect(made.modules.state('heartbeat')).toBe('off')
+  })
+
   it('applies nothing and answers failed for a change it throws on, with the fault recorded', async () => {
     const securityView = createSecurityView()
     securityView.asked = () => { throw new Error('broken') }

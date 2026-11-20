@@ -6,6 +6,7 @@ import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
 import { capabilityText } from '../../api/trusted.ts'
+import { watchingModuleIds } from '../../api/ids.ts'
 
 export type Bridge = {
   send(message: unknown): void
@@ -103,6 +104,7 @@ function pluginLine(plugin: ListedPlugin, locked: boolean): string {
   const known = plugin.from === 'folder' ? [plugin.class === null ? 'class unknown, counted as 4' : `class ${plugin.class}`] : []
   return [
     plugin.id, from, plugin.place, state, ...(plugin.security ? ['security'] : []), ...known, ...(locked ? ['locked while the security view is off'] : []),
+    ...(plugin.from === 'core' && (watchingModuleIds as readonly string[]).includes(plugin.id) ? ['its off waits for a Confirm'] : []),
   ].join(' · ')
 }
 

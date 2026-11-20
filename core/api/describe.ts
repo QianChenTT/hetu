@@ -21,6 +21,7 @@ const whileOff: Readonly<Record<string, string>> = Object.freeze({
 })
 
 const RECOMMEND = 'hetu recommends keeping every security plugin on'
+const HEARTBEAT_OFF = 'Nothing then pings a plugin or ends a utility process that hangs, so a call to a hung plugin waits its whole deadline'
 
 export function describeChange(change: Change): Described {
   switch (change.kind) {
@@ -31,6 +32,7 @@ export function describeChange(change: Change): Described {
     case 'plugin.on':
       return { text: `Switch ${change.plugin} on`, notes: [] }
     case 'plugin.off':
+      if (change.plugin === 'heartbeat') return { text: 'Switch heartbeat off', notes: [HEARTBEAT_OFF] }
       if (!isSecurityControl(change.plugin)) return { text: `Switch ${change.plugin} off`, notes: ['The plugins that need it stop with it'] }
       return { text: `Switch ${change.plugin} off`, notes: [whileOff[change.plugin] ?? `Writes then pass without ${change.plugin}'s check`, RECOMMEND] }
     case 'plugin.remove':

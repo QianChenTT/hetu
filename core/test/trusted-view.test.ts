@@ -150,6 +150,12 @@ describe('what the trusted window draws', () => {
     expect(on.plugins[0].actions).toEqual(['switch-off'])
   })
 
+  it('says the heartbeat\'s off waits for a Confirm, though it is no security control', () => {
+    const drawn = screen(calm({ plugins: [plugin({ id: 'heartbeat', from: 'core', place: 'core', class: null }), plugin({ id: 'storage', from: 'core', place: 'core', class: null })] }))
+    expect(drawn.plugins[0].line).toBe('heartbeat · ships with hetu · core · ready · its off waits for a Confirm')
+    expect(drawn.plugins[1].line).toBe('storage · ships with hetu · core · ready')
+  })
+
   it('says the macOS install is not protected from programs running as the human', () => {
     expect(screen(calm()).install).toBe('On macOS, programs running as you can change hetu’s install')
   })
