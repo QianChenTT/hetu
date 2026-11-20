@@ -32,17 +32,6 @@ export const token = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 // judges on the pair's own items
 export const label = screenText(MAX_LABEL_LENGTH)
 
-// An agent's label as the agent door names it and as the agent host's entry holds it: the OAuth client id, # and the
-// number of the authorization, which has no leading zero. The client id is held to the characters a URL holds as
-// written (RFC 3986, no fragment). A client id metadata document's address fits. With nothing outside ASCII one label
-// never reads as two or as nothing. Two labels that differ are two agents. The trusted window draws a label in a
-// fixed-width face so letters such as I and l read apart
-export const MAX_CLIENT_ID_LENGTH = 255
-export const MAX_AGENT_NUMBER_DIGITS = 15
-export const agentLabel = z.string()
-  .max(MAX_CLIENT_ID_LENGTH + 1 + MAX_AGENT_NUMBER_DIGITS, { abort: true })
-  .regex(new RegExp(`^[A-Za-z0-9._~:/?\\[\\]@!$&'()*+,;=%-]{1,${MAX_CLIENT_ID_LENGTH}}#[1-9][0-9]{0,${MAX_AGENT_NUMBER_DIGITS - 1}}$`))
-
 const requestFields = {
   v: z.literal(VERSION),
   kind: z.literal('call'),

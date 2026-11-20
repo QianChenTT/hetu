@@ -98,6 +98,24 @@ describe('http on the fake core', () => {
     expect(mcp.delivered).toHaveLength(1)
   })
 
+  it('refuses a token that names a label out of the form with 401, reaching nothing, the core hearing only the refusal', async () => {
+    const { core, mcp, port } = await started({ token: () => ({ client: 'https://client.example/metadata' }) })
+    await until(() => canConnect(port))
+    expect((await post(port, { headers: { Authorization: 'Bearer any' } })).status).toBe(401)
+    expect(mcp.delivered).toEqual([])
+    await until(() => core.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
+    expect(core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => record.fields.reason)).toEqual(['token'])
+    expect(core.coreCalls).toEqual([])
+  })
+
+  it('asks the core nothing while it serves a request, so no state of the gate reaches it', async () => {
+    const { core, mcp, port } = await started()
+    await until(() => canConnect(port))
+    expect((await post(port, { headers: { Authorization: 'Bearer good-token' } })).status).toBe(200)
+    expect(mcp.delivered).toHaveLength(1)
+    expect(core.coreCalls).toEqual([])
+  })
+
   it('opens no door while mcp is not there, opens it when mcp turns ready, closes it when mcp goes and opens it again', async () => {
     const { core, port, state } = await started({ mcp: 'unavailable' })
     expect(state).toEqual({ state: 'ready' })

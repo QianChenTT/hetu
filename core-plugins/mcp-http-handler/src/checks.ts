@@ -98,6 +98,19 @@ export type TokenSeam = (authorization: string | null) => { client: string } | n
 // The build that ships issues no token yet, so every request is refused at the token check
 export const refuseEveryToken: TokenSeam = () => null
 
+// The label the door sets on each call it makes for a client: the OAuth client id, # and the number of the
+// authorization, which has no leading zero. The client id is held to the characters a URL holds as written (RFC 3986, no
+// fragment), so a client id metadata document's address fits. With nothing outside ASCII one label never reads as two
+// or as nothing. Two labels that differ are two clients. The core takes any field and judges the pair it makes, so
+// this form is the door's own check
+export const MAX_CLIENT_ID_LENGTH = 255
+export const MAX_NUMBER_DIGITS = 15
+const label = new RegExp(`^[A-Za-z0-9._~:/?\\[\\]@!$&'()*+,;=%-]{1,${MAX_CLIENT_ID_LENGTH}}#[1-9][0-9]{0,${MAX_NUMBER_DIGITS - 1}}$`)
+
+export function labelOk(text: string): boolean {
+  return text.length <= MAX_CLIENT_ID_LENGTH + 1 + MAX_NUMBER_DIGITS && label.test(text)
+}
+
 // The Authorization header's text when exactly one was sent, else null, which no seam takes
 export function authorizationOf(seen: Seen): string | null {
   const values = valuesOf(seen, 'authorization')

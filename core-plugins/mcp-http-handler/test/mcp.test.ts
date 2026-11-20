@@ -11,7 +11,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const CLIENT = 'https://client.example/metadata'
+const CLIENT = 'https://client.example/metadata#1'
 
 // A request past every check of the door, as server.ts hands it on: the raw header list, names as sent
 function passed(over: { body?: Buffer | string, headers?: string[], client?: string, signal?: AbortSignal } = {}): Passed {
@@ -38,6 +38,16 @@ function mcp(answer: (seen: Seen) => unknown = () => ({ status: 200, body: '{"js
 }
 
 describe('a request on its way to mcp.handle', () => {
+  it('calls only for a label in the form <client id>#<n> and refuses any other with token, calling nothing', async () => {
+    const { calls, serve } = mcp()
+    for (const client of ['client', 'client#0', 'a b#1', 'cl\u0131ent#1', `${'x'.repeat(256)}#1`, '']) {
+      expect(await serve(passed({ client })), JSON.stringify(client)).toEqual({ status: 401, reason: 'token' })
+    }
+    expect(calls).toEqual([])
+    expect(await serve(passed({ client: 'client#1' }))).toMatchObject({ status: 200 })
+    expect(calls.map(call => call.options.onBehalf)).toEqual(['client#1'])
+  })
+
   it('hands the body over as text byte for byte and never parses it, a body that is not JSON and a byte order mark too', async () => {
     const { calls, serve } = mcp()
     const bodies = ['{"jsonrpc":"2.0","id":1}', 'not json at all {', '\uFEFF{"a":"\u00E9\u6F22\u{1F600}"}', '']
@@ -61,8 +71,8 @@ describe('a request on its way to mcp.handle', () => {
   it('calls on behalf of the client the token named, never anything a request sent, with the request\'s signal', async () => {
     const { calls, serve } = mcp()
     const controller = new AbortController()
-    await serve(passed({ client: 'client-a', signal: controller.signal, headers: ['X-On-Behalf', 'client-b', 'mcp-on-behalf', 'client-c'] }))
-    expect(calls[0].options.onBehalf).toBe('client-a')
+    await serve(passed({ client: 'client-a#1', signal: controller.signal, headers: ['X-On-Behalf', 'client-b#1', 'mcp-on-behalf', 'client-c#1'] }))
+    expect(calls[0].options.onBehalf).toBe('client-a#1')
     expect(calls[0].options.signal).toBe(controller.signal)
   })
 
@@ -93,14 +103,14 @@ describe('a request on its way to mcp.handle', () => {
       await held
       return { status: 202, body: null }
     })
-    const first = Array.from({ length: 8 }, () => serve(passed({ client: 'a' })))
-    expect(await serve(passed({ client: 'a' }))).toEqual({ status: 429, reason: 'rate' })
-    const rest = ['b', 'c', 'd'].flatMap(client => Array.from({ length: 8 }, () => serve(passed({ client }))))
-    expect(await serve(passed({ client: 'e' }))).toEqual({ status: 429, reason: 'rate' })
+    const first = Array.from({ length: 8 }, () => serve(passed({ client: 'a#1' })))
+    expect(await serve(passed({ client: 'a#1' }))).toEqual({ status: 429, reason: 'rate' })
+    const rest = ['b#1', 'c#1', 'd#1'].flatMap(client => Array.from({ length: 8 }, () => serve(passed({ client }))))
+    expect(await serve(passed({ client: 'e#1' }))).toEqual({ status: 429, reason: 'rate' })
     expect(calls).toHaveLength(32)
     release()
     expect(await Promise.all([...first, ...rest])).toEqual(Array(32).fill({ status: 202, body: null }))
-    expect(await serve(passed({ client: 'a' }))).toEqual({ status: 202, body: null })
+    expect(await serve(passed({ client: 'a#1' }))).toEqual({ status: 202, body: null })
   })
 })
 

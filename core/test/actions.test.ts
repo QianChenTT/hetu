@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  agentRefusals, coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
-  providerActions,
+  coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
+  providerActions, refusedReasons,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
@@ -43,8 +43,8 @@ describe('the core actions', () => {
   })
 
   it('names the eight reasons an agent is refused at the door for, fixed and frozen', () => {
-    expect(agentRefusals).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
-    expect(Object.isFrozen(agentRefusals)).toBe(true)
+    expect(refusedReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
+    expect(Object.isFrozen(refusedReasons)).toBe(true)
   })
 
   it('lives only in the namespaces the core serves, none of them events, which the bus has, or ui yet', () => {
@@ -107,7 +107,7 @@ describe('the core actions', () => {
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/dist/board.html', navigated: true }, true],
     ['editor.frameGone', { url: 'https://example.com/', navigated: false }, false],
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/', navigated: 'yes' }, false],
-    ...agentRefusals.map((reason): [string, unknown, boolean] => ['core.refused', { reason, count: 1 }, true]),
+    ...refusedReasons.map((reason): [string, unknown, boolean] => ['core.refused', { reason, count: 1 }, true]),
     ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT }, true],
     ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT + 1 }, false],
     ['core.refused', { reason: 'token', count: 0 }, false],

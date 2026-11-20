@@ -1,10 +1,11 @@
 import { Refused } from '@hetu/sdk'
-import { doorLimits, type Refusal } from './checks.ts'
+import { doorLimits, labelOk, type Refusal } from './checks.ts'
 import type { Answer, Passed } from './server.ts'
 
 // The serving part behind the door: a request that passed every check becomes one mcp.handle call. The body goes as
-// text and is never parsed, only the mcp- headers go with it and the call is made on behalf of the client the token
-// named, never anything a request sent. MCP answers a status and a body and sets no header
+// text and is never parsed, only the mcp- headers go with it and the call is made on behalf of the label the token
+// named, never anything a request sent. A label out of its form is refused as a token no client holds. MCP answers a
+// status and a body and sets no header
 
 // The call to mcp.handle, made through the core with the request's signal, so a closed connection cancels it
 export type CallMcp = (
@@ -77,6 +78,7 @@ export function mcpServe(callMcp: CallMcp): (passed: Passed) => Promise<Answer |
   const inFlight = new Map<string, number>()
   let total = 0
   return async passed => {
+    if (!labelOk(passed.client)) return { status: 401, reason: 'token' }
     const read = mcpHeaders(passed.headers)
     if ('refused' in read) return read.refused
     let body: string

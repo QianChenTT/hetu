@@ -66,12 +66,12 @@ const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPIC
 // caller
 export type CoreFrom = 'any' | 'windows' | 'trusted' | 'utility' | 'pair'
 
-// Why mcp-http-handler refused an agent at the door, the only reasons core.refused takes: the Host, an Origin or a
+// Why a utility half refused a request at its door, the only reasons core.refused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
 // too slow
-export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
-export type AgentRefusal = typeof agentRefusals[number]
-// The most refusals one report counts, far above what the door can refuse in the second a report covers
+export const refusedReasons = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
+export type RefusedReason = typeof refusedReasons[number]
+// The most refusals one report counts, far above what a door can refuse in the second a report covers
 export const MAX_REFUSAL_COUNT = 1_000_000
 // The most fields one core.identities call names
 export const MAX_FIELDS_ASKED = 64
@@ -165,7 +165,7 @@ const coreTable = {
   // <plugin id>.refused coalesced by reason
   'core.refused': {
     from: 'utility',
-    args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
+    args: z.strictObject({ reason: z.enum(refusedReasons), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
   // mcp-http-handler's bind on its port failed. The plugins manager ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
