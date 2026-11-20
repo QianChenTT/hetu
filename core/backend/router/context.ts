@@ -80,6 +80,8 @@ export type Pending = {
   judged: { kind: Extract<Kind, { kind: 'power' }>, scope: Scope } | null
   // The code a call its grant no longer covers answers once its perform throws
   revoked: RefusalCode | null
+  // A provider's perform was called, so a revoke lets it end on its own rather than answering at once
+  performing: boolean
 }
 
 // Where a call goes, by the route the namespace table gives its namespace: the part serving it with the contract's entry

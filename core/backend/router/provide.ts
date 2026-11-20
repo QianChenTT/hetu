@@ -221,6 +221,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   }
 
   let performed: unknown
+  pending.performing = true
   try {
     performed = await provider.perform(call, prepared)
   } catch (err) {

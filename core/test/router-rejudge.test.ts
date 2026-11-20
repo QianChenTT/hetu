@@ -167,3 +167,85 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(exec.signals[0].aborted).toBe(true)
   })
 })
+
+// scribe calls word-count, which makes its own calls under the one it was handed, each covered by its own grant
+function under() {
+  const parts = made()
+  const { pluginsManager, gate, connect } = parts
+  pluginsManager.sandboxed('word-count', { count: {} })
+  pluginsManager.sandboxed('tagger', { tag: {} })
+  gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+  gate.grants['word-count'] = [
+    { type: 'exec', commands: [build], env: [] }, { type: 'luoshu.write', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['tagger'] },
+  ]
+  const scribe = connect(worker('scribe'))
+  const counter = connect(worker('word-count'))
+  const tagger = connect(worker('tagger'))
+  return { ...parts, scribe, counter, tagger }
+}
+
+describe('the calls under a call a new grants snapshot no longer covers', () => {
+  it('answers the call stale and lets a write under it finish and answer its result', async () => {
+    const { luoshu, scribe, counter, gate, snapshot } = under()
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const write = counter.call('luoshu.write', { path: 'notes/a.md', text: 'x' }, { parent: got.callId })
+    await tick(20)
+    expect(luoshu.performed).toHaveLength(1)
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    await tick(10)
+    expect(counter.repliesTo(write)).toEqual([])
+    open()
+    const reply = await counter.reply(write)
+    expect([reply.ok, luoshu.files.get('notes/a.md')]).toEqual([true, 'x'])
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(true)
+  })
+
+  it('kills an exec run under it, the run answering stale', async () => {
+    const { exec, scribe, counter, gate, snapshot } = under()
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    const run = counter.call('exec.run', { command: build }, { parent: got.callId })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    expect(code(await counter.reply(run))).toBe('stale')
+    expect(exec.signals[0].aborted).toBe(true)
+  })
+
+  it('cancels a plugin callee under it and answers that call stale at once', async () => {
+    const { scribe, counter, tagger, gate, snapshot } = under()
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    const tag = counter.call('tagger.tag', {}, { parent: got.callId })
+    const delivered = await tagger.delivered('tagger.tag')
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    expect(code(await counter.reply(tag))).toBe('stale')
+    await tagger.waitFor(message => message.kind === 'cancel' && message.callId === delivered.callId)
+  })
+
+  it('answers a call under it still in prepare stale, with nothing performed', async () => {
+    const { luoshu, scribe, counter, gate, snapshot } = under()
+    const id = scribe.call('word-count.count', {})
+    const got = await counter.delivered('word-count.count')
+    let open!: () => void
+    luoshu.hold.prepare = new Promise<void>(resolve => { open = resolve })
+    const write = counter.call('luoshu.write', { path: 'notes/a.md', text: 'x' }, { parent: got.callId })
+    await tick(20)
+    gate.grants.scribe = []
+    snapshot()
+    expect(code(await scribe.reply(id))).toBe('stale')
+    expect(code(await counter.reply(write))).toBe('stale')
+    open()
+    await tick(20)
+    expect([luoshu.performed, luoshu.files.has('notes/a.md')]).toEqual([[], false])
+  })
+})

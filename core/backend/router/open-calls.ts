@@ -58,6 +58,7 @@ export function admitted(c: Context,
     ended: new AbortController(),
     judged: null,
     revoked: null,
+    performing: false,
   }
   way.made.set(pending.id, pending)
   parent?.children.add(pending)
@@ -167,12 +168,17 @@ export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
   })
 }
 
-// A call a new grants snapshot no longer covers. A plugin callee is sent cancel and the caller answered code at once.
-// A provider hears the call's signal: one that stops answers code once its perform throws, a single write finishes and
-// answers as it would
+// A call a new grants snapshot no longer covers, with every call under it revoked the same way. A plugin callee is sent
+// cancel and the caller answered code at once, as is a call not yet in perform. A provider in perform hears the call's
+// signal: one that stops answers code once its perform throws, a single write finishes and answers as it would. A call
+// under it still in perform is no longer its sub-call, so the call answering doesn't stop it
 export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
-  if (pending.done) return
-  if (pending.callee !== null) return stop(c, pending, code)
+  if (pending.done || pending.revoked !== null) return
+  for (const child of [...pending.children]) {
+    revoke(c, child, code)
+    if (!child.done) pending.children.delete(child)
+  }
+  if (!pending.performing) return stop(c, pending, code)
   pending.revoked = code
   pending.ended.abort(code)
 }
