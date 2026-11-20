@@ -1,6 +1,7 @@
 import path from 'node:path'
-import type { UiNode } from '@hetu/sdk'
+import { definePlugin, type Plugin, type PluginContext, type UiNode } from '@hetu/sdk'
 import { type FakeCore, fakeCore, type FakeCoreOptions, FakeDrawer } from '@hetu/sdk/testing'
+import search from '../src/worker.ts'
 
 export const manifest = path.join(import.meta.dirname, '..', 'hetu-plugin.json')
 
@@ -20,9 +21,11 @@ export async function close(): Promise<void> {
 
 export const tick = (ms = 5) => new Promise(resolve => setTimeout(resolve, ms))
 
+// Waits ms of the clock, however long each check takes
 export async function until(check: () => boolean | Promise<boolean>, ms = 3000): Promise<void> {
-  for (let waited = 0; !(await check()); waited += 10) {
-    if (waited > ms) throw new Error('nothing arrived in time')
+  const end = Date.now() + ms
+  while (!(await check())) {
+    if (Date.now() > end) throw new Error('nothing arrived in time')
     await tick(10)
   }
 }
@@ -80,4 +83,9 @@ export function click(drawer: FakeDrawer, node: string): void {
 
 export function type(drawer: FakeDrawer, node: string, value: string): void {
   drawer.emit({ topic: 'view.event', instance: instance(drawer), node, type: 'input', value })
+}
+
+// search with parts of its ctx swapped by change, for a test that needs a call to fail in a way the fake core can't make
+export function wrapped(change: (ctx: PluginContext) => Partial<PluginContext>): Plugin {
+  return definePlugin({ start: ctx => search.spec.start({ ...ctx, ...change(ctx) }) })
 }

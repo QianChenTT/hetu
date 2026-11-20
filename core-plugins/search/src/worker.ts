@@ -1,6 +1,7 @@
 import { definePlugin, type PluginContext, Refused } from '@hetu/sdk'
 import { Index } from './index.ts'
 import { listAll } from './listing.ts'
+import { threw } from './threw.ts'
 import { Viewer } from './viewer.ts'
 
 const CACHE_KEY = 'index'
@@ -31,8 +32,11 @@ function textOf(args: unknown): string | null {
 async function start(ctx: PluginContext): Promise<void> {
   const saved = await ctx.try(ctx.cache.get({ key: CACHE_KEY }))
   const index = Index.from(saved.ok ? saved.value : null)
+  const viewer = new Viewer(ctx, text => index.search(text))
 
   const retries = new Set<string>()
+  // A failed read found retries full, so a note may be in neither the index nor retries. The next retry lists again
+  let overflowed = false
   let retryMs = FIRST_RETRY_MS
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   const retryLater = () => {
@@ -41,6 +45,10 @@ async function start(ctx: PluginContext): Promise<void> {
       retryTimer = null
       retryMs = Math.min(retryMs * 2, LAST_RETRY_MS)
       readAgain(retries)
+      if (overflowed) {
+        overflowed = false
+        void listing().catch(threw)
+      }
     }, retryMs)
   }
 
@@ -58,10 +66,12 @@ async function start(ctx: PluginContext): Promise<void> {
           for (const path of batch) due.delete(path)
           await Promise.all(batch.map(refresh))
         }
+        // Words typed while the notes were read may find more now
+        viewer.draw()
       } finally {
         reading = false
       }
-    })()
+    })().catch(threw)
   }
 
   // Reads the note again. One that is gone or that search may no longer read leaves the index. One whose read failed
@@ -75,6 +85,7 @@ async function start(ctx: PluginContext): Promise<void> {
         return
       }
       if (retries.size < MAX_RETRIES) retries.add(path)
+      else overflowed = true
       retryLater()
       return
     }
@@ -101,7 +112,7 @@ async function start(ctx: PluginContext): Promise<void> {
     const hits = index.search(text).slice(0, MAX_HITS)
     return { paths: hits.length === 0 ? [] : await ctx.filterReadable(call, hits) }
   })
-  new Viewer(ctx, text => index.search(text)).start()
+  viewer.start()
 
   // A path-less event names no note, so it waits for the resync that follows. A refused subscribe leaves search
   // answering from the index it has
@@ -111,7 +122,7 @@ async function start(ctx: PluginContext): Promise<void> {
     },
   }))
   // After the subscribe, so a change made while it lists is heard. The cache answers queries meanwhile
-  void listing()
+  void listing().catch(threw)
 
   ctx.onStop(async () => {
     if (retryTimer !== null) clearTimeout(retryTimer)

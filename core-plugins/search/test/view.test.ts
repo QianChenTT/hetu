@@ -2,10 +2,11 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { checkManifest } from '@hetu/sdk/check-manifest'
 import { buildPlugin } from '@hetu/sdk/esbuild'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { PluginContext } from '@hetu/sdk'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MAX_ROWS } from '../src/view.ts'
 import search from '../src/worker.ts'
-import { click, close, core, finds, manifest, nodes, query, row, rows, status, type, until, view } from './helpers.ts'
+import { click, close, core, finds, manifest, nodes, query, row, rows, status, tick, type, until, view, wrapped } from './helpers.ts'
 
 afterEach(close)
 
@@ -131,4 +132,68 @@ describe('the view', () => {
     await until(() => rows(drawer).length > 0 && status(drawer) === `First ${MAX_ROWS} of ${MAX_ROWS + 50} notes`, 5000)
     expect(rows(drawer)).toHaveLength(MAX_ROWS)
   }, 10_000)
+
+  it('draws again once the reads at start end, for words typed while they ran', async () => {
+    const notes: Record<string, string> = {}
+    for (let i = 0; i < 50; i++) notes[`notes/${i}.md`] = 'fox'
+    const { fake, drawer } = core({ notes, latencyMs: 20 })
+    await fake.start(search)
+    type(drawer, 'query', 'fox')
+    await until(() => status(drawer) !== null)
+    expect(rows(drawer).length).toBeLessThan(50)
+    await until(() => rows(drawer).length === 50)
+    expect(status(drawer)).toBe('50 notes')
+  })
+
+  // The refusal answers after the human typed again, so the line says what the newer search found
+  it('keeps the status of a search typed after a click whose open is refused', async () => {
+    const { fake, drawer } = core({ notes: { 'private/b.md': 'fox', 'public/c.md': 'heron' } })
+    await fake.start(search)
+    await finds(fake, 'heron', ['public/c.md'])
+    type(drawer, 'query', 'fox')
+    await until(() => rows(drawer).length === 1)
+    drawer.connect([{ type: 'ui.view' }, { type: 'luoshu.read', paths: ['public/**'] }], { search: { title: 'Search', kind: 'view' } })
+    await until(() => drawer.instances().every(({ instance }) => drawer.tree(instance) !== null))
+    click(drawer, row(drawer, 'private/b.md'))
+    type(drawer, 'query', 'heron')
+    await until(() => rows(drawer).join() === 'public/c.md')
+    await tick(50)
+    expect(status(drawer)).toBe('1 note')
+  })
+})
+
+describe('a throw that is no refusal', () => {
+  const unhandled: unknown[] = []
+  const heard = (err: unknown) => void unhandled.push(err)
+  beforeEach(() => {
+    unhandled.length = 0
+    process.on('unhandledRejection', heard)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    process.off('unhandledRejection', heard)
+    vi.restoreAllMocks()
+  })
+  const broken = () => Promise.reject(new TypeError('broken'))
+
+  it('in the listing is logged and not left unhandled', async () => {
+    const { fake } = core({ notes: { 'a.md': 'fox' } })
+    expect(await fake.start(wrapped(ctx => ({ luoshu: { ...ctx.luoshu, list: broken } })))).toEqual({ state: 'ready' })
+    await tick(100)
+    expect(unhandled).toEqual([])
+    expect(console.error).toHaveBeenCalledWith('search: a task threw', expect.any(TypeError))
+  })
+
+  it('in a draw or an open is logged and not left unhandled', async () => {
+    const { fake, drawer } = core({ notes: { 'a.md': 'fox' } })
+    const ui = (ctx: PluginContext) => ({ ...ctx.ui, on: ctx.ui.on.bind(ctx.ui), views: { ...ctx.ui.views, draw: broken } })
+    await fake.start(wrapped(ctx => ({ ui: ui(ctx), editor: { open: broken } as unknown as PluginContext['editor'] })))
+    await finds(fake, 'fox', ['a.md'])
+    type(drawer, 'query', 'fox')
+    await tick(50)
+    click(drawer, 'r1')
+    await tick(100)
+    expect(unhandled).toEqual([])
+    expect(vi.mocked(console.error).mock.calls.length).toBeGreaterThanOrEqual(3)
+  })
 })

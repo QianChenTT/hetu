@@ -2,7 +2,7 @@ import { definePlugin, Refused } from '@hetu/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 import { listAll, RETRY_MS, WAIT_MS } from '../src/listing.ts'
 import search from '../src/worker.ts'
-import { close, core, finds, query, until } from './helpers.ts'
+import { close, core, finds, query, until, wrapped } from './helpers.ts'
 
 afterEach(close)
 
@@ -129,4 +129,20 @@ describe('the listing at start in a vault of 469 notes search never saw', () => 
     expect(peak).toBeGreaterThan(8)
     expect(peak).toBeLessThanOrEqual(16)
   }, 30_000)
+})
+
+describe('reads that fail for a while at start', () => {
+  // More notes than search keeps to read again, every read refused while the luoshu is busy
+  it('loses no note past the notes it keeps to read again', async () => {
+    const notes: Record<string, string> = {}
+    // Two halves, since a query answers at most 1024 notes
+    for (let i = 0; i < 1100; i++) notes[`notes/${String(i).padStart(4, '0')}.md`] = i % 2 === 0 ? 'even' : 'odd'
+    const { fake } = core({ notes })
+    let refusing = 1100
+    const busy = wrapped(ctx => ({
+      luoshu: { ...ctx.luoshu, read: args => (refusing-- > 0 ? Promise.reject(new Refused('unavailable', 'luoshu.read')) : ctx.luoshu.read(args)) },
+    }))
+    await fake.start(busy)
+    await until(async () => (await query(fake, 'even')).length === 550 && (await query(fake, 'odd')).length === 550, 8000)
+  }, 15_000)
 })
