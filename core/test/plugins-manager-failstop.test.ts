@@ -1,7 +1,8 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CoreStatus, SecurityList } from '../api/actions.ts'
+import { START_HUNG, type CoreStatus, type SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/runtime/header.ts'
 import { afterFailure, Ending } from '../backend/runtime/quit.ts'
@@ -425,6 +426,59 @@ describe('the fail-safe at start', () => {
     // A clean Quit is what clears it
     await new Ending().leave(second.pluginsManager)
     expect(await exists(path.join(second.dataDir, 'failed-once'))).toBe(false)
+  })
+
+  // A start that hangs main can't be tested by hanging, so the gate's first push looks at the disk instead, and a
+  // marker left in place stands for the hang the run before
+  describe('the start marker', () => {
+    const starting = (dataDir: string, id: string) => path.join(dataDir, 'starting', id)
+    const marked = (id: string) => async ({ dataDir }: { dataDir: string }) => {
+      await mkdir(path.join(dataDir, 'starting'), { recursive: true })
+      await writeFile(starting(dataDir, id), '')
+    }
+
+    it('stands for the gate alone while its first grants snapshot is pushed and is gone once its start returned', async () => {
+      const gate = allowAll()
+      const push = gate.stateChanged.bind(gate)
+      const onDisk: boolean[][] = []
+      let dataDir = ''
+      gate.stateChanged = view => {
+        if (onDisk.length === 0) onDisk.push([existsSync(starting(dataDir, 'gate')), existsSync(starting(dataDir, 'flood-control'))])
+        push(view)
+      }
+      const made = await harness({ ...plugins(), modules: { gate }, before: async dirs => { dataDir = dirs.dataDir } })
+      await made.pluginsManager.start()
+      expect(onDisk).toEqual([[true, false]])
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(await readdir(path.join(made.dataDir, 'starting'))).toEqual([])
+    })
+
+    it('stops hetu in the fail-safe naming the control whose start hung the run before, before any module begins', async () => {
+      const { modules, untouched, picked } = counted()
+      const gate = allowAll()
+      const made = await harness({
+        ...plugins(), modules: { ...modules, gate },
+        before: async dirs => {
+          await picked(dirs)
+          await marked('gate')(dirs)
+        },
+      })
+      await made.pluginsManager.start()
+      await made.pluginsManager.settled()
+      const mode = { control: 'gate', why: 'start-failed', reason: START_HUNG, again: false }
+      expect(made.pluginsManager.stopped()).toEqual(mode)
+      expect(made.link.events('core.stopped')).toEqual([mode])
+      expect(gate.views).toEqual([])
+      untouched()
+      noCall(made)
+    })
+
+    it('holds nothing back for a marker naming no control the fail-safe covers', async () => {
+      const made = await harness({ ...plugins(), before: marked('storage') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    })
   })
 
   it('refuses everything and stops nothing for the gate failing in use', async () => {

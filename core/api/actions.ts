@@ -316,6 +316,9 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // failure, so it didn't restart a second time
 export type StoppedMode = { control: string, why: 'tampered' | 'failed' | 'start-failed', reason: string | null, again: boolean }
 
+// The reason of a control whose start marker the run before left: its start hung main and the run was ended
+export const START_HUNG = 'start-hung'
+
 // The words that name why hetu stopped, the same in the trusted window and in the native box
 export function stoppedCause(mode: StoppedMode): string {
   if (mode.why === 'start-failed') return `hetu stopped: ${mode.control} failed at start`
