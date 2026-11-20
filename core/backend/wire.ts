@@ -1,10 +1,12 @@
 import type { Caller } from '../api/envelope.ts'
-import type { LimitName } from '../api/limits.ts'
+import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/header.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, Landing, Port, Served } from './carrier/header.ts'
+import type { Asks, CarrierOptions, Debug, HumanLimits, Landing, Port, Served } from './carrier/header.ts'
+import { Limits } from './carrier/limits.ts'
+import { createFloodControl } from './flood-control/flood-control.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
 import { createGate } from './policy/gate/gate.ts'
@@ -39,15 +41,16 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec'>>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl'>>
 }
 
-// The six core modules made and held: each the real one unless a test hands its own, the luoshu publishing through
-// publish for its two topics alone
+// The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
+// for its two topics alone and flood control counting by limit, the fixed values unless one is handed
 export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
   publish: (topic: string, path: string) => void
+  limit?: (plugin: string | null, name: LimitName) => number
 }): CoreModules {
-  const { publish, ...given } = options
+  const { publish, limit, ...given } = options
   return new CoreModules({
     ...given,
     gate: given.gate ?? createGate(),
@@ -56,6 +59,10 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish(publish) }),
     history: given.history ?? createHistory(),
     exec: given.exec ?? createExec(),
+    floodControl: given.floodControl ?? createFloodControl({
+      limit: limit ?? ((_plugin, name) => defaultLimits[name]),
+      clock: () => performance.now(),
+    }),
   })
 }
 
@@ -109,19 +116,20 @@ export class LinkToCarrier implements CarrierLink {
   }
 }
 
-// What the carrier asks for: the gate and every provider from the core modules, no guard, since nothing that runs holds
-// one, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
+// What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
+// that runs holds one, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
 // both build the carrier from it, so the tests run the wiring that ships
 export function carrierOptions(
   pluginsManager: PluginsManager,
   modules: Holder,
-  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers'>,
+  rest: Omit<CarrierOptions, 'pluginsManager' | 'gate' | 'guards' | 'providers' | 'floodControl'>,
 ): CarrierOptions {
   return {
     pluginsManager,
     gate: () => modules.gate(),
     guards: () => null,
     providers: id => modules.provider(id),
+    floodControl: () => modules.floodControl(),
     core: pluginsManager.serve,
     asks: pluginsManager.asks,
     ...rest,
@@ -134,14 +142,18 @@ export function carrierOptions(
 // log.segments and log.verify from
 export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder } {
   const link = new LinkToCarrier()
-  // The six made here, the one place that builds the parts. The luoshu publishes only once started, which is after the
-  // carrier is attached
+  // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the carrier does
+  const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
+  const limits = new Limits(() => human.limits())
+  // The modules made here, the one place that builds the parts. The luoshu publishes only once started, which is after
+  // the carrier is attached
   const modules = buildModules({
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
     ...options.modules,
     publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path),
+    limit: (plugin, name) => limits.of(plugin, name),
   })
   const pluginsManager = new PluginsManager({
     booted: options.booted,
@@ -156,6 +168,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
+  human.limits = () => pluginsManager.limits()
   const { windows } = options
   const carrier = new Carrier(carrierOptions(pluginsManager, modules, {
     log: options.booted.log,

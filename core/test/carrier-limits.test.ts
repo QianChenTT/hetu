@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
-import { countMessage, newRate } from '../api/rate.ts'
 import { Limits } from '../backend/carrier/limits.ts'
+import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { HumanLimits, Port } from '../backend/carrier/header.ts'
 import { cleanup, code, editor, harness, tick, windowWay, worker } from './carrier-fakes.ts'
 
@@ -62,64 +62,6 @@ describe('the limits a window runs on', () => {
 
   it('still give a plugin the lowered value for all', () => {
     expect(human({ argumentBytes: 8 }).of('search', 'argumentBytes')).toBe(8)
-  })
-})
-
-describe('the message count', () => {
-  const at = (perSecond: number, floodMs = 5000, floodFactor = 10) =>
-    (name: string) => ({ messagesPerSecond: perSecond, floodMs, floodFactor } as Record<string, number>)[name]
-
-  it('passes the rate, drops one over it and starts again each second', () => {
-    const rate = newRate()
-    const limit = at(3)
-    expect([0, 1, 2, 3].map(() => countMessage(rate, 1000, limit))).toEqual(['pass', 'pass', 'pass', 'drop'])
-    expect(countMessage(rate, 1999, limit)).toBe('drop')
-    expect(countMessage(rate, 2000, limit)).toBe('pass')
-  })
-
-  it('calls more than the flood factor times the rate across the flood window a flood', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 10)
-    const verdicts = Array.from({ length: 21 }, () => countMessage(rate, 5000, limit))
-    expect(verdicts.slice(0, 20).includes('flood')).toBe(false)
-    expect(verdicts[20]).toBe('flood')
-  })
-
-  it('starts both windows again when the clock goes back', () => {
-    const rate = newRate()
-    const limit = at(1)
-    expect(countMessage(rate, 5000, limit)).toBe('pass')
-    expect(countMessage(rate, 4000, limit)).toBe('pass')
-  })
-
-  // A flood cap of 2 in the cases below, so only the flood window decides
-  it('starts the flood window again when the clock goes back', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 1)
-    expect([5000, 5000, 4999].map(now => countMessage(rate, now, limit))).toEqual(['pass', 'pass', 'pass'])
-  })
-
-  it('ends the flood window after exactly floodMs', () => {
-    const rate = newRate()
-    const limit = at(2, 1000, 1)
-    expect([5000, 5000, 6000].map(now => countMessage(rate, now, limit))).toEqual(['pass', 'pass', 'pass'])
-  })
-
-  it('judges a flood window against the cap it started with, so a lowered rate drops at once and floods only from the next window', () => {
-    const rate = newRate()
-    const limits: Record<string, number> = { messagesPerSecond: 200, floodMs: 5000, floodFactor: 10 }
-    const limit = (name: string) => limits[name]
-    // 600 messages over 3 s, under every rate in force when each was sent
-    for (const now of [0, 1000, 2000]) {
-      for (let i = 0; i < 200; i++) expect(countMessage(rate, now, limit)).toBe('pass')
-    }
-    limits.messagesPerSecond = 10
-    expect(countMessage(rate, 2500, limit)).toBe('drop')
-    expect(countMessage(rate, 3000, limit)).toBe('pass')
-    // The next window takes the cap of 10 times 10 a second for 5 s
-    const verdicts = Array.from({ length: 501 }, () => countMessage(rate, 5000, limit))
-    expect(verdicts.slice(0, 500).includes('flood')).toBe(false)
-    expect(verdicts[500]).toBe('flood')
   })
 })
 
@@ -292,6 +234,17 @@ describe('the rate', () => {
     expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
     expect(pluginsManager.crashes).toEqual([])
   })
+
+  it('keeps a window\'s way in open past the fixed flood cap and answers it once the windows start again', async () => {
+    let clock = 1_000_000
+    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    const way = windowWay(carrier, { 'editor-1': editor })
+    const cap = defaultLimits.messagesPerSecond * defaultLimits.floodFactor * defaultLimits.floodMs / 1000
+    for (let i = 0; i <= cap + 10; i++) way.post('editor-1', { v: 1, kind: 'pong' })
+    clock += defaultLimits.floodMs + 1000
+    expect((await way.ask('editor-1', 'core.self')).ok).toBe(true)
+    expect(pluginsManager.crashes).toEqual([])
+  })
 })
 
 describe('the flood cap', () => {
@@ -343,5 +296,104 @@ describe('the flood cap', () => {
     await tick(20)
     expect(pluginsManager.crashes).toEqual([])
     expect(pluginsManager.lifecycle).toHaveLength(600)
+  })
+})
+
+// The carrier asks flood control and acts on its answer: drops a message, closes a way or throttles a call. Flood
+// control off answers yes to everything, for plugins and windows alike
+describe('flood control in the path', () => {
+  it('drops nothing, closes nothing and throttles nothing while flood control is off', async () => {
+    const clock = 1_000_000
+    const { carrier, connect, pluginsManager } = harness({ clock: () => clock, floodControl: () => null })
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    pluginsManager.human.all = { messagesPerSecond: 1, floodMs: 1000, floodFactor: 1, callsInFlight: 1 }
+    const search = connect(worker('search'))
+    connect(worker('git'))
+    const ids = Array.from({ length: 5 }, () => search.call('core.self'))
+    await search.reply(ids[4])
+    expect(ids.map(id => search.repliesTo(id).length)).toEqual([1, 1, 1, 1, 1])
+    search.call('git.log')
+    search.call('git.log')
+    await tick(10)
+    expect((await search.ask('core.self')).ok).toBe(true)
+    const way = windowWay(carrier, { 'editor-1': editor })
+    const sent = defaultLimits.messagesPerSecond + 10
+    for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
+    await tick(50)
+    expect(way.replies).toHaveLength(sent)
+    expect(pluginsManager.crashes).toEqual([])
+  })
+
+  it('drops the one message whose count throws and records the fault, the next counted again', async () => {
+    let broken = true
+    const { connect, log, carrier } = harness({
+      floodControl: () => ({
+        admit: () => { if (broken) throw new Error('broken'); return 'pass' },
+        acquire: () => ({ principals: [], bytes: 0 }),
+        release: () => {},
+      }),
+    })
+    const search = connect(worker('search'))
+    const first = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(first)).toEqual([])
+    broken = false
+    expect((await search.ask('core.self')).ok).toBe(true)
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'admit', count: 1 }])
+  })
+
+  it('drops a message counted with an answer outside the list', async () => {
+    const { connect } = harness({
+      floodControl: () => ({ admit: () => 'maybe' as never, acquire: () => ({ principals: [], bytes: 0 }), release: () => {} }),
+    })
+    const search = connect(worker('search'))
+    const id = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(id)).toEqual([])
+  })
+
+  it('answers failed for a call whose acquire throws and records the fault, asking no gate', async () => {
+    const { connect, log, carrier, gate } = harness({
+      floodControl: () => ({ admit: () => 'pass', acquire: () => { throw new Error('broken') }, release: () => {} }),
+    })
+    const search = connect(worker('search'))
+    expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('failed')
+    expect(gate.asked).toEqual([])
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'acquire', count: 1 }])
+  })
+
+  it('answers a call whose release throws and records the fault', async () => {
+    const { connect, log, carrier } = harness({
+      floodControl: () => ({ admit: () => 'pass', acquire: () => ({ principals: [], bytes: 0 }), release: () => { throw new Error('broken') } }),
+    })
+    const search = connect(worker('search'))
+    expect((await search.ask('core.self')).ok).toBe(true)
+    carrier.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'release', count: 1 }])
+  })
+
+  it('gives a call\'s release to the flood control that acquired it, though it was switched off meanwhile', async () => {
+    const real = createFloodControl({ limit: (_plugin, name) => (name === 'callsInFlight' ? 1 : defaultLimits[name]), clock: () => 0 })
+    let on = true
+    const { connect, pluginsManager } = harness({ floodControl: () => (on ? real : null) })
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.sandboxed('git', { log: {} })
+    const search = connect(worker('search'))
+    const git = connect(worker('git'))
+    const first = search.call('git.log')
+    const got = await git.delivered('git.log')
+    on = false
+    git.answer(got.callId, null)
+    await search.reply(first)
+    on = true
+    const second = search.call('git.log')
+    await git.delivered('git.log')
+    expect(search.repliesTo(second)).toEqual([])
   })
 })

@@ -9,6 +9,8 @@ import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpe
 import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Carrier } from '../../backend/carrier/carrier.ts'
+import { Limits } from '../../backend/carrier/limits.ts'
+import { createFloodControl } from '../../backend/flood-control/flood-control.ts'
 import type { HumanLimits, PluginsManager, PluginInfo } from '../../backend/carrier/header.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -270,8 +272,12 @@ export class FakeCore {
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
+    // Flood control counts by the limits the fake core was given, as the core's does by the human's
+    const limits = new Limits(() => this.pluginsManager.limits())
+    const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock: () => performance.now() })
     this.carrier = new Carrier({
       pluginsManager: this.pluginsManager,
+      floodControl: () => floodControl,
       gate: () => this.gate,
       guards: () => null,
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),

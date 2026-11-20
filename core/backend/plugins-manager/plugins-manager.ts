@@ -307,7 +307,8 @@ export class PluginsManager implements Seam {
   private queue: Promise<unknown> = Promise.resolve()
   private readonly requests: Requests
   private readonly onFailure: PluginsManagerOptions['onFailure']
-  private readonly limited: PluginsManagerOptions['limited']
+  // The runtime's limited, which never throws here
+  private readonly limited: (plugin: string) => void
   // starting until the install list is read and the core modules started, all from then on, stopped once the install
   // list or the log failed
   private phase: 'starting' | 'all' | 'stopped' = 'starting'
@@ -338,7 +339,11 @@ export class PluginsManager implements Seam {
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
-    this.limited = options.limited
+    this.limited = plugin => {
+      try {
+        options.limited?.(plugin)
+      } catch {}
+    }
     this.clock = options.clock ?? (() => performance.now())
     this.state = booted.state
     this.removedKnown = booted.removedKnown
@@ -500,7 +505,7 @@ ${capabilityKey(change.capability)}`)
         if (k.place !== 'sandboxed' && k.place !== 'utility') throw { code: 'not-granted' }
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
-        if (call.action === 'core.restart' && this.stoppedByHuman(k) && !trusted) throw { code: 'not-granted' }
+        if (call.action === 'core.restart' && k.held?.state === 'stopped' && k.held.reason === 'human' && !trusted) throw { code: 'not-granted' }
         // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
         // ended, so it is the human's in the trusted window alone, as its stop is. The place is the plugins manager's to know,
         // so the rule is here and not in the floor, which sees only that a window asked
@@ -536,10 +541,6 @@ ${capabilityKey(change.capability)}`)
       })
     }
     return { plugins }
-  }
-
-  private stoppedByHuman(k: Known): boolean {
-    return k.held?.state === 'stopped' && k.held.reason === 'human'
   }
 
   // What the trusted window draws. Ids, states and fixed reasons only, and each request in the core's own words. The core
@@ -2041,11 +2042,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
         await this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
         // A raise as well as a lowering, so a half paces itself to what the carrier now counts it against
-        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) {
-          try {
-            this.limited?.(id)
-          } catch {}
-        }
+        for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) this.limited(id)
         return
       }
       case 'luoshu.pick': {
@@ -2374,6 +2371,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       // change on. The pass that classes every entry follows in the changes' turn, as it did once the classifier
       // started. One bump, so the grants snapshot grows by one for the change
       this.bump()
+      // Flood control paces every running half's messages, so each paces itself as it now stands
+      if (id === 'flood-control') for (const known of this.known.keys()) this.limited(known)
       if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
         void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
       }

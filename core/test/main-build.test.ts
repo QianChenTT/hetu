@@ -368,6 +368,7 @@ describe('each core module\'s Node built-ins', () => {
       luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
       history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
       exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      'flood-control': [],
     })
     expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
   })

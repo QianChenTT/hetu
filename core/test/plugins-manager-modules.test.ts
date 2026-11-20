@@ -49,7 +49,7 @@ describe('a core module\'s start', () => {
   it('records each module started once the core starts, one switched off off and nothing for one that never ran', async () => {
     const made = await harness({ switches: { off: ['history'] } })
     await made.pluginsManager.start()
-    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec'].map(module => ({ module, state: 'started', reason: null })))
+    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control'].map(module => ({ module, state: 'started', reason: null })))
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'exec' })
     expect(changes(made).at(-1)).toEqual({ module: 'exec', state: 'stopped', reason: 'off' })
   })
@@ -116,6 +116,33 @@ describe('the grants snapshot', () => {
     expect(made.pluginsManager.view()).toBe(3)
     await made.pluginsManager.settled()
     expect(made.pluginsManager.view()).toBe(3)
+  })
+})
+
+describe('flood control as a core module', () => {
+  it('is a row of its own with its switch, a security control switched off only with its id typed', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    expect((await rows(made)).find(row => row.id === 'flood-control')).toMatchObject({
+      from: 'core', place: 'core', state: 'ready', security: true, on: true,
+    })
+    expect(made.modules.floodControl()).not.toBe(null)
+    const held = await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'flood-control' }, trusted) as { held: string }
+    const listed = (await made.pluginsManager.serve(call(trusted, 'security.list'))) as SecurityList
+    expect(listed.requests.find(request => request.id === held.held)?.type).toBe('flood-control')
+  })
+
+  it('reads off once switched off, so the carrier asks nothing, and hands every running plugin its limits again each way', async () => {
+    const limited: string[] = []
+    const made = await harness({ ...needing('alpha', 'luoshu'), pluginsManager: { limited: plugin => void limited.push(plugin) } })
+    await made.pluginsManager.start()
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'flood-control' })
+    expect(made.modules.state('flood-control')).toBe('off')
+    expect(made.modules.floodControl()).toBe(null)
+    expect(limited).toEqual(['alpha'])
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'flood-control' })
+    expect(made.modules.floodControl()).not.toBe(null)
+    expect(limited).toEqual(['alpha', 'alpha'])
   })
 })
 

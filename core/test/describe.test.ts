@@ -117,6 +117,7 @@ describe('typing to prove attention', () => {
   it("asks for a security control's id to switch it off", () => {
     expect(mustType(one({ kind: 'plugin.off', plugin: 'gate' }))).toBe('gate')
     expect(mustType(one({ kind: 'plugin.off', plugin: 'grant-risk-classifier' }))).toBe('grant-risk-classifier')
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'flood-control' }))).toBe('flood-control')
   })
 
   it('asks for log to stop recording', () => {

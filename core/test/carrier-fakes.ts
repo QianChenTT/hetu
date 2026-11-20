@@ -6,6 +6,8 @@ import { scopeMatches } from '../api/scope.ts'
 import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
+import { Limits } from '../backend/carrier/limits.ts'
+import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
@@ -371,8 +373,13 @@ export function harness(over: Partial<CarrierOptions> = {}) {
   const log = new FakeLog()
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
+  // The real flood control on the carrier's clock and the fake plugins manager's limits, unless a test hands its own
+  const limits = new Limits(() => pluginsManager.limits())
+  const clock = over.clock ?? (() => performance.now())
+  const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock })
   const carrier = new Carrier({
     pluginsManager,
+    floodControl: () => floodControl,
     gate: () => gate,
     guards: id => guards[id] ?? null,
     providers: id => providers[id] ?? null,

@@ -3,6 +3,7 @@ import type { LimitName } from '../../api/limits.ts'
 import type { GuardableAction } from '../../api/ids.ts'
 import type { Access, Call, Gate, Guard, PluginState, Provider, PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
+import type { FloodControl } from '../flood-control/header.ts'
 import type { AuditLog } from './audit.ts'
 
 // What the later parts give the carrier, each a small interface the tests fake. The carrier imports nothing from boot
@@ -85,6 +86,8 @@ export type CarrierOptions = {
   gate: () => Gate | null
   guards: (id: string) => Guard | null
   providers: (id: string) => Provider | null
+  // Flood control while the human has it on, else null, which counts nothing and says yes to everything
+  floodControl: () => FloodControl | null
   log: CoreLog | null
   asks?: Asks
   // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or

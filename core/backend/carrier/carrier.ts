@@ -20,10 +20,10 @@ import {
 import type { Field } from '../../lib/event-log.ts'
 import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
-import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import { Limits } from './limits.ts'
 import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
 import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './header.ts'
+import type { Admitted, Charged, Counted, Held } from '../flood-control/header.ts'
 
 type Send = (message: unknown) => void
 
@@ -39,7 +39,8 @@ type Way = {
   close: (() => void) | null
   open: boolean
   ownClose: boolean
-  rate: Rate
+  // What flood control counts the way's messages by, one object for the way's life
+  counted: Counted
   // Calls this way made, by the caller's own id
   made: Map<number, Pending>
   // Calls delivered to this way, by call id. Replies, parents and filterReadable look only here
@@ -72,8 +73,8 @@ type Pending = {
   // The deadline on the clock no change of the wall clock moves. The steps check it before they hand a call on, since
   // a gate or a guard can run past it before the timer gets a turn
   due: number
-  bytes: number
-  charged: [string, string | null][]
+  // Gives the call's room back to the flood control that took it, null when none did
+  release: (() => void) | null
   children: Set<Pending>
   callee: Way | null
   timer: ReturnType<typeof setTimeout> | null
@@ -124,6 +125,9 @@ const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, co
 
 // The core actions the trusted window may send inside its input delay, since they only read
 const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.segments', 'log.verify'])
+
+// What a step of flood control that threw gives back, which no answer of its can be
+const threw = Symbol('threw')
 
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
@@ -228,7 +232,6 @@ export class Carrier {
   private readonly logReads: Served | undefined
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
-  private readonly inflight = new Map<string, { calls: number, bytes: number }>()
   // The gate's time filterReadable took in the current second for each caller of a live call, by principal
   private readonly filtered = new Map<string, { second: number, spent: number }>()
   private readonly guardsFor: (action: GuardableAction) => readonly string[]
@@ -516,7 +519,7 @@ export class Carrier {
       close,
       open: true,
       ownClose: false,
-      rate: newRate(),
+      counted: Object.freeze({ plugin }),
       made: new Map(),
       delivered: new Map(),
     }
@@ -535,7 +538,7 @@ export class Carrier {
         this.options.pluginsManager.heard(way.caller, 'alive')
       } catch {}
     }
-    const verdict = countMessage(way.rate, this.clock(), name => this.limits.of(way.plugin, name))
+    const verdict = this.admit(way)
     // Closing a window's way would lock the human out, so a window only ever drops
     if (verdict === 'flood' && way.via !== 'window') return this.flood(way)
     // One over the rate gets no reply
@@ -552,6 +555,24 @@ export class Carrier {
       }
       // Anything else, another v and the kinds only the carrier sends included, is dropped unread
     } catch {}
+  }
+
+  // Flood control's verdict on one message, pass while it is off. A throw or an answer outside the list drops that one
+  // message, so a broken count never lets one through
+  private admit(way: Way): Admitted {
+    const flood = this.holder(() => this.options.floodControl())
+    const verdict = flood === null ? 'pass' : this.flooded('admit', () => flood.admit(way.counted))
+    return verdict === 'pass' || verdict === 'flood' ? verdict : 'drop'
+  }
+
+  // A step of flood control, threw with a fault recorded when it throws
+  private flooded(step: string, run: () => unknown): unknown {
+    try {
+      return run()
+    } catch {
+      this.fault('flood-control', step)
+      return threw
+    }
   }
 
   // The flood cap closes the way and reports the plugin crashed with flood. The carrier marks its own close first,
@@ -598,8 +619,9 @@ export class Carrier {
       if (!shaped.ok) return this.early(way, answer, callId, shaped, shaped.no, started)
       const kind = this.floorOf(way, shaped.target, shaped.args, shaped.agent)
       if ('code' in kind) return this.early(way, answer, callId, shaped, kind, started)
-      pending = this.admit(way, answer, callId, shaped, kind, started)
-      if (pending === null) return this.early(way, answer, callId, shaped, { code: 'throttled' }, started)
+      const charged = this.charge(way, shaped.parent, shaped.bytes)
+      if (!('release' in charged)) return this.early(way, answer, callId, shaped, charged, started)
+      pending = this.admitted(way, answer, callId, shaped, kind, started, charged.release)
       await this.run(pending, shaped.target, shaped.args, kind)
     } catch (err) {
       if (pending === null) return
@@ -770,52 +792,35 @@ export class Carrier {
     }
   }
 
-  // 4 ceiling: calls and bytes in flight, charged to the caller and to the root of its parent links
-  private admit(way: Way, answer: Send, callId: string, shaped: Extract<Shaped, { ok: true }>, kind: Kind, started: number): Pending | null {
-    const { parent, bytes } = shaped
+  // 4 ceiling: flood control's yes or no on the call's bytes, charged to the caller and to the root of its parent
+  // links. With flood control off nothing is charged. A no is throttled. A throw, or an acquire of the wrong shape, fails
+  // the call, as a provider's throw does
+  private charge(way: Way, parent: Pending | null, bytes: number): { release: (() => void) | null } | No {
+    const flood = this.holder(() => this.options.floodControl())
+    if (flood === null) return { release: null }
+    const root = parent?.root ?? way
+    const charged = (one: Root | Way): Charged => Object.freeze({ principal: one.principal, plugin: one.plugin })
+    const held = this.flooded('acquire', () => flood.acquire(charged(way), charged(root), bytes))
+    if (held === null) return { code: 'throttled' }
+    if (typeof held !== 'object') return { code: 'failed' }
+    return { release: () => this.flooded('release', () => flood.release(held as Held)) }
+  }
+
+  // The call in flight once the ceiling took it, its deadline shrinking along parent
+  private admitted(
+    way: Way, answer: Send, callId: string, shaped: Extract<Shaped, { ok: true }>, kind: Kind, started: number, release: (() => void) | null,
+  ): Pending {
+    const { parent, target } = shaped
     const root: Root = parent?.root ?? { principal: way.principal, plugin: way.plugin, caller: way.caller }
-    const charged: [string, string | null][] = [[way.principal, way.plugin]]
-    if (root.principal !== way.principal) charged.push([root.principal, root.plugin])
-    for (const [principal, plugin] of charged) {
-      const load = this.inflight.get(principal) ?? { calls: 0, bytes: 0 }
-      if (load.calls + 1 > this.limits.of(plugin, 'callsInFlight')) return null
-      if (load.bytes + bytes > this.limits.of(plugin, 'bytesInFlight')) return null
-    }
-    for (const [principal] of charged) {
-      const load = this.inflight.get(principal) ?? { calls: 0, bytes: 0 }
-      load.calls++
-      load.bytes += bytes
-      this.inflight.set(principal, load)
-    }
-    const { target } = shaped
     // Never past the longest delay a timer takes, so a raised deadline can't fire at once and stays a safe integer
     const ownDeadline = started + Math.min(this.limits.of(way.plugin, 'callDeadlineMs'), MAX_TIMER_MS)
     // Shrinks along parent, so no sub-call outlives the call it serves
     const deadline = Math.min(ownDeadline, parent?.deadline ?? ownDeadline)
     const left = Math.max(0, deadline - this.now())
     const pending: Pending = {
-      callId,
-      id: shaped.id,
-      way,
-      answer,
-      caller: way.caller,
-      onBehalf: shaped.onBehalf,
-      agent: shaped.agent,
-      lends: shaped.lends,
-      action: shaped.action,
-      parent,
-      root,
-      depth: (parent?.depth ?? 0) + 1,
-      deadline,
-      due: this.clock() + left,
-      bytes,
-      charged,
-      children: new Set(),
-      callee: null,
-      timer: null,
-      done: false,
-      started,
-      gate: this.policyJob('gate'),
+      callId, id: shaped.id, way, answer, caller: way.caller, onBehalf: shaped.onBehalf, agent: shaped.agent, lends: shaped.lends,
+      action: shaped.action, parent, root, depth: (parent?.depth ?? 0) + 1, deadline, due: this.clock() + left, release,
+      children: new Set(), callee: null, timer: null, done: false, started, gate: this.policyJob('gate'),
       // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
       // no path. A plugin call's target is already the plugin's id
       scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
@@ -1468,13 +1473,7 @@ export class Carrier {
     pending.done = true
     for (const child of [...pending.children]) this.stop(child, 'stopped')
     if (pending.timer !== null) clearTimeout(pending.timer)
-    for (const [principal] of pending.charged) {
-      const load = this.inflight.get(principal)
-      if (load === undefined) continue
-      load.calls--
-      load.bytes -= pending.bytes
-      if (load.calls <= 0) this.inflight.delete(principal)
-    }
+    pending.release?.()
     pending.way.made.delete(pending.id)
     pending.parent?.children.delete(pending)
     pending.callee?.delivered.delete(pending.callId)

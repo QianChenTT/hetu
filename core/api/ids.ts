@@ -60,15 +60,22 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The security controls: the policy job holders and every guard core/api expects. Switching one off widens what
-// plugins may do. The log is the core's own and the providers serve powers without limiting anyone, so neither is one
+// The core modules that bound what plugins and windows may do to main without judging any call: flood control. Each is
+// a security control too
+export const boundingModuleIds = frozen(['flood-control'] as const)
+
+// The security controls: the policy job holders, every guard core/api expects and the bounding modules. Switching one
+// off widens what plugins may do and is typed. The log is the core's own and the providers serve powers without
+// limiting anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
   return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+    || (boundingModuleIds as readonly string[]).includes(id)
 }
 
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
-// their own and no incarnation. Each keeps its off switch in the state and its id reserved
-export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const)
+// their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
+// start in this order, the ones after them have no start of their own
+export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
 // Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the

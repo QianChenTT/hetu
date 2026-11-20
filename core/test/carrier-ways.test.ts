@@ -387,7 +387,7 @@ describe('the window way in', () => {
 })
 
 describe('the carrier\'s imports', () => {
-  it('imports nothing from boot, so the state store and the log arrive only through its header', () => {
+  it('imports nothing from boot, so the state store and the log arrive only through its header, and flood control only through its door', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
     expect(files.sort()).toEqual(['audit.ts', 'bus.ts', 'carrier.ts', 'header.ts', 'limits.ts', 'records.ts'])
@@ -395,7 +395,7 @@ describe('the carrier\'s imports', () => {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])
       expect(specifiers.filter(specifier => specifier.includes('/boot/') || specifier.includes('/events/'))).toEqual([])
-      expect(specifiers.every(specifier => specifier.startsWith('node:') || specifier.startsWith('./') || specifier.startsWith('../../api/') || specifier.startsWith('../../lib/'))).toBe(true)
+      expect(specifiers.every(specifier => specifier.startsWith('node:') || specifier.startsWith('./') || specifier.startsWith('../../api/') || specifier.startsWith('../../lib/') || specifier === '../flood-control/header.ts')).toBe(true)
     }
   })
 })

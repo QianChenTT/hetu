@@ -15,6 +15,7 @@ const quoted = (value: string) => JSON.stringify(value)
 const whileOff: Readonly<Record<string, string>> = Object.freeze({
   gate: 'Calls with power then pass unchecked. The per-item switches lapse too, since allowing all means all. Exec still refuses a command whose item is off',
   'grant-risk-classifier': 'Plugins then go unclassified and nothing asks at its first use until it is on again',
+  'flood-control': 'Nothing then limits how fast a plugin or a window sends or how many calls it keeps in flight, and no plugin is cut off for a flood',
 })
 
 const RECOMMEND = 'hetu recommends keeping every security plugin on'

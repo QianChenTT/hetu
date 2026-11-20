@@ -192,6 +192,7 @@ describe('whether a change widens', () => {
     ['a provider switched on', { kind: 'plugin.on', plugin: 'luoshu' }],
     ['the gate switched off', { kind: 'plugin.off', plugin: 'gate' }],
     ['capabilities switched off', { kind: 'plugin.off', plugin: 'grant-risk-classifier' }],
+    ['flood control switched off', { kind: 'plugin.off', plugin: 'flood-control' }],
     ['a grant added', { kind: 'grant.widen', plugin: 'search', capability: cap }],
     ['an item switched back on', { kind: 'item.on', plugin: 'search', capability: cap }],
     ['a new notes folder', { kind: 'luoshu.pick', folder: '/Users/han/notes' }],
@@ -210,6 +211,7 @@ describe('whether a change widens', () => {
 
   it.each([
     ['the gate switched back on', { kind: 'plugin.on', plugin: 'gate' }],
+    ['flood control switched back on', { kind: 'plugin.on', plugin: 'flood-control' }],
     ['a plugin switched off', { kind: 'plugin.off', plugin: 'search' }],
     ['a provider switched off', { kind: 'plugin.off', plugin: 'exec' }],
     ['a grant taken away', { kind: 'grant.narrow', plugin: 'search', capability: cap }],

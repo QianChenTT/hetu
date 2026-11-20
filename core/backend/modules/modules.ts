@@ -1,6 +1,7 @@
 import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
 import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { FloodControl } from '../flood-control/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
@@ -12,6 +13,10 @@ import {
 // The order the modules close in, the reverse of their start, so history closes before the luoshu it reads from and
 // the gate closes last
 const closing = [...coreModuleIds].reverse()
+
+// The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
+// human's way back in needs them: flood control
+const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
@@ -28,6 +33,7 @@ export class CoreModules implements Holder {
   private readonly luoshuOf: Luoshu
   private readonly historyOf: History
   private readonly execOf: Exec
+  private readonly floodControlOf: FloodControl
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
@@ -55,6 +61,7 @@ export class CoreModules implements Holder {
     this.luoshuOf = options.luoshu
     this.historyOf = options.history
     this.execOf = options.exec
+    this.floodControlOf = options.floodControl
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -90,6 +97,10 @@ export class CoreModules implements Holder {
 
   storage(): StorageRole | null {
     return this.serving('storage') ? this.storageOf : null
+  }
+
+  floodControl(): FloodControl | null {
+    return this.serving('flood-control') ? this.floodControlOf : null
   }
 
   // The provider serving a namespace, cache through storage. leases and net have no module and answer null. A module
@@ -169,16 +180,16 @@ export class CoreModules implements Holder {
   }
 
   // Shutdown, once every plugin stopped: exec and history end what runs, the luoshu's watch ends and storage serves no
-  // more, in that order. The gate and the grant risk classifier answer to the end
+  // more, in that order. The gate, the grant risk classifier and the lasting modules answer to the end
   close(): void {
     if (this.closed) return
     this.closed = true
-    for (const id of closing) if (id !== 'gate' && id !== 'grant-risk-classifier') this.halt(id, 'shutdown')
+    for (const id of closing) if (id !== 'gate' && id !== 'grant-risk-classifier' && !lasting.has(id)) this.halt(id, 'shutdown')
   }
 
   // The stopped mode, once every plugin stopped: every module closed in the reverse of its start, the gate last, so
-  // nothing acts while nothing can be recorded. Modules not yet started never start. off is the human's switches as
-  // they stand, so a module switched off keeps reading off
+  // nothing acts while nothing can be recorded. The lasting modules run on. Modules not yet started never start. off is
+  // the human's switches as they stand, so a module switched off keeps reading off
   stop(off: readonly string[]): void {
     if (this.halted) return
     // Once shutdown began, the gate and the grant risk classifier answer to its end
@@ -186,7 +197,7 @@ export class CoreModules implements Holder {
     this.halted = true
     this.closed = true
     this.off = new Set(off)
-    for (const id of closing) if (!shutdown || (id !== 'gate' && id !== 'grant-risk-classifier')) this.halt(id, 'stopped-mode')
+    for (const id of closing) if (!lasting.has(id) && (!shutdown || (id !== 'gate' && id !== 'grant-risk-classifier'))) this.halt(id, 'stopped-mode')
   }
 
   private opening(): Opening {

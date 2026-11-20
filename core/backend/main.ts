@@ -4,6 +4,8 @@ import { boot, type Booted } from './boot/boot.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
 import type { Carrier } from './carrier/carrier.ts'
+import { pacedLimit } from './flood-control/flood-control.ts'
+import type { CoreModules } from './modules/header.ts'
 import type { Failure, PluginsManager } from './plugins-manager/plugins-manager.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
@@ -112,7 +114,12 @@ async function start(): Promise<void> {
     // The carrier and the plugins manager exist once the core is wired, before any worker starts
     let carrier: Carrier | null = null
     let pluginsManager: PluginsManager | null = null
-    const limit = (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name]
+    let modules: CoreModules | null = null
+    // What paces a plugin's messages before main reads them follows flood control: with it off nothing paces them
+    const limit = pacedLimit(
+      (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name],
+      () => modules?.state('flood-control') === 'off',
+    )
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
     // A worker's start waits for its page, within the plugin's own ready deadline
     const renderer = new WorkerRenderers(group => new WorkerRenderer({
@@ -220,6 +227,7 @@ async function start(): Promise<void> {
     })
     carrier = wired.carrier
     pluginsManager = wired.pluginsManager
+    modules = wired.modules
     pluginsManagerOf = wired.pluginsManager
     carrierOf = wired.carrier
     parts = { pluginsManager: wired.pluginsManager, carrier: wired.carrier, release: booted.release }
