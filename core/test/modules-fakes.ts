@@ -6,7 +6,7 @@ import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 
 // A provider fake as the core modules hold the luoshu, its opening and its close doing nothing unless role says
 export function luoshuModule(provider: Provider, role: Luoshu['role'] = { open() {} }): Luoshu {
-  return { provider, role, close() {} }
+  return { provider, role, close() {}, calls: () => 0 }
 }
 
 // A provider fake as the core modules hold storage, opening on the data folder and clearing a space doing nothing
