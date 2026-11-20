@@ -195,10 +195,13 @@ describe('http on the fake core', () => {
     await until(() => canConnect(pipe))
     const socket = net.connect(pipe)
     let closed = false
+    let text = ''
+    socket.on('data', data => { text += data.toString('utf8') })
     socket.on('error', () => {})
     socket.on('close', () => { closed = true })
     socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { clientInfo: { name: 'claude-code', version: '2' } } })}\n`)
     await until(() => closed)
+    expect(text).toBe('{"jsonrpc":"2.0","id":0,"error":{"code":-32000,"message":"refused"}}\n')
     const asked = core.coreCalls.filter(call => call.action === 'core.consentAsk')
     expect(asked).toHaveLength(1)
     expect(asked[0].args).toMatchObject({ client: 'claude-code', name: null, redirect: null })

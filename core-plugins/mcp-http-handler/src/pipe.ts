@@ -2,12 +2,15 @@ import { lstat, mkdir, unlink } from 'node:fs/promises'
 import net from 'node:net'
 import { doorLimits, type Refusal, type RefusalReason } from './checks.ts'
 import type { Clients, Joined } from './clients.ts'
+import { refusedWords } from './mcp.ts'
 import type { Answer, Passed } from './server.ts'
 
 // The local pipe beside the door: MCP's stdio framing, one JSON-RPC message a line, from a program on this computer the
 // shim relays. No token is traded on it. The first line, MCP's initialize, names the client, which joins through the
 // clients table before anything is served. Every line then goes to the same serving part as the door's, on behalf of
-// the connection's own label and under the door's rate. A refusal is recorded by its reason and closes the connection
+// the connection's own label and under the door's rate. A request past the rate or the calls in flight, or one the
+// serving part answers with a fixed body, gets a JSON-RPC error with its id and the connection stays. A line past the
+// cap, bytes that are no UTF-8 and a refused first line are recorded by their reason and close the connection
 
 export type PipeOptions = {
   path: string
@@ -39,6 +42,16 @@ export function clientOf(line: Buffer): { client: string, name: string | null } 
   return { client: info.name, name: typeof info.title === 'string' ? info.title : null }
 }
 
+// The id of the request a line carries, a string or a number, read for its error alone
+function idOf(line: Buffer): string | number | undefined {
+  try {
+    const id = (JSON.parse(line.toString('utf8')) as { id?: unknown } | null)?.id
+    return typeof id === 'string' || typeof id === 'number' ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // On macOS and Linux the socket sits in a folder only its owner may open, made here, or one already there taken only
 // when it is this user's own and no one else may open it, so no other user can swap the socket for one of theirs
 async function ownFolder(at: string): Promise<void> {
@@ -68,7 +81,8 @@ const listen = (server: net.Server, at: string) => new Promise<void>((resolve, r
 })
 
 // Opens the pipe on its name or rejects. A name another server holds is never shared: on Windows the first server of a
-// pipe name keeps it. Elsewhere a socket is taken away only when no server answers on it, one a run that crashed left
+// pipe name keeps it. Elsewhere a socket is taken away only when no server answers on it, one a run that crashed left,
+// and anything at the name that is no socket stays
 export async function openPipe(options: PipeOptions): Promise<Pipe> {
   const { path: at, take, refused } = options
   const sockets = new Set<net.Socket>()
@@ -87,53 +101,83 @@ export async function openPipe(options: PipeOptions): Promise<Pipe> {
       joined?.leave()
     })
 
+    const open = () => !socket.destroyed && !socket.writableEnded
+
+    // The connection ends once what was written went out, at the latest the door's request time later
     const refuse = (reason: RefusalReason) => {
-      if (socket.destroyed) return
+      if (!open()) return
       refused(reason)
-      socket.destroy()
+      const cap = setTimeout(() => socket.destroy(), doorLimits.requestMs)
+      cap.unref?.()
+      socket.once('close', () => clearTimeout(cap))
+      socket.end(() => socket.destroy())
     }
 
+    // A request's JSON-RPC error, written only when the line carries an id, so a notification gets none
+    const answerError = (line: Buffer, message: string, code = -32000) => {
+      const id = idOf(line)
+      if (id !== undefined && open()) socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })}\n`)
+    }
+
+    // A call past the rate or the calls in flight is answered and the connection kept. Any other refusal ends it
     const one = async (line: Buffer, label: string) => {
       const gone = new AbortController()
       calls.add(gone)
       const given = await options.serve({ client: label, body: line, headers: [], signal: gone.signal }).catch(() => null)
       calls.delete(gone)
-      if (socket.destroyed) return
+      if (!open()) return
       if (given === null) return void socket.destroy()
-      if ('reason' in given) return refuse(given.reason)
+      if ('reason' in given && given.reason !== 'rate') return refuse(given.reason)
+      if ('reason' in given) {
+        refused('rate')
+        return answerError(line, refusedWords[429])
+      }
+      if (Object.hasOwn(refusedWords, given.status)) return answerError(line, refusedWords[given.status])
       if (given.body !== null) socket.write(`${given.body}\n`)
     }
 
-    // The connection reads nothing more until its client joined, so the lines behind the first wait in the socket
+    // Lines behind the first are held until the client joined. A first line refused is answered before the end
     const first = async (line: Buffer) => {
+      if (!take()) {
+        answerError(line, refusedWords[429])
+        return refuse('rate')
+      }
       const named = clientOf(line)
-      if (named === null) return refuse('malformed')
+      if (named === null) {
+        answerError(line, 'invalid request', -32600)
+        return refuse('malformed')
+      }
       const got = await options.clients.join(named.client, named.name, () => socket.destroy()).catch(() => null)
-      if (got === null) return refuse('token')
-      if (socket.destroyed) return got.leave()
+      if (got === null) {
+        answerError(line, 'refused')
+        return refuse('token')
+      }
+      if (!open()) return got.leave()
       joined = got
       joining = false
       void one(line, got.label)
-      socket.resume()
       read()
     }
 
-    // Each whole line in what came, a line past the cap refused before its end arrives
+    // Each whole line in what came, a line past the cap refused before its end arrives and the lines held while the
+    // client joins within the cap too
     const read = () => {
-      while (!joining && !socket.destroyed) {
+      while (open()) {
         const end = rest.indexOf(NEWLINE)
-        if (end < 0) return void (rest.length > doorLimits.mcpBodyBytes && refuse('size'))
+        if (joining || end < 0) return void (rest.length > doorLimits.mcpBodyBytes && refuse('size'))
         if (end > doorLimits.mcpBodyBytes) return refuse('size')
         const line = rest.subarray(0, end)
         rest = rest.subarray(end + 1)
-        if (!take()) return refuse('rate')
         if (joined === null) {
           joining = true
-          socket.pause()
           void first(line)
           return
         }
-        void one(line, joined.label)
+        if (take()) void one(line, joined.label)
+        else {
+          refused('rate')
+          answerError(line, refusedWords[429])
+        }
       }
     }
 
@@ -149,7 +193,7 @@ export async function openPipe(options: PipeOptions): Promise<Pipe> {
   try {
     await listen(server, at)
   } catch (error) {
-    if (process.platform === 'win32' || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || await answers(at)) throw error
+    if (process.platform === 'win32' || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || await answers(at) || !(await lstat(at)).isSocket()) throw error
     await unlink(at)
     await listen(server, at)
   }

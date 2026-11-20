@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { doorLimits, type Refusal, type RefusalReason } from '../src/checks.ts'
 import { type Clients, clientsOf } from '../src/clients.ts'
+import { mcpServe } from '../src/mcp.ts'
 import { openPipe, type Pipe } from '../src/pipe.ts'
 import type { Answer, Passed } from '../src/server.ts'
 
@@ -106,6 +108,9 @@ const initialize = (name: unknown = 'claude-code', title?: unknown) => JSON.stri
 
 const answered = (line: string) => JSON.parse(line) as { label: string, line: string }
 
+// The JSON-RPC error a refused request is answered with
+const error = (id: unknown, message: string, code = -32000) => JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } })
+
 describe('a connection joining', () => {
   it('names its client by the first line\'s initialize, joins it through the clients with no redirect and serves that line on behalf of its label', async () => {
     const { path: at, core, passed, clients } = await made()
@@ -156,14 +161,32 @@ describe('a connection joining', () => {
     }
   })
 
-  it('refuses a client the human turned away as token, closes and serves nothing', async () => {
+  it('answers a refused first line that carries an id with a JSON-RPC error before it closes', async () => {
+    const { path: at } = await made()
+    const client = await connect(at)
+    client.socket.write('{"jsonrpc":"2.0","id":"a","method":"tools/list"}\n')
+    await until(() => client.closed())
+    expect(client.lines).toEqual([error('a', 'invalid request', -32600)])
+  })
+
+  it('refuses a client the human turned away as token, answers its initialize with a JSON-RPC error, closes and serves nothing', async () => {
     const { path: at, refused, passed } = await made({ answer: 'no' })
     const client = await connect(at)
     client.socket.write(`${initialize()}\n`)
     await until(() => client.closed())
     expect(refused).toEqual(['token'])
     expect(passed).toEqual([])
-    expect(client.lines).toEqual([])
+    expect(client.lines).toEqual([error(0, 'refused')])
+  })
+
+  it('refuses a first line past the rate with a JSON-RPC error and closes, asking the core nothing', async () => {
+    const { path: at, core, refused } = await made({ take: () => false })
+    const client = await connect(at)
+    client.socket.write(`${initialize()}\n`)
+    await until(() => client.closed())
+    expect(refused).toEqual(['rate'])
+    expect(core.asked).toEqual([])
+    expect(client.lines).toEqual([error(0, 'throttled')])
   })
 
   it('holds the lines sent behind the first until the client joined, then serves them in order', async () => {
@@ -230,34 +253,114 @@ describe('lines', () => {
     expect(client.lines).toEqual(['{"ok":true}', '{"ok":true}'])
   })
 
-  it('passes the answer\'s body of any status as a line', async () => {
-    const { path: at } = await made({ serve: async () => ({ status: 503, body: '{"error":"unavailable"}' }) })
+  it('passes MCP\'s own answers of 400 and 404 on as they are', async () => {
+    const statuses = [200, 400, 404]
+    const { path: at } = await made({ serve: async () => { const status = statuses.shift()!; return { status, body: `{"s":${status}}` } } })
     const client = await connect(at)
-    client.socket.write(`${initialize()}\n`)
-    await until(() => client.lines.length === 1)
-    expect(client.lines).toEqual(['{"error":"unavailable"}'])
+    client.socket.write(`${initialize()}\n{"id":1}\n{"id":2}\n`)
+    await until(() => client.lines.length === 3)
+    expect(client.lines.sort()).toEqual(['{"s":200}', '{"s":400}', '{"s":404}'])
+  })
+
+  it('answers a request the serving part refused with a JSON-RPC error carrying its id and a notification with nothing, keeping the connection', async () => {
+    const refusals: Record<string, Answer> = {
+      1: { status: 503, body: '{"error":"unavailable"}' },
+      2: { status: 504, body: '{"error":"timeout"}' },
+      3: { status: 429, body: '{"error":"throttled"}' },
+      '"four"': { status: 413, body: '{"error":"too large"}' },
+      5: { status: 502, body: '{"error":"bad gateway"}' },
+      none: { status: 503, body: '{"error":"unavailable"}' },
+    }
+    const { path: at } = await made({
+      serve: async given => {
+        const text = given.body.toString('utf8')
+        if (text.includes('"method":"initialize"')) return { status: 200, body: '{}' }
+        return refusals[text.match(/"id":([^,}]+)/)?.[1] ?? 'none']
+      },
+    })
+    const client = await connect(at)
+    client.socket.write(`${initialize()}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n`)
+    for (const id of ['1', '2', '3', '"four"', '5']) client.socket.write(`{"jsonrpc":"2.0","id":${id},"method":"tools/call"}\n`)
+    await until(() => client.lines.length === 6)
+    await tick(30)
+    expect(client.lines.slice(1).sort()).toEqual([
+      error(1, 'unavailable'), error(2, 'timeout'), error(3, 'throttled'), error('four', 'too large'), error(5, 'bad gateway'),
+    ].sort())
     expect(client.closed()).toBe(false)
   })
 })
 
 describe('refusals and the end of a connection', () => {
-  it('spends the shared rate on every line and refuses one past it as rate, closing', async () => {
+  it('spends the shared rate on every line and answers one past it with a JSON-RPC error, keeping the connection', async () => {
     let left = 2
     const { path: at, refused, passed } = await made({ take: () => left-- > 0 })
     const client = await connect(at)
     client.socket.write(`${initialize()}\n{"id":1}\n{"id":2}\n`)
-    await until(() => client.closed())
+    await until(() => client.lines.length === 3)
     expect(refused).toEqual(['rate'])
     expect(passed.map(given => given.body.toString('utf8'))).toEqual([initialize(), '{"id":1}'])
+    expect(client.lines).toContain(error(2, 'throttled'))
+    left = 1
+    client.socket.write('{"id":3}\n')
+    await until(() => client.lines.length === 4)
+    expect(answered(client.lines[3]).line).toBe('{"id":3}')
+    expect(client.closed()).toBe(false)
   })
 
-  it('records a refusal the serving part answers and closes', async () => {
-    const { path: at, refused } = await made({ serve: async () => ({ status: 429, reason: 'rate' }) })
+  it('answers a call past the cap on calls in flight with a JSON-RPC error and keeps the connection and its other calls', async () => {
+    const signals: AbortSignal[] = []
+    let answer = () => {}
+    const slow = new Promise<void>(resolve => { answer = resolve })
+    const serve = mcpServe(async (args, options) => {
+      if (args.body.includes('initialize')) return { status: 200, body: '{}' }
+      signals.push(options.signal)
+      await slow
+      return { status: 200, body: args.body }
+    })
+    const { path: at, refused } = await made({ serve })
     const client = await connect(at)
     client.socket.write(`${initialize()}\n`)
-    await until(() => client.closed())
+    await until(() => client.lines.length === 1)
+    for (let id = 1; id <= doorLimits.callsPerClient + 1; id++) client.socket.write(`{"id":${id}}\n`)
+    await until(() => client.lines.length === 2)
+    expect(client.lines[1]).toBe(error(doorLimits.callsPerClient + 1, 'throttled'))
     expect(refused).toEqual(['rate'])
-    expect(client.lines).toEqual([])
+    answer()
+    await until(() => client.lines.length === doorLimits.callsPerClient + 2)
+    expect(signals.some(signal => signal.aborted)).toBe(false)
+    expect(client.closed()).toBe(false)
+  })
+
+  it('lets an answer written before a refusal reach a client still reading it before the connection ends', async () => {
+    const big = `"${'x'.repeat(1024 * 1024)}"`
+    const { path: at, refused } = await made({
+      serve: async given => {
+        const text = given.body.toString('utf8')
+        if (text === '{"id":1}') return { status: 200, body: big }
+        if (text === 'bad') return new Promise(resolve => setTimeout(() => resolve({ status: 400, reason: 'malformed' }), 50))
+        return { status: 200, body: '{}' }
+      },
+    })
+    const client = await connect(at)
+    client.socket.write(`${initialize()}\n`)
+    await until(() => client.lines.length === 1)
+    client.socket.pause()
+    client.socket.write('{"id":1}\nbad\n')
+    await until(() => refused.length === 1)
+    client.socket.resume()
+    await until(() => client.closed())
+    expect(client.lines).toEqual(['{}', big])
+  })
+
+  it('refuses a line that is no UTF-8 as malformed and closes', async () => {
+    const { path: at, refused } = await made({ serve: mcpServe(async args => ({ status: 200, body: args.body })) })
+    const client = await connect(at)
+    client.socket.write(`${initialize()}\n{"id":1}\n`)
+    await until(() => client.lines.length === 2)
+    client.socket.write(Buffer.from([0xff, 0xfe, 0x0a]))
+    await until(() => client.closed())
+    expect(refused).toEqual(['malformed'])
+    expect(client.lines).toEqual([initialize(), '{"id":1}'])
   })
 
   it('aborts the calls a connection carries when its client goes and leaves the clients\' table', async () => {
@@ -319,7 +422,7 @@ describe.skipIf(process.platform === 'win32')('the socket\'s folder', () => {
     expect(statSync(path.dirname(at)).mode & 0o777).toBe(0o700)
   })
 
-  it('refuses a folder another user could open', async () => {
+  it('refuses a folder of the user\'s own that others may open', async () => {
     const folder = mkdtempSync(path.join(tmpdir(), 'hetu-test-'))
     chmodSync(folder, 0o755)
     await expect(opened(path.join(folder, 'mcp.sock'))).rejects.toMatchObject({ code: 'EACCES' })
@@ -327,9 +430,18 @@ describe.skipIf(process.platform === 'win32')('the socket\'s folder', () => {
 
   it('takes away a socket no server answers on, one a crashed run left', async () => {
     const at = freshPath()
-    writeFileSync(at, '')
+    // A process that ends with its server still listening leaves the socket behind
+    spawnSync(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(at)}, () => process.exit(0))`])
+    expect(lstatSync(at).isSocket()).toBe(true)
     pipes.push(await opened(at))
     expect(await new Promise(resolve => net.connect(at).once('connect', () => resolve(true)).once('error', () => resolve(false)))).toBe(true)
+  })
+
+  it('leaves anything at the name that is no socket and fails', async () => {
+    const at = freshPath()
+    writeFileSync(at, 'kept')
+    await expect(opened(at)).rejects.toMatchObject({ code: 'EADDRINUSE' })
+    expect(readFileSync(at, 'utf8')).toBe('kept')
   })
 })
 
