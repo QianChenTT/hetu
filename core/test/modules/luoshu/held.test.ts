@@ -23,13 +23,18 @@ beforeEach(async () => {
   await writeFile(path.join(notes, 'kept.md'), 'kept')
 })
 
+// Each luoshu opened watches its folder, closed before the folder goes
+const live: Luoshu[] = []
+
 afterEach(async () => {
+  for (const made of live.splice(0)) made.close()
   await rm(root, { recursive: true, force: true })
 })
 
 function started(): Luoshu {
   const made = createLuoshu()
   made.role.open({ folder: notes, dataDir: path.join(root, 'data'), installDir: path.join(root, 'install') })
+  live.push(made)
   return made
 }
 
