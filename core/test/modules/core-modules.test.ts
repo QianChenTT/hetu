@@ -98,6 +98,14 @@ function made(options: Partial<CoreModulesOptions> & { publish?: (topic: string,
 }
 
 describe('the core modules', () => {
+  // Told on every message heard from a plugin, so nothing is built per message
+  it('hands the same heartbeat each time it is asked while on', async () => {
+    const modules = made(fakes().options)
+    await modules.start([], handing().handed)
+    expect(modules.heartbeat()).not.toBe(null)
+    expect(modules.heartbeat()).toBe(modules.heartbeat())
+  })
+
   it('answer nothing before start, so nothing is judged or served on a gate with no grants snapshot', () => {
     const modules = made()
     expect(modules.gate()).toBeNull()

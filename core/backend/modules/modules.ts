@@ -38,6 +38,9 @@ export class CoreModules implements Holder {
   private readonly execOf: Exec
   private readonly floodControlOf: FloodControl
   private readonly heartbeatOf: HeartbeatModule
+  // The heartbeat as the plugins manager tells it, each thing kept from throwing: a throw skips that beat with a fault.
+  // Made once, since it is told on every message heard from a plugin
+  private readonly heartbeatTold: Heartbeat
   private readonly securityViewOf: SecurityView
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
@@ -69,6 +72,14 @@ export class CoreModules implements Holder {
     this.execOf = options.exec
     this.floodControlOf = options.floodControl
     this.heartbeatOf = options.heartbeat
+    const told = (step: keyof Heartbeat) => (plugin: Beating) => {
+      try {
+        this.heartbeatOf[step](plugin)
+      } catch {
+        this.fault('heartbeat', step)
+      }
+    }
+    this.heartbeatTold = Object.freeze({ started: told('started'), heard: told('heard'), stopped: told('stopped') })
     this.securityViewOf = options.securityView
   }
 
@@ -117,17 +128,8 @@ export class CoreModules implements Holder {
     return this.off.has('security-view') ? null : this.securityViewOf
   }
 
-  // The heartbeat while on, each thing it is told kept from throwing: a throw skips that beat with a fault
   heartbeat(): Heartbeat | null {
-    if (!this.serving('heartbeat')) return null
-    const told = (step: keyof Heartbeat) => (plugin: Beating) => {
-      try {
-        this.heartbeatOf[step](plugin)
-      } catch {
-        this.fault('heartbeat', step)
-      }
-    }
-    return { started: told('started'), heard: told('heard'), stopped: told('stopped') }
+    return this.serving('heartbeat') ? this.heartbeatTold : null
   }
 
   // The provider serving a namespace, cache through storage. leases and net have no module and answer null. A module
