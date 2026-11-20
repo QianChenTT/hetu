@@ -2,7 +2,7 @@ import { capabilityTypes, scopedUiTypes } from '../../api/capabilities.ts'
 import { answer as answerSchema, calleeRefusalCodes, VERSION, type Caller, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
-import { dotted, hashOf, no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
+import { hashOf, no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf } from './open-calls.ts'
 import { gateOpen, judge, judgeAll, askable, provide, secondOf } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
@@ -95,7 +95,7 @@ function reach(c: Context, args: unknown): Outcome {
     const open = gateOpen(c)
     if (open !== 'pass') return no(open as RefusalCode)
     const verbs = capabilityTypes.filter(type => type.startsWith('ui.') && !isOne(scopedUiTypes, type))
-    const any = path !== undefined && !dotted(path)
+    const any = path !== undefined
     return { ok: true, result: { read: any, edit: any, uiRead: any, list: any, verbs } }
   }
   const gate = state === 'on' ? c.holder(() => c.options.gate()) : null
@@ -104,8 +104,7 @@ function reach(c: Context, args: unknown): Outcome {
   try {
     const held = gate.verbs(plugin, 'editor')
     const verbs = Array.isArray(held) ? held.filter(verb => typeof verb === 'string') : []
-    // No note the human opened has a path with a dot segment, so the gate isn't asked about one
-    if (path === undefined || dotted(path)) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
+    if (path === undefined) return { ok: true, result: { read: false, edit: false, uiRead: false, list: false, verbs } }
     const read = gate.canRead(caller, path) === true
     const list = gate.canList(caller, path) === true
     // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
@@ -124,9 +123,9 @@ function reach(c: Context, args: unknown): Outcome {
 }
 
 // Only during a live call delivered on this way. The paths the callee may read itself that the call's own caller may
-// read too, every path with the gate off and policy-down while the gate is starting or failed. Never one with a dot
-// segment, which the gate isn't asked about. One message asks the
-// gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
+// read too, every path with the gate off and policy-down while the gate is starting or failed. A path a callee read is
+// taken as it is, a dot segment included, since a store from an older build may hold one: the gate's matcher matches
+// no such path and with the gate off the callee gets back only what it gave. One message asks the gate up to twice per path, synchronously in main, and scopes shaped for the matcher's worst case make each ask
 // slow. So the gate's time counts against the live call's caller, filterMsPerSecond each second, and one that floods
 // a plugin with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got,
 // so the next try goes on from there and any call finishes within its deadline. That progress is dropped once the
@@ -145,7 +144,7 @@ function filterReadable(c: Context, way: Way, args: unknown): Outcome {
     if (open !== 'decide') return no(open as RefusalCode)
   }
   const state = c.policyJob('gate')
-  if (state === 'off') return { ok: true, result: paths.filter(path => !dotted(path)) }
+  if (state === 'off') return { ok: true, result: paths }
   const gate = state === 'on' ? c.holder(() => c.options.gate()) : null
   if (gate === null) return no(c.down('policy-down'))
   const budget = c.limits.of(live.way.plugin, 'filterMsPerSecond')
@@ -161,7 +160,7 @@ function filterReadable(c: Context, way: Way, args: unknown): Outcome {
   try {
     while (progress.asked < paths.length) {
       const path = paths[progress.asked]
-      const kept = !dotted(path) && gate.canRead(way.caller, path, agent) === true && (door || gate.canRead(live.caller, path) === true)
+      const kept = gate.canRead(way.caller, path, agent) === true && (door || gate.canRead(live.caller, path) === true)
       if (kept) progress.kept.push(progress.asked)
       progress.asked++
       if (progress.asked < paths.length && spent.spent + c.clock() - started >= budget) break
@@ -189,8 +188,7 @@ function events(c: Context, pending: Pending, args: unknown, kind: Kind): void {
   const { way } = pending
   if (pending.action === 'events.publish') {
     const path = field(args, 'path') as string | undefined
-    // One with a dot segment reaches no subscriber whatever the gate's state, as one the gate lets no one list
-    if (path === undefined || !dotted(path)) c.bus.publish(field(args, 'topic') as string, path)
+    c.bus.publish(field(args, 'topic') as string, path)
     return finish(c, pending, { ok: true, result: null })
   }
   const topics = [...new Set(field(args, 'topics') as string[])]

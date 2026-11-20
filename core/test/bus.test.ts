@@ -533,12 +533,12 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 })
 
-// A path with a dot segment names no note. The luoshu publishes none, so one on the bus is a string a plugin wrote or
-// a luoshu gone wrong
+// A path with a dot segment names no note. The contract's path schema refuses one in a plugin's publish and the core's
+// own publish drops one, so a luoshu gone wrong reaches no subscriber with it either
 describe('a path with a dot segment', () => {
   const dotted = ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config']
 
-  it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, while a plugin\'s publish answers as any other', async state => {
+  it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, a plugin\'s publish answering invalid', async state => {
     const { carrier, pluginsManager, gate, search, scribe, git, edited } = setup()
     gate.listable = () => true
     pluginsManager.policyJobs.gate = state
@@ -547,7 +547,7 @@ describe('a path with a dot segment', () => {
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).ok).toBe(true)
     for (const path of dotted) {
       await edited(path)
-      expect((await search.ask('events.publish', { topic: 'search.indexed', path })).ok, path).toBe(true)
+      expect(await search.ask('events.publish', { topic: 'search.indexed', path }), path).toMatchObject({ ok: false, refusal: { code: 'invalid' } })
     }
     await edited('notes/a.md')
     await search.ask('events.publish', { topic: 'search.indexed', path: 'notes/a.md' })

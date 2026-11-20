@@ -649,20 +649,20 @@ describe('dot folders through the joined core', () => {
   // What a reply tells its caller, without the ids that differ between calls
   const told = (reply: Message | null) => (reply === null ? null : reply.ok ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal })
 
-  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s and answers a link into one as a missing name', async gate => {
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, invalid as spelled, and answers a link into one as a missing name', async gate => {
     const { alpha, folder } = await dotted(gate)
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
-      expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('not-granted')
-      expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('not-granted')
+      expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('invalid')
+      expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('invalid')
     }
     expect(code((await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))!)).toBe('not-found')
     expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
-    expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('invalid')
     expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/y/main.js', text: 'planted' }))!)).toBe('not-granted')
     // A vault in a subfolder has its own .obsidian
-    expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
-    expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('invalid')
+    expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('invalid')
     expect(told(await alpha.ask('luoshu.list', { folder: 'cfg' }))).toEqual({ ok: true, result: { paths: [], next: null } })
     expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
     expect(await exists(path.join(folder, '.github'))).toBe(false)
@@ -678,7 +678,7 @@ describe('dot folders through the joined core', () => {
     const aliases = ['cfg', 'cfg/plugins', ...await shortNames(folder, ['.obsidian', '.env'])]
     if (process.platform === 'win32') expect(aliases).toHaveLength(4)
     for (const alias of aliases) expect(told(await zero.ask('luoshu.list', { folder: alias })), alias).toEqual(missing)
-    expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('invalid')
     // A granted read answers as for a missing note. The event log keeps the same record of both
     expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
     await recording.flush()
@@ -690,7 +690,7 @@ describe('dot folders through the joined core', () => {
       return { calls: found.reduce((sum, record) => sum + (record.count as number), 0), shapes: new Set(found.map(shape)).size }
     }
     expect(shapes('luoshu.list', null)).toEqual({ calls: aliases.length + 1, shapes: 1 })
-    expect(shapes('luoshu.list', 'not-granted')).toEqual({ calls: 1, shapes: 1 })
+    expect(shapes('luoshu.list', 'invalid')).toEqual({ calls: 1, shapes: 1 })
     expect(shapes('luoshu.read', 'not-found')).toEqual({ calls: 2, shapes: 1 })
     expect(kept.filter(record => record.action === 'luoshu.read' && record.code !== 'not-found')).toEqual([])
   })

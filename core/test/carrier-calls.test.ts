@@ -541,15 +541,16 @@ describe('filterReadable', () => {
     expect(gate.reads).toEqual([])
   })
 
-  // A saved index or another store from a build before dot names were refused could still hold one
-  it('gives back no path with a dot segment whatever the gate says with the gate on or off and asks it nothing about one', async () => {
+  // A saved index or another store from a build before dot names were refused could still hold one. The callee read it
+  // itself, so it is taken as it is and left to the gate, whose matcher matches no dot name
+  it('takes a path with a dot segment as the callee gave it, the gate answering for it and every path back with the gate off', async () => {
     const { search, got, pluginsManager, gate } = await incoming()
-    gate.readable = () => true
+    gate.readable = (_caller, path) => !path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.'))
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
     expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
-    expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
+    expect(gate.reads.map(read => read.path)).toEqual(expect.arrayContaining(['.env', '.git/config']))
     pluginsManager.policyJobs.gate = 'off'
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
   })
 
   it('refuses policy-down when canRead throws and counts only an exact true', async () => {
@@ -680,7 +681,7 @@ describe('a listing', () => {
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
     expect(gate.asked).toEqual([])
     expect(gate.lists.map(asked => asked.path)).toEqual(expect.arrayContaining(['secret/b.md']))
-    // A dot name never reaches the gate
+    // The luoshu's walk passes a dot name by, so it never reaches the gate
     expect(gate.lists.map(asked => asked.path)).not.toContain('.scratch.md')
   })
 
@@ -705,16 +706,14 @@ describe('a listing', () => {
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
   })
 
-  // The luoshu's walk leaves dot names out itself. This is the carrier's own check behind it
-  it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s and fails a page that holds one', async state => {
+  // The luoshu's walk leaves dot names out itself, before the gate is asked
+  it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s', async state => {
     const { search, pluginsManager, gate, luoshu } = listing()
     for (const path of ['notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json']) luoshu.files.set(path, 'x')
     gate.listable = () => true
     pluginsManager.policyJobs.gate = state
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
     expect(gate.lists.filter(asked => asked.path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.')))).toEqual([])
-    luoshu.perform_ = () => ({ paths: ['notes/.hidden.md'], next: null })
-    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
   })
 
   it('records a canList that throws and answers policy-down rather than a page it couldn’t check', async () => {
@@ -829,15 +828,15 @@ describe('editor.reach', () => {
     }
   })
 
-  // No note the human opened has such a path, so a plugin reaches none through one
-  it.each(['on', 'off'] as const)('answers no reach for a path with a dot segment whatever the gate says, with the gate %s', async state => {
+  // No note the human opened has such a path. The contract's path schema refuses it at shape
+  it.each(['on', 'off'] as const)('answers a reach for a path with a dot segment invalid whatever the gate says, with the gate %s', async state => {
     const { way, pluginsManager, gate } = made()
     gate.readable = () => true
     gate.listable = () => true
     gate.decision = () => ({ allow: true, view: pluginsManager.current })
     pluginsManager.policyJobs.gate = state
     for (const path of ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/edit/.config/x.md', '\u200c.obsidian/app.json']) {
-      expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })).result, path).toMatchObject({ read: false, edit: false, uiRead: false, list: false })
+      expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })), path).toBe('invalid')
     }
     expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: true, list: true })
   })

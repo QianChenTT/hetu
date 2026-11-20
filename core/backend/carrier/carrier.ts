@@ -1,9 +1,9 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
-import { pathProblem } from '../../api/scope.ts'
+import { actionPathProblem } from '../../api/actions.ts'
 import { Bus } from './bus.ts'
 import type { CarrierOptions, Port } from './header.ts'
-import { dotted, topicsOf, whoOf, Context } from './context.ts'
+import { topicsOf, whoOf, Context } from './context.ts'
 import { busState, listable, recheck } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
 
@@ -49,12 +49,12 @@ export class Carrier {
     if (!this.c.closed) this.c.bus.emit('core.quitting')
   }
 
-  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path events.publish's shape
-  // refuses reaches nobody, as no call checks it, and one with a dot segment reaches no subscriber whatever the gate's
-  // state. The module names its own topics, so no manifest is read. No call carries it, so it makes no audit record of
+  // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path the contract's path
+  // schema refuses, a dot segment among them, reaches nobody whatever the gate's state, since no shape step checks it
+  // here. The module names its own topics, so no manifest is read. No call carries it, so it makes no audit record of
   // an events.publish
   publishCore(owner: string, topic: string, path: string): void {
-    if (this.c.closed || pathProblem(path) !== null || dotted(path)) return
+    if (this.c.closed || actionPathProblem(path) !== null) return
     this.c.bus.publish(`${owner}.${topic}`, path)
   }
 

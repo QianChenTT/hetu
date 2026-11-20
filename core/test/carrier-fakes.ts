@@ -3,7 +3,7 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { LimitName } from '../api/limits.ts'
-import { scopeMatches } from '../api/scope.ts'
+import { isDotName, scopeMatches } from '../api/scope.ts'
 import type { Access, Call, Decision, Gate, Guard, GuardCall, LogSegment, LogVerification, Prepared, Provider, PolicyJobState } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
@@ -196,8 +196,11 @@ export class FakeLuoshu implements Provider {
     await this.hold.perform
     if (this.perform_ !== null) return this.perform_(call, prepared)
     // Every name, unfiltered, as the luoshu lists them
-    // Every name the carrier's canList lets through, as the luoshu lists them
-    if (call.action === 'luoshu.list') return { paths: [...this.files.keys()].sort().filter(name => call.canList?.(name) === true), next: null }
+    // Every name the carrier's canList lets through, as the luoshu lists them, its walk passing dot names by unasked
+    if (call.action === 'luoshu.list') {
+      const names = [...this.files.keys()].sort().filter(name => !name.split('/').some(isDotName))
+      return { paths: names.filter(name => call.canList?.(name) === true), next: null }
+    }
     const path = prepared.scope.paths![0]
     if (call.action === 'luoshu.move') {
       const to = prepared.scope.paths![1]

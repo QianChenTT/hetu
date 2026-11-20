@@ -3,7 +3,6 @@ import type { CoreAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { guards as expectedGuards, type GuardableAction } from '../../api/ids.ts'
-import { isDotName } from '../../api/names.ts'
 import { pluginStates, policyJobStates, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
@@ -38,10 +37,6 @@ export type Way = {
 }
 
 export type Root = { principal: string, plugin: string | null, caller: Caller }
-
-// A path with a dot segment names no note, whatever the gate's state: a plugin wrote it or kept it from a build before
-// dot names were refused
-export const dotted = (path: string) => path.split('/').some(isDotName)
 
 export type Pending = {
   callId: string

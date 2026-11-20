@@ -221,7 +221,7 @@ describe('the fake core\'s luoshu listing', () => {
     expect(await ctx.luoshu.list({ after: 'notes/deep/er/2499.md' })).toEqual({ paths: ['notes/\u{1f600}.md', 'notes/ﬁ.md', 'notesx/n.md', 'secret/s.md'], next: null })
     expect((await ctx.luoshu.list({ folder: 'notes/deep' })).paths).toEqual(listable.filter(name => name.startsWith('notes/deep/')).sort(byCodeUnit))
     for (const folder of ['notes/dee', 'missing', 'notes/a.md']) expect(await ctx.luoshu.list({ folder })).toEqual({ paths: [], next: null })
-    for (const folder of ['notes/.obsidian', 'notes/deep/.cache']) await expect(ctx.luoshu.list({ folder })).rejects.toMatchObject({ code: 'not-granted' })
+    for (const folder of ['notes/.obsidian', 'notes/deep/.cache']) await expect(ctx.luoshu.list({ folder })).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it('lists nothing for a plugin that may list nothing', async () => {

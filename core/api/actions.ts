@@ -16,11 +16,19 @@ import type { ThemeSpec } from './ui.ts'
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
 // action here yet. Each provider's own step settles its list: net has none yet
 
-// A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
-// A spelling no canonical path holds is refused here, so it answers invalid before precheck could answer not-granted
-// and a caller can tell its own bad spelling from a missing grant. Shape reads only the caller's own text
-const path = z.string().superRefine((value, ctx) => {
-  const problem = pathProblem(value)
+// Why a path no action takes, or null: a spelling no canonical path holds, or a dot segment, which names no note. The
+// one definition of both, read by the path schema and by the core's own publish, which no schema checks
+export function actionPathProblem(value: string): string | null {
+  return pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
+}
+
+// A path as the caller wrote it, for every action. The matcher judges this text at precheck and the provider's prepare
+// canonicalises it. A spelling no canonical path holds or a dot segment is refused here, so it answers invalid before
+// precheck could answer not-granted, whatever the gate's state, and a caller can tell its own bad spelling from a
+// missing grant. Shape reads only the caller's own text. Its length is spelled as checks the JSON Schema an agent reads
+// keeps, since a refinement leaves it
+const path = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
+  const problem = actionPathProblem(value)
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
 })
 // A path a callee read, which a link in the luoshu can give a name outside the grammar. filterReadable drops such a path
@@ -210,13 +218,8 @@ const commitMessage = z.string().min(1).max(MAX_COMMIT_MESSAGE, { abort: true })
 // A commit by its full id, never a name git would resolve
 const commitId = z.string().regex(/^[0-9a-f]{40}$/)
 
-// A path as an agent sends it: what path takes less a dot segment, which names no note. Its length is spelled as checks
-// the JSON Schema an agent reads keeps, since a refinement leaves it. Its grammar is given in words
+// A path's grammar in words, for the agent tools
 const PATH_WORDS = 'A note path inside the notes folder, its segments split by /, at most 512 characters. No segment is empty, . or .. or starts with a dot and none holds a backslash, a colon or a control character'
-const notePath = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
-  const problem = pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
-  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
-})
 
 const providerTable = {
   'luoshu.read': {
@@ -227,7 +230,7 @@ const providerTable = {
     agent: tool(
       'read_note',
       'Read one note from the notes folder. Answers its text, its path and its version, the SHA-256 of its bytes in hex. Only a note this agent holds a grant to read is answered',
-      z.strictObject({ path: notePath.describe(PATH_WORDS) }),
+      z.strictObject({ path: path.describe(PATH_WORDS) }),
     ),
   },
   // The file paths under folder, the whole luoshu when it is left out, in name order after the one named, a page at a
@@ -242,8 +245,8 @@ const providerTable = {
       'list_notes',
       `List the paths of the notes under a folder, or in the whole notes folder when none is named, in name order and at most ${LIST_PAGE} at a time. Answers paths and next, the after of the next page or null on the last. Only paths this agent holds a grant to list or read are listed`,
       z.strictObject({
-        folder: notePath.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
-        after: notePath.describe('The next of the page before. Left out for the first page').optional(),
+        folder: path.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
+        after: path.describe('The next of the page before. Left out for the first page').optional(),
       }),
     ),
   },
@@ -257,7 +260,7 @@ const providerTable = {
       'write_note',
       'Write the whole text of one note. Answers its new version. baseVersion is the version the note has now, left out only when no note is at that path, or the write answers stale and changes nothing. Only a path this agent holds a grant to write is written',
       z.strictObject({
-        path: notePath.describe(PATH_WORDS),
+        path: path.describe(PATH_WORDS),
         text: z.string().describe('The whole new text of the note'),
         baseVersion: sha256.describe('The version the note has now, 64 lowercase hex digits. Left out for a new note').optional(),
       }),
@@ -312,7 +315,7 @@ const providerTable = {
       'note_history',
       'List the commits in hetu\'s history that changed one note, newest first, each with its id, author, committer, date and message. Only a note this agent holds a grant to read the history of is answered',
       z.strictObject({
-        path: notePath.describe(PATH_WORDS),
+        path: path.describe(PATH_WORDS),
         limit: z.int().min(1).max(MAX_LOG_PAGE).describe(`The most commits to answer, ${LOG_PAGE} when left out`).optional(),
       }),
     ),

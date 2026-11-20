@@ -628,3 +628,41 @@ describe('precheck', () => {
     expect(code(await search.ask('ghost.log'))).toBe('unavailable')
   })
 })
+
+// A dot segment names no note. The contract's path schema refuses it for every action, so a path holding one answers
+// invalid at shape from every caller whatever the gate's state, before the gate or a provider hears of it
+describe('a path with a dot segment', () => {
+  const dotted = ['.git/config', '.obsidian/x', 'notes/.hidden.md', 'notes/deep/.config/x.md', '‌.obsidian/app.json']
+  const calls = (path: string): [string, unknown][] => [
+    ['luoshu.read', { path }], ['luoshu.write', { path, text: 'x' }], ['luoshu.remove', { path, baseVersion: '0'.repeat(64) }],
+    ['luoshu.move', { from: 'notes/a.md', to: path }], ['luoshu.move', { from: path, to: 'notes/a.md' }], ['luoshu.list', { folder: path }],
+    ['luoshu.list', { after: path }], ['history.log', { path }], ['leases.acquire', { paths: ['notes/a.md', path] }],
+    ['events.publish', { topic: 'search.indexed', path }],
+  ]
+
+  it.each(['on', 'off'] as const)('answers invalid from a plugin with the gate %s, a grant to every path held', async state => {
+    const { connect, gate, luoshu, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = state
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.list', paths: ['**'] }]
+    const search = connect(worker('search'))
+    for (const path of dotted) {
+      for (const [action, args] of calls(path)) expect(code(await search.ask(action, args)), `${action} ${path}`).toBe('invalid')
+    }
+    expect(gate.asked).toEqual([])
+    expect(luoshu.prepared).toEqual([])
+  })
+
+  it.each(['on', 'off'] as const)('answers invalid from a window with the gate %s', async state => {
+    const { carrier, gate, luoshu, pluginsManager } = harness()
+    pluginsManager.policyJobs.gate = state
+    const way = windowWay(carrier, { editor })
+    for (const path of dotted) {
+      expect(code(await way.ask('editor', 'luoshu.read', { path })), path).toBe('invalid')
+      expect(code(await way.ask('editor', 'luoshu.write', { path, text: 'x' })), path).toBe('invalid')
+      expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path })), path).toBe('invalid')
+    }
+    expect(gate.asked).toEqual([])
+    expect(gate.reads).toEqual([])
+    expect(luoshu.prepared).toEqual([])
+  })
+})

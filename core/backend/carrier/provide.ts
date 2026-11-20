@@ -6,7 +6,7 @@ import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
-import { dotted, no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
+import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
 import { stop, result, thrown, finish, callOf } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
@@ -322,7 +322,6 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
   let charged = false
   return {
     canList: path => {
-      if (dotted(path)) return false
       if (off) return agent === undefined
       if (gate === null || threw) return false
       try {

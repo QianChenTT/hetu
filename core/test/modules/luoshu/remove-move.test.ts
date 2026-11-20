@@ -374,17 +374,16 @@ describe('the dot rule on both ends of a move and on a remove', () => {
     await untouched(made)
   })
 
-  it('refuses a to end through a junction into a dot folder, and a junction named with a dot', async () => {
+  // A junction named with a dot never gets here: the contract's path schema refuses that spelling at shape
+  it('refuses a to end through a junction into a dot folder', async () => {
     await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
-    await symlink(path.join(folder, 'journal'), path.join(folder, '.shown'), 'junction')
     before = await tree()
     const made = opened()
-    for (const to of ['cfg/a.md', 'cfg/plugins/x/a.js', 'cfg/plugins/y/main.js', '.shown/a.md']) {
+    for (const to of ['cfg/a.md', 'cfg/plugins/x/a.js', 'cfg/plugins/y/main.js']) {
       expect(await ask(made, 'luoshu.move', { from: 'a.md', to }), to).toEqual(notGranted)
     }
-    // The from end through either junction too
+    // The from end through the junction too
     expect(await ask(made, 'luoshu.move', { from: 'cfg/plugins/x/main.js', to: 'stolen.js' })).toEqual(notGranted)
-    expect(await ask(made, 'luoshu.move', { from: '.shown/b.md', to: 'b.md' })).toEqual(notGranted)
     await untouched(made)
   })
 

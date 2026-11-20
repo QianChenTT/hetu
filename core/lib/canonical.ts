@@ -182,7 +182,7 @@ export async function lastNamed(target: Canonical, input: string, options: Canon
   const real = await realpath(path.join(folder, last)).catch(() => null)
   if (real === null || path.dirname(real) !== folder) return null
   const name = path.basename(real)
-  if (isDotName(name) || isDotName(last)) return null
+  if (isDotName(name)) return null
   for (const own of [options.dataDir, options.installDir]) {
     if (own === undefined) continue
     const resolved = await realpath(own).catch(() => null)
@@ -237,9 +237,9 @@ export async function canonical(root: string, input: string, options: CanonicalO
   // A link to the luoshu itself, where no note lives
   if (names.length === 0) return refuse('root')
   if (names.some(isGitName)) return refuse('git')
-  // A dot name as the caller spelled it, so a link named .x refuses as .x would, by the rule of the name it leads to
-  // when that is a dot name too
-  if (names.some(isDotName) || spelled.some(isDotName)) return refuse(found.hidden ?? 'dot')
+  // A dot name on the real path, by the rule of the name a link leads to. A dot name as a caller spells it never gets
+  // here, since the contract's path schema refuses it
+  if (names.some(isDotName)) return refuse(found.hidden ?? 'dot')
 
   const absolute = path.join(found.real, ...found.rest)
   for (const [rule, folder] of [['data', options.dataDir], ['install', options.installDir]] as const) {

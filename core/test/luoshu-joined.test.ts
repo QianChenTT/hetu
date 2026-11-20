@@ -381,14 +381,16 @@ describe('the dot rule with the gate off by the human', () => {
     return { folder, ask }
   }
 
+  // A dot name as spelled answers invalid at shape, a junction into a dot folder not-granted from canonical's real path
   it('refuses either end of a move and a remove that names a dot folder or a dot file, a junction into one too', async () => {
     const { folder, ask } = await dotted()
+    const expected = (spelled: string) => spelled.startsWith('cfg/') ? 'not-granted' : 'invalid'
     for (const to of ['.obsidian/a.md', '.obsidian/plugins/x/a.js', '.github/workflows/x.yml', 'journal/.config/a.md', 'journal/.a.md', '.a.md', 'cfg/a.md']) {
-      expect((await ask('luoshu.move', { from: 'a.md', to })).refusal?.code, to).toBe('not-granted')
+      expect((await ask('luoshu.move', { from: 'a.md', to })).refusal?.code, to).toBe(expected(to))
     }
     for (const from of ['.obsidian/plugins/x/main.js', 'journal/.hidden.md', 'cfg/plugins/x/main.js']) {
-      expect((await ask('luoshu.move', { from, to: 'stolen.md' })).refusal?.code, from).toBe('not-granted')
-      expect((await ask('luoshu.remove', { path: from, baseVersion: VERSION })).refusal?.code, from).toBe('not-granted')
+      expect((await ask('luoshu.move', { from, to: 'stolen.md' })).refusal?.code, from).toBe(expected(from))
+      expect((await ask('luoshu.remove', { path: from, baseVersion: VERSION })).refusal?.code, from).toBe(expected(from))
     }
     expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
     expect(await readFile(path.join(folder, 'journal', '.hidden.md'), 'utf8')).toBe('hidden')
@@ -410,7 +412,7 @@ describe('the dot rule with the gate off by the human', () => {
     expect(await ask('luoshu.list', {})).toMatchObject({ ok: true, result: { paths: ['a.md', 'journal/deep/b.md'], next: null } })
     expect(await ask('luoshu.list', { folder: 'journal' })).toMatchObject({ ok: true, result: { paths: ['journal/deep/b.md'], next: null } })
     for (const at of ['.obsidian', 'journal/deep/.config']) {
-      expect((await ask('luoshu.list', { folder: at })).refusal?.code, at).toBe('not-granted')
+      expect((await ask('luoshu.list', { folder: at })).refusal?.code, at).toBe('invalid')
     }
     // Spelled with no dot, so it answers as nothing-here does
     for (const at of ['cfg', 'cfg/plugins', 'nothing-here']) {

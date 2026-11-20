@@ -942,3 +942,19 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
     expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1']])
   })
 })
+
+describe('a path with a dot segment down an agent\'s chain', () => {
+  it.each(['on', 'off'] as const)('answers invalid at shape with the gate %s, before the gate or the luoshu hears of it', async state => {
+    const { door, mcp, gate, luoshu, pluginsManager } = agents()
+    const { parent } = await handled(door, mcp)
+    pluginsManager.policyJobs.gate = state
+    const before = gate.asked.length
+    for (const path of ['.git/config', '.obsidian/x', 'inbox/.hidden.md']) {
+      expect(code(await mcp.ask('luoshu.read', { path }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('luoshu.write', { path, text: 'x' }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('history.log', { path }, parent)), path).toBe('invalid')
+    }
+    expect(gate.asked.length).toBe(before)
+    expect(luoshu.prepared).toEqual([])
+  })
+})
