@@ -1,10 +1,11 @@
 import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ElectronApplication, Page } from 'playwright'
+import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
+import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows } from './helpers.ts'
+import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -318,6 +319,113 @@ describe('the switches and limits', () => {
     // The record lands before the change applies
     await until(async () => (await new StateStore(dataDir).load()).state.switches.off.includes('gate'))
     await until(async () => (await editor.locator('#banner li').allTextContents()).includes('gate: off'))
+  })
+})
+
+describe('the identities list', () => {
+  const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
+  // asker hands its context to the test, which calls callee on behalf of a field. callee asks the human for read on
+  // inbox for the pair of the call it got, asker and that field
+  const asker = `import { definePlugin } from '${sdk}'
+export default definePlugin({ start(ctx) { ;(globalThis as Record<string, unknown>).ctx = ctx } })
+`
+  const callee = `import { definePlugin } from '${sdk}'
+export default definePlugin({
+  start(ctx) {
+    ctx.provide('ask', call => call.ctx.call('core', 'identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }))
+  },
+})
+`
+  const built = async (code: string) => {
+    const source = await temp()
+    await writeFolder(source, { 'src/worker.ts': code })
+    const [one] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
+    return one!.text
+  }
+  const askFor = (worker: PageWorker, field: string) => worker.evaluate(field => (globalThis as unknown as {
+    ctx: { call(target: string, action: string, args: unknown, options: object): Promise<unknown> }
+  }).ctx.call('callee', 'ask', {}, { onBehalf: field }), field)
+
+  it('lists each pair the human gave items by its field in quotes under its root plugin in a face that wraps, revoking one at once', async () => {
+    const calls = [{ type: 'plugin.call' as const, targets: ['callee'] }]
+    const dataDir = await data({
+      workers: {
+        asker: { code: await built(asker), manifest: { requires: ['callee'], capabilities: calls }, entry: { granted: calls } },
+        callee: { code: await built(callee), manifest: { provides: { actions: { ask: {} } } } },
+      },
+    })
+    const app = await start(dataDir, await install())
+    const editor = await editorPage(app)
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'asker' }))
+    const workers = await workersPage(app, 'asker')
+    await until(() => workers.workers().length === 1)
+    const worker = workers.workers()[0] as PageWorker
+    const prefix = 'https://claude.ai/oauth/'
+    const long = `${prefix}${'x'.repeat(255 - prefix.length)}#7`
+    const fields = [long, 'client#1', 'cIient#1']
+
+    // Each ask waits for the human, who confirms it in the trusted window once its delay passed
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    for (const field of fields) {
+      expect(await askFor(worker, field)).toEqual({ asked: 'waiting' })
+      await until(async () => (await page.locator('section.request h1 span.label').innerText().catch(() => '')) === JSON.stringify(field))
+      expect(await page.locator('section.request h1').innerText()).toBe(`Give ${JSON.stringify(field)} under asker what it asks for through callee`)
+      await tick(PAST_DELAY)
+      await page.getByRole('button', { name: 'Confirm' }).click()
+      await until(async () => (await page.locator('section.request').count()) === 0)
+    }
+    await showing(page, '"cIient#1" under asker · luoshu.read on "inbox/**"')
+    const identities = page.locator('section.identities')
+    expect(await identities.locator('h2').innerText()).toBe('Identities')
+    expect(await identities.innerText()).not.toMatch(/\bagents?\b/i)
+
+    // One more ask stays waiting, so its heading is measured beside the rows
+    expect(await askFor(worker, 'client#2')).toEqual({ asked: 'waiting' })
+    await until(async () => (await page.locator('section.request h1 span.label').innerText().catch(() => '')) === '"client#2"')
+    const measured = await page.evaluate(() => {
+      const width = document.documentElement.clientWidth
+      const lines = [...document.querySelectorAll('section.identities p.identity'), document.querySelector('section.request h1')!]
+      const all = lines.map(line => {
+        const drawn = line.querySelector('.label')!
+        const text = drawn.firstChild!
+        // The box of the field's last two characters
+        const end = document.createRange()
+        end.setStart(text, text.textContent!.length - 2)
+        end.setEnd(text, text.textContent!.length)
+        const style = getComputedStyle(drawn)
+        return { label: drawn.textContent, font: style.fontFamily, wrap: style.overflowWrap, fits: line.scrollWidth <= line.clientWidth, right: Math.ceil(end.getBoundingClientRect().right) }
+      })
+      // The face the field is drawn in: every character as wide as every other, so the system had a fixed-width one
+      const span = document.querySelector('section.identities .label')!
+      const pen = document.createElement('canvas').getContext('2d')!
+      pen.font = `${getComputedStyle(span).fontSize} ${getComputedStyle(span).fontFamily}`
+      const widths = Object.fromEntries(['I', 'l', '1', 'i', 'm', 'W'].map(glyph => [glyph, pen.measureText(glyph).width]))
+      return { width, scroll: document.documentElement.scrollWidth, all, widths }
+    })
+    expect(measured.scroll).toBeLessThanOrEqual(measured.width)
+    for (const drawn of measured.all) {
+      expect(drawn.font).toContain('monospace')
+      expect(drawn.wrap).toBe('anywhere')
+      expect(drawn.fits).toBe(true)
+      expect(drawn.right).toBeLessThanOrEqual(measured.width)
+    }
+    expect(measured.all.map(drawn => drawn.label)).toEqual([...fields.map(field => JSON.stringify(field)), '"client#2"'])
+    expect(new Set(Object.values(measured.widths)).size).toBe(1)
+
+    // Cancel and revoke turns the waiting pair away, Revoke takes a pair's items at once with no Confirm
+    await tick(PAST_DELAY)
+    await page.getByRole('button', { name: 'Cancel and revoke' }).click()
+    await showing(page, '"client#2" under asker · revoked until hetu quits')
+    await tick(PAST_DELAY)
+    await identities.locator('p.identity', { hasText: '"client#1"' }).getByRole('button', { name: 'Revoke' }).click()
+    await showing(page, '"client#1" under asker · revoked until hetu quits')
+    expect(await page.locator('section.request').count()).toBe(0)
+    expect(await identities.locator('p.identity', { hasText: '"client#1"' }).getByRole('button').count()).toBe(0)
+    expect(await logged(dataDir, 'security.applied', { kind: 'identity.revoke', target: 'asker', field: 'client#1', by: 'narrows' })).toBe(true)
+    // A revoked pair asks for nothing again in the run
+    await expect(askFor(worker, 'client#1')).rejects.toThrow(/not-granted/)
   })
 })
 

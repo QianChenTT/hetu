@@ -34,15 +34,15 @@ section {
   font-size: 18px;
 }
 
-/* An agent's label: a face the system has, fetched from nowhere, in which I, l and 1 differ, wrapped anywhere so a
-   long client id never pushes its number out of the window */
+/* A field: a face the system has, fetched from nowhere, in which I, l and 1 differ, wrapped anywhere so a long one
+   never pushes its end out of the window */
 .label {
   font-family: ui-monospace, Consolas, Menlo, "DejaVu Sans Mono", monospace;
   overflow-wrap: anywhere;
 }
 
 .request h1,
-.agent {
+.identity {
   overflow-wrap: anywhere;
 }
 

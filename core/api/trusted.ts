@@ -9,8 +9,8 @@ export const INPUT_DELAY_MS = 1000
 
 const quoted = (value: string) => JSON.stringify(value)
 
-// One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or an
-// agent chose reads as a sentence of the screen
+// One capability as its type and each scope quoted, a target, a topic and a variable name too, so nothing a plugin or
+// its client chose reads as a sentence of the screen
 export function capabilityText(granted: Capability): string {
   switch (granted.type) {
     case 'luoshu.read':

@@ -90,7 +90,7 @@ async function started(): Promise<{ app: ElectronApplication, editor: Page, data
 }
 
 const CLAUDE = 'https://claude.ai/oauth/claude-code-client-metadata'
-const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code', redirect: 'http://localhost:33418/callback', number })
+const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: `${client}#${number}` })
 const through = (worker: Worker, action: string, args: unknown) =>
   worker.evaluate(([action, args]) => (globalThis as unknown as { ctx: { call(t: string, a: string, x: unknown): Promise<unknown> } }).ctx.call('mcp-http-handler', action, args), [action, args] as const) as Promise<Settled>
 const connect = async (worker: Worker, args: unknown) => through(worker, 'connect', args)
@@ -132,7 +132,7 @@ describe('a connect in the trusted window', () => {
     const page = await trustedPage(app, editor)
     const heading = page.locator('section.request h1')
     await until(async () => (await heading.innerText()).startsWith('Connect the client from "claude.ai"'))
-    expect(await heading.innerText()).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${CLAUDE}#3"`)
+    expect(await heading.innerText()).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "${CLAUDE}#3"`)
     expect(await heading.locator('span.label').innerText()).toBe(`"${CLAUDE}#3"`)
     expect(await page.locator('section.request li').allInnerTexts()).toEqual([
       'Any program on this computer can connect under that client id and that name, so confirm only a connect you started just now',
@@ -149,7 +149,7 @@ describe('a connect in the trusted window', () => {
 
     await tick(PAST_DELAY)
     await confirm.click()
-    await until(() => logged(dataDir, 'security.applied', { kind: 'consent.ask', target: 'mcp-http-handler', by: 'confirm' }))
+    await until(() => logged(dataDir, 'security.applied', { kind: 'consent.ask', target: 'mcp-http-handler', field: `${CLAUDE}#3`, by: 'confirm' }))
     expect(await collect(worker, handle)).toEqual({ answer: 'yes' })
     expect(await collect(worker, handle)).toEqual({ answer: 'gone' })
   })

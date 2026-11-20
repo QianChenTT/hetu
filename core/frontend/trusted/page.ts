@@ -19,8 +19,8 @@ function button(text: string, act: () => void): HTMLButtonElement {
   return made
 }
 
-// An agent's label in quotes, drawn in a fixed-width face that wraps anywhere, so I and l read apart and the number
-// at its end stays in view however long the client id
+// A field in quotes, drawn in a fixed-width face that wraps anywhere, so I and l read apart and its end stays in view
+// however long it is
 function labelOf(text: string): HTMLSpanElement {
   const made = element('span', text)
   made.className = 'label'
@@ -157,18 +157,18 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     luoshu.append(folderLine, element('p', 'A new folder waits for your Confirm'))
     parts.push(luoshu)
 
-    const agents = element('section')
-    agents.className = 'agents'
-    agents.append(element('h2', 'Agents'), element('p', shown.agents.about))
-    for (const row of shown.agents.rows) {
+    const identities = element('section')
+    identities.className = 'identities'
+    identities.append(element('h2', 'Identities'), element('p', shown.identities.about))
+    for (const row of shown.identities.rows) {
       const line = element('p')
-      line.className = 'agent'
+      line.className = 'identity'
       line.append(labelOf(row.label), document.createTextNode(row.line))
       const { change } = row
       if (change !== null) line.append(button('Revoke', () => page.ask(change)))
-      agents.append(line)
+      identities.append(line)
     }
-    parts.push(agents)
+    parts.push(identities)
 
     const install = element('section')
     install.className = 'install'
