@@ -55,7 +55,7 @@ describe('hetu as an Electron app', () => {
     const after = ['plugin.stopped', 'audit.call', 'module.state']
     const tail = all.slice(stopping + 1)
     expect(tail.map(record => record.event).filter(event => !after.includes(event as string))).toEqual([])
-    expect(tail.filter(record => record.event === 'module.state')).toEqual(['exec', 'history', 'luoshu', 'storage'].map(module => expect.objectContaining({
+    expect(tail.filter(record => record.event === 'module.state')).toEqual(['heartbeat', 'exec', 'history', 'luoshu', 'storage'].map(module => expect.objectContaining({
       module, state: 'stopped', reason: 'shutdown',
     })))
     const lastStop = tail.findLastIndex(record => record.event === 'plugin.stopped')

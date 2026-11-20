@@ -80,7 +80,6 @@ const switches = z.strictObject({
   removed: list(firstPartyId), // tombstones, which the reconcile never copies back
   execAnyCommand: list(anyPlugin), // plugins exec runs any command for, past the declared list
   limits,
-  recordNothing: z.boolean(),
   // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, held here while the agent host has no
   // entry and handed to the entry it gets next. Left out of a file with none
   revokedAgents: list(agentLabel).optional(),
@@ -136,7 +135,9 @@ function luoshuFor(platform: string) {
 }
 
 const format = z.literal(FORMAT)
-const switchesFile = z.strictObject({ format, ...switches.shape })
+// recordNothing is how a file from before recording was a core module says recording is off. It is read once as
+// recording in off and never written again
+const switchesFile = z.strictObject({ format, ...switches.shape, recordNothing: z.boolean().optional() })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
 
 export type Switches = z.infer<typeof switches>
@@ -170,7 +171,6 @@ export function defaultSwitches(): Switches {
     removed: [],
     execAnyCommand: [],
     limits: { all: table({}), plugins: table({}) },
-    recordNothing: false,
   }
 }
 
@@ -224,6 +224,12 @@ async function readChecked<T extends z.ZodType>(file: string, schema: T): Promis
 function withoutFormat<T extends { format: typeof FORMAT }>(file: T): Omit<T, 'format'> {
   const { format, ...rest } = file
   return rest
+}
+
+// The switches as a file holds them, recordNothing from before recording was a core module read as recording in off
+function switchesOf(read: Switches & { recordNothing?: boolean }): Switches {
+  const { recordNothing, ...rest } = read
+  return recordNothing === true && !rest.off.includes('recording') ? { ...rest, off: [...rest.off, 'recording'] } : rest
 }
 
 // What Finder and Explorer leave in a folder the user only looked at. Never read, so they can't stand in for an entry
@@ -346,7 +352,7 @@ export class StateStore {
     // A bad or missing switches file never touches the luoshu and a bad luoshu file never touches the switches
     const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile)
     checks.push({ check: 'switches', result: switchesRead.result })
-    if (switchesRead.value) state.switches = withoutFormat(switchesRead.value)
+    if (switchesRead.value) state.switches = switchesOf(withoutFormat(switchesRead.value))
 
     // Absent is a luoshu not picked yet
     const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile)

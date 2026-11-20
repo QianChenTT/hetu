@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../api/capabilities.ts'
 import type { Caller } from '../api/envelope.ts'
@@ -8,6 +9,8 @@ import { windowGrants } from '../api/windows.ts'
 import { Carrier } from '../backend/carrier/carrier.ts'
 import { Limits } from '../backend/carrier/limits.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
+import type { CoreLog, Recording } from '../backend/recording/header.ts'
+import { createRecording } from '../backend/recording/recording.ts'
 import type { CarrierOptions, HumanLimits, PluginsManager, PluginInfo } from '../backend/carrier/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
@@ -45,10 +48,6 @@ export class FakePluginsManager implements PluginsManager {
 
   limits(): HumanLimits {
     return this.human
-  }
-
-  recordNothing(): boolean {
-    return this.nothing
   }
 
   revoked(label: string): boolean {
@@ -363,33 +362,54 @@ export const code = (reply: Message) => (reply.refusal as { code?: string } | un
 
 const live: { carrier: Carrier, ports: MessagePort[] }[] = []
 
-export function harness(over: Partial<CarrierOptions> = {}) {
+// What the harness builds recording from: the log, null for none, how long its lane waits to try again, how often its
+// writer writes and where the log failing is told
+export type RecordingOver = { log?: CoreLog | null, coreRecordRetryMs?: number, auditEveryMs?: number, logFailed?: () => boolean | void }
+
+export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+
+export function harness(given: Partial<CarrierOptions> & RecordingOver = {}) {
+  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, ...over } = given
   const pluginsManager = new FakePluginsManager()
   const gate = new FakeGate(pluginsManager)
   const luoshu = new FakeLuoshu()
   const storage = new FakeStorage()
   const guards: Record<string, FakeGuard> = {}
   const providers: Record<string, Provider> = { luoshu, storage }
-  const log = new FakeLog()
+  const log = logGiven === undefined ? new FakeLog() : logGiven
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
   // The real flood control on the carrier's clock and the fake plugins manager's limits, unless a test hands its own
   const limits = new Limits(() => pluginsManager.limits())
   const clock = over.clock ?? (() => performance.now())
   const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock })
+  // Recording over the log, off while the fake plugins manager says nothing. Audit records land only on flush unless a
+  // test names how often the writer writes, so a test decides when the writer takes them
+  const parts: { carrier: Carrier | null } = { carrier: null }
+  const recording: Recording | null = log === null ? null : createRecording({
+    log,
+    off: () => pluginsManager.nothing,
+    limit: name => limits.of(null, name),
+    hash: sha256,
+    ...(over.now !== undefined ? { now: over.now } : {}),
+    clock,
+    retryMs: coreRecordRetryMs ?? 5000,
+    everyMs: 'auditEveryMs' in given ? auditEveryMs ?? 100 : 3_600_000,
+    noticed: () => parts.carrier?.status(),
+    ...(logFailed !== undefined ? { failed: logFailed } : {}),
+  })
   const carrier = new Carrier({
     pluginsManager,
     floodControl: () => floodControl,
     gate: () => gate,
     guards: id => guards[id] ?? null,
     providers: id => providers[id] ?? null,
-    log,
+    recording,
     asks: { raise: (ask, access) => { asks.push({ ask, access }); return `req-${asks.length}` } },
     debug: entry => { debug.push(entry) },
-    // Audit records land only on flush, so a test decides when the writer takes them
-    auditEveryMs: 3_600_000,
     ...over,
   })
+  parts.carrier = carrier
   const ports: MessagePort[] = []
   live.push({ carrier, ports })
   // A plugin half on a real MessageChannel, the carrier holding the other end
@@ -399,7 +419,10 @@ export function harness(over: Partial<CarrierOptions> = {}) {
     carrier.register(port1, caller)
     return new Side(port2)
   }
-  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log, debug, asks, connect }
+  // recording is the one the carrier was handed, a test's own included
+  const handed = over.recording !== undefined ? over.recording : recording
+  if (handed !== recording) recording?.close()
+  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log: log as FakeLog, debug, asks, connect, recording: handed as Recording }
 }
 
 // A window's way in with a sender check that knows one sender per window

@@ -19,15 +19,17 @@ function parts(over: { shutdown?: () => Promise<void>, flush?: () => Promise<voi
         },
       },
       carrier: {
+        close: () => {
+          calls.push('close')
+          over.close?.()
+        },
+      },
+      recording: {
         flush: async () => {
           const n = ++flushes
           calls.push(`flush ${n}`)
           await (over.flush ?? (async () => {}))()
           calls.push(`flush ${n} done`)
-        },
-        close: () => {
-          calls.push('close')
-          over.close?.()
         },
       },
       release: async () => {

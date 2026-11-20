@@ -31,7 +31,7 @@ describe('a window\'s way in', () => {
     const switches = path.join(dataDir, 'state', 'switches.json')
     const written = await readFile(switches, 'utf8')
     // The hash line stays as it was, so the edit fails the check
-    const byHand = written.replace('"recordNothing": false', '"recordNothing": true')
+    const byHand = written.replace('"confirmOff": false', '"confirmOff": true')
     expect(byHand).not.toBe(written)
     await writeFile(switches, byHand)
     const line = 'state files that failed their check at start: switches'

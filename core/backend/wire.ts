@@ -1,13 +1,15 @@
+import { createHash } from 'node:crypto'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
-import type { Field } from '../lib/event-log.ts'
 import type { Booted } from './boot/header.ts'
 import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, HumanLimits, Landing, Port, Served } from './carrier/header.ts'
+import type { Asks, CarrierOptions, Debug, HumanLimits, Port, Served } from './carrier/header.ts'
 import { Limits } from './carrier/limits.ts'
 import { createFloodControl } from './flood-control/flood-control.ts'
 import { createHeartbeat } from './heartbeat/heartbeat.ts'
+import type { Recording } from './recording/header.ts'
+import { createRecording } from './recording/recording.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
 import { createGate } from './policy/gate/gate.ts'
@@ -93,24 +95,12 @@ export class LinkToCarrier implements CarrierLink {
     this.to.send(caller, message)
   }
 
-  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
-    return this.to.record(event, fields, signal)
-  }
-
   changed(): void {
     this.to.changed()
   }
 
   stopping(): void {
     this.to.stopping()
-  }
-
-  drain(ms: number): Promise<number> {
-    return this.to.drain(ms)
-  }
-
-  resume(): void {
-    this.to.resume()
   }
 
   limit(plugin: string, name: LimitName): number {
@@ -138,11 +128,13 @@ export function carrierOptions(
   }
 }
 
-// The core joined in its order: the link, the core modules publishing through it, then the plugins manager holding both,
-// then the carrier asking the modules for the gate and the providers, then the link pointed at the carrier. The log is
-// the one EventLog boot opened, which the carrier writes its core records and its audit queue through and serves
-// log.segments and log.verify from
-export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder } {
+// SHA-256 as hex, which recording is handed so it reaches no Node built-in
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+
+// The core joined in its order: the link, the core modules publishing through it, recording over the one EventLog boot
+// opened, then the plugins manager holding the modules and recording, then the carrier asking the modules for the gate,
+// the providers and flood control and handing each call's record to recording, then the link pointed at the carrier
+export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder, recording: Recording } {
   const link = new LinkToCarrier()
   // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the carrier does
   const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
@@ -150,6 +142,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
   // The modules made here, the one place that builds the parts. The luoshu publishes only once started, which is after
   // the carrier is attached
   const modules = buildModules({
+    off: options.booted.state.switches.off,
     dataDir: options.booted.dataDir,
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
@@ -157,11 +150,23 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path),
     limit: (plugin, name) => limits.of(plugin, name),
   })
+  // The log failing is told to the plugins manager, which quits hetu to start it again, once it exists. Windows hear
+  // the log's health through the carrier
+  const parts: { pluginsManager: PluginsManager | null } = { pluginsManager: null }
+  const recording = createRecording({
+    log: options.booted.log,
+    off: () => modules.state('recording') === 'off',
+    limit: name => limits.of(null, name),
+    hash: sha256,
+    noticed: () => link.carrier?.status(),
+    failed: () => parts.pluginsManager?.controlFailed('log', 'log-failing') ?? false,
+  })
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
     ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
     link,
+    recording,
     runtime: options.runtime,
     modules,
     logWrites: () => options.booted.log.healthy,
@@ -171,16 +176,16 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
   human.limits = () => pluginsManager.limits()
+  parts.pluginsManager = pluginsManager
   const { windows } = options
   const carrier = new Carrier(carrierOptions(pluginsManager, modules, {
-    log: options.booted.log,
+    recording,
     core: call => (runtimeActions.has(call.action) ? windows?.serve(call) ?? Promise.reject({ code: 'unavailable' }) : pluginsManager.serve(call)),
-    logFailed: () => pluginsManager.controlFailed('log', 'log-failing'),
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.asks !== undefined ? { asks: options.asks } : {}),
   }))
   link.carrier = carrier
-  return { pluginsManager, carrier, modules }
+  return { pluginsManager, carrier, modules, recording }
 }

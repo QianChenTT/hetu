@@ -49,7 +49,7 @@ describe('a core module\'s start', () => {
   it('records each module started once the core starts, one switched off off and nothing for one that never ran', async () => {
     const made = await harness({ switches: { off: ['history'] } })
     await made.pluginsManager.start()
-    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control', 'heartbeat'].map(module => ({ module, state: 'started', reason: null })))
+    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control', 'heartbeat', 'recording'].map(module => ({ module, state: 'started', reason: null })))
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'exec' })
     expect(changes(made).at(-1)).toEqual({ module: 'exec', state: 'stopped', reason: 'off' })
   })

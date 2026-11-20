@@ -92,4 +92,11 @@ export const retiredNames: readonly RetiredName[] = [
     allowed: [],
   },
   { name: 'capabilities plugin', now: 'grant-risk-classifier', pattern: /\bcapabilities[ -]plugins?\b/gi, allowed: [] },
+  {
+    name: 'recordNothing',
+    now: 'recording, a core module whose switch is in switches.off',
+    // The name only, since record nothing as plain words names no switch
+    pattern: /\brecordNothing\b/g,
+    allowed: [{ place: 'core/backend/boot/state.ts', why: 'a switches file from before recording was a core module still holds it, read once as recording in off' }],
+  },
 ]

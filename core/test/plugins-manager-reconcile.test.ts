@@ -82,7 +82,7 @@ describe('the first-party reconcile', () => {
     try {
       expect(booted.removedKnown).toBe(false)
       const modules = coreModules({ dataDir: first.dataDir, installDir: first.installDir }, first.link, { gate: first.gate })
-      const pluginsManager = new PluginsManager({ booted, installDir: first.installDir, link: first.link, runtime: first.runtime, modules })
+      const pluginsManager = new PluginsManager({ booted, installDir: first.installDir, link: first.link, recording: first.link, runtime: first.runtime, modules })
       wire(pluginsManager, modules, first.link)
       await pluginsManager.start()
       expect(await exists(folderOf(first.dataDir, 'git'))).toBe(false)
@@ -262,19 +262,19 @@ describe('a copy and its record', () => {
   })
 
   it('applies at once while the human turned recording off, with nothing recorded at all', async () => {
-    const made = await harness({ install: installWith({ git: gitFiles() }), switches: { recordNothing: true } })
+    const made = await harness({ install: installWith({ git: gitFiles() }), switches: { off: ['recording'] } })
     made.link.landing = () => new Promise<Landing>(() => {})
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'git')).toBe('ready')
-    expect(made.pluginsManager.recordNothing()).toBe(true)
+    expect(made.modules.state('recording')).toBe('off')
     expect(made.link.records).toEqual([])
   })
 
   it('records again once recording is back on', async () => {
-    const made = await harness({ switches: { recordNothing: true } })
+    const made = await harness({ switches: { off: ['recording'] } })
     await made.pluginsManager.start()
     expect(made.link.records).toEqual([])
-    await made.pluginsManager.apply({ kind: 'recordNothing', on: false })
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'recording' })
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'gate' })
     expect(made.link.events('policy-job.state')).toContainEqual({ policyJob: 'gate', state: 'off' })
   })

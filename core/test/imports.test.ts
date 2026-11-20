@@ -58,6 +58,7 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'exec', under: 'core/backend/providers/exec/' },
   { part: 'flood-control', under: 'core/backend/flood-control/' },
   { part: 'heartbeat', under: 'core/backend/heartbeat/' },
+  { part: 'recording', under: 'core/backend/recording/' },
   { part: 'tooling', under: 'scripts/' },
 ]
 
@@ -65,9 +66,9 @@ export const parts: readonly { part: string, under: string }[] = [
 const pluginSource = /^core-plugins\/[^/]+\/src\//
 
 // What each part may import besides itself. The contract imports nothing but zod. lib, the SDK and the pages
-// only the contract, the backend's lib the contract and lib. The carrier the contract, the libs and flood control's
-// door, boot only the contract and the libs.
-// The plugins manager the carrier, boot, the runtime, the core modules and the heartbeat, each through its door. The runtime the
+// only the contract, the backend's lib the contract and lib. The carrier the contract, the libs and the doors of flood
+// control and recording, boot only the contract and the libs.
+// The plugins manager the carrier, boot, the runtime, the core modules, the heartbeat and recording, each through its door. The runtime the
 // carrier and boot through their doors (the runtime's types sit in its own door, so the plugins manager imports the runtime and not the other way). The
 // core modules: the holder reads the modules through their doors and each module the contract alone or with lib
 // (the build bounds their Node built-ins). The joins and tooling may import anything. Plugins import the
@@ -80,9 +81,9 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   'page:trusted': ['contract'],
   'page:workers': ['contract'],
   'backend-lib': ['contract', 'lib'],
-  carrier: ['contract', 'lib', 'backend-lib', 'flood-control'],
+  carrier: ['contract', 'lib', 'backend-lib', 'flood-control', 'recording'],
   boot: ['contract', 'lib', 'backend-lib'],
-  'plugins-manager': ['contract', 'lib', 'backend-lib', 'carrier', 'boot', 'runtime', 'modules', 'heartbeat'],
+  'plugins-manager': ['contract', 'lib', 'backend-lib', 'carrier', 'boot', 'runtime', 'modules', 'heartbeat', 'recording'],
   runtime: ['contract', 'lib', 'backend-lib', 'carrier', 'boot'],
   modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat'],
   gate: ['contract'],
@@ -93,6 +94,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   exec: ['contract', 'lib'],
   'flood-control': ['contract'],
   heartbeat: ['contract'],
+  recording: ['contract', 'lib'],
   plugin: ['contract', 'sdk'],
   join: ['*'],
   tooling: ['*'],
@@ -100,7 +102,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
 
 // The parts reached from outside only through their header.ts. The gate, the classifier and storage are in no part's
 // row but the joins', which build them, so nothing else may import them and they need no door
-export const doors = new Set(['carrier', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat'])
+export const doors = new Set(['carrier', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording'])
 
 // Files outside the arrows, each with its reason. The utility process's own bootstrap runs in its own process and not
 // in main: it is bundled apart into utility.js and runs a utility half through the SDK's runner, so it and the check

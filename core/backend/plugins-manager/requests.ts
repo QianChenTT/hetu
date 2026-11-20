@@ -239,7 +239,7 @@ export class Requests {
   // and it applies even when that record is lost, since the log it switches off is what can't write. The drain and the
   // record share the one wait. still says whether the request is still held once its record landed, for a Confirm
   private async landThenApply(change: Change, fields: Record<string, Field>, still: () => boolean = () => true): Promise<void> {
-    const stopping = change.kind === 'recordNothing' && change.on
+    const stopping = change.kind === 'plugin.off' && change.plugin === 'recording'
     const whole = this.host.recordMs ?? CONFIRM_RECORD_MS
     const wait = stopping ? whole / 2 : whole
     if (stopping) fields = { ...fields, unwritten: await this.host.drain(wait) }

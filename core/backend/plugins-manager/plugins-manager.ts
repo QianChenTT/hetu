@@ -25,6 +25,7 @@ import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capa
 import type { GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, Opening, PluginState, PolicyJobState, GrantsSnapshot } from '../../api/policy-jobs.ts'
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import { retried } from '../../lib/disk.ts'
+import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
 import { agentItems } from '../lib/agent-items.ts'
@@ -39,7 +40,7 @@ import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
 import type { Beating } from '../heartbeat/header.ts'
 import type { Runtime } from '../runtime/header.ts'
-import type { CarrierLink } from './header.ts'
+import type { CarrierLink, PluginsRecording } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
 
@@ -52,6 +53,8 @@ export type PluginsManagerOptions = {
   // packaged build does inside app.asar
   listDir?: string
   link: CarrierLink
+  // Recording, which the plugins manager calls only while the human has it on
+  recording: PluginsRecording
   runtime: Runtime
   // The core's own modules, which the plugins manager starts, hands each change and switches as the human does
   modules: CoreModules
@@ -270,6 +273,7 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
 // decides no grant
 export class PluginsManager implements Seam {
   private readonly link: CarrierLink
+  private readonly recording: PluginsRecording
   private readonly runtime: Runtime
   private readonly modules: CoreModules
   private readonly store: StateStore
@@ -330,6 +334,7 @@ export class PluginsManager implements Seam {
   constructor(options: PluginsManagerOptions) {
     const { booted } = options
     this.link = options.link
+    this.recording = options.recording
     this.runtime = options.runtime
     this.modules = options.modules
     this.store = booted.store
@@ -369,10 +374,10 @@ export class PluginsManager implements Seam {
         if (change.kind === 'agent.connect') this.connects.cancelled(change)
         return Promise.resolve()
       },
-      record: (event, fields, signal) => this.link.record(event, fields, signal),
+      record: (event, fields, signal) => this.record(event, fields, signal),
       confirmOff: () => this.state.switches.confirmOff,
-      drain: ms => this.link.drain(ms),
-      resume: () => this.link.resume(),
+      drain: ms => this.recording.drain(ms),
+      resume: () => this.recording.resume(),
       changed: () => this.refresh(),
       clock: () => this.clock(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
@@ -426,10 +431,6 @@ ${capabilityKey(change.capability)}`)
 
   limits(): HumanLimits {
     return this.state.switches.limits
-  }
-
-  recordNothing(): boolean {
-    return this.state.switches.recordNothing
   }
 
   // For the carrier, which refuses the door's call for a revoked label before the agent host sees it: the marks on the
@@ -582,7 +583,7 @@ ${capabilityKey(change.capability)}`)
       plugins,
       switches: {
         devMode: [...switches.devMode], execAnyCommand: [...switches.execAnyCommand], skipVerification: switches.skipVerification,
-        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff, recordNothing: switches.recordNothing,
+        allowUnsigned: [...switches.allowUnsigned], confirmOff: switches.confirmOff,
       },
       limits: {
         all: { ...switches.limits.all },
@@ -1014,7 +1015,7 @@ ${capabilityKey(change.capability)}`)
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
-      recordNothing: switches.recordNothing,
+      recordingOff: this.modules.state('recording') === 'off',
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
@@ -2023,9 +2024,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         return this.writeSwitches({ ...this.state.switches, skipVerification: change.on })
       case 'confirmOff':
         return this.writeSwitches({ ...this.state.switches, confirmOff: change.on })
-      // Step 14 writes the change's own record before recording stops and after it starts again
-      case 'recordNothing':
-        return this.writeSwitches({ ...this.state.switches, recordNothing: change.on })
       case 'allowUnsigned':
         return this.writeSwitches({ ...this.state.switches, allowUnsigned: toggled(this.state.switches.allowUnsigned, change.hash, change.on) })
       case 'limit.set': {
@@ -2590,11 +2588,12 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     return Math.min(value, MAX_TIMER_MS)
   }
 
-  // Nothing goes to the carrier while the human turned recording off. What waited on a record applies at once
-  private record(event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
-    if (this.state.switches.recordNothing) return Promise.resolve('muted')
+  // Nothing goes to recording while the human has it off. What waited on a record applies at once. A record recording
+  // threw on counts as one that did not land
+  private record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<'landed' | 'muted' | 'lost'> {
+    if (this.modules.state('recording') === 'off') return Promise.resolve('muted')
     try {
-      return Promise.resolve(this.link.record(event, fields)).catch(() => 'lost' as const)
+      return Promise.resolve(this.recording.record(event, fields, signal)).catch(() => 'lost' as const)
     } catch {
       return Promise.resolve('lost')
     }
@@ -2604,7 +2603,6 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // the change queue behind it. Past that the wait gives up and the record counts as lost: the lane takes it out if
   // it still waits, so the log never shows a change that didn't apply. One whose write was under way may land late
   private async landing(plugin: string, event: string, fields: Record<string, string | number | boolean | null>): Promise<'landed' | 'muted' | 'lost'> {
-    if (this.state.switches.recordNothing) return 'muted'
     const giveUp = new AbortController()
     let timer: ReturnType<typeof setTimeout> | null = null
     const due = new Promise<'lost'>(resolve => {
@@ -2615,7 +2613,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       timer.unref?.()
     })
     try {
-      return await Promise.race([Promise.resolve(this.link.record(event, fields, giveUp.signal)).catch(() => 'lost' as const), due])
+      return await Promise.race([this.record(event, fields, giveUp.signal), due])
     } catch {
       return 'lost'
     } finally {

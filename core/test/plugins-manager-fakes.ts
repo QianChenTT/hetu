@@ -19,7 +19,7 @@ import type { Exec } from '../backend/providers/exec/exec.ts'
 import type { History } from '../backend/providers/history/history.ts'
 import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
-import type { CarrierLink, Landing } from '../backend/plugins-manager/header.ts'
+import type { CarrierLink, Landing, PluginsRecording } from '../backend/plugins-manager/header.ts'
 import type { Runtime, UtilityStart, WorkerStart } from '../backend/runtime/header.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
@@ -41,9 +41,9 @@ export async function until(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-// What the plugins manager needs from the carrier, around a real carrier for the ways in. send, record, changed, stopping and
-// limit are the join's to build, faked here
-export class FakeLink implements CarrierLink {
+// What the plugins manager needs from the carrier and from recording, around a real carrier for the ways in. send,
+// changed, stopping and limit are the join's to build and record, drain and resume recording's, faked here
+export class FakeLink implements CarrierLink, PluginsRecording {
   carrier: Carrier | null = null
   readonly records: { event: string, fields: Record<string, Field> }[] = []
   readonly sent: { caller: Caller, message: Message }[] = []
@@ -430,7 +430,7 @@ export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plug
 export const coreInstall = (): Record<string, Listing> => ({})
 
 // The core modules' instances a test hands in place of the real ones, and the OS's bin for the luoshu
-export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'heartbeat' | 'trash'>>
+export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'heartbeat' | 'trash' | 'off'>>
 
 // The core modules as wireCore makes them, each the real one unless a test hands its own, the luoshu publishing through
 // the carrier the link points at and flood control counting by limit
@@ -445,7 +445,7 @@ export function coreModules(
 // A real carrier over the plugins manager and the core modules, built from the options wireCore builds it from, with no
 // core record log
 export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Carrier {
-  const carrier = new Carrier(carrierOptions(pluginsManager, modules, { log: null }))
+  const carrier = new Carrier(carrierOptions(pluginsManager, modules, { recording: null }))
   link.carrier?.close()
   link.carrier = carrier
   return carrier
@@ -516,11 +516,13 @@ export async function harness(options: {
   // Flood control counts by the human's limits, which are the plugins manager's once it exists, as wireCore has it
   const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
   const limits = new Limits(() => human.limits())
-  const modules = coreModules({ dataDir, installDir }, link, { ...options.modules, gate }, (plugin, name) => limits.of(plugin, name))
+  const modules = coreModules({ dataDir, installDir }, link, { ...options.modules, gate, off: loaded.state.switches.off }, (plugin, name) => limits.of(plugin, name))
   const pluginsManager = new PluginsManager({
     booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir },
     installDir,
     link,
+    // The link stands in for recording, so a test sees each record the plugins manager makes and decides how it lands
+    recording: link,
     runtime,
     modules,
     // A request counts at once unless a test is about the delay

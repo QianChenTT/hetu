@@ -380,7 +380,6 @@ export type SecurityList = {
     skipVerification: boolean
     allowUnsigned: string[]
     confirmOff: boolean
-    recordNothing: boolean
   }
   // The values the human set, for all plugins and for each one. A constant not named runs at the fixed value
   limits: { all: Partial<Record<LimitName, number>>, plugins: Record<string, Partial<Record<LimitName, number>>> }
@@ -401,7 +400,8 @@ export type CoreStatus = {
   devMode: string[]
   allowUnsigned: number
   skipVerification: boolean
-  recordNothing: boolean
+  // The human has recording off
+  recordingOff: boolean
   logWrites: boolean
   luoshuPicked: boolean
   // The in-page core plugins that are ready, which the editor window applies: hidden-marks

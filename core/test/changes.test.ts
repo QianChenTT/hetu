@@ -27,7 +27,6 @@ const everyKind = [
   { kind: 'confirmOff', on: true },
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
-  { kind: 'recordNothing', on: true },
   { kind: 'agent.revoke', agent: 'client#1' },
 ]
 
@@ -37,7 +36,7 @@ describe('the change kinds', () => {
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.pick', 'devMode', 'exec.anyCommand', 'skipVerification',
-      'confirmOff', 'recordNothing', 'allowUnsigned', 'limit.set', 'agent.revoke',
+      'confirmOff', 'allowUnsigned', 'limit.set', 'agent.revoke',
     ])
   })
 
@@ -125,7 +124,7 @@ describe('what each kind holds', () => {
   })
 
   it('refuses a plugin on a switch that holds for everything', () => {
-    expect(change.safeParse({ kind: 'recordNothing', on: true, plugin: 'search' }).success).toBe(false)
+    expect(change.safeParse({ kind: 'recordNothing', on: true }).success).toBe(false)
   })
 
   it('takes an unsigned build only by its lowercase content hash', () => {
@@ -201,7 +200,7 @@ describe('whether a change widens', () => {
     ['the hash checks skipped', { kind: 'skipVerification', on: true }],
     ['an unsigned build trusted', { kind: 'allowUnsigned', hash: HASH, on: true }],
     ['the Confirm switched off', { kind: 'confirmOff', on: true }],
-    ['recording stopped', { kind: 'recordNothing', on: true }],
+    ['recording stopped', { kind: 'plugin.off', plugin: 'recording' }],
     ['a limit raised', { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' }],
     // A lower value can starve hetu's own controls or its audit, which the core can't tell apart from a safe one
     ['a limit lowered', { kind: 'limit.set', constant: 'logFailMs', value: 1, plugin: null }],
@@ -221,7 +220,7 @@ describe('whether a change widens', () => {
     ['the hash checks back', { kind: 'skipVerification', on: false }],
     ['an unsigned build no longer trusted', { kind: 'allowUnsigned', hash: HASH, on: false }],
     ['the Confirm back', { kind: 'confirmOff', on: false }],
-    ['recording again', { kind: 'recordNothing', on: false }],
+    ['recording again', { kind: 'plugin.on', plugin: 'recording' }],
     ['an agent revoked', { kind: 'agent.revoke', agent: 'client#1' }],
   ])('narrows with %s', (_name, one) => {
     expect(effect(one)).toBe('narrows')

@@ -60,7 +60,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     luoshu.close()
     expect(code(reply)).toBe('failed')
     expect(await readFile(path.join(folder, 'taken.md'), 'utf8')).toBe('OWN')
-    await parts.carrier.flush()
+    await parts.recording.flush()
     expect(parts.log.events('audit.call').map(record => record.fields)).toMatchObject([{ action: 'luoshu.move', code: 'failed' }])
     // The carrier's coalesced records are written as it closes
     parts.carrier.close()

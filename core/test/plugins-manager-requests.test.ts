@@ -201,13 +201,13 @@ describe('typing to prove attention', () => {
     expect(made.pluginsManager.policyJob('gate')).toBe('off')
   })
 
-  it('confirms recording off only with log typed', async () => {
+  it('confirms recording off only with its id typed', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     expect(await code(made.pluginsManager.confirm(id, { typed: 'gate' }))).toBe('invalid')
-    await made.pluginsManager.confirm(id, { typed: 'log' })
-    expect(made.pluginsManager.recordNothing()).toBe(true)
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
   })
 })
 
@@ -230,7 +230,7 @@ describe('confirmOff', () => {
     const made = await harness({ switches: { confirmOff: true } })
     await made.pluginsManager.start()
     held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted))
-    held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, trusted))
+    held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, trusted))
     expect(made.pluginsManager.policyJob('gate')).toBe('on')
   })
 
@@ -328,12 +328,12 @@ describe('recording off and on', () => {
     const made = await harness()
     await made.pluginsManager.start()
     made.link.waiting = 2
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
-    await made.pluginsManager.confirm(id, { typed: 'log' })
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
     const at = made.link.timeline.indexOf('drain')
     expect(at).toBeGreaterThan(-1)
     expect(made.link.timeline.indexOf('record security.confirm')).toBeGreaterThan(at)
-    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'recordNothing', unwritten: 2 }])
+    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'plugin.off', target: 'recording', unwritten: 2 }])
   })
 
   it('drains nothing for any other change', async () => {
@@ -345,14 +345,14 @@ describe('recording off and on', () => {
   })
 
   it('switches recording back on before its record, so that record is the first one written again', async () => {
-    const made = await harness({ switches: { recordNothing: true } })
+    const made = await harness({ switches: { off: ['recording'] } })
     await made.pluginsManager.start()
     let recording: boolean | null = null
     made.link.landing = event => {
-      if (event === 'security.applied') recording = !made.pluginsManager.recordNothing()
+      if (event === 'security.applied') recording = made.modules.state('recording') !== 'off'
       return 'landed'
     }
-    expect(await made.pluginsManager.request({ kind: 'recordNothing', on: false }, editor)).toEqual({ applied: true })
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'recording' }, editor)).toEqual({ applied: true })
     expect(recording).toBe(true)
     // Only recording going off drains
     expect(made.link.timeline).not.toContain('drain')
@@ -444,9 +444,9 @@ describe('requests the core raises itself', () => {
 describe('the wiring', () => {
   it('hands the carrier the plugins manager\'s asks unless a test names others', async () => {
     const made = await harness()
-    expect(carrierOptions(made.pluginsManager, made.modules, { log: null }).asks).toBe(made.pluginsManager.asks)
+    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null }).asks).toBe(made.pluginsManager.asks)
     const other = { raise: () => 'req-1' }
-    expect(carrierOptions(made.pluginsManager, made.modules, { log: null, asks: other }).asks).toBe(other)
+    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null, asks: other }).asks).toBe(other)
   })
 })
 
@@ -491,7 +491,7 @@ describe('the core actions the plugins manager serves', () => {
       id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', agent: null,
     }])
     expect(list.switches).toEqual({
-      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false,
+      devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false,
     })
     expect(list.limits).toEqual({ all: {}, plugins: {} })
     expect(list.luoshu).toBe(null)
@@ -673,18 +673,32 @@ describe('stopping recording with the log down', () => {
   it('applies though its own record was lost, since the log is what it switches off', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     made.link.landing = () => 'lost'
-    await made.pluginsManager.confirm(id, { typed: 'log' })
-    expect(made.pluginsManager.recordNothing()).toBe(true)
+    await made.pluginsManager.confirm(id, { typed: 'recording' })
+    expect(made.modules.state('recording')).toBe('off')
   })
 
   it('lets the audit writer go again when the switch can\u2019t be written', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    const id = held(await made.pluginsManager.request({ kind: 'recordNothing', on: true }, editor))
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'recording' }, editor))
     made.store.writeSwitches = async () => { throw new Error('read-only') }
-    expect(await code(made.pluginsManager.confirm(id, { typed: 'log' }))).toBe('failed')
+    expect(await code(made.pluginsManager.confirm(id, { typed: 'recording' }))).toBe('failed')
     expect(made.link.timeline.slice(-2)).toEqual(expect.arrayContaining(['resume']))
+  })
+})
+
+// A record recording throws on counts as one that didn't land, so a change that waits on it applies nothing
+describe('a record recording throws on', () => {
+  const call = (caller: Caller, action: string) => ({ callId: 'c1', caller, action, args: undefined, deadline: Date.now() + 30_000 })
+
+  it('fails the Confirm and applies nothing', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    made.link.landing = () => { throw new Error('broken') }
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).switches.skipVerification).toBe(false)
   })
 })

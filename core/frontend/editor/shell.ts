@@ -14,7 +14,7 @@ export function bannerLines(status: CoreStatus): string[] {
   if (status.devMode.length > 0) lines.push(`dev mode: ${status.devMode.join(', ')}`)
   if (status.allowUnsigned > 0) lines.push(`unsigned builds allowed: ${status.allowUnsigned}`)
   if (status.skipVerification) lines.push('verification skipped')
-  if (status.recordNothing) lines.push('recording off')
+  if (status.recordingOff) lines.push('recording off')
   if (!status.logWrites) lines.push("the log can't write")
   if (!status.luoshuPicked) lines.push('pick a luoshu folder')
   return lines

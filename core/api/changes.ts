@@ -22,7 +22,7 @@ const pluginKinds = [
 ] as const
 const grantKinds = ['grant.widen', 'grant.narrow', 'item.on', 'item.off'] as const
 const perPluginSwitches = ['devMode', 'exec.anyCommand'] as const
-const switches = ['skipVerification', 'confirmOff', 'recordNothing'] as const
+const switches = ['skipVerification', 'confirmOff'] as const
 
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
@@ -164,7 +164,6 @@ export function changeEffect(change: Change): ChangeEffect {
     case 'exec.anyCommand':
     case 'skipVerification':
     case 'confirmOff':
-    case 'recordNothing':
     case 'allowUnsigned':
       return change.on ? 'widens' : 'narrows'
     case 'limit.set':
@@ -191,11 +190,10 @@ export function withdrawnWith(change: Change): readonly string[] {
   return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
 }
 
-// What the human types to prove attention before Confirm arms: a security control's id to switch it off and log to
-// stop recording, the moments protection goes away. Every other Confirm has the input delay alone, so typing doesn't
-// become a habit
+// What the human types to prove attention before Confirm arms: a security control's id to switch it off, recording's
+// included, the moments protection goes away. Every other Confirm has the input delay alone, so typing doesn't become a
+// habit
 export function mustType(change: Change): string | null {
   if (change.kind === 'plugin.off' && isSecurityControl(change.plugin)) return change.plugin
-  if (change.kind === 'recordNothing' && change.on) return 'log'
   return null
 }

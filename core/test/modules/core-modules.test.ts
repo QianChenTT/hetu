@@ -308,7 +308,7 @@ describe('the core modules', () => {
     await modules.start(['history'], handed)
     expect(changes).toEqual([
       'gate started', 'grant-risk-classifier started', 'storage started', 'luoshu started', 'exec failed start-failed',
-      'flood-control started', 'heartbeat started',
+      'flood-control started', 'heartbeat started', 'recording started',
     ])
   })
 

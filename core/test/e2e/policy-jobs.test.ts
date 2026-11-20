@@ -77,7 +77,7 @@ describe('the gate off by the human', () => {
 
   // Recording off writes no core.ready, so the banner says when the start is over
   it('lets them through unrecorded once the human turned recording off too', async () => {
-    const dataDir = await data({ off: ['gate'], recordNothing: true })
+    const dataDir = await data({ off: ['gate', 'recording'] })
     const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
     const page = await editorPage(app)
     await banner(page, 'gate: off')

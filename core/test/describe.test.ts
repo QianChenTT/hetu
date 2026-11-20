@@ -23,7 +23,6 @@ const everyKind = [
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'skipVerification', on: false },
   { kind: 'confirmOff', on: true },
-  { kind: 'recordNothing', on: true },
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
   { kind: 'agent.revoke', agent: 'client#1' },
@@ -120,15 +119,15 @@ describe('typing to prove attention', () => {
     expect(mustType(one({ kind: 'plugin.off', plugin: 'flood-control' }))).toBe('flood-control')
   })
 
-  it('asks for log to stop recording', () => {
-    expect(mustType(one({ kind: 'recordNothing', on: true }))).toBe('log')
+  it('asks for recording to stop recording', () => {
+    expect(mustType(one({ kind: 'plugin.off', plugin: 'recording' }))).toBe('recording')
   })
 
   it('asks for nothing anywhere else', () => {
     const asked = everyKind.filter(input => mustType(one(input)) !== null).map(input => input.kind)
-    expect(asked).toEqual(['plugin.off', 'recordNothing'])
+    expect(asked).toEqual(['plugin.off'])
     expect(mustType(one({ kind: 'plugin.off', plugin: 'search' }))).toBeNull()
-    expect(mustType(one({ kind: 'recordNothing', on: false }))).toBeNull()
+    expect(mustType(one({ kind: 'plugin.on', plugin: 'recording' }))).toBeNull()
   })
 })
 

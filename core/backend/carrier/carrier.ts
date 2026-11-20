@@ -18,12 +18,11 @@ import {
   type Scope, type PolicyJobState,
 } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
-import { AuditWriter } from './audit.ts'
 import { Bus, type Paths } from './bus.ts'
 import { Limits } from './limits.ts'
-import { AuditQueue, Coalesced, CoreRecordLane, type Join } from './records.ts'
-import type { CarrierOptions, Landing, PluginInfo, Port, Served } from './header.ts'
+import type { CarrierOptions, PluginInfo, Port, Served } from './header.ts'
 import type { Admitted, Charged, Counted, Held } from '../flood-control/header.ts'
+import type { CallRecord, Join, Recording } from '../recording/header.ts'
 
 type Send = (message: unknown) => void
 
@@ -224,12 +223,8 @@ export class Carrier {
   private readonly now: () => number
   private readonly clock: () => number
   private readonly limits: Limits
-  private readonly lane: CoreRecordLane
-  private readonly coalesced: Coalesced
-  private readonly queue: AuditQueue
-  // The core's own writer of the audit queue, none with no log
-  private readonly writer: AuditWriter | null
-  private readonly logReads: Served | undefined
+  // Recording, none with no log
+  private readonly recording: Recording | null
   private readonly ways = new Map<string, Way>()
   private readonly ports = new WeakSet<object>()
   // The gate's time filterReadable took in the current second for each caller of a live call, by principal
@@ -241,57 +236,14 @@ export class Carrier {
   private closed = false
   // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   private shutting = false
-  // The once a second look, and the log's health it last saw
-  private readonly looking: ReturnType<typeof setInterval>
-  private logHealthy: boolean | undefined
-  private toldLog = false
-  // Drained for recording to go off: the writer writes nothing more until the switch applies or resume is called
-  private paused = false
 
   constructor(options: CarrierOptions) {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())
     this.limits = new Limits(() => options.pluginsManager.limits())
-    this.lane = new CoreRecordLane(options.log, {
-      bound: () => this.limits.of(null, 'floorBacklog'),
-      muted: () => this.muted(),
-      retryMs: options.coreRecordRetryMs ?? 5000,
-      // Windows read core.status again, which says whether the log takes appends
-      noticed: () => {
-        if (!this.closed && !this.shutting) this.bus.emit('core.status')
-      },
-    })
-    this.coalesced = new Coalesced(this.lane)
-    this.queue = new AuditQueue(() => this.limits.of(null, 'auditQueue'), this.clock)
-    const log = options.log
-    // A batch the log refused while healthy is let go and counted, one record a batch
-    // Once the human turned recording off, what the queue still holds is let go: the switch's own record counted it
-    // and is the last record written. Between the drain and the switch nothing is written, so no call record
-    // lands after the switch's own
-    const source = {
-      next: (max: number) => {
-        if (this.muted()) {
-          this.queue.clear()
-          this.paused = false
-          return []
-        }
-        return this.paused ? [] : this.queue.next(max)
-      },
-      ack: (seq: number) => this.queue.ack(seq),
-    }
-    this.writer = log === null ? null : new AuditWriter(source, log, {
-      everyMs: options.auditEveryMs ?? 100,
-      refused: count => {
-        void this.lane.write('audit.dropped', { why: 'refused', count })
-      },
-    })
-    this.writer?.start()
-    this.logReads = log === null ? undefined : async call => (call.action === 'log.segments' ? log.history() : log.verify())
+    this.recording = options.recording
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
-    this.logHealthy = options.log?.healthy
-    this.looking = setInterval(() => this.look(), 1000)
-    this.looking.unref?.()
     this.bus = new Bus({
       state: () => this.busState(),
       canList: (caller, path) => this.listable(caller, path),
@@ -300,11 +252,11 @@ export class Carrier {
       // Coalesced, since a publisher's pace or a subscriber's own can make them
       // Shutdown takes the gate down on its way out, which is no failure, so the bus records nothing then
       dropped: (caller, why) => {
-        if (!this.shutting) this.coalesced.hit('events.dropped', { ...whoOf(caller), why })
+        if (!this.shutting) this.coalesced('events.dropped', { ...whoOf(caller), why })
       },
       // One record each, since a change of the gate or the grants makes them
       changed: (caller, change, topics) => {
-        if (!this.shutting) this.lane.write(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) })
+        if (!this.shutting) this.recorded(recording => recording.coreRecord(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }))
       },
     })
   }
@@ -323,15 +275,9 @@ export class Carrier {
     return this.shutting ? 'stopped' : code
   }
 
-  // A core record from the core: boot, the plugins manager and the carrier itself
-  coreRecord(event: string, fields: Record<string, Field> = {}): void {
-    this.lane.write(event, fields)
-  }
-
-  // A core record a plugin can make happen again and again, coalesced with a count like the carrier's own, such as a
-  // frame of its that navigated
-  coreRecordCoalesced(event: string, fields: Record<string, Field>): void {
-    if (!this.closed) this.coalesced.hit(event, fields)
+  // Recording saw the log's health change: windows read core.status again, which says whether the log takes appends
+  status(): void {
+    if (!this.closed && !this.shutting) this.bus.emit('core.status')
   }
 
   // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
@@ -346,31 +292,6 @@ export class Carrier {
   publishCore(owner: string, topic: string, path: string): void {
     if (this.closed || pathProblem(path) !== null || dotted(path)) return
     this.bus.publish(`${owner}.${topic}`, path)
-  }
-
-  // Writes what the audit queue holds, then the core record backlog: for a log that came back and for Quit, before close and
-  // after it. Never throws
-  async flush(): Promise<void> {
-    await this.writer?.flush()
-    await this.lane.flush()
-  }
-
-  // Writes what the audit queue and the core record backlog hold, waiting at most ms, and gives back how many records still
-  // wait. Record nothing's switch drains first, so its own record is the last one written and counts what didn't land
-  async drain(ms: number): Promise<number> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const deadline = new Promise<void>(resolve => {
-      timer = setTimeout(resolve, ms)
-    })
-    await Promise.race([this.flush(), deadline])
-    clearTimeout(timer)
-    this.paused = true
-    return this.queue.size + this.lane.waiting
-  }
-
-  // Recording didn't go off after a drain, so the writer goes on
-  resume(): void {
-    this.paused = false
   }
 
   // For the plugins manager, after it changed a policy job state, a plugin state or the grants snapshot. Once the gate's state or the
@@ -470,27 +391,18 @@ export class Carrier {
     way.send(message)
   }
 
-  // For the plugins manager: a core record it can wait on, landed once on disk, muted while recording is off or lost. A record
-  // still waiting when signal aborts comes out and settles lost
-  record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing> {
-    return this.lane.write(event, fields, signal)
-  }
-
   // For the plugins manager: a limit as the carrier enforces it for one plugin, so the plugins manager's start and stop
   // deadlines follow the same values
   limit(plugin: string, name: LimitName): number {
     return this.limits.of(plugin, name)
   }
 
-  // The records of the calls it stops stay queued for the flush after close. What the log can't take by then is lost
-  // with the run and a count of it couldn't land either
+  // The records of the calls it stops stay queued for the flush after close, then recording takes nothing more in. What
+  // the log can't take by then is lost with the run and a count of it couldn't land either
   close(): void {
     this.closed = true
-    clearInterval(this.looking)
-    this.writer?.stop()
     for (const way of [...this.ways.values()]) this.end(way.caller)
-    this.coalesced.close()
-    this.lane.close()
+    this.recorded(recording => recording.close())
   }
 
   private bindable(caller: Caller): Caller {
@@ -870,7 +782,7 @@ export class Carrier {
     if (gate === 'on') return 'decide'
     if (gate === 'starting') return 'starting'
     if (gate !== 'off' || agent !== undefined) return this.down('policy-down')
-    if (this.muted() || !this.logFailing()) return 'pass'
+    if (!this.logFailing()) return 'pass'
     return this.down('policy-down')
   }
 
@@ -954,7 +866,10 @@ export class Carrier {
     if (pending.action === 'core.self') return this.finish(pending, { ok: true, result: pending.caller })
     if (pending.action === 'core.filterReadable') return this.finish(pending, this.filterReadable(pending.way, args))
     if (pending.action === 'editor.reach') return this.finish(pending, this.reach(args))
-    if (pending.action === 'log.segments' || pending.action === 'log.verify') return this.serve(pending, this.logReads, args)
+    if (pending.action === 'log.segments' || pending.action === 'log.verify') {
+      const { recording } = this
+      return this.serve(pending, recording === null ? undefined : call => recording.serve(call), args)
+    }
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. Its reads answer
     const { caller } = pending
@@ -964,7 +879,7 @@ export class Carrier {
     // Coalesced by reason with the counts added up, so mcp-http-handler calling at its whole rate still leaves two records a reason
     // a second
     if (pending.action === 'core.agentRefused') {
-      this.coalesced.hit('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
+      this.coalesced('http.refused', { reason: field(args, 'reason') as string }, undefined, field(args, 'count') as number)
       return this.finish(pending, { ok: true, result: null })
     }
     return this.serve(pending, this.options.core, args)
@@ -1110,7 +1025,7 @@ export class Carrier {
       pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
       if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
       // Counted per half, since the topics are the plugin's to pick
-      this.coalesced.hit('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
+      this.coalesced('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
     }
     this.finish(pending, { ok: true, result: { standing } })
   }
@@ -1384,7 +1299,7 @@ export class Carrier {
     const space = spaceOf(pending.caller)
     const key = field(args, 'key')
     if (space === null || typeof key !== 'string') return
-    this.coalesced.hit('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
+    this.coalesced('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
   }
 
   // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
@@ -1517,39 +1432,31 @@ export class Carrier {
     }
   }
 
-  // One audit record per call, which the writer takes to the log. Nothing while recording is off or with no log. One
-  // past the queue's bound is dropped and counted
-  private recordCall(record: Parameters<AuditQueue['push']>[0], coalesce: boolean): void {
-    if (this.writer === null || this.muted()) return
-    if (!this.queue.push(record, coalesce, this.now())) this.coalesced.hit('audit.dropped', { why: 'full' })
-    this.checkLog()
+  // 11 record: one audit record per call into recording's queue, never blocking the reply. A throw loses that record
+  private recordCall(record: CallRecord, coalesce: boolean): void {
+    this.recorded(recording => recording.call(record, coalesce))
   }
 
-  // Tells the plugins manager that the log failed, as records queue and once a second, whatever the gate's state, until the
-  // plugins manager takes it
-  private checkLog(): void {
-    if (this.toldLog || this.muted() || !this.logFailing()) return
+  // Recording took a record or let it go. A throw is that record lost and hetu runs on
+  private recorded(take: (recording: Recording) => void): void {
+    if (this.recording === null) return
     try {
-      if (this.options.logFailed?.() !== false) this.toldLog = true
+      take(this.recording)
     } catch {}
   }
 
-  // Once a second, so windows hear when the log's health changed through an audit write, which the core record lane doesn't see
-  private look(): void {
-    if (this.closed || this.shutting) return
-    this.checkLog()
-    const healthy = this.options.log?.healthy
-    if (healthy === this.logHealthy) return
-    this.logHealthy = healthy
-    this.bus.emit('core.status')
+  private coalesced(event: string, fields: Record<string, Field>, keyed?: Parameters<Recording['coalesced']>[2], weight?: number): void {
+    this.recorded(recording => recording.coalesced(event, fields, keyed, weight))
   }
 
-  // The core's log has failed once the oldest record the audit queue holds has waited logFailMs to be written, from a
-  // log that refuses appends or a writer that stopped. Timed from when the record was queued, so a long call doesn't
-  // count. The plugins manager then quits hetu to start it again, and meanwhile the gate off refuses a call with power
+  // The core's log failing, as recording reads it, for the gate off to refuse calls with power until fail-stop. One it
+  // can't say counts as failing
   private logFailing(): boolean {
-    const oldest = this.queue.oldest()
-    return oldest !== null && this.clock() - oldest >= this.limits.of(null, 'logFailMs')
+    try {
+      return this.recording?.failing() === true
+    } catch {
+      return true
+    }
   }
 
   private callOf(pending: Pending, args: unknown): Call {
@@ -1562,7 +1469,7 @@ export class Carrier {
   }
 
   private fault(plugin: string, step: string): void {
-    this.coalesced.hit('fault', { plugin, step })
+    this.coalesced('fault', { plugin, step })
   }
 
   // plugin is whose code threw, so the text can go to that plugin's own debug and not the caller's
@@ -1614,14 +1521,6 @@ export class Carrier {
   private armed(caller: Caller): boolean {
     try {
       return this.options.armed?.(caller) === true
-    } catch {
-      return false
-    }
-  }
-
-  private muted(): boolean {
-    try {
-      return this.options.pluginsManager.recordNothing() === true
     } catch {
       return false
     }

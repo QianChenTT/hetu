@@ -16,8 +16,8 @@ import {
 const closing = [...coreModuleIds].reverse()
 
 // The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
-// human's way back in needs them: flood control
-const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control'])
+// human's way back in needs them: flood control and recording, which writes the last records
+const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
@@ -54,6 +54,7 @@ export class CoreModules implements Holder {
   private halted = false
 
   constructor(options: CoreModulesOptions) {
+    this.off = new Set(options.off ?? [])
     this.dataDir = options.dataDir
     this.installDir = options.installDir
     this.trash = options.trash

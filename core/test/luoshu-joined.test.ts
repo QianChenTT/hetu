@@ -55,12 +55,12 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   const runtime = new FakeRuntime()
   // The gate the core modules hold, the shipping one unless holder is given
   const gate = options.holder ?? createGate()
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
+  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
@@ -81,7 +81,7 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
       waiting.delete(reply.id)
     })
   })
-  return { pluginsManager, carrier, runtime, dataDir, base, ask, receive }
+  return { pluginsManager, carrier, recording, runtime, dataDir, base, ask, receive }
 }
 
 // A plugin's port to the editor window's drawer, each reply read once the drawer answered
@@ -434,7 +434,7 @@ describe('indexing a vault through the carrier with the log on', () => {
         await writeFile(path.join(dir, `note ${i}.md`), line.repeat(93))
       }
     }
-    const { ask, carrier, dataDir } = await joined(folder)
+    const { recording, ask, carrier, dataDir } = await joined(folder)
 
     const started = performance.now()
     const listed: string[] = []
@@ -466,7 +466,7 @@ describe('indexing a vault through the carrier with the log on', () => {
     console.log(`budget: ${md.length} notes read in ${Math.round(totalMs)} ms, the save answered in ${Math.round(saveMs)} ms`)
 
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     const written = await events(dataDir)
     expect(written.some(record => record.event === 'audit.call' && record.action === 'luoshu.write' && record.code === null)).toBe(true)
     expect(written.filter(record => record.event === 'audit.call' && record.action === 'luoshu.read').length).toBeGreaterThan(0)

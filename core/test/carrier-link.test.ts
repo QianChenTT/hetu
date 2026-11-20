@@ -52,10 +52,10 @@ describe('the carrier as the plugins manager\'s link', () => {
 
   it('gives record the core record lane\'s landing', async () => {
     const log = new FakeLog()
-    const { carrier, pluginsManager } = harness({ log })
-    expect(await carrier.record('plugin.copied', { plugin: 'git' })).toBe('landed')
+    const { recording, carrier, pluginsManager } = harness({ log })
+    expect(await recording.record('plugin.copied', { plugin: 'git' })).toBe('landed')
     pluginsManager.nothing = true
-    expect(await carrier.record('plugin.copied', { plugin: 'mcp' })).toBe('muted')
+    expect(await recording.record('plugin.copied', { plugin: 'mcp' })).toBe('muted')
     expect(log.records.map(record => [record.event, record.fields.plugin])).toEqual([['plugin.copied', 'git']])
   })
 

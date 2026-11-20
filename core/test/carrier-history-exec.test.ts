@@ -1,9 +1,10 @@
+import type { Recording as RecordingModule } from '../backend/recording/header.ts'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, AuditRecord, Call, Prepared, Provider } from '../api/policy-jobs.ts'
-import { auditFields } from '../backend/carrier/audit.ts'
+import { auditFields } from '../backend/recording/audit.ts'
 import type { Carrier } from '../backend/carrier/carrier.ts'
-import { cleanup, code, editor, type FakeLog, harness, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, type FakeLog, harness, sha256, trusted, windowWay, worker } from './carrier-fakes.ts'
 
 afterEach(cleanup)
 
@@ -42,8 +43,8 @@ function started() {
   return { ...made, history, exec, asked }
 }
 
-async function written(carrier: Carrier, log: FakeLog): Promise<Record<string, unknown>[]> {
-  await carrier.flush()
+async function written(recording: RecordingModule, log: FakeLog): Promise<Record<string, unknown>[]> {
+  await recording.flush()
   return log.events('audit.call').map(record => record.fields)
 }
 
@@ -95,13 +96,13 @@ describe('a history call through the carrier', () => {
   })
 
   it('records a commit once with its paths and access, and reads coalesced', async () => {
-    const { carrier, connect, gate, log } = started()
+    const { recording, carrier, connect, gate, log } = started()
     gate.grants.git = [{ type: 'history', access: 'commit', paths: ['**'] }, { type: 'history', access: 'read', paths: ['**'] }]
     const git = connect(worker('git'))
     await git.ask('history.commit', { paths: ['notes/a.md'], message: 'a secret message' })
     await git.ask('history.log', { path: 'notes/a.md' })
     await git.ask('history.log', { path: 'notes/a.md' })
-    const records = await written(carrier, log)
+    const records = await written(recording, log)
     expect(records).toMatchObject([
       { action: 'history.commit', paths: '["notes/a.md"]', pathCount: 1, access: 'commit', code: null, count: 1 },
       { action: 'history.log', access: 'read', code: null, count: 2 },
@@ -151,24 +152,24 @@ describe('an exec call through the carrier', () => {
   })
 
   it('hands the call to the provider with the gate off, which keeps its own check, and records it with gate off', async () => {
-    const { carrier, connect, pluginsManager, exec, asked, log } = started()
+    const { recording, carrier, connect, pluginsManager, exec, asked, log } = started()
     pluginsManager.policyJobs.gate = 'off'
     const reply = await connect(worker('git')).ask('exec.run', { command: ['curl', 'https://example.com'] })
     expect(reply.ok).toBe(true)
     expect(asked).toEqual([])
     expect(exec.performed[0].prepared.scope.command).toEqual(['curl', 'https://example.com'])
-    expect(await written(carrier, log)).toMatchObject([{ action: 'exec.run', gate: 'off', command: '["curl","https://example.com"]', commandArgs: 2 }])
+    expect(await written(recording, log)).toMatchObject([{ action: 'exec.run', gate: 'off', command: '["curl","https://example.com"]', commandArgs: 2 }])
   })
 
   it('records every run on its own with the command, a refused one included, and never its output', async () => {
-    const { carrier, connect, gate, exec, log } = started()
+    const { recording, carrier, connect, gate, exec, log } = started()
     gate.grants.git = [{ type: 'exec', commands: [['git', 'status']], env: [] }]
     exec.perform = async () => ({ code: 0, signal: null, stdout: 'secret output', stderr: '', truncated: false })
     const git = connect(worker('git'))
     await git.ask('exec.run', { command: ['git', 'status'] })
     await git.ask('exec.run', { command: ['git', 'status'] })
     await git.ask('exec.run', { command: ['git', 'push'] })
-    const records = await written(carrier, log)
+    const records = await written(recording, log)
     expect(records).toMatchObject([
       { action: 'exec.run', command: '["git","status"]', commandArgs: 2, code: null, count: 1 },
       { action: 'exec.run', command: '["git","status"]', commandArgs: 2, code: null, count: 1 },
@@ -184,17 +185,17 @@ describe('the audit fields of a command and an access', () => {
     ({ seq: 1, at: Date.UTC(2026, 10, 9), caller: alpha, root: alpha, action: 'exec.run', scope, code: null, ms: 1, gate: 'on', count: 1 })
 
   it('writes the command as a JSON list that reads back whole, with how many arguments there were', () => {
-    const fields = auditFields(record({ command: ['git', 'commit', '-m', 'two words'] }))
+    const fields = auditFields(record({ command: ['git', 'commit', '-m', 'two words'] }), sha256)
     expect(JSON.parse(fields.command as string)).toEqual(['git', 'commit', '-m', 'two words'])
     expect(fields.commandArgs).toBe(4)
-    expect(auditFields(record({ paths: ['a.md'], access: 'read' }))).toMatchObject({ access: 'read', paths: '["a.md"]' })
-    expect('command' in auditFields(record({ paths: ['a.md'] }))).toBe(false)
-    expect('access' in auditFields(record({ paths: ['a.md'] }))).toBe(false)
+    expect(auditFields(record({ paths: ['a.md'], access: 'read' }), sha256)).toMatchObject({ access: 'read', paths: '["a.md"]' })
+    expect('command' in auditFields(record({ paths: ['a.md'] }), sha256)).toBe(false)
+    expect('access' in auditFields(record({ paths: ['a.md'] }), sha256)).toBe(false)
   })
 
   it('cuts a long command to the arguments that fit the log\'s value cap', () => {
     const command = Array.from({ length: 64 }, (_, i) => `${i}`.padEnd(500, 'x'))
-    const fields = auditFields(record({ command }))
+    const fields = auditFields(record({ command }), sha256)
     expect((fields.command as string).length).toBeLessThanOrEqual(4096)
     expect((JSON.parse(fields.command as string) as string[]).length).toBeLessThan(64)
     expect(fields.commandArgs).toBe(64)
@@ -203,7 +204,7 @@ describe('the audit fields of a command and an access', () => {
   // Padding at the front must not push the argument that matters out of the record
   it('keeps the program and the last arguments when it cuts, and a hash of the whole command to match it against a manifest', () => {
     const command = ['node', ...Array.from({ length: 40 }, () => 'p'.repeat(200)), '--import', 'file:///C:/notes/x.js']
-    const fields = auditFields(record({ command }))
+    const fields = auditFields(record({ command }), sha256)
     const kept = JSON.parse(fields.command as string) as string[]
     expect(kept[0]).toBe('node')
     expect(kept.slice(-2)).toEqual(['--import', 'file:///C:/notes/x.js'])
@@ -213,7 +214,7 @@ describe('the audit fields of a command and an access', () => {
   })
 
   it('keeps both ends of one argument longer than the cap', () => {
-    const fields = auditFields(record({ command: ['node', '-e', `${'a'.repeat(9000)}MARK`] }))
+    const fields = auditFields(record({ command: ['node', '-e', `${'a'.repeat(9000)}MARK`] }), sha256)
     const kept = JSON.parse(fields.command as string) as string[]
     expect(kept.slice(0, 2)).toEqual(['node', '-e'])
     expect(kept[2].endsWith('MARK')).toBe(true)

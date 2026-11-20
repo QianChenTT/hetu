@@ -14,7 +14,7 @@ const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
 
 const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   plugins: [],
-  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
   limits: { all: {}, plugins: {} },
   luoshu: null,
   requests: [],
@@ -108,15 +108,13 @@ describe('what the trusted window draws', () => {
     expect(screen(calm()).switches).toEqual([
       { line: 'Confirm off for this window: off', change: { kind: 'confirmOff', on: true } },
       { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
-      { line: 'Record nothing: off', change: { kind: 'recordNothing', on: true } },
     ])
     const drawn = screen(calm({
-      switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true, recordNothing: true },
+      switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true },
     }))
     expect(drawn.switches).toEqual([
       { line: 'Confirm off for this window: on', change: { kind: 'confirmOff', on: false } },
       { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
-      { line: 'Record nothing: on', change: { kind: 'recordNothing', on: false } },
       { line: 'dev mode: search', change: null },
       { line: 'any command: git', change: null },
       { line: 'unsigned builds trusted: 1', change: null },
@@ -140,7 +138,7 @@ describe('what the trusted window draws', () => {
         plugin({ id: 'git', items: [{ capability: exec, off: false, firstUse: false }] }),
         plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null }),
       ],
-      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false, recordNothing: false },
+      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
     }))
     expect(drawn.plugins.map(row => row.switches)).toEqual([
       [{ line: 'dev mode: on', change: { kind: 'devMode', plugin: 'search', on: false } }],
@@ -279,7 +277,7 @@ describe('what the trusted window draws', () => {
     })
 
     it('turns each choice into the change it asks for', () => {
-      expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'recordNothing', on: true })
+      expect(choiceChange('log', 'switch-off')).toEqual({ kind: 'plugin.off', plugin: 'recording' })
       expect(choiceChange('log', 'quit')).toBe(null)
       expect(choiceChange('install', 'quit')).toBe(null)
     })
@@ -385,14 +383,14 @@ describe('the trusted page', () => {
   // With confirmOff on a choice applied through the request and hetu stayed stopped
   it('starts hetu again once a choice in the stopped mode applied at once', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
-    page.ask({ kind: 'recordNothing', on: true })
+    page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { applied: true }))
     expect(sent.map(message => message.action)).toContain('core.relaunch')
   })
 
   it('starts nothing again for a choice that waits for its Confirm', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
-    page.ask({ kind: 'recordNothing', on: true })
+    page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { held: 'r1' }))
     expect(sent.map(message => message.action)).not.toContain('core.relaunch')
   })

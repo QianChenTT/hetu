@@ -88,9 +88,9 @@ function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   return { control: mode.control, lines, choices }
 }
 
-// The stopped mode's switch-off as the change it asks for: the log goes off by stopping recording. Quit is no change
+// The stopped mode's switch-off as the change it asks for: the log goes off by switching recording off. Quit is no change
 export function choiceChange(control: string, choice: Choice): Change | null {
-  return choice === 'switch-off' && control === 'log' ? { kind: 'recordNothing', on: true } : null
+  return choice === 'switch-off' && control === 'log' ? { kind: 'plugin.off', plugin: 'recording' } : null
 }
 
 // A core module and a core plugin both ship with hetu. A plugin-folder plugin's class, from the grant risk classifier
@@ -141,7 +141,6 @@ function switchesOf(list: SecurityList): Switch[] {
   const rows: Switch[] = [
     { line: `Confirm off for this window: ${state(switches.confirmOff)}`, change: { kind: 'confirmOff', on: !switches.confirmOff } },
     { line: `Verification skipped: ${state(switches.skipVerification)}`, change: { kind: 'skipVerification', on: !switches.skipVerification } },
-    { line: `Record nothing: ${state(switches.recordNothing)}`, change: { kind: 'recordNothing', on: !switches.recordNothing } },
   ]
   if (switches.devMode.length > 0) rows.push({ line: `dev mode: ${switches.devMode.join(', ')}`, change: null })
   if (switches.execAnyCommand.length > 0) rows.push({ line: `any command: ${switches.execAnyCommand.join(', ')}`, change: null })

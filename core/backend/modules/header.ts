@@ -52,6 +52,8 @@ export type StorageModule = Provider & StorageRole & { open(dataDir: string): vo
 // The six as the join made them, with the folders they run on and the OS's bin the runtime gives, handed to the
 // luoshu alone. The join makes the luoshu publishing through luoshuPublish
 export type CoreModulesOptions = {
+  // The human's switches as boot read them, so a module switched off reads off before the core modules start
+  off?: readonly string[]
   dataDir: string
   installDir: string
   trash?: (absolute: string) => Promise<void>
@@ -90,5 +92,6 @@ export const moduleRequires: Readonly<Record<CoreModuleId, readonly CoreModuleId
   exec: Object.freeze([]),
   'flood-control': Object.freeze([]),
   heartbeat: Object.freeze([]),
+  recording: Object.freeze([]),
 })
 

@@ -76,12 +76,12 @@ async function joined(gate: 'on' | 'off') {
   }
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
     carrier.close()
-    await carrier.flush()
+    await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })

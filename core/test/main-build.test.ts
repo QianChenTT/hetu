@@ -370,6 +370,7 @@ describe('each core module\'s Node built-ins', () => {
       exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
       'flood-control': [],
       heartbeat: [],
+      recording: [],
     })
     expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
   })
