@@ -49,7 +49,7 @@ export type RouterDoor = {
   // A lifecycle message down a half's own way: init, deps, stop or ping. Dropped when the way is gone
   send(caller: Caller, message: unknown): void
   // A policy job state, a plugin state or the grants snapshot changed, so the router asks the gate about live
-  // subscriptions again
+  // subscriptions again. On a new grants snapshot it also has the gate judge every open call with power again
   changed(): void
   // Shutdown has begun. From this call on a policy job, guard or provider that is down answers stopped
   stopping(): void

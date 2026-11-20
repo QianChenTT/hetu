@@ -155,7 +155,7 @@ export function listable(c: Context, caller: Caller, path: string): boolean {
 
 // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
 // grants snapshot included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
-// An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
+// An ask is the item's first use: the prompt holds a request for the human or can't for now, while the subscription
 // waits for the Confirm. A declined ask refuses
 export function recheck(c: Context, caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
   const asker: Asker = { caller, onBehalf: undefined, action: subscribeAction.action }
@@ -204,8 +204,8 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   if (prepared === null) return finish(c, pending, { ok: false, ...(refusalIn(given) ?? { code: 'failed' }) })
   pending.scope = prepared.scope
 
-  // Nothing awaits from here to perform, and perform gets the frozen copy the gate and the guards judge, never the
-  // object prepare gave, which could answer another path when read again
+  // Nothing awaits from here to perform. Perform gets the frozen copy the gate and the guards judge, never the object
+  // prepare gave, which could answer another path when read again
   const refused = judged(c, pending, kind, prepared, true)
   if (refused !== null) {
     release()
@@ -330,7 +330,7 @@ function tampered(c: Context, pending: Pending, part: string, args: unknown): vo
   c.coalesced(`${part}.tampered`, { space, key }, { by: { space }, join: (_held, next) => next })
 }
 
-// What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the
+// What a listing's provider gets to filter with and the charge for the whole listing. canList asks the gate for the
 // caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
 // throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
 // the caller's second of the gate's time as gate.filterReadable's does
@@ -362,7 +362,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
 }
 
 // A listing's page as the provider gave it, checked again before the caller sees it: at most LIST_PAGE names, each
-// one the caller may list, and a next that is null or the page's last name. Anything else fails, so a provider that
+// one the caller may list, with a next that is null or the page's last name. Anything else fails, so a provider that
 // filters wrongly leaks no name, not even as where the next page starts
 function listed(c: Context, lister: { canList: (path: string) => boolean, threw: () => boolean }, result: unknown): Outcome {
   if (lister.threw()) {
@@ -377,8 +377,8 @@ function listed(c: Context, lister: { canList: (path: string) => boolean, threw:
   return { ok: true, result: { paths: [...paths], next } }
 }
 
-// Before a listing is made: refused while the gate can't be asked, and throttled once the caller spent its second,
-// so a flood of listings costs main at most one listing past the budget each second
+// Before a listing is made: refused while the gate can't be asked, throttled once the caller spent its second. So a
+// flood of listings costs main at most one listing past the budget each second
 function listingRefused(c: Context, pending: Pending): RefusalCode | null {
   if (c.policyJob('gate') === 'off') return null
   if (!askable(c)) return c.down('policy-down')

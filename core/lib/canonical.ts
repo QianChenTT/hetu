@@ -41,7 +41,7 @@ const devices = new Set([
 // For latches and leases only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one new
 // note meet only here. Drops what HFS+ skips, takes NFC since APFS reads both forms as one name and folds case
 // further than lowercase does, since lowercase keeps the sharp s, the long s and the micro sign apart from the ss, s
-// and mu APFS reads them as. Folding more than a volume does only makes two notes share a lock or block each other's
+// and mu APFS reads them as. Folding more than a volume does only makes two notes share a latch or block each other's
 // lease. The same fold in matching would widen a grant
 const keyOf = (relative: string) =>
   withoutIgnorable(relative).normalize('NFC').toLowerCase().toUpperCase().toLowerCase().normalize('NFC')

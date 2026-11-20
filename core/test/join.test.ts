@@ -644,7 +644,7 @@ describe('dot folders through the joined core', () => {
   // What a reply tells its caller, without the ids that differ between calls
   const told = (reply: Message | null) => (reply === null ? null : reply.ok ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal })
 
-  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, invalid as spelled, and answers a link into one as a missing name', async gate => {
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, invalid as spelled, with a link into one a missing name', async gate => {
     const { alpha, folder } = await dotted(gate)
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {

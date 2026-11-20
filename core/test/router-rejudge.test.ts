@@ -48,7 +48,7 @@ function made(over: HarnessOptions = {}) {
 }
 
 describe('open calls judged again on a new grants snapshot', () => {
-  it('kills an exec run its grant no longer covers as stale, and the retry is not-granted', async () => {
+  it('kills an exec run its grant no longer covers as stale, its retry not-granted', async () => {
     const { exec, search, gate, snapshot } = made()
     const id = search.call('exec.run', { command: build })
     await tick(20)
@@ -179,7 +179,7 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(log.events('fault').map(record => record.fields)).toContainEqual(expect.objectContaining({ plugin: 'gate', step: 'decide' }))
   })
 
-  // The gate off lets everything pass, and the log failing decides nothing of a call
+  // The gate off lets everything pass while the log failing decides nothing of a call
   it('judges no open call again while the human has the gate off, the log failing included', async () => {
     let now = 0
     const { exec, search, gate, snapshot, pluginsManager, log, recording } = made({ clock: () => now })

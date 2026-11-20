@@ -73,7 +73,7 @@ describe('the namespace table', () => {
     expect((await way.ask('editor-1', 'log.verify')).result).toEqual({ ok: true })
   })
 
-  it('answers unavailable for a namespace whose part nobody handed in, and hands ui.* to the drawer', async () => {
+  it('answers unavailable for a namespace whose part nobody handed in, ui.* going to the drawer', async () => {
     const { router, connect } = harness({ core: async () => null })
     const search = connect(worker('search'))
     expect(code(await search.ask('ui.view', { title: 'x' }))).toBe('unavailable')
@@ -81,8 +81,8 @@ describe('the namespace table', () => {
     expect((await search.ask('ui.view', { title: 'x' })).result).toBe('mounted')
   })
 
-  // The trusted window's reads are marked in the contract, and anything else it sends inside its input delay is refused
-  // at the floor, before flood control charges it
+  // The trusted window's reads are marked in the contract. Anything else it sends inside its input delay is refused at
+  // the floor, before flood control charges it
   it('refuses the trusted window inside its input delay at the floor for every core action the contract marks as no read', async () => {
     const seen: string[] = []
     const { router } = harness({ core: async call => { seen.push(call.action); return null }, armed: () => false })

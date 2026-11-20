@@ -6,7 +6,7 @@ import { createGateActions } from '../../../backend/policy/gate/actions.ts'
 const search: Caller = { kind: 'plugin', id: 'search', half: 'worker', incarnation: 1 }
 const word: Caller = { kind: 'plugin', id: 'word-count', half: 'worker', incarnation: 1 }
 
-// A gate that reads what its readers hold, by plugin id, and decides allow on view 1 for ui.edit under notes/
+// A gate that reads what its readers hold by plugin id and decides allow on view 1 for ui.edit under notes/
 function fakeGate(readable: Record<string, string[]>): Gate & { reads: number } {
   const gate = {
     reads: 0,
@@ -100,7 +100,7 @@ describe('the gate module\'s actions', () => {
     expect(await refusal(actions.serve(reach('notes/a.md')))).toBe('policy-down')
   })
 
-  it('refuses that one call policy-down with a fault when the gate throws, and answers the next', async () => {
+  it('refuses that one call policy-down with a fault when the gate throws, then answers the next', async () => {
     const gate = fakeGate({ search: ['notes/a.md'], 'word-count': ['notes/a.md'] })
     const { actions, faults } = made({ gate })
     const canRead = gate.canRead
