@@ -7,6 +7,7 @@ import { Carrier } from './carrier/carrier.ts'
 import type { Asks, CarrierOptions, Debug, HumanLimits, Landing, Port, Served } from './carrier/header.ts'
 import { Limits } from './carrier/limits.ts'
 import { createFloodControl } from './flood-control/flood-control.ts'
+import { createHeartbeat } from './heartbeat/heartbeat.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
 import { createGate } from './policy/gate/gate.ts'
@@ -41,7 +42,7 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl'>>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat'>>
 }
 
 // The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
@@ -63,6 +64,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
       limit: limit ?? ((_plugin, name) => defaultLimits[name]),
       clock: () => performance.now(),
     }),
+    heartbeat: given.heartbeat ?? createHeartbeat(),
   })
 }
 

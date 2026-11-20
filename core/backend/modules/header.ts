@@ -1,6 +1,7 @@
 import type { CoreModuleId } from '../../api/ids.ts'
 import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
+import type { Heartbeat, HeartbeatCore, HeartbeatModule } from '../heartbeat/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
@@ -18,6 +19,7 @@ export type CoreModules = {
   storage(): StorageRole | null
   provider(namespace: string): Provider | null
   floodControl(): FloodControl | null
+  heartbeat(): Heartbeat | null
   start(off: readonly string[], handed: Handed): Promise<void>
   apply(off: readonly string[]): Promise<void>
   bumped(): boolean
@@ -60,11 +62,12 @@ export type CoreModulesOptions = {
   history: History
   exec: Exec
   floodControl: FloodControl
+  heartbeat: HeartbeatModule
 }
 
 // What the plugins manager hands the modules at start, read again at each push: the newest grants snapshot, exec's view
-// of the grants, the notes folder picked, how long a module's start may take, where a fault goes and where each change
-// of a module's state is told
+// of the grants, the notes folder picked, how long a module's start may take, where a fault goes, where each change
+// of a module's state is told and what the core does at the heartbeat's ask
 export type Handed = {
   grants(): GrantsSnapshot
   exec(): ExecView
@@ -72,6 +75,7 @@ export type Handed = {
   readyMs(id: CoreModuleId): number
   fault(id: CoreModuleId, step: string): void
   changed(id: CoreModuleId, change: ModuleChange, reason: string | null): void
+  heartbeat: HeartbeatCore
 }
 
 // What each module requires, as its manifest said when it was a core plugin. History commits the notes the luoshu
@@ -85,5 +89,6 @@ export const moduleRequires: Readonly<Record<CoreModuleId, readonly CoreModuleId
   history: Object.freeze(['luoshu'] as const),
   exec: Object.freeze([]),
   'flood-control': Object.freeze([]),
+  heartbeat: Object.freeze([]),
 })
 

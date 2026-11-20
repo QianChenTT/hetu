@@ -49,7 +49,7 @@ describe('a core module\'s start', () => {
   it('records each module started once the core starts, one switched off off and nothing for one that never ran', async () => {
     const made = await harness({ switches: { off: ['history'] } })
     await made.pluginsManager.start()
-    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control'].map(module => ({ module, state: 'started', reason: null })))
+    expect(changes(made)).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'exec', 'flood-control', 'heartbeat'].map(module => ({ module, state: 'started', reason: null })))
     await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'exec' })
     expect(changes(made).at(-1)).toEqual({ module: 'exec', state: 'stopped', reason: 'off' })
   })
@@ -179,7 +179,7 @@ describe('the core modules in the stopped mode', () => {
     const started = changes(made).length
     made.pluginsManager.controlFailed('log', 'log-failing')
     await until(() => failures.length > 0)
-    expect(changes(made).slice(started)).toEqual(['exec', 'history', 'luoshu', 'storage', 'grant-risk-classifier', 'gate'].map(module => ({
+    expect(changes(made).slice(started)).toEqual(['heartbeat', 'exec', 'history', 'luoshu', 'storage', 'grant-risk-classifier', 'gate'].map(module => ({
       module, state: 'stopped', reason: 'stopped-mode',
     })))
     const timeline = made.link.timeline

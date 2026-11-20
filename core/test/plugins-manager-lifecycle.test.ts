@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../api/envelope.ts'
+import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import {
   cleanup, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, reasonOf, stateOf, tick, until, workerManifest, type Files,
   type Harness,
@@ -339,6 +340,58 @@ describe('the heartbeat', () => {
     await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
     const reply = await made.runtime.half('outline').ask('mapper.query', {}, 200)
     expect((reply?.refusal as { code: string }).code).toBe('timeout')
+  })
+
+  it('pings nothing and marks nothing while the human has it off, so a silent plugin stays ready', async () => {
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, switches: { off: ['heartbeat'] },
+      limits: { heartbeatMs: 10, heartbeatMisses: 2 },
+    })
+    await made.pluginsManager.start()
+    made.runtime.behave.mapper = { pong: false }
+    await tick(80)
+    expect(made.link.sentTo('mapper', 'ping')).toEqual([])
+    expect(stateOf(made.pluginsManager, 'mapper')).toBe('ready')
+  })
+
+  it('reads an unresponsive plugin ready once switched off and pings it again once switched on', async () => {
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, limits: { heartbeatMs: 10, heartbeatMisses: 2 },
+    })
+    await made.pluginsManager.start()
+    made.runtime.behave.mapper = { pong: false }
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'heartbeat' })
+    expect(stateOf(made.pluginsManager, 'mapper')).toBe('ready')
+    expect(made.modules.state('heartbeat')).toBe('off')
+    const pinged = made.link.sentTo('mapper', 'ping').length
+    await tick(60)
+    expect(made.link.sentTo('mapper', 'ping')).toHaveLength(pinged)
+    await made.pluginsManager.apply({ kind: 'plugin.on', plugin: 'heartbeat' })
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'unresponsive')
+  })
+
+  it('skips a beat the heartbeat threw on with a fault recorded and goes on', async () => {
+    const heartbeat = createHeartbeat()
+    const heard = heartbeat.heard
+    heartbeat.heard = () => { throw new Error('broken') }
+    const made = await harness({
+      folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, modules: { heartbeat }, limits: { heartbeatMs: 10, heartbeatMisses: 3 },
+    })
+    await made.pluginsManager.start()
+    await until(() => made.link.events('fault').some(fields => fields.plugin === 'heartbeat' && fields.step === 'heard'))
+    heartbeat.heard = heard
+    expect(stateOf(made.pluginsManager, 'mapper')).not.toBe('crashed')
+  })
+
+  it('pings an incarnation no more once it stopped', async () => {
+    const made = await harness({ folder: { mapper: worker('mapper') }, entries: { mapper: signed() }, limits: { heartbeatMs: 10 } })
+    await made.pluginsManager.start()
+    await until(() => made.link.sentTo('mapper', 'ping').length > 0)
+    await made.pluginsManager.stop('mapper', 'human')
+    const pinged = made.link.sentTo('mapper', 'ping').length
+    await tick(60)
+    expect(made.link.sentTo('mapper', 'ping')).toHaveLength(pinged)
   })
 
   it('pings no core module', async () => {

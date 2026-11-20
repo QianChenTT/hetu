@@ -92,7 +92,7 @@ describe('policy jobs, providers and guards', () => {
   })
 
   it('lists the core modules main holds apart from the core plugins', () => {
-    expect(coreModuleIds).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control'])
+    expect(coreModuleIds).toEqual(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat'])
     for (const id of coreModuleIds) expect(corePluginIds).not.toContain(id)
   })
 
@@ -116,7 +116,7 @@ describe('reserved ids', () => {
   // Section 3: every namespace the carrier serves, every policy job, provider and install id and the ids first party keeps
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor',
-    'gate', 'grant-risk-classifier', 'log', 'flood-control',
+    'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat',
     'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]

@@ -2,6 +2,7 @@ import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
 import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
+import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
@@ -34,6 +35,7 @@ export class CoreModules implements Holder {
   private readonly historyOf: History
   private readonly execOf: Exec
   private readonly floodControlOf: FloodControl
+  private readonly heartbeatOf: HeartbeatModule
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
@@ -62,6 +64,7 @@ export class CoreModules implements Holder {
     this.historyOf = options.history
     this.execOf = options.exec
     this.floodControlOf = options.floodControl
+    this.heartbeatOf = options.heartbeat
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -101,6 +104,19 @@ export class CoreModules implements Holder {
 
   floodControl(): FloodControl | null {
     return this.serving('flood-control') ? this.floodControlOf : null
+  }
+
+  // The heartbeat while on, each thing it is told kept from throwing: a throw skips that beat with a fault
+  heartbeat(): Heartbeat | null {
+    if (!this.serving('heartbeat')) return null
+    const told = (step: keyof Heartbeat) => (plugin: Beating) => {
+      try {
+        this.heartbeatOf[step](plugin)
+      } catch {
+        this.fault('heartbeat', step)
+      }
+    }
+    return { started: told('started'), heard: told('heard'), stopped: told('stopped') }
   }
 
   // The provider serving a namespace, cache through storage. leases and net have no module and answer null. A module
@@ -239,6 +255,7 @@ export class CoreModules implements Holder {
     if (id === 'storage') return this.storageOf.open(this.dataDir)
     if (id === 'history') return this.historyOf.start(this.dataDir)
     if (id === 'exec') return this.execOf.start(this.dataDir)
+    if (id === 'heartbeat' && this.handed !== null) this.heartbeatOf.open(this.handed.heartbeat, step => this.fault('heartbeat', step))
   }
 
   // readyMs as the human set it for the module or for all, the default when it can't be read
@@ -278,6 +295,7 @@ export class CoreModules implements Holder {
       if (id === 'luoshu') this.luoshuOf.close()
       else if (id === 'history') this.historyOf.close()
       else if (id === 'exec') this.execOf.close()
+      else if (id === 'heartbeat') this.heartbeatOf.close()
     } catch {
       this.fault(id, 'close')
     }

@@ -43,6 +43,7 @@ function handing(folder: string | null = null, readyMs = 10000) {
     readyMs: () => readyMs,
     fault: (id, step) => faults.push(`${id} ${step}`),
     changed: (id, change, reason) => changes.push(reason === null ? `${id} ${change}` : `${id} ${change} ${reason}`),
+    heartbeat: { ping: () => {}, unresponsive: () => {}, kill: () => {}, limit: () => 1000 },
   }
   return { handed, faults, changes, next: () => n++ }
 }
@@ -273,7 +274,9 @@ describe('the core modules', () => {
     changes.length = 0
     modules.close()
     expect(seen).toEqual(['exec.close', 'history.close', 'luoshu.close'])
-    expect(changes).toEqual(['exec stopped shutdown', 'history stopped shutdown', 'luoshu stopped shutdown', 'storage stopped shutdown'])
+    expect(changes).toEqual([
+      'heartbeat stopped shutdown', 'exec stopped shutdown', 'history stopped shutdown', 'luoshu stopped shutdown', 'storage stopped shutdown',
+    ])
     expect(modules.state('storage')).toBe('stopped')
     expect(modules.provider('storage')).toBeNull()
     expect(modules.provider('luoshu')).toBeNull()
@@ -305,7 +308,7 @@ describe('the core modules', () => {
     await modules.start(['history'], handed)
     expect(changes).toEqual([
       'gate started', 'grant-risk-classifier started', 'storage started', 'luoshu started', 'exec failed start-failed',
-      'flood-control started',
+      'flood-control started', 'heartbeat started',
     ])
   })
 
@@ -470,7 +473,7 @@ describe('the core modules', () => {
       modules.stop(['storage'])
       expect(seen).toEqual(['exec.close', 'history.close', 'luoshu.close'])
       expect(changes).toEqual([
-        'exec stopped stopped-mode', 'history stopped stopped-mode', 'luoshu stopped stopped-mode',
+        'heartbeat stopped stopped-mode', 'exec stopped stopped-mode', 'history stopped stopped-mode', 'luoshu stopped stopped-mode',
         'grant-risk-classifier stopped stopped-mode', 'gate stopped stopped-mode',
       ])
       expect(modules.gate()).toBeNull()

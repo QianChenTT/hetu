@@ -37,6 +37,7 @@ import {
 import { plan, type Node, type Plan, type Status, type Verdict } from './graph.ts'
 import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
+import type { Beating } from '../heartbeat/header.ts'
 import type { Runtime } from '../runtime/header.ts'
 import type { CarrierLink } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
@@ -107,8 +108,8 @@ type Live = {
   readyTimer: ReturnType<typeof setTimeout> | null
   stopTimer: ReturnType<typeof setTimeout> | null
   stop: { done: Promise<void>, end: () => void, reason: string } | null
-  // The worker's heartbeat: pings sent with no pong since and the timer that sends the next
-  beat: { timer: ReturnType<typeof setInterval>, misses: number, waiting: boolean } | null
+  // The incarnation as the heartbeat watches it, from its ready on
+  beating: Beating | null
   // The running plugins that stop with this one, named when its stop is decided, since they stop before it does
   with: string[]
   over: boolean
@@ -459,9 +460,8 @@ ${capabilityKey(change.capability)}`)
     } else if (kind === 'stopped' && live.stop !== null) {
       run.stopped = true
       if ([...live.halves.values()].every(half => half.stopped)) this.finished(k, live)
-    } else if ((kind === 'pong' || kind === 'alive') && live.beat !== null) {
-      live.beat.misses = 0
-      live.beat.waiting = false
+    } else if ((kind === 'pong' || kind === 'alive') && live.beating !== null) {
+      this.modules.heartbeat()?.heard(live.beating)
       if (k.state === 'unresponsive') {
         k.state = 'ready'
         this.refresh()
@@ -1052,6 +1052,12 @@ ${capabilityKey(change.capability)}`)
       readyMs: id => this.limitOf(id, 'readyMs'),
       fault: (id, step) => this.note('fault', { plugin: id, step }),
       changed: (id, change, reason) => this.note('module.state', { module: id, state: change, reason }),
+      heartbeat: {
+        ping: plugin => this.link.send(plugin.caller, { v: VERSION, kind: 'ping' }),
+        unresponsive: plugin => this.missed(plugin, true),
+        kill: plugin => this.missed(plugin, false),
+        limit: (plugin, name) => this.limitOf(plugin, name),
+      },
     })
     this.phase = 'all'
     this.replan()
@@ -1659,7 +1665,7 @@ ${capabilityKey(change.capability)}`)
     const n = (this.minted.get(k.id) ?? 0) + 1
     this.minted.set(k.id, n)
     k.incarnations = n
-    const live: Live = { n, halves: new Map(), readyTimer: null, stopTimer: null, stop: null, beat: null, with: [], over: false, deps: '' }
+    const live: Live = { n, halves: new Map(), readyTimer: null, stopTimer: null, stop: null, beating: null, with: [], over: false, deps: '' }
     k.live = live
     k.state = 'starting'
     k.reason = null
@@ -1743,7 +1749,10 @@ ${capabilityKey(change.capability)}`)
     k.previousVersion = null
     this.versions.delete(k.id)
     this.note('plugin.started', { plugin: k.id, incarnation: live.n })
-    this.beat(k, live)
+    // The heartbeat watches the worker's half or the utility half, whose every message main hears answers a beat
+    const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
+    live.beating = pinged === undefined ? null : frozen({ plugin: k.id, caller: pinged.caller, utility: k.place === 'utility' })
+    if (live.beating !== null) this.modules.heartbeat()?.started(live.beating)
     this.replan()
   }
 
@@ -1826,35 +1835,20 @@ ${capabilityKey(change.capability)}`)
     this.die(k, killed ? 'killed' : 'exited')
   }
 
-  // A ping down the worker's or the utility half's port every heartbeatMs. heartbeatMisses unanswered in a row read a
-  // worker unresponsive: calls to it time out at once and its dependents keep running, nothing is closed. It reads ready
-  // again once it answers. Stopping it is the human's call. A utility half that misses them is killed
-  // instead and reads crashed, since a hung one still holds whatever it opened, a socket among them. Anything main
-  // heard from a utility half answers a beat, a message dropped for its rate included
-  private beat(k: Known, live: Live): void {
-    const pinged = live.halves.get(k.place === 'utility' ? 'host' : 'worker')
-    if (pinged === undefined) return
-    const misses = this.limitOf(k.id, 'heartbeatMisses')
-    const timer = setInterval(() => {
-      const beat = live.beat
-      if (beat === null || live.over) return
-      if (beat.waiting) beat.misses++
-      if (beat.misses >= misses && k.place === 'utility' && live.stop === null) return this.die(k, 'unresponsive')
-      if (beat.misses >= misses && k.state === 'ready' && live.stop === null) {
-        k.state = 'unresponsive'
-        this.note('plugin.unresponsive', { plugin: k.id, incarnation: live.n })
-        this.refresh()
-      }
-      beat.waiting = true
-      this.link.send(pinged.caller, { v: VERSION, kind: 'ping' })
-    }, this.limitOf(k.id, 'heartbeatMs'))
-    timer.unref?.()
-    live.beat = { timer, misses: 0, waiting: false }
+  // The heartbeat's ask once a plugin missed its beats. A worker reads unresponsive until it answers: calls to it time out
+  // at once and nothing is closed. A hung utility half still holds what it opened, so it is killed and reads crashed
+  private missed(plugin: Beating, worker: boolean): void {
+    const found = this.runOf(plugin.caller)
+    if (found === null || found.live.stop !== null) return
+    if (!worker) return this.die(found.k, 'unresponsive')
+    if (found.k.state !== 'ready') return
+    found.k.state = 'unresponsive'
+    this.note('plugin.unresponsive', { plugin: found.k.id, incarnation: found.live.n })
+    this.refresh()
   }
 
   private retire(k: Known, live: Live): void {
-    if (live.beat !== null) clearInterval(live.beat.timer)
-    live.beat = null
+    if (live.beating !== null && !live.over) this.modules.heartbeat()?.stopped(live.beating)
     live.over = true
     if (live.readyTimer !== null) clearTimeout(live.readyTimer)
     if (live.stopTimer !== null) clearTimeout(live.stopTimer)
@@ -2373,6 +2367,11 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
       this.bump()
       // Flood control paces every running half's messages, so each paces itself as it now stands
       if (id === 'flood-control') for (const known of this.known.keys()) this.limited(known)
+      // The heartbeat on watches every plugin that runs. Off, nothing reads unresponsive, so a call fails on its own deadline
+      for (const k of id === 'heartbeat' ? this.known.values() : []) {
+        if (on && k.live?.beating && !k.live.over) this.modules.heartbeat()?.started(k.live.beating)
+        else if (!on && k.state === 'unresponsive') k.state = 'ready'
+      }
       if (on && id === 'grant-risk-classifier' && this.classedAtStart) {
         void this.serial(() => this.classAll('slot-on')).catch(() => this.note('fault', { plugin: 'grant-risk-classifier', step: 'reclass' }))
       }

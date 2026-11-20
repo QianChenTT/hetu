@@ -15,12 +15,13 @@ export const moduleFolders: Readonly<Record<CoreModuleId, string>> = {
   history: 'backend/providers/history',
   exec: 'backend/providers/exec',
   'flood-control': 'backend/flood-control',
+  heartbeat: 'backend/heartbeat',
 }
 
 // The Node built-ins each core module may reach, by the exact name it imports. The gate and the grant risk
 // classifier judge from what they are handed and touch nothing. Storage reads and writes its files. The luoshu watches
 // and writes the notes folder. History and exec run git and the commands a plugin was granted. Flood control counts
-// what it is handed
+// what it is handed and the heartbeat asks the core through what it is handed
 export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> = {
   gate: [],
   'grant-risk-classifier': [],
@@ -29,6 +30,7 @@ export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> =
   history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
   exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
   'flood-control': [],
+  heartbeat: [],
 }
 
 const named = (specifier: string) => (specifier.startsWith('node:') ? specifier : `node:${specifier}`)

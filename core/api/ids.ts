@@ -75,7 +75,7 @@ export function isSecurityControl(id: string): boolean {
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
 // their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
 // start in this order, the ones after them have no start of their own
-export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control'] as const)
+export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
 // Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the

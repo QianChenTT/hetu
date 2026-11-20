@@ -430,7 +430,7 @@ export const firstPartyEntry = (hash: string, extra: Partial<Plugin> = {}): Plug
 export const coreInstall = (): Record<string, Listing> => ({})
 
 // The core modules' instances a test hands in place of the real ones, and the OS's bin for the luoshu
-export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'trash'>>
+export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'heartbeat' | 'trash'>>
 
 // The core modules as wireCore makes them, each the real one unless a test hands its own, the luoshu publishing through
 // the carrier the link points at and flood control counting by limit
