@@ -64,7 +64,7 @@ async function moved(): Promise<unknown> {
   live.push(luoshu)
   luoshu.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
   const call: Call = {
-    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.move',
+    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.move',
     args: { from: 'box/m.md', to: 'taken.md' }, deadline: Date.now() + 30000, judge: () => ({ code: 'not-granted' }),
   }
   const prepared = await luoshu.provider.prepare(call) as Prepared

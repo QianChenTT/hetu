@@ -13,7 +13,7 @@ export type HttpOptions = { port: number, token: TokenSeam, limits?: Partial<Doo
 export function httpPlugin(options: HttpOptions): Plugin {
   return definePlugin({
     start(ctx) {
-      const counter = refusalCounter((reason, count) => ctx.call('core', 'agentRefused', { reason, count }))
+      const counter = refusalCounter((reason, count) => ctx.call('core', 'refused', { reason, count }))
       const serve = mcpServe((args, call) => ctx.call('mcp', 'handle', args, call))
       let door: Door | null = null
       let failed = false

@@ -53,7 +53,7 @@ async function started(view: ExecView | null, options: ExecOptions = {}): Promis
 }
 
 const callOf = (command: unknown, caller: Caller = git, deadline = Date.now() + 30000, signal?: AbortSignal): Call =>
-  ({ callId: `c${++n}`, caller, action: 'exec.run', args: { command }, deadline, ...(signal !== undefined ? { signal } : {}) })
+  ({ callId: `c${++n}`, caller, root: caller, action: 'exec.run', args: { command }, deadline, ...(signal !== undefined ? { signal } : {}) })
 
 // prepare then perform, as the router makes a call, the command it judged laid over the prepared scope
 async function run(exec: Exec, command: unknown, caller: Caller = git, deadline?: number, signal?: AbortSignal): Promise<ExecResult | { refused: unknown }> {

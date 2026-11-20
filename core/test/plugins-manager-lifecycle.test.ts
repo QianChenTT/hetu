@@ -15,7 +15,7 @@ const wkr = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half
 // The human's Stop or Restart on the core seam, as the router hands one from the trusted window
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const human = (made: Harness, action: 'core.stop' | 'core.restart', plugin: string) =>
-  made.pluginsManager.serve({ callId: 'w', caller: trusted, action, args: { plugin }, deadline: Date.now() + 1000 })
+  made.pluginsManager.serve({ callId: 'w', caller: trusted, root: trusted, action, args: { plugin }, deadline: Date.now() + 1000 })
 
 describe('dependencies and turning down', () => {
   it('leaves a plugin whose requirement is missing waiting with its reason, never started', async () => {
@@ -301,7 +301,7 @@ describe('restarts', () => {
   it('serves core.stop on the core seam and refuses a change outside the schema and an action it does not serve', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') }, entries: { alpha: signed() } })
     await made.pluginsManager.start()
-    const call = (action: string, args: unknown) => ({ callId: 'c', caller: trusted, action, args, deadline: Date.now() + 1000 })
+    const call = (action: string, args: unknown) => ({ callId: 'c', caller: trusted, root: trusted, action, args, deadline: Date.now() + 1000 })
     await expect(made.pluginsManager.serve(call('security.request', { change: {} }))).rejects.toEqual({ code: 'invalid' })
     await expect(made.pluginsManager.serve(call('core.stop', { plugin: 'gate' }))).rejects.toEqual({ code: 'not-found' })
     await expect(made.pluginsManager.serve(call('watchdog.stop', { plugin: 'alpha' }))).rejects.toEqual({ code: 'unavailable' })

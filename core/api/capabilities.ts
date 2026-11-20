@@ -17,6 +17,14 @@ export function screenText(max: number) {
 
 export const text = screenText(MAX_TEXT_LENGTH)
 
+// A format character, such as a zero-width one, draws as nothing and a line or paragraph separator breaks the line,
+// neither of which the quotes escape
+const unseen = /[\p{Cf}\p{Zl}\p{Zp}]/u
+// Screen text with nothing that draws as nothing either, for a name the human tells apart from another by sight
+export function seenText(max: number) {
+  return screenText(max).refine(value => value.isWellFormed() && !unseen.test(value), 'a character that draws as nothing')
+}
+
 // A variable exec passes through from hetu's own environment, by name. Never a value, and never a name that makes a
 // program load code
 const envName = z.string().max(MAX_TEXT_LENGTH, { abort: true }).superRefine((value, ctx) => {
@@ -78,6 +86,11 @@ export function isInstallOnly(type: string): boolean {
 }
 
 export const folderCapability = capability.refine(granted => !isInstallOnly(granted.type), 'a type only core plugins hold')
+
+// The types a pair's item may hold: reading, listing and writing notes and their history. The gate holds a pair to
+// these and an ask names no other, so nothing a pair is given reaches a plugin, runs a command or subscribes to a topic
+export const pairTypes = frozen(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history'] as const satisfies readonly CapabilityType[])
+export const pairCapability = folderCapability.refine(granted => (pairTypes as readonly string[]).includes(granted.type), 'a type no pair holds')
 
 // Counted per type and scope field across the list, so splitting a type over many entries doesn't get past the cap
 function capped<T extends z.ZodType<Capability>>(item: T) {

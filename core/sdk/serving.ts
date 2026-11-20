@@ -5,13 +5,14 @@ import { isPlain } from './plain.ts'
 import { Refused } from './refused.ts'
 
 // A call another plugin or a window made to one of the plugin's own actions, as the router delivered it. caller is
-// who the router says made it. signal aborts once the router gives the call up. ctx makes sub-calls with this call
-// as their parent, held to its deadline
+// who the router says made it. root is the caller at the root of the chain that set onBehalf, beside it. signal aborts
+// once the router gives the call up. ctx makes sub-calls with this call as their parent, held to its deadline
 export type IncomingCall = {
   readonly callId: string
   readonly caller: Caller
   readonly action: string
   readonly onBehalf?: string
+  readonly root?: Caller
   readonly deadline: number
   readonly signal: AbortSignal
   readonly ctx: Client
@@ -47,7 +48,7 @@ export class Serving {
   }
 
   async deliver(message: Record<string, unknown>): Promise<void> {
-    const { callId, caller, action, args, deadline, onBehalf } = message
+    const { callId, caller, action, args, deadline, onBehalf, root } = message
     if (typeof callId !== 'string' || typeof action !== 'string' || this.live.has(callId)) return
     const controller = new AbortController()
     this.live.set(callId, controller)
@@ -56,7 +57,7 @@ export class Serving {
       callId,
       caller: caller as Caller,
       action,
-      ...(typeof onBehalf === 'string' ? { onBehalf } : {}),
+      ...(typeof onBehalf === 'string' ? { onBehalf, root: root as Caller } : {}),
       deadline: due,
       signal: controller.signal,
       ctx: makeClient(this.request, { callId, deadline: due }),

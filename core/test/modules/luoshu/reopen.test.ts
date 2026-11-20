@@ -60,7 +60,7 @@ async function performed(action: string, args: unknown, allowed: (paths: readonl
   live.push(luoshu)
   luoshu.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
   const call: Call = {
-    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action, args, deadline: Date.now() + 30000,
+    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action, args, deadline: Date.now() + 30000,
     judge: (paths: readonly string[]) => (allowed(paths) ? null : { code: 'not-granted' }),
   }
   const prepared = await luoshu.provider.prepare(call) as Prepared

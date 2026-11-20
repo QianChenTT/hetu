@@ -1,17 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, Call, GuardCall, Prepared } from '../api/policy-jobs.ts'
 import { cleanup, FakeGuard, harness, host, worker } from './router-fakes.ts'
-
-// The provider table with luoshu.move marked as a tool, so an agent's move under the door reaches the second ask. A move
-// is the action with the most requirements. The router refuses an agent's call to an action the table does not mark.
-// It also holds that an entry in the table is what opens an action to an agent, with no change to the router
-vi.mock('../api/actions.ts', async importOriginal => {
-  const real = await importOriginal<typeof import('../api/actions.ts')>()
-  const tool = Object.freeze({ name: 'move_note', description: 'Move one note', args: z.strictObject({ from: z.string(), to: z.string() }) })
-  const move = Object.freeze({ ...real.providerActions['luoshu.move'], agent: tool })
-  return { ...real, providerActions: Object.freeze(Object.assign(Object.create(null), real.providerActions, { 'luoshu.move': move })) }
-})
 
 afterEach(cleanup)
 
@@ -151,7 +140,7 @@ describe('the judge a call with power carries to its provider', () => {
     const renamed = (paths: readonly string[] | undefined) => paths?.map(path => path.replace(/^notes\//, 'moved/'))
     expect(canonical.length).toBeGreaterThan(1)
     expect(again).toEqual(canonical.map(access => ({ ...access, scope: { ...access.scope, paths: renamed(access.scope.paths) } })))
-    expect([...canonical, ...again].map(access => [access.onBehalf, access.agent])).toEqual(Array(canonical.length * 2).fill([agent ?? 'agent-a', agent]))
+    expect([...canonical, ...again].map(access => [access.onBehalf, access.pair])).toEqual(Array(canonical.length * 2).fill([agent ?? 'agent-a', agent === undefined ? undefined : { plugin: 'mcp-http-handler', field: agent }]))
     for (const guard of ['leases', 'second']) {
       const [one, two] = parts.guards[guard].calls
       expect(two).toEqual({ ...one, scope: { ...one.scope, paths: renamed(one.scope.paths) } })

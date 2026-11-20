@@ -3,7 +3,7 @@ import { MAX_TIMER_MS } from '../../api/limits.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import type { Call, LiveCall } from '../../api/policy-jobs.ts'
 import type { Charged, Held } from '../flood-control/header.ts'
-import { no, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
+import { no, pairOf, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
 
 // 4 ceiling and the life of an open call: its deadline, cancel, stop and finish, the one exit of every call, where
 // 11 record happens
@@ -38,13 +38,15 @@ export function admitted(c: Context,
 ): Pending {
   const { parent, target } = shaped
   const root: Root = parent?.root ?? { principal: way.principal, plugin: way.plugin, caller: way.caller }
+  // The root call is the root plugin's own and judged on its own items. Every call under it is judged for the pair too
+  const pair = parent === null ? undefined : pairOf(root.caller, shaped.onBehalf)
   // Never past the longest delay a timer takes, so a raised deadline can't fire at once and stays a safe integer
   const ownDeadline = started + Math.min(c.limits.of(way.plugin, 'callDeadlineMs'), MAX_TIMER_MS)
   // Shrinks along parent, so no sub-call outlives the call it serves
   const deadline = Math.min(ownDeadline, parent?.deadline ?? ownDeadline)
   const left = Math.max(0, deadline - c.now())
   const pending: Pending = {
-    callId, id: shaped.id, way, answer, caller: way.caller, onBehalf: shaped.onBehalf, agent: shaped.agent, lends: shaped.lends,
+    callId, id: shaped.id, way, answer, caller: way.caller, onBehalf: shaped.onBehalf, pair,
     action: shaped.action, parent, root, depth: (parent?.depth ?? 0) + 1, deadline, due: c.clock() + left, release,
     children: new Set(), callee: null, timer: null, done: false, started, gate: c.policyJob('gate'),
     // A path is the caller's own text until prepare gives the canonical one, so a call refused before that records
@@ -159,7 +161,7 @@ function refusalOf(action: string, refused: No): Refusal {
 export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
   return Object.freeze({
     ...frozen({
-      callId: pending.callId, caller: pending.caller,
+      callId: pending.callId, caller: pending.caller, root: pending.root.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       ...(pending.parent !== null ? { parent: pending.parent.callId } : {}),
       action: pending.action, args, deadline: pending.deadline, ...(live !== undefined ? { live } : {}),
@@ -183,15 +185,18 @@ export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
   pending.ended.abort(code)
 }
 
-// The view of a live call a part gets with an action that names it, the same object for the call's life. The door's
-// own call lends its label with no agent of its own
+// The view of a live call a part gets with an action that names it, the same object for the call's life. pair is the
+// one its chain carries, the root call's included, which its own judgements leave out
 export function liveOf(pending: Pending): LiveCall {
-  pending.live ??= frozen({
-    caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin,
-    ...(pending.lends !== undefined ? { agent: pending.lends } : {}),
-    door: pending.lends !== undefined && pending.agent === undefined,
-    open: () => !pending.done,
-  })
+  if (pending.live === null) {
+    const pair = pairOf(pending.root.caller, pending.onBehalf)
+    pending.live = frozen({
+      caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin, root: pending.root.caller,
+      ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
+      ...(pair !== undefined ? { pair } : {}),
+      open: () => !pending.done,
+    })
+  }
   return pending.live
 }
 

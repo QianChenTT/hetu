@@ -11,7 +11,7 @@ afterEach(cleanup)
 
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 const status = async (made: Awaited<ReturnType<typeof harness>>) =>
-  (await made.pluginsManager.serve({ callId: 'c1', caller: editor, action: 'core.status', args: undefined, deadline: Date.now() + 30_000 })) as CoreStatus
+  (await made.pluginsManager.serve({ callId: 'c1', caller: editor, root: editor, action: 'core.status', args: undefined, deadline: Date.now() + 30_000 })) as CoreStatus
 const notes = { folder: process.platform === 'win32' ? 'C:\\Users\\han\\notes' : '/home/han/notes' }
 const stateFile = (dataDir: string, ...parts: string[]) => path.join(dataDir, 'state', ...parts)
 

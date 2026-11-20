@@ -44,7 +44,7 @@ function opened(options: Parameters<typeof createLuoshu>[0] = {}): Luoshu & { he
 
 // A listing carries the router's canList, every name allowed unless a test says otherwise
 const callOf = (action: string, args: unknown, canList: ((path: string) => boolean) | null = () => true): Call => ({
-  callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000,
+  callId: `c${++n}`, caller, root: caller, action, args, deadline: Date.now() + 30000,
   ...(action === 'luoshu.list' && canList !== null ? { canList } : {}),
 })
 

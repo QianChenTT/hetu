@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentAsk, change, changeEffect, changeKinds, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
+import { change, changeEffect, changeKinds, identityAsk, MAX_FOLDER_LENGTH, type Change } from '../api/changes.ts'
 import { isSecurityControl } from '../api/ids.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../api/limits.ts'
 
@@ -27,7 +27,7 @@ const everyKind = [
   { kind: 'confirmOff', on: true },
   { kind: 'exec.anyCommand', plugin: 'git', on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
-  { kind: 'agent.revoke', agent: 'client#1' },
+  { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' },
 ]
 
 describe('the change kinds', () => {
@@ -36,19 +36,24 @@ describe('the change kinds', () => {
       'plugin.approve', 'plugin.update', 'plugin.on', 'plugin.off', 'plugin.remove', 'plugin.restore', 'plugin.clearStorage',
       'plugin.reset',
       'grant.widen', 'grant.narrow', 'item.on', 'item.off', 'luoshu.pick', 'devMode', 'exec.anyCommand', 'skipVerification',
-      'confirmOff', 'allowUnsigned', 'limit.set', 'agent.revoke',
+      'confirmOff', 'allowUnsigned', 'limit.set', 'identity.revoke',
     ])
   })
 
-  it('keeps an agent\'s ask out of what a window may send and has it widen, with its label in the agent label\'s form', () => {
-    const asked = { kind: 'agent.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }
+  it('keeps an ask for a pair\'s items out of what a window may send and has it widen, naming the plugin that asked and the pair', () => {
+    const asked = { kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }
     expect(change.safeParse(asked).success).toBe(false)
-    expect(agentAsk.parse(asked)).toEqual(asked)
+    expect(identityAsk.parse(asked)).toEqual(asked)
     expect(changeEffect(asked as Change)).toBe('widens')
-    expect(agentAsk.safeParse({ ...asked, plugin: 'search' }).success).toBe(false)
-    expect(agentAsk.safeParse({ ...asked, agent: 'client' }).success).toBe(false)
-    expect(agentAsk.safeParse({ ...asked, capabilities: [] }).success).toBe(false)
-    expect(change.safeParse({ kind: 'agent.revoke', agent: 'client' }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, plugin: 'search', root: 'beta', field: 'any text a plugin sets' }).success).toBe(true)
+    expect(identityAsk.safeParse({ ...asked, field: '' }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, field: 'x'.repeat(513) }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, root: 'Not An Id' }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, capabilities: [] }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, capabilities: [{ type: 'storage' }] }).success).toBe(false)
+    expect(identityAsk.safeParse({ ...asked, agent: 'client#1' }).success).toBe(false)
+    expect(change.safeParse({ kind: 'identity.revoke', field: 'client#1' }).success).toBe(false)
+    expect(change.safeParse({ kind: 'identity.revoke', agent: 'client#1' }).success).toBe(false)
   })
 
   it('have a schema for every listed kind and no other', () => {
@@ -223,7 +228,7 @@ describe('whether a change widens', () => {
     ['an unsigned build no longer trusted', { kind: 'allowUnsigned', hash: HASH, on: false }],
     ['the Confirm back', { kind: 'confirmOff', on: false }],
     ['recording again', { kind: 'plugin.on', plugin: 'recording' }],
-    ['an agent revoked', { kind: 'agent.revoke', agent: 'client#1' }],
+    ['a pair revoked', { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' }],
   ])('narrows with %s', (_name, one) => {
     expect(effect(one)).toBe('narrows')
   })

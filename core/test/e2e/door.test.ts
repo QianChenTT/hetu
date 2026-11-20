@@ -129,7 +129,7 @@ describe('the door', () => {
     expect(await logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler' })).toBe(false)
   })
 
-  it('refuses another Host and an Origin with 403, reaching nothing, each reason in one http.refused with its count', async () => {
+  it('refuses another Host and an Origin with 403, reaching nothing, each reason in one mcp-http-handler.refused with its count', async () => {
     expect(await canConnect()).toBe(false)
     const { dataDir } = await started(true)
     await until(() => canConnect())
@@ -138,9 +138,9 @@ describe('the door', () => {
     expect(await post(['Host: 127.0.0.1:4747', 'Origin: https://evil.example', 'Authorization: Bearer any'])).toBe(403)
     // The shipped seam refuses every token
     expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
-    await until(async () => (await records(dataDir)).filter(record => record.event === 'http.refused').length === 3)
+    await until(async () => (await records(dataDir)).filter(record => record.event === 'mcp-http-handler.refused').length === 3)
     await tick(1500)
-    const refused = (await records(dataDir)).filter(record => record.event === 'http.refused')
+    const refused = (await records(dataDir)).filter(record => record.event === 'mcp-http-handler.refused')
     expect(refused.map(record => [record.reason, record.count]).sort()).toEqual([['host', 2], ['origin', 1], ['token', 1]])
     expect((await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'mcp.handle')).toEqual([])
   })

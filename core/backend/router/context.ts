@@ -2,8 +2,9 @@ import { randomBytes } from 'node:crypto'
 import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
+import { frozen } from '../../api/plain.ts'
 import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
-import { pluginStates, policyJobStates, type GateTime, type LiveCall, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
+import { pluginStates, policyJobStates, type GateTime, type LiveCall, type Pair, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
@@ -46,10 +47,8 @@ export type Pending = {
   caller: Caller
   // The parent's for a sub-call, the caller's own text otherwise
   onBehalf: string | undefined
-  // The agent the call is judged for, inherited from the door's call down the chain
-  agent: string | undefined
-  // The agent its sub-calls act for: the label of the door's own call, an agent's call's agent
-  lends: string | undefined
+  // The pair the call is judged for beside its caller: the chain's under a plugin root, none for the root call itself
+  pair: Pair | undefined
   action: string
   parent: Pending | null
   root: Root
@@ -106,13 +105,19 @@ export type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
 export type About = { id: number | null, action: string, onBehalf: string | undefined, parent: Pending | null }
 
 // Who the gate is asked for: a call, or a subscription the bus asks about again
-export type Asker = { caller: Caller, onBehalf: string | undefined, agent?: string | undefined, action: string }
+export type Asker = { caller: Caller, root: { readonly caller: Caller }, onBehalf: string | undefined, pair?: Pair | undefined, action: string }
 
 export type Shaped =
   | ({ ok: false, no: No } & About)
-  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number, agent: string | undefined, lends: string | undefined } & About)
+  | ({ ok: true, id: number, target: Target, args: unknown, bytes: number } & About)
 
 export const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
+
+// The pair a chain carries: the root plugin's id and the onBehalf it set. A window's onBehalf names who a change was
+// made for and makes no pair, nor does a chain whose root set none
+export function pairOf(root: Caller, field: string | undefined): Pair | undefined {
+  return field !== undefined && root.kind === 'plugin' ? frozen({ plugin: root.id, field }) : undefined
+}
 
 // Random, in core/api's token grammar
 export const newId = () => randomBytes(16).toString('base64url')
@@ -277,15 +282,6 @@ export class Context {
       return Number.isSafeInteger(view) ? view : null
     } catch {
       return null
-    }
-  }
-
-  // Revoked unless the plugins manager says plainly it is not, so a view that throws refuses
-  revoked(label: string): boolean {
-    try {
-      return this.tableOf().revoked(label) !== false
-    } catch {
-      return true
     }
   }
 

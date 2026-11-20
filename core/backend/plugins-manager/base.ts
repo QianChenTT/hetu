@@ -1,5 +1,5 @@
 import type { CoreStatus, StateKind, StoppedMode } from '../../api/actions.ts'
-import { AGENT_ASK_PAUSE_MS, changeEffect, type Change } from '../../api/changes.ts'
+import { changeEffect, IDENTITY_ASK_PAUSE_MS, type Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
 import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
@@ -17,8 +17,7 @@ import type { RouterDoor } from '../router/header.ts'
 import { type CoreModules } from '../modules/header.ts'
 import { clear, folders, type Installed } from './folders.ts'
 import { plan, type Plan, type Status, type Verdict } from './graph.ts'
-import { Connects } from './connects.ts'
-import { cleared } from './marks.ts'
+import { Connects, type PairOf } from './connects.ts'
 import type { Beating } from '../heartbeat/header.ts'
 import type { Failure, Runtime } from '../runtime/header.ts'
 import type { PluginsRecording } from './header.ts'
@@ -56,7 +55,7 @@ export type PluginsManagerOptions = {
   // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
   // the plugin's limits as they are now to its running halves
   limited?: (plugin: string) => void
-  // A clock no change of the wall clock moves, for how long a request is first in line and how long an agent's ask
+  // A clock no change of the wall clock moves, for how long a request is first in line and how long an ask for a pair
   // waits. performance.now unless a test names another
   clock?: () => number
 }
@@ -151,7 +150,7 @@ export function bare<T extends object>(entries: T): T {
 }
 
 // What every part of the plugins manager shares: the fields, what the core handed over, the small readers and writers
-// every step uses and how a plugin's status is judged. The parts above it are the lifecycle, the agents' state, the
+// every step uses and how a plugin's status is judged. The parts above it are the lifecycle, the pairs' state, the
 // classes, the install, the changes and the plugins manager joining them
 export abstract class PluginsBase {
   protected readonly link: RouterDoor
@@ -205,9 +204,10 @@ export abstract class PluginsBase {
   protected failing = false
   // Items whose ask the human cancelled this run, by plugin and item, which answer declined until Restart hetu
   protected readonly declinedAsks = new Set<string>()
-  // Agents whose ask the human cancelled, by label, with the time from which each may ask again
+  // Pairs whose ask the human cancelled, by the root plugin's id and the field on two lines, with the time from which
+  // each may ask again
   protected readonly askPaused = new Map<string, number>()
-  // The connects mcp-http-handler asks for: the one waiting, the answers not yet collected and the client ids paused
+  // The connects utility halves ask for: the one waiting, the answers not yet collected and the client ids paused
   protected readonly connects: Connects
   protected readonly clock: () => number
   // The pass at start has classed every entry, so the grant risk classifier switched on from here on classes them again
@@ -245,15 +245,19 @@ export abstract class PluginsBase {
     this.requests = new Requests({
       effect: change => changeEffect(change),
       // A notice of a class moved up and a connect change nothing when answered, so no state they read can go stale under
-      // them. A connect's Confirm looks at the label again instead
-      fingerprint: change => (change.kind === 'class.raised' || change.kind === 'agent.connect'
-        ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
+      // them. A connect's Confirm looks at the pair again instead. An ask for a pair reads that pair's items alone, held
+      // in memory, so only a change to that pair stales it
+      fingerprint: change => {
+        if (change.kind === 'class.raised' || change.kind === 'consent.ask') return Promise.resolve(change.kind)
+        if (change.kind === 'identity.ask') return Promise.resolve(`${change.kind}\n${change.root}\n${change.field}\n${this.pairCount(change)}`)
+        return this.store.fingerprint('plugin' in change ? change.plugin : null)
+      },
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
       cancelled: change => {
         if (change.kind === 'class.raised') return this.answered(change.plugin)
-        if (change.kind === 'agent.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
-        if (change.kind === 'agent.connect') this.connects.cancelled(change)
+        if (change.kind === 'identity.ask') this.askPaused.set(`${change.root}\n${change.field}`, this.clock() + IDENTITY_ASK_PAUSE_MS)
+        if (change.kind === 'consent.ask') this.connects.cancelled(change)
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.record(event, fields, signal),
@@ -276,10 +280,10 @@ ${capabilityKey(change.capability)}`)
       clock: () => this.clock(),
       held: change => this.requests.changes().some(one => one.change === change),
       raise: change => {
-        const id = this.requests.raise(change, null, 1, 'agent.connect')
+        const id = this.requests.raise(change, null, 1, 'consent.ask')
         return typeof id === 'string' && this.requests.changes().some(one => one.id === id && one.change === change)
       },
-      inUse: label => this.labelHeld(label),
+      inUse: pair => this.pairHeld(pair),
     })
   }
 
@@ -565,7 +569,8 @@ ${capabilityKey(change.capability)}`)
   // Steps of the parts above, which the constructor's closures and the readers here call
   protected abstract replan(): void
   protected abstract refresh(): void
-  protected abstract labelHeld(label: string): boolean
+  protected abstract pairHeld(pair: PairOf): boolean
+  protected abstract pairCount(pair: PairOf): number
   protected abstract applyNow(change: Change, confirm: boolean): Promise<void | 'unchanged'>
   protected abstract answered(id: string): Promise<void>
 }

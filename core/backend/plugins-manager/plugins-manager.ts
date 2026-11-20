@@ -1,5 +1,5 @@
 import type { CoreStatus, HeldRequest, ListedPlugin, SecurityList } from '../../api/actions.ts'
-import { connectLabel, type Change } from '../../api/changes.ts'
+import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
@@ -50,21 +50,27 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         return null
       case 'security.list':
         return this.securityList()
-      // The router's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
-      case 'core.agentAsk':
-        return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
-      // The floor let only mcp-http-handler's half on its utility port through
-      case 'core.agents':
-        return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
-      // The floor let only mcp-http-handler's half on its utility port through. The handle is the core's own, never an argument
-      case 'core.agentConnect':
-        return { handle: this.connects.ask(args as ConnectAsked) }
-      case 'core.agentConnected':
-        return { answer: this.connects.answer(args.handle as string) }
-      // Coalesced by reason with the counts added up. A throw in recording is that record lost
-      case 'core.agentRefused':
+      // The router's floor let only the plugin the root of a chain called through, under that call, so the pair is that
+      // chain's: the root plugin and the field it set
+      case 'core.identityAsk':
+        return this.identityAsk(call, args.capabilities as Capability[])
+      // The floor let only a plugin's host half on its utility port through, which asks about the pairs its plugin roots
+      case 'core.identities':
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return this.identitiesOf(call.caller.id, args.fields as string[])
+      // From a utility half too. The handle is the core's own and never an argument. Only the plugin that asked collects
+      // the answer
+      case 'core.consentAsk':
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return { handle: this.connects.ask(args as ConnectAsked, call.caller.id) }
+      case 'core.consentAnswer':
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return { answer: this.connects.answer(args.handle as string, call.caller.id) }
+      // Under the calling plugin's id, coalesced by reason with the counts added up. A throw in recording is that record
+      // lost
+      case 'core.refused':
         try {
-          this.recording.coalesced('http.refused', { reason: args.reason as string }, undefined, args.count as number)
+          if (call.caller.kind === 'plugin') this.recording.coalesced(`${call.caller.id}.refused`, { reason: args.reason as string }, undefined, args.count as number)
         } catch {}
         return null
       case 'core.stop':
@@ -75,9 +81,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         // The human stopped it from the trusted window, so only the trusted window starts it again
         const trusted = call.caller.kind === 'window' && call.caller.role === 'trusted'
         if (call.action === 'core.restart' && k.held?.state === 'stopped' && k.held.reason === 'human' && !trusted) throw { code: 'not-granted' }
-        // A utility half is the door. Its restart cuts every agent call in flight and can bring back a door the core
-        // ended, so it is the human's in the trusted window alone, as its stop is. The place is the plugins manager's to know,
-        // so the rule is here and not in the floor, which sees only that a window asked
+        // A utility half is a door. Its restart cuts every call it made for a client in flight and can bring back a door
+        // the core ended, so it is the human's in the trusted window alone, as its stop is. The place is the plugins
+        // manager's to know, so the rule is here and not in the floor, which sees only that a window asked
         if (call.action === 'core.restart' && k.place === 'utility' && !trusted) throw { code: 'not-granted' }
         if (call.action === 'core.stop') await this.stop(k.id, 'human')
         else await this.restart(k.id, 'human')
@@ -127,7 +133,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: this.requests.typed(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
+        type: this.requests.typed(change),
+        root: change.kind === 'identity.ask' ? change.root : change.kind === 'consent.ask' ? change.plugin : null,
+        field: change.kind === 'identity.ask' || change.kind === 'consent.ask' ? change.field : null,
       }
     })
     return {
@@ -142,7 +150,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       },
       luoshu: this.state.luoshu?.folder ?? null,
       requests,
-      agents: this.listedAgents(),
+      identities: this.listedIdentities(),
       stopped: this.stoppedMode,
     }
   }
@@ -179,7 +187,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const read = this.bundled.get(change.plugin)
       const listed = this.install?.plugins[change.plugin]
       if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
-      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true, 'restore')
+      const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true)
       return [...this.classes('restore', change.plugin, after, true).lines]
     }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {

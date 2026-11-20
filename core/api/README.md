@@ -5,7 +5,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `changes.ts`: the change kinds a security request carries, whether each widens, narrows or destroys data (`changeEffect`) and what the human types to switch protection off (`mustType`)
 - `describe.ts`: the core's own words for each change, which the trusted window draws above Confirm
 - `trusted.ts`: what the trusted page shares with the core, apart from zod: the input delay and how a capability reads
-- `capabilities.ts`: the fixed capability list with the install-only types marked
+- `capabilities.ts`: the fixed capability list with the install-only types marked and the types a pair may hold (`pairTypes`), which the gate and the ask for a pair's items read
 - `scope.ts`: the scope grammar, the path matcher and the check for characters that could hide on a screen. The matcher matches no path with a dot segment
 - `names.ts`: `isDotName`, the one check for a segment no note path holds, with `withoutIgnorable` and apart from zod so the SDK hands `isDotName` to plugins
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder, and `supportsApi`: this core's major or an older one every major since only added to (`apiChanges`), with no type in the manifest added, removed or reshaped since
@@ -13,9 +13,8 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `windows.ts`: what each window holds
 - `limits.ts`: the limits and the longest delay a timer takes, past which no time constant may be raised
 - `actions.ts`: the core actions with who may call each, which the trusted window may send inside its input delay as reads and which name a live call, the bus's actions with what the bus does with each and the provider actions with the capability each is checked against, each with its argument schema. `ActionArgs` and `ActionResults` type what the SDK's calls take and answer
-- `tools.ts`: the tools an agent may call through mcp, made from the provider rows' `agent` entries. `toolList` gives what `tools/list` answers and `toolFor` the action and schema for a name. The router refuses a call under an agent's chain to a provider action with no entry, the caller's own storage and cache aside
 - `classes.ts`: the grant risk classifier's interface: the table it is handed at every class change (`ClassTable`), the answer it gives (`ClassAnswer`, a `ClassVerdict` for each plugin the change moves) and the shape check the core runs on every answer (`checkedAnswer`), with the highest class a class not known counts as
-- `policy-jobs.ts`: what the router asks and hands on: the gate, guard and provider interfaces, `Call` with the signal it carries into perform, the view of a live call (`LiveCall`) and the gate's time per caller (`GateTime`), `Access`, `Decision`, `GuardCall`, the policy job and plugin states, the audit record, the class names, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the plugins manager calls
+- `policy-jobs.ts`: what the router asks and hands on: the gate, guard and provider interfaces, `Call` with the signal it carries into perform, the view of a live call (`LiveCall`) and the gate's time per caller (`GateTime`), the pair a chain under a plugin root carries (`Pair`), `Access`, `Decision`, `GuardCall`, the policy job and plugin states, the audit record, the class names, `Opening` and the `LuoshuRole`, `StorageRole`, `HistoryRole` and `ExecRole` the plugins manager calls
 - `editor.ts`: the editor bridge's verbs and what each needs, the mark and change shapes, key bindings, `parseBridgeCall`, replies and events
 - `ui.ts`: themes, the style list, the tree node and its operations (`applyOps`), the ui verbs (`uiCall`, `uiNeeds`), `parseDrawerCall`, `LayoutView`, `LayoutState` and `UiEvent`
 - `ui-limits.ts`: the caps on what plugins draw, apart from zod

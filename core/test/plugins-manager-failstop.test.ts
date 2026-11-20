@@ -20,7 +20,7 @@ afterEach(cleanup)
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const worker = (id: string): Files => filesFor(workerManifest(id))
-const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
+const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 const exists = (file: string) => stat(file).then(() => true, () => false)
 // An install list naming a core module, which the core holds and no list may name, so the list can't be read
 const naming = () => ({ ...coreInstall(), gate: { files: filesFor(hostManifest('gate')) } })

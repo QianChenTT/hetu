@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, originOk, PORT, refusalReasons, refuseEveryToken, routeOf,
-  type Seen,
+  authorizationOf, checkDoor, doorLimits, fetchSiteOk, HOST, hostOk, labelOk, MAX_CLIENT_ID_LENGTH, MAX_NUMBER_DIGITS, originOk, PORT, refusalReasons,
+  refuseEveryToken, routeOf, type Seen,
 } from '../src/checks.ts'
-import { agentRefusals } from 'hetu-core/api/actions.ts'
+import { refusedReasons } from 'hetu-core/api/actions.ts'
 
 // A request as Node's parser hands it over: the method, the target as sent, the version and the raw header list,
 // names as sent and each followed by its value
@@ -38,9 +38,26 @@ describe('the fixed values', () => {
     expect(Object.isFrozen(doorLimits)).toBe(true)
   })
 
-  it('records a refusal under the eight fixed reasons core.agentRefused takes and no others', () => {
+  it('records a refusal under the eight fixed reasons core.refused takes and no others', () => {
     expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
-    expect(refusalReasons).toEqual(agentRefusals)
+    expect(refusalReasons).toEqual(refusedReasons)
+  })
+})
+
+describe('the label a token names', () => {
+  it('takes the client id, # and the number of the authorization with no leading zero', () => {
+    expect([MAX_CLIENT_ID_LENGTH, MAX_NUMBER_DIGITS]).toEqual([255, 15])
+    for (const label of [
+      'client#1', 'https://claude.ai/oauth/claude-code-client-metadata#3', "https://u@a.example:8443/p;q=1?x=[1]&y=(2)*+,$!'~-._%41#12",
+      `${'x'.repeat(255)}#${'9'.repeat(15)}`, '7c4d0c1e-5b1d-4d7e-9a8a-1d0f5a1b2c3d#120',
+    ]) expect(labelOk(label), label).toBe(true)
+  })
+
+  it('refuses any other text: no number, a leading zero, a fragment in the client id, a space, a letter outside ASCII and past each cap', () => {
+    for (const label of [
+      '', 'client', 'client#', '#1', 'client#0', 'client#01', 'client#-1', 'client#1.5', 'a#b#1', 'a b#1', 'cl\u0131ent#1', 'client#1\n',
+      `${'x'.repeat(256)}#1`, `client#${'1'.repeat(16)}`, 'client#1 ', ' client#1', 'claude\u202e#1',
+    ]) expect(labelOk(label), JSON.stringify(label)).toBe(false)
   })
 })
 

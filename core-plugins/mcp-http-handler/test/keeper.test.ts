@@ -98,6 +98,24 @@ describe('http on the fake core', () => {
     expect(mcp.delivered).toHaveLength(1)
   })
 
+  it('refuses a token that names a label out of the form with 401, reaching nothing, the core hearing only the refusal', async () => {
+    const { core, mcp, port } = await started({ token: () => ({ client: 'https://client.example/metadata' }) })
+    await until(() => canConnect(port))
+    expect((await post(port, { headers: { Authorization: 'Bearer any' } })).status).toBe(401)
+    expect(mcp.delivered).toEqual([])
+    await until(() => core.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
+    expect(core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => record.fields.reason)).toEqual(['token'])
+    expect(core.coreCalls).toEqual([])
+  })
+
+  it('asks the core nothing while it serves a request, so no state of the gate reaches it', async () => {
+    const { core, mcp, port } = await started()
+    await until(() => canConnect(port))
+    expect((await post(port, { headers: { Authorization: 'Bearer good-token' } })).status).toBe(200)
+    expect(mcp.delivered).toHaveLength(1)
+    expect(core.coreCalls).toEqual([])
+  })
+
   it('opens no door while mcp is not there, opens it when mcp turns ready, closes it when mcp goes and opens it again', async () => {
     const { core, port, state } = await started({ mcp: 'unavailable' })
     expect(state).toEqual({ state: 'ready' })
@@ -147,8 +165,8 @@ describe('http on the fake core', () => {
     for (let i = 0; i < 5; i++) expect((await post(port, { host: 'evil.example' })).status).toBe(403)
     expect((await post(port, { headers: { Origin: 'https://evil.example', Authorization: 'Bearer good-token' } })).status).toBe(403)
     expect((await post(port, { headers: { Authorization: 'Bearer wrong' } })).status).toBe(401)
-    await until(() => core.coreRecords.filter(record => record.event === 'http.refused').length === 3)
-    const counts = Object.fromEntries(core.coreRecords.filter(record => record.event === 'http.refused').map(record => [record.fields.reason, record.fields.count]))
+    await until(() => core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').length === 3)
+    const counts = Object.fromEntries(core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => [record.fields.reason, record.fields.count]))
     expect(counts).toEqual({ host: 5, origin: 1, token: 1 })
     expect(mcp.delivered).toEqual([])
   })
@@ -170,7 +188,7 @@ describe('http on the fake core', () => {
     await post(port, { headers: { Authorization: 'Bearer good-token' }, path: '/mcp?q=query-secret' })
     await post(port, { host: 'evil-host.example', headers: { Authorization: 'Bearer good-token' } })
     await post(port, { headers: { Authorization: 'Bearer good-token', Origin: 'https://evil-origin.example' } })
-    await until(() => core.coreRecords.some(record => record.event === 'http.refused'))
+    await until(() => core.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
     await core.stop()
     const written = JSON.stringify(core.coreRecords) + lines.join('\n')
     for (const secret of secrets) expect(written).not.toContain(secret)

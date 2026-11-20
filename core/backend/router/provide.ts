@@ -36,16 +36,12 @@ function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
 }
 
 // The gate policy job's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-// call with power passes, whatever the log's state, which decides nothing of a call. A call for an agent never passes:
-// with the gate off nothing judges the agent's own grant, so it answers as a gate that is down. Once shutdown began a
-// call for an agent answers stopped whatever the gate's state, so the door's call during a shutdown answers the same
-// with the gate on as with it off
-export function gateOpen(c: Context, agent?: string): 'decide' | 'pass' | RefusalCode {
-  if (agent !== undefined && c.shutting) return 'stopped'
+// call with power passes, whatever the log's state, which decides nothing of a call, a call for a pair included
+function gateOpen(c: Context): 'decide' | 'pass' | RefusalCode {
   const gate = c.policyJob('gate')
   if (gate === 'on') return 'decide'
   if (gate === 'starting') return 'starting'
-  if (gate !== 'off' || agent !== undefined) return c.down('policy-down')
+  if (gate !== 'off') return c.down('policy-down')
   return 'pass'
 }
 
@@ -68,17 +64,18 @@ export function judgeAll(c: Context, pending: Pending, stage: Access['stage'], k
 }
 
 // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
-// since a live subscription is its item in use. Every judgement of a call comes here, so a call for an agent is
-// judged against the agent's own grant beside the caller's at each one and passes at none while the gate isn't on
+// since a live subscription is its item in use. Every judgement of a call comes here, so a call for a pair is judged
+// against the pair's items beside the caller's at each one
 function decideFor(c: Context, asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-  const open = gateOpen(c, asker.agent)
+  const open = gateOpen(c)
   if (open === 'pass') return null
   if (open !== 'decide') return { code: open }
   const gate = c.holder(() => c.options.gate())
   if (gate === null) return { code: c.down('policy-down') }
+  const { pair } = asker
   const access: Access = frozen({
-    stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
-    ...(asker.agent !== undefined ? { agent: asker.agent } : {}), action: asker.action, capability, scope,
+    stage, caller: asker.caller, root: asker.root.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
+    ...(pair !== undefined ? { pair } : {}), action: asker.action, capability, scope,
   })
   let allow: unknown, view: unknown, code: unknown, ask: unknown
   try {
@@ -158,7 +155,7 @@ export function listable(c: Context, caller: Caller, path: string): boolean {
 // An ask is the item's first use: the prompt holds a request for the human or can't for now, while the subscription
 // waits for the Confirm. A declined ask refuses
 export function recheck(c: Context, caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
-  const asker: Asker = { caller, onBehalf: undefined, action: subscribeAction.action }
+  const asker: Asker = { caller, root: { caller }, onBehalf: undefined, action: subscribeAction.action }
   const scope: Scope = frozen({ topics: [topic] })
   for (const stage of ['raw', 'canonical'] as const) {
     const refused = decideFor(c, asker, stage, subscribeAction.capability, scope)
@@ -296,7 +293,7 @@ function guard(c: Context, pending: Pending, prepared: Prepared): RefusalCode | 
     const guard = state === 'on' ? c.holder(() => c.options.guards(id)) : null
     if (guard === null) return c.down('guard-down')
     const call: GuardCall = frozen({
-      callId: pending.callId, caller: pending.caller,
+      callId: pending.callId, caller: pending.caller, root: pending.root.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       action: pending.action, scope: prepared.scope,
       ...(prepared.baseVersion !== undefined ? { baseVersion: prepared.baseVersion } : {}),
@@ -331,22 +328,22 @@ function tampered(c: Context, pending: Pending, part: string, args: unknown): vo
 }
 
 // What a listing's provider gets to filter with and the charge for the whole listing. canList asks the gate for the
-// caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
-// throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
-// the caller's second of the gate's time as gate.filterReadable's does
+// caller and the pair the call is judged for, every name passing with the gate off by the human. A throw counts as a no
+// and fails the listing. The whole listing, the walk and the gate's time alike, counts against the caller's second of
+// the gate's time as gate.filterReadable's does
 function listerOf(c: Context, pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
   const off = c.policyJob('gate') === 'off'
   const gate = off ? null : c.holder(() => c.options.gate())
-  const { agent } = pending
+  const { pair } = pending
   let threw = false
   const started = c.clock()
   let charged = false
   return {
     canList: path => {
-      if (off) return agent === undefined
+      if (off) return true
       if (gate === null || threw) return false
       try {
-        return gate.canList(pending.caller, path, agent) === true
+        return gate.canList(pending.caller, path, pair) === true
       } catch {
         threw = true
         return false

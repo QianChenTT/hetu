@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { findProgram } from '../../../lib/clean-env.ts'
+import type { Caller } from '../../../api/envelope.ts'
 import type { Call } from '../../../api/policy-jobs.ts'
 import { createHistory } from '../../../backend/providers/history/history.ts'
 import { ask, callOf, cleanup, commitOf, editor, git, logOf, place, started, type Place } from './helpers.ts'
@@ -196,6 +197,32 @@ describe('a commit', () => {
       ['https://agent.example/client evil@example.com Signed-off-by: x', 'git'],
       ['git', 'git'],
     ])
+  })
+
+  it('names the root plugin as the committer and the field as the author on a chain that carries a pair', async () => {
+    const history = await started(where)
+    const mcp: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
+    const handler: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
+    await commitOf(history, ['a.md'], 'for a client', { caller: mcp, root: handler, onBehalf: 'claude-code#1' })
+    expect((await logOf(history, 'a.md')).map(entry => [entry.author, entry.committer])).toEqual([['claude-code#1', 'mcp-http-handler']])
+  })
+
+  it('names the plugin that made the call as the committer under a window root, with the onBehalf the window set as the author', async () => {
+    const history = await started(where)
+    const marker: Caller = { kind: 'plugin', id: 'marker', half: 'worker', incarnation: 1 }
+    await commitOf(history, ['a.md'], 'bolded', { caller: marker, root: editor, onBehalf: 'the human' })
+    await note(where, 'a.md', 'edited again')
+    await commitOf(history, ['a.md'], 'saved', { caller: marker, root: editor })
+    expect((await logOf(history, 'a.md')).map(entry => [entry.author, entry.committer])).toEqual([
+      ['marker', 'marker'], ['the human', 'marker'],
+    ])
+  })
+
+  it('names the caller on a chain under a plugin root that carries no pair, as before', async () => {
+    const history = await started(where)
+    const beta: Caller = { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }
+    await commitOf(history, ['a.md'], 'through git', { caller: git, root: beta })
+    expect((await logOf(history, 'a.md')).map(entry => [entry.author, entry.committer])).toEqual([['git', 'git']])
   })
 
   it('falls back to the caller when the label holds nothing a name may', async () => {

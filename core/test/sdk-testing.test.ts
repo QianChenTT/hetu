@@ -262,7 +262,7 @@ describe('the fake luoshu against the luoshu plugin', () => {
     let n = 0
     async function ask(provider: Provider, args: object, canList: ((at: string) => boolean) | null): Promise<unknown> {
       const call: Call = {
-        callId: `l${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.list', args, deadline: Date.now() + 30000,
+        callId: `l${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, root: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.list', args, deadline: Date.now() + 30000,
         ...(canList === null ? {} : { canList }),
       }
       const prepared = await provider.prepare(call)
@@ -356,7 +356,7 @@ describe('the fake core\'s storage', () => {
   const caller = { kind: 'plugin', id: 'reader', half: 'worker', incarnation: 1 } as const
   let n = 0
   async function ask(store: MemoryStorage, action: string, args: object, from: Call['caller'] = caller): Promise<unknown> {
-    const call: Call = { callId: `m${++n}`, caller: from, action, args, deadline: Date.now() + 30000 }
+    const call: Call = { callId: `m${++n}`, caller: from, root: from, action, args, deadline: Date.now() + 30000 }
     const prepared = await store.prepare(call)
     if (!('scope' in prepared)) return { refused: prepared }
     try {
@@ -782,9 +782,9 @@ describe('the fake core playing another plugin', () => {
   it('places http under test in a utility process on a port, where the floor takes its two core actions', async () => {
     const http = { id: 'mcp-http-handler', name: 'HTTP', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' }, node: ['http'] }
     const { made, ctx } = await started(http)
-    expect(await ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).toBeNull()
-    await until(() => made.coreRecords.some(record => record.event === 'http.refused'))
-    expect(made.coreRecords.filter(record => record.event === 'http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
+    expect(await ctx.call('core', 'refused', { reason: 'host', count: 4 })).toBeNull()
+    await until(() => made.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
+    expect(made.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 4 }])
     // The core ends the half before any answer, as the plugins manager ends the process, so the call never settles
     void ctx.bindFailed('port-taken').catch(() => {})
     await until(() => made.coreCalls.length === 1)
@@ -795,7 +795,7 @@ describe('the fake core playing another plugin', () => {
   it('places any other host plugin in main, where the floor refuses both', async () => {
     const net = { id: 'net', name: 'Net', version: '1.0.0', api: `^${API_VERSION}`, entries: { host: 'dist/host.js' } }
     const { made, ctx } = await started(net)
-    await expect(ctx.call('core', 'agentRefused', { reason: 'host', count: 4 })).rejects.toMatchObject({ code: 'not-granted' })
+    await expect(ctx.call('core', 'refused', { reason: 'host', count: 4 })).rejects.toMatchObject({ code: 'not-granted' })
     await expect(ctx.bindFailed('port-taken')).rejects.toMatchObject({ code: 'not-granted' })
     expect(made.coreCalls).toEqual([])
     expect(made.status()).toEqual({ state: 'ready', reason: null })

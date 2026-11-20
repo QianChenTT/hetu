@@ -89,7 +89,7 @@ function opened(): Luoshu {
 // { refused }
 async function write(luoshu: Luoshu, file: string, text: string, baseVersion?: string): Promise<unknown> {
   const call: Call = {
-    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.write',
+    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.write',
     args: baseVersion === undefined ? { path: file, text } : { path: file, text, baseVersion }, deadline: Date.now() + 30000,
     judge: () => ({ code: 'not-granted' }),
   }
@@ -285,7 +285,7 @@ describe('on a volume with no hard links', () => {
     }
     const luoshu = opened()
     const call: Call = {
-      callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.move',
+      callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action: 'luoshu.move',
       args: { from: 'box/m.md', to: 'taken.md' }, deadline: Date.now() + 30000, judge: () => ({ code: 'not-granted' }),
     }
     const prepared = await luoshu.provider.prepare(call) as Prepared

@@ -68,15 +68,18 @@ function canonical(value: unknown): string {
 }
 
 // What the records say of a change: its kind, its target and the hash of the change as stored. Never a folder or a
-// scope, which the hash stands for. An agent's ask and its revoke name the agent, whose label's form holds ASCII alone
+// scope, which the hash stands for. An ask for a pair and its revoke name the root plugin and the field, a connect the
+// plugin that asked and the field it would set
 function fieldsOf(change: Change, key: string): Record<string, Field> {
-  const agent = change.kind === 'agent.ask' || change.kind === 'agent.revoke' ? change.agent : null
-  const target = agent ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
-  return {
+  const root = change.kind === 'identity.ask' || change.kind === 'identity.revoke' ? change.root : null
+  const target = root ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
+  const fields: Record<string, Field> = {
     kind: change.kind,
     target: change.kind === 'limit.set' ? `${change.constant}:${change.plugin ?? 'all'}` : target,
-    hash: createHash('sha256').update(key).digest('hex'),
   }
+  if (change.kind === 'identity.ask' || change.kind === 'identity.revoke' || change.kind === 'consent.ask') fields.field = change.field
+  fields.hash = createHash('sha256').update(key).digest('hex')
+  return fields
 }
 
 const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.kind)

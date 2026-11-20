@@ -55,7 +55,7 @@ describe('recording', () => {
 
   it('reads the log for log.segments and log.verify whatever its switch', async () => {
     const { recording: one, log } = recording({ off: () => true })
-    const asked = (action: string) => one.serve({ callId: 'c', caller: worker('search'), action, args: undefined, deadline: 0 })
+    const asked = (action: string) => one.serve({ callId: 'c', caller: worker('search'), root: worker('search'), action, args: undefined, deadline: 0 })
     expect(await asked('log.segments')).toEqual(log.segments)
     expect(await asked('log.verify')).toEqual({ ok: true })
   })

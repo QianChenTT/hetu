@@ -1,7 +1,7 @@
 // The trusted window's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
 // function that draws a screen as text. Every word on it is the core's or this file's, a plugin's only as an id or a
 // quoted scope
-import { stoppedCause, type HeldRequest, type ListedAgent, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
+import { stoppedCause, type HeldRequest, type ListedIdentity, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
@@ -19,17 +19,17 @@ export type Choice = 'retry' | 'switch-off' | 'quit'
 // A line and the change its button asks for, none for a line with no button
 export type Switch = { line: string, change: Change | null }
 
-// A run of text, an agent's label in quotes being drawn apart from the words around it
+// A run of text, a field in quotes being drawn apart from the words around it
 export type Part = { text: string, label: boolean }
 
-// An agent's row: its label in quotes, then the rest of its line
-export type AgentRow = { label: string, line: string, change: Change | null }
+// A pair's row: its field in quotes, then the rest of its line
+export type IdentityRow = { label: string, line: string, change: Change | null }
 
 export type Limit = { constant: LimitName, fixed: number, all: number | null, plugins: { plugin: string, value: number }[] }
 
 export type Screen = {
   stopped: { control: string, lines: string[], choices: Choice[] } | null
-  // The oldest request waiting with its heading in parts and for an agent's ask the revoke of the label its heading
+  // The oldest request waiting with its heading in parts and for an ask for a pair's items the revoke of the pair its heading
   // shows, then how many wait behind it
   request: (HeldRequest & { heading: Part[], revoke: Change | null }) | null
   behind: number
@@ -42,27 +42,28 @@ export type Screen = {
   limits: Limit[]
   luoshu: string
   install: string
-  // Each agent with its Revoke, a revoked one with none, then what the list can't know
-  agents: { rows: AgentRow[], about: string }
+  // Each pair with its Revoke, a revoked one with none, then what the list holds
+  identities: { rows: IdentityRow[], about: string }
 }
 
 // A fixed line: the macOS app is the user's to write, unlike Program Files on Windows
 const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s install'
-// What the agent list holds and what it can't: the core keeps the label and the items, mcp-http-handler the client's name and the tokens
-const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s'
+// What the identities list holds: the pairs the core holds for this run, each the field its root plugin set
+const IDENTITIES_LINE = 'Each is the field a plugin sets on the calls it makes for one of its clients, under that plugin. What it holds and a revoke last until hetu quits'
 
-// An agent's label in quotes as data, then its items, or that it is revoked
-function agentRow(agent: ListedAgent): AgentRow {
-  const label = JSON.stringify(agent.agent)
-  if (agent.revoked) return { label, line: ' · revoked, its tokens end once mcp-http-handler hears', change: null }
-  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'agent.revoke', agent: agent.agent } }
+// A pair's field in quotes as data, then its root plugin and its items, or that it is revoked
+function identityRow(pair: ListedIdentity): IdentityRow {
+  const label = JSON.stringify(pair.field)
+  const under = ` under ${pair.root}`
+  if (pair.revoked) return { label, line: `${under} · revoked until hetu quits`, change: null }
+  return { label, line: under + pair.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'identity.revoke', root: pair.root, field: pair.field } }
 }
 
-// A request's heading with the agent's label in quotes as a part of its own, the whole text as one part for any other
-// request or one whose text doesn't hold the label. The last place it is found, where a connect's words put the label,
-// so a client's name that reads as the label is never the part drawn apart
+// A request's heading with the field in quotes as a part of its own, the whole text as one part for any other request
+// or one whose text doesn't hold the field. The last place it is found, where a connect's words put the field, so a
+// client's name that reads as the field is never the part drawn apart
 export function headingOf(request: HeldRequest): Part[] {
-  const label = request.agent === null ? '' : JSON.stringify(request.agent)
+  const label = request.field === null ? '' : JSON.stringify(request.field)
   const at = label === '' ? -1 : request.text.lastIndexOf(label)
   if (at < 0) return [{ text: request.text, label: false }]
   const parts = [
@@ -71,10 +72,11 @@ export function headingOf(request: HeldRequest): Part[] {
   return parts.filter(part => part.text !== '')
 }
 
-// The request drawn first. An agent's ask gets Cancel and revoke beside Confirm and Cancel, the revoke naming the label
-// the request holds, which is the one its heading draws
+// The request drawn first. An ask for a pair's items gets Cancel and revoke beside Confirm and Cancel, the revoke naming
+// the pair the request holds, whose field its heading draws
 function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
-  const revoke: Change | null = request.kind === 'agent.ask' && request.agent !== null ? { kind: 'agent.revoke', agent: request.agent } : null
+  const revoke: Change | null = request.kind === 'identity.ask' && request.root !== null && request.field !== null
+    ? { kind: 'identity.revoke', root: request.root, field: request.field } : null
   return { ...request, heading: headingOf(request), revoke }
 }
 
@@ -223,7 +225,7 @@ export function screen(list: SecurityList): Screen {
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
     install: INSTALL_LINE,
-    agents: { rows: list.agents.map(agentRow), about: AGENTS_LINE },
+    identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
   }
 }
 

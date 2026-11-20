@@ -158,8 +158,8 @@ describe('guards', () => {
     expect(reply.ok).toBe(true)
     expect(asked).toEqual(['leases', 'second'])
     const call: GuardCall = guards.leases.calls[0]
-    expect(Object.keys(call).sort()).toEqual(['action', 'baseVersion', 'callId', 'caller', 'scope'])
-    expect(call).toMatchObject({ action: 'luoshu.write', caller: worker('scribe'), scope: { paths: ['notes/a.md'] }, baseVersion: hash })
+    expect(Object.keys(call).sort()).toEqual(['action', 'baseVersion', 'callId', 'caller', 'root', 'scope'])
+    expect(call).toMatchObject({ action: 'luoshu.write', caller: worker('scribe'), root: worker('scribe'), scope: { paths: ['notes/a.md'] }, baseVersion: hash })
     expect(JSON.stringify(guards.leases.calls)).not.toContain('secret text')
     expect(Object.isFrozen(call)).toBe(true)
   })

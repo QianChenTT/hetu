@@ -132,14 +132,7 @@ export abstract class PluginsInstall extends PluginsClasses {
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
-    const change = this.classes(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
-    const entry = this.withMarks(id, change.own!.entry!)
-    await this.settle(change.others, true)
-    await this.store.writePlugin(id, entry)
-    this.putEntry(id, entry)
-    await this.marksHandedBack(id)
-    await this.settle(change.others, false)
-    this.raiseOwed(this.touched(change))
+    await this.writeClassed(id, this.classes(cause, id, this.copied(id, read, listed, enabled), confirm))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
     this.bump()
     return true

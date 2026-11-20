@@ -57,7 +57,7 @@ function opened(options: LuoshuOptions = {}, trash?: Bin): Opened {
   return Object.assign(made, { heard, binned })
 }
 
-const callOf = (action: string, args: unknown): Call => ({ callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 })
+const callOf = (action: string, args: unknown): Call => ({ callId: `c${++n}`, caller, root: caller, action, args, deadline: Date.now() + 30000 })
 
 // prepare then perform, as the router makes a call. A refusal from either comes back as the value thrown or given
 async function ask(made: Luoshu, action: string, args: unknown): Promise<unknown> {

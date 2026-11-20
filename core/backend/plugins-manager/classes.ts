@@ -4,10 +4,9 @@ import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import { checkedAnswer, highestClass, type ClassAnswer, type ClassCause, type ClassTable, type ClassVerdict } from '../../api/classes.ts'
 import type { Plugin } from '../boot/header.ts'
-import { revoked } from './marks.ts'
 import { MAX_PENDING } from './requests.ts'
 import { type Read } from './verify.ts'
-import { PluginsAgents } from './agents.ts'
+import { PluginsIdentities } from './identities.ts'
 import { type Known } from './base.ts'
 
 // The grant risk classifier as classing reads it: on with its module serving, off once the human switched it off, down
@@ -46,7 +45,7 @@ function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capabil
 
 // The classes: the table handed to the grant risk classifier, its answer stored by the one function every class change
 // goes through, the writes ordered from the class numbers stored and the notices owed raised and withdrawn
-export abstract class PluginsClasses extends PluginsAgents {
+export abstract class PluginsClasses extends PluginsIdentities {
   // ---- classes
 
   // The grant risk classifier as classing reads it: on while its module serves, off only once the human switched it off
@@ -160,6 +159,17 @@ export abstract class PluginsClasses extends PluginsAgents {
     return [...(change.own === null ? [] : [change.own]), ...change.others].map(decided => decided.id)
   }
 
+  // A plugin's new entry as classing gave it written with the others the change classed, a class that rises settled
+  // before the write and one that falls after, then each notice owed raised
+  protected async writeClassed(id: string, change: Classed): Promise<void> {
+    const entry = change.own!.entry!
+    await this.settle(change.others, true)
+    await this.store.writePlugin(id, entry)
+    this.putEntry(id, entry)
+    await this.settle(change.others, false)
+    this.raiseOwed(this.touched(change))
+  }
+
   // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
   // it holds, naming the cause and the plugin whose change it was. Notices take places of their own. One that finds no
   // place stays owed and is raised again once a notice is answered or at the next start, and a notice that says what is
@@ -200,18 +210,14 @@ export abstract class PluginsClasses extends PluginsAgents {
     return { version: manifest.version, contentHash: k.read.hash!, signer: null, granted: manifest.capabilities ?? [], class: null, enabled: true }
   }
 
-  // A first-party copy's entry before it is classed, with the human's item switches carried over. A newer version's copy
-  // keeps the agents' items, so an update leaves each agent what the human gave it. A restore is Recover and drops them
-  protected copied(id: string, read: Read, listed: Listed, enabled: boolean, cause: 'copy' | 'restore'): Plugin {
+  // A first-party copy's entry before it is classed, with the human's item switches carried over
+  protected copied(id: string, read: Read, listed: Listed, enabled: boolean): Plugin {
     const granted = read.manifest!.capabilities ?? []
     const before = this.state.plugins[id] ?? null
     const off = carriedOff(before, granted)
-    const agents = cause === 'copy' ? before?.agents : undefined
-    // A revoked label stays marked either way, until mcp-http-handler says it ended the label's tokens
-    const revoked = before?.revoked
     return {
       version: listed.version, contentHash: listed.hash, signer: FIRST_PARTY_SIGNER, granted, class: before?.class ?? null, enabled,
-      ...(off.length > 0 ? { off } : {}), ...(agents !== undefined ? { agents } : {}), ...(revoked !== undefined ? { revoked } : {}),
+      ...(off.length > 0 ? { off } : {}),
     }
   }
 

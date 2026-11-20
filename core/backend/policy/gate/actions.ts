@@ -118,7 +118,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
       // An edit through the editor needs ui.edit on the note, never luoshu.write. ui.read is a read the drawer serves
       // only for a note the human opened
       const allows = (action: string, capability: 'ui.edit' | 'ui.read') => {
-        const decision = gate.decide(frozen({ stage: 'canonical', caller, action, capability, scope: frozen({ paths: [path] }) }))
+        const decision = gate.decide(frozen({ stage: 'canonical', caller, root: caller, action, capability, scope: frozen({ paths: [path] }) }))
         return 'allow' in decision && decision.allow === true
       }
       const edit = allows('editor.edit', 'ui.edit')
@@ -138,9 +138,9 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   // the gate's time counts against the live call's caller, filterMsPerSecond each second, so one that floods a plugin
   // with calls spends only its own. Past it the call answers throttled and the live call keeps how far it got, so the
   // next try goes on from there and any call finishes within its deadline. That progress is dropped once the gate or
-  // the grants snapshot changed, so no answer from before a narrowing stands. For a live call that acts for an agent,
-  // the paths the agent may read too. The door's own call names mcp-http-handler as its caller, which reads nothing and
-  // passes the answer on to the agent, so there the agent's grant stands in for the caller's
+  // the grants snapshot changed, so no answer from before a narrowing stands. For a live call whose chain carries a
+  // pair, the paths the pair may read too. The root plugin passes what its callee answers on to whoever it set the field
+  // for, so where the live call's caller is the root plugin the pair stands in for it
   function filterReadable(call: Call): unknown {
     const { live } = call
     const paths = (call.args as { paths: string[] }).paths.filter(path => actionPathProblem(path) === null)
@@ -159,10 +159,12 @@ export function createGateActions(options: GateActionsOptions): GateActions {
     const same = before !== undefined && before.gate === gate && before.view === current
       && before.paths.length === paths.length && before.paths.every((path, at) => path === paths[at])
     const going: Progress = same ? before : { paths: [...paths], gate, view: current, asked: 0, kept: [] }
+    const { pair } = live
+    const standsIn = pair !== undefined && live.caller.kind === 'plugin' && live.caller.id === pair.plugin
     try {
       while (going.asked < paths.length) {
         const path = paths[going.asked]
-        const kept = gate.canRead(call.caller, path, live.agent) === true && (live.door || gate.canRead(live.caller, path) === true)
+        const kept = gate.canRead(call.caller, path, live.pair) === true && (standsIn || gate.canRead(live.caller, path) === true)
         if (kept) going.kept.push(going.asked)
         going.asked++
         if (going.asked < paths.length && spent.spent + options.clock() - started >= budget) break

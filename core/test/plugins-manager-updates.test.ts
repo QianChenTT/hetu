@@ -191,7 +191,7 @@ describe('a staged update', () => {
 // A second staged update kept the first one's request, so its Confirm applied a version the human never saw
 describe('the request for an update', () => {
   const trusted = { kind: 'window' as const, role: 'trusted' as const, n: 1 }
-  const call = (action: string) => ({ callId: 'c1', caller: trusted, action, args: undefined, deadline: Date.now() + 30_000 })
+  const call = (action: string) => ({ callId: 'c1', caller: trusted, root: trusted, action, args: undefined, deadline: Date.now() + 30_000 })
 
   it('names the version it goes from and to', async () => {
     const made = await running()

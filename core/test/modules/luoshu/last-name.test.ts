@@ -38,7 +38,7 @@ function opened(): Luoshu {
 function judging(action: string, args: unknown, allowed: (paths: readonly string[]) => boolean) {
   const asked: string[][] = []
   const call: Call = {
-    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action, args, deadline: Date.now() + 30000,
+    callId: `c${++n}`, caller: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'beta', half: 'worker', incarnation: 1 }, action, args, deadline: Date.now() + 30000,
     judge: (paths: readonly string[]) => {
       asked.push([...paths])
       return allowed(paths) ? null : { code: 'not-granted' }

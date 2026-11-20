@@ -431,13 +431,13 @@ export function harness(given: HarnessOptions = {}) {
   // What the plugins manager and the runtime hand in through the router's door: the table, the core actions, the
   // prompt behind an ask and the listeners for what the ways in heard
   router.read(pluginsManager)
-  // The plugins manager's core.self and core.agentRefused as it serves them, the second through the recording handed in
+  // The plugins manager's core.self and core.refused as it serves them, the second through the recording handed in
   const core: Served = coreGiven ?? (async call => {
     if (call.action === 'core.self') return call.caller
-    if (call.action !== 'core.agentRefused') throw { code: 'unavailable' }
+    if (call.action !== 'core.refused') throw { code: 'unavailable' }
     const { reason, count } = call.args as { reason: string, count: number }
     const handed = over.recording !== undefined ? over.recording : recording
-    handed?.coalesced('http.refused', { reason }, undefined, count)
+    if (call.caller.kind === 'plugin') handed?.coalesced(`${call.caller.id}.refused`, { reason }, undefined, count)
     return null
   })
   for (const part of ['plugins-manager', 'runtime'] as const) router.serve(part, core)

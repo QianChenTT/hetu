@@ -278,7 +278,10 @@ export function createHistory(options: HistoryOptions = {}): History {
       if (parent !== null && (await git(repo, ['rev-parse', '--verify', `${parent}^{tree}`])).trim() === tree) return { commit: null }
       // An empty tree with nothing before it is a commit of nothing
       if (parent === null && notes.every(note => note.bytes === null)) return { commit: null }
-      const committer = nameOf(callerName(call.caller)) || 'hetu'
+      // On a chain that carries a pair the committer is the root plugin and the author the field. Any other chain names its
+      // caller as the committer, with a window's onBehalf, attribution alone, as the author
+      const pair = call.root.kind === 'plugin' && call.onBehalf !== undefined
+      const committer = nameOf(callerName(pair ? call.root : call.caller)) || 'hetu'
       const author = (call.onBehalf === undefined ? '' : nameOf(call.onBehalf)) || committer
       const env: Env = Object.assign(Object.create(null), repo.env, {
         GIT_AUTHOR_NAME: author, GIT_AUTHOR_EMAIL: 'author@hetu.invalid', GIT_COMMITTER_NAME: committer, GIT_COMMITTER_EMAIL: 'committer@hetu.invalid',

@@ -16,12 +16,22 @@ export type Scope = {
   readonly command?: readonly string[]
 }
 
-// A call as the router hands it to a provider, a callee or a core action. callId is the router's own and deadline is
-// in ms since the epoch, never later than the parent's
-export type Call = {
+// The pair a chain under a plugin root carries: the root plugin's id and the onBehalf it set. A chain whose root is a
+// window carries none, its onBehalf naming who the change was made for and judged by nobody
+export type Pair = { readonly plugin: string, readonly field: string }
+
+// Who made a call, as every part the router hands it to reads it. callId is the router's own. root is the caller at the
+// root of the chain, the caller itself for a call with no parent
+export type CallHead = {
   readonly callId: string
   readonly caller: Caller
+  readonly root: Caller
   readonly onBehalf?: string
+}
+
+// A call as the router hands it to a provider, a callee or a core action. deadline is in ms since the epoch, never
+// later than the parent's
+export type Call = CallHead & {
   readonly parent?: string
   readonly action: string
   readonly args: unknown
@@ -50,14 +60,15 @@ export type CallSignal = {
 }
 
 // A live call as the router hands it on with an action that names it, never the call itself: its own caller, whose
-// principal and plugin its gate time counts against, the agent it lends to, whether it is the door's own call and
-// whether it is still open
+// principal and plugin its gate time counts against, the root of its chain with the onBehalf that root set, the pair
+// the chain carries and whether it is still open
 export type LiveCall = {
   readonly caller: Caller
   readonly principal: string
   readonly plugin: string | null
-  readonly agent?: string
-  readonly door: boolean
+  readonly root: Caller
+  readonly onBehalf?: string
+  readonly pair?: Pair
   open(): boolean
 }
 
@@ -70,37 +81,26 @@ export type GateTime = {
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
-export type GuardCall = {
-  readonly callId: string
-  readonly caller: Caller
-  readonly onBehalf?: string
+export type GuardCall = CallHead & {
   readonly action: string
   readonly scope: Scope
   readonly baseVersion?: string
 }
 
-// What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing. agent is set by the router alone for a call under a chain that started at
-// the agent door. It names the agent whose own grant the call is judged against beside the caller's
+// What the gate decides on: the raw request at precheck and the prepared object at decide. root is the caller at the
+// root of the chain. onBehalf rides along and is never decided on, so it grants nothing. pair is set by the router
+// alone, for a call under the root call of a chain that carries one, whose items the call is judged against beside the
+// caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
   readonly caller: Caller
+  readonly root: Caller
   readonly onBehalf?: string
-  readonly agent?: string
+  readonly pair?: Pair
   readonly action: string
   readonly capability: CapabilityType
   readonly scope: Scope
 }
-
-// The agent door: mcp-http-handler's host half in its utility process, on the port the plugins manager minted, calling mcp.handle on behalf
-// of an agent, named by its label. Every call under that call carries the label as the agent's and can't set its own. A
-// label set anywhere else names nobody's agent, the same half on an in-process handle or with mcp-http-handler placed elsewhere too
-export const agentDoor = frozen({ plugin: 'mcp-http-handler', half: 'host', action: 'mcp.handle' } as const)
-// The plugin agents act through, whose entry holds their grants as labelled items
-export const agentHost = 'mcp'
-// The providers the agent host reaches with no live call from the door: its own storage and cache, which hold nothing
-// of the notes. Every other provider and every other plugin it reaches only under that call
-export const agentOwn = frozen(['storage'] as const)
 
 // view is the number of the grants snapshot the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only
@@ -117,22 +117,24 @@ export type GrantedItem = { readonly capability: Capability, readonly off: boole
 // each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
 // volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
-// agents holds each agent's own grant by its label, the labelled items of the agent host's entry, none of which is in
-// the host's own items. A view with no agents gives every agent nothing
+// pairs holds each pair's own items by the root plugin's id and then the field, none of them the root plugin's own.
+// revoked names the fields the human revoked under each root plugin's id for this run. A view with no pairs gives
+// every pair nothing
 export type GrantsSnapshot = {
   readonly n: number
   readonly foldCase: boolean
   readonly plugins: Readonly<Record<string, readonly GrantedItem[]>>
   readonly execAny: readonly string[]
-  readonly agents?: Readonly<Record<string, readonly GrantedItem[]>>
+  readonly pairs?: Readonly<Record<string, Readonly<Record<string, readonly GrantedItem[]>>>>
+  readonly revoked?: Readonly<Record<string, readonly string[]>>
 }
 
-// With an agent, canRead and canList answer for the caller's own items and the agent's both
+// With a pair, canRead and canList answer for the caller's own items and the pair's both
 export type Gate = {
   decide(access: Access): Decision
-  canRead(caller: Caller, path: string, agent?: string): boolean
+  canRead(caller: Caller, path: string, pair?: Pair): boolean
   // Whether the caller may see the path's name: an on item of luoshu.list or luoshu.read covering it
-  canList(caller: Caller, path: string, agent?: string): boolean
+  canList(caller: Caller, path: string, pair?: Pair): boolean
   verbs(plugin: string, window: string): string[]
   // A throw marks the gate failed
   stateChanged(view: GrantsSnapshot): void
@@ -232,8 +234,6 @@ export type PluginTable = {
   // null for no such plugin
   plugin(id: string): PluginInfo | null
   limits(): HumanLimits
-  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens
-  revoked(label: string): boolean
 }
 
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a
