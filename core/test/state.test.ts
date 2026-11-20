@@ -980,6 +980,19 @@ describe('the retired recordNothing', () => {
   })
 })
 
+// The watchdog, a core plugin before it was dropped, may still be switched off in a file: read with the id dropped
+describe('the dropped watchdog', () => {
+  it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate', 'watchdog', 'leases'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('watchdog')
+  })
+})
+
 // The limits the design accepts: detect only against a program that knows hetu, threats 24, 25 and 55
 describe('what the hash does not catch', () => {
   it('accepts an edit whose hash was rewritten too', async () => {
