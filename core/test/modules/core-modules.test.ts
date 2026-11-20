@@ -76,7 +76,7 @@ function fakes() {
     stateChanged: () => maybe('gate.stateChanged'),
   }
   const storage: StorageModule = { ...provider(), open: () => maybe('storage.open'), clear: async () => {} }
-  const luoshu: Luoshu = { provider: provider(), role: { open: () => maybe('luoshu.open') }, close: () => maybe('luoshu.close') }
+  const luoshu: Luoshu = { provider: provider(), role: { open: () => maybe('luoshu.open') }, close: () => maybe('luoshu.close'), calls: () => 0 }
   const history: History = {
     provider: provider(),
     role: { open: () => maybe('history.open') },

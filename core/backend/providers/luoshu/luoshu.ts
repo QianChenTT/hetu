@@ -19,6 +19,8 @@ export type Luoshu = {
   role: LuoshuRole
   // Ends the watch, for the plugin's stop
   close(): void
+  // How many calls luoshu keeps anything for, 0 once each has ended, a call refused at prepare included
+  calls(): number
 }
 
 export type LuoshuOptions = {
@@ -623,17 +625,19 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const provider: Provider = {
     async prepare(call: Call): Promise<Prepared | ProviderRefusal> {
       if (opening === null) return refused('unavailable')
-      const { folder, dataDir, installDir } = opening
-      preparedUnder.set(call.callId, opening)
+      const under = opening
+      const { folder, dataDir, installDir } = under
+      // The folder is kept only for a call prepare takes, since the router releases no other
+      const took = (given: Prepared): Prepared => (preparedUnder.set(call.callId, under), given)
       const args = (call.args ?? {}) as { path?: unknown, folder?: unknown, baseVersion?: unknown, from?: unknown, to?: unknown }
       if (call.action === 'luoshu.list') {
-        if (args.folder === undefined) return { scope: {} }
+        if (args.folder === undefined) return took({ scope: {} })
         if (typeof args.folder !== 'string') return refused('invalid')
         const target = usable(await canonical(folder, args.folder, { dataDir, installDir }))
         if (!('ok' in target)) return target
         spelling.set(target, args.folder)
         resolved.set(call.callId, target)
-        return { scope: {} }
+        return took({ scope: {} })
       }
       if (call.action === 'luoshu.move') {
         const { from: fromText, to: toText } = args
@@ -650,7 +654,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         for (const key of [...new Set([from.key, to.key])].sort()) await latch(key, call.callId)
         resolved.set(call.callId, from)
         moving.set(call.callId, { to, same })
-        return { scope: { paths: [from.relative, to.relative] } }
+        return took({ scope: { paths: [from.relative, to.relative] } })
       }
       if (typeof args.path !== 'string') return refused('invalid')
       const target = usable(await canonical(folder, args.path, { dataDir, installDir }))
@@ -659,7 +663,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       await latch(target.key, call.callId)
       resolved.set(call.callId, target)
       const scope = { paths: [target.relative] }
-      return typeof args.baseVersion === 'string' ? { scope, baseVersion: args.baseVersion } : { scope }
+      return took(typeof args.baseVersion === 'string' ? { scope, baseVersion: args.baseVersion } : { scope })
     },
 
     async perform(call: Call, prepared: Prepared): Promise<unknown> {
@@ -804,5 +808,6 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
   }
 
-  return { provider, role, close: stopWatching }
+  const calls = () => new Set([...preparedUnder.keys(), ...resolved.keys(), ...moving.keys(), ...holding.keys()]).size
+  return { provider, role, close: stopWatching, calls }
 }

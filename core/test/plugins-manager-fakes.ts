@@ -320,6 +320,7 @@ export function fakeLuoshu(): Luoshu & { opened: Opening[], closed: number, thro
     close() {
       made.closed++
     },
+    calls: () => 0,
   }
   return made
 }

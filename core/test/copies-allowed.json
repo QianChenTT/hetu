@@ -177,7 +177,7 @@
       "hash": "153d478ed3c86d72",
       "at": [
         "core/backend/boot/state.ts:181-186",
-        "core/backend/providers/luoshu/luoshu.ts:236-241"
+        "core/backend/providers/luoshu/luoshu.ts:238-243"
       ],
       "judged": "not yet"
     },
@@ -189,7 +189,7 @@
       "hash": "32d147def6696b83",
       "at": [
         "core/backend/boot/state.ts:182-189",
-        "core/backend/providers/luoshu/luoshu.ts:237-244"
+        "core/backend/providers/luoshu/luoshu.ts:239-246"
       ],
       "judged": "not yet"
     },
@@ -333,7 +333,7 @@
       "hash": "53ef9d2c8148efc5",
       "at": [
         "core/backend/providers/exec/exec.ts:218-226",
-        "core/backend/providers/history/history.ts:416-424"
+        "core/backend/providers/history/history.ts:419-427"
       ],
       "judged": "not yet"
     },
@@ -345,7 +345,7 @@
       "hash": "ac66a44ef05a4bd9",
       "at": [
         "core/backend/providers/exec/exec.ts:146-150",
-        "core/backend/providers/history/history.ts:362-366"
+        "core/backend/providers/history/history.ts:365-369"
       ],
       "judged": "not yet"
     },
@@ -357,19 +357,7 @@
       "hash": "b8ffacd3a37a55e5",
       "at": [
         "core/backend/providers/exec/exec.ts:232-237",
-        "core/backend/providers/history/history.ts:428-433"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/backend/providers/exec/exec.ts",
-        "core/backend/providers/luoshu/luoshu.ts"
-      ],
-      "hash": "83275fddcab29df0",
-      "at": [
-        "core/backend/providers/exec/exec.ts:174-178",
-        "core/backend/providers/luoshu/luoshu.ts:662-666"
+        "core/backend/providers/history/history.ts:431-436"
       ],
       "judged": "not yet"
     },
@@ -381,7 +369,7 @@
       "hash": "0950428060ffbe31",
       "at": [
         "core/backend/providers/history/history.ts:236-240",
-        "core/backend/providers/history/history.ts:323-326"
+        "core/backend/providers/history/history.ts:326-329"
       ],
       "judged": "not yet"
     },
@@ -393,7 +381,7 @@
       "hash": "415b8671d8093b4d",
       "at": [
         "core/backend/providers/history/history.ts:33-39",
-        "core/backend/providers/luoshu/luoshu.ts:52-59"
+        "core/backend/providers/luoshu/luoshu.ts:54-61"
       ],
       "judged": "not yet"
     },
@@ -404,8 +392,8 @@
       ],
       "hash": "188cc128a293af6f",
       "at": [
-        "core/backend/providers/luoshu/luoshu.ts:140-144",
-        "core/backend/providers/luoshu/luoshu.ts:361-363"
+        "core/backend/providers/luoshu/luoshu.ts:142-146",
+        "core/backend/providers/luoshu/luoshu.ts:363-365"
       ],
       "judged": "not yet"
     },
@@ -416,8 +404,8 @@
       ],
       "hash": "7dc3eb14eb95aa9a",
       "at": [
-        "core/backend/providers/luoshu/luoshu.ts:384-397",
-        "core/backend/providers/luoshu/luoshu.ts:438-447"
+        "core/backend/providers/luoshu/luoshu.ts:386-399",
+        "core/backend/providers/luoshu/luoshu.ts:440-449"
       ],
       "judged": "not yet"
     },
@@ -428,7 +416,7 @@
       ],
       "hash": "15dc1334c925a1d2",
       "at": [
-        "core/backend/providers/luoshu/luoshu.ts:354-361",
+        "core/backend/providers/luoshu/luoshu.ts:356-363",
         "core/lib/canonical.ts:196-201"
       ],
       "judged": "not yet"
@@ -440,7 +428,7 @@
       ],
       "hash": "32644c2af2a75255",
       "at": [
-        "core/backend/providers/luoshu/luoshu.ts:62-66",
+        "core/backend/providers/luoshu/luoshu.ts:64-68",
         "core/lib/clean-env.ts:95-99"
       ],
       "judged": "not yet"
@@ -452,7 +440,7 @@
       ],
       "hash": "1aeafa0b77c82646",
       "at": [
-        "core/backend/providers/luoshu/luoshu.ts:277-284",
+        "core/backend/providers/luoshu/luoshu.ts:279-286",
         "core/lib/hashed-file.ts:41-48"
       ],
       "judged": "not yet"
@@ -561,7 +549,7 @@
       "hash": "edbf48ffce081b66",
       "at": [
         "core/backend/runtime/workers.ts:149-154",
-        "core/frontend/trusted/view.ts:337-342"
+        "core/frontend/trusted/view.ts:338-343"
       ],
       "judged": "not yet"
     },
@@ -704,7 +692,7 @@
       ],
       "hash": "2981d94d33dbe4d6",
       "at": [
-        "core/frontend/trusted/view.ts:337-342",
+        "core/frontend/trusted/view.ts:338-343",
         "core/sdk/editor.ts:146-151"
       ],
       "judged": "not yet"
