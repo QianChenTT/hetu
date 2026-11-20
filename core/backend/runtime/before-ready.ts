@@ -35,7 +35,7 @@ export type EarlyProtocol = { registerSchemesAsPrivileged(schemes: CustomScheme[
 // folder: a second start with another folder runs
 //
 // The shim gets a profile of its own in the data folder, so it never shares Chromium's files with the hetu it reaches,
-// and no GPU. It takes no lock, since a second start only shows the first one's window, and opens no renderer, so it
+// and no GPU. It takes no lock, since a second start only shows the first one's window and opens no renderer, so it
 // needs no sandbox or scheme
 export function beforeReady(
   app: EarlyApp,

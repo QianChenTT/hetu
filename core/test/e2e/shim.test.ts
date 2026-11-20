@@ -30,7 +30,7 @@ const PAST_DELAY = 1300
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
 // A first-party id, so it ships in this install as a first-party copy. Its handle answers a request with its id and
-// the label it was called on behalf of, and a notification with nothing
+// the label it was called on behalf of and a notification with nothing
 const mcp = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({

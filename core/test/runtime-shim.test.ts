@@ -122,7 +122,7 @@ describe('the relay', () => {
     expect(shim.errors).toEqual([])
   })
 
-  it('closes the pipe whole once stdin ends with nothing owed, never half-closing it, and exits 0', async () => {
+  it('closes the pipe whole once stdin ends with nothing owed, never half-closing it and exits 0', async () => {
     const shim = relayed()
     shim.input.write(`${notification()}\n`)
     shim.input.end()
@@ -181,7 +181,7 @@ describe('the relay', () => {
     expect(shim.written()).toBe(`${notification()}\n`)
   })
 
-  it('closes the pipe past the wait with answers still owed, saying so on stderr, and exits 0', async () => {
+  it('closes the pipe past the wait with answers still owed, saying so on stderr and exits 0', async () => {
     const shim = relayed({ answerWaitMs: 20 })
     shim.input.write(`${request(1)}\n`)
     shim.input.end()
