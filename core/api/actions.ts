@@ -24,7 +24,7 @@ export function actionPathProblem(value: string): string | null {
 
 // A path as the caller wrote it, for every action. The matcher judges this text at precheck and the provider's prepare
 // canonicalises it. A spelling no canonical path holds or a dot segment is refused here, so it answers invalid before
-// precheck could answer not-granted, whatever the gate's state, and a caller can tell its own bad spelling from a
+// precheck could answer not-granted whatever the gate's state. A caller can so tell its own bad spelling from a
 // missing grant. Shape reads only the caller's own text. Its length is spelled as checks the JSON Schema an agent reads
 // keeps, since a refinement leaves it
 const path = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {

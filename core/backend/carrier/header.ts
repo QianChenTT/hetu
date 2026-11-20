@@ -17,7 +17,7 @@ export type Port = {
   on(event: 'message' | 'messageerror' | 'close', listener: (value: unknown) => void): unknown
 }
 
-// What a plugin half's way in told the router, which it only passes on: ready, pong and stopped, and alive for
+// What a plugin half's way in told the router, which it only passes on: ready, pong or stopped as sent, alive for
 // anything main heard from a utility half, before its rate
 export type Heard = (caller: Caller, kind: 'ready' | 'pong' | 'stopped' | 'alive') => void
 
