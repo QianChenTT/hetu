@@ -211,8 +211,9 @@ describe('core plugins', () => {
     expect(reasonOf(pluginsManager, MARKS)).toBe('invalid')
   })
 
-  // Only a host half in main could hold a policy job, a provider or a guard, and the core runs none
-  it('refuses a policy job, provider or guard id with place, whatever its entries, and stops nothing', async () => {
+  // Only a host half in main could hold a policy job, a provider or a guard. The core runs none. An expected guard
+  // nothing holds stops hetu in the fail-safe at start, the provider nothing
+  it('refuses a policy job, provider or guard id with place, whatever its entries', async () => {
     const { pluginsManager, runtime } = await harness({
       install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, leases: host('leases') },
       pluginsManager: { guardsFor: () => ['leases'] },
@@ -220,8 +221,12 @@ describe('core plugins', () => {
     await pluginsManager.start()
     for (const id of ['net', 'leases']) expect(reasonOf(pluginsManager, id)).toBe('place')
     expect(pluginsManager.policyJob('leases')).toBe('absent')
-    expect(pluginsManager.stopped()).toBe(null)
+    expect(pluginsManager.stopped()).toMatchObject({ control: 'leases', why: 'start-failed' })
     expect(runtime.order()).toEqual([])
+    const unguarded = await harness({ install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) } } })
+    await unguarded.pluginsManager.start()
+    expect(reasonOf(unguarded.pluginsManager, 'net')).toBe('place')
+    expect(unguarded.pluginsManager.stopped()).toBe(null)
   })
 
   it('refuses a host entry outside a utility process and a utility id with no host entry, place', async () => {

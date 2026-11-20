@@ -7,10 +7,12 @@ import type { Failure } from '../backend/runtime/header.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
+import { StateStore } from '../backend/boot/state.ts'
 import {
-  allowAll, cleanup, coreInstall, entryFor, fakeHistory, filesFor, harness, hostManifest, stateOf, tempBase, throwingClassifier, until, workerManifest,
-  type Files,
+  allowAll, cleanup, coreInstall, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, stateOf, tempBase, throwingClassifier, until,
+  workerManifest, type Files,
 } from './plugins-manager-fakes.ts'
+import { storageModule } from './modules-fakes.ts'
 
 afterEach(cleanup)
 
@@ -314,6 +316,60 @@ describe('the fail-safe at start', () => {
     expect(again.pluginsManager.stopped()).toBe(null)
     expect(again.pluginsManager.policyJob('gate')).toBe('off')
     expect(stateOf(again.pluginsManager, 'alpha')).toBe('ready')
+  })
+
+  // The modules the plugins manager hands a folder and a snapshot to, each counting what it was handed, with a notes
+  // folder picked so the luoshu and history would be handed it
+  const counted = () => {
+    const storage = Object.assign(storageModule({ prepare: async () => ({ scope: {} }), perform: async () => null }), { opened: 0 })
+    storage.open = () => { storage.opened++ }
+    const modules = { storage, luoshu: fakeLuoshu(), history: fakeHistory(), exec: fakeExec() }
+    const untouched = () => {
+      expect(storage.opened).toBe(0)
+      expect(modules.luoshu.opened).toEqual([])
+      expect(modules.history.started).toBe(0)
+      expect(modules.history.opened).toEqual([])
+      expect(modules.exec.started).toBe(0)
+      expect(modules.exec.views).toEqual([])
+    }
+    const picked = async ({ dataDir }: { dataDir: string }) => new StateStore(dataDir).writeLuoshu({ folder: path.join(dataDir, '..', 'notes') })
+    return { modules, untouched, picked }
+  }
+  const noCall = (made: Awaited<ReturnType<typeof harness>>) => {
+    expect(made.runtime.order()).toEqual([])
+    expect(made.link.coalesces).toEqual([])
+    expect(made.link.records.map(record => record.event).filter(event => event.startsWith('audit.') || event.startsWith('plugin.'))).toEqual([])
+  }
+
+  it('begins and hands nothing to storage, the luoshu, history or exec when the gate\'s first grants snapshot throws', async () => {
+    const { modules, untouched, picked } = counted()
+    const made = await harness({ ...plugins(), modules: { ...modules, gate: failing() }, before: picked })
+    await made.pluginsManager.start()
+    await made.pluginsManager.settled()
+    expect(made.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'start-failed', reason: 'state-changed', again: false })
+    untouched()
+    noCall(made)
+  })
+
+  it('stops hetu the same way for an expected guard nothing holds, before any module begins', async () => {
+    const { modules, untouched, picked } = counted()
+    const gate = allowAll()
+    const made = await harness({ ...plugins(), modules: { ...modules, gate }, before: picked, pluginsManager: { guardsFor: () => ['leases'] } })
+    await made.pluginsManager.start()
+    await made.pluginsManager.settled()
+    expect(made.pluginsManager.stopped()).toEqual({ control: 'leases', why: 'start-failed', reason: 'absent', again: false })
+    expect(made.link.events('core.stopped')).toEqual([{ control: 'leases', why: 'start-failed', reason: 'absent', again: false }])
+    expect(gate.views).toEqual([])
+    untouched()
+    noCall(made)
+    expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
+  })
+
+  it('starts on with an expected guard the human switched off', async () => {
+    const made = await harness({ ...plugins(), switches: { off: ['leases'] }, pluginsManager: { guardsFor: () => ['leases'] } })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stopped()).toBe(null)
+    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
   })
 
   it('refuses everything and stops nothing for the gate failing in use', async () => {
