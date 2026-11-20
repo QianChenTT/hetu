@@ -60,7 +60,7 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect(code(await search.ask('exec.run', { command: build }))).toBe('not-granted')
   })
 
-  // The write lands, as a single write finishes once begun, and its caller hears stale all the same
+  // The write lands, as a single write finishes once begun and its caller hears stale all the same
   it('answers a write in perform stale once its grant goes, whatever its provider returns after the abort', async () => {
     const { luoshu, search, gate, snapshot } = made()
     let open!: () => void

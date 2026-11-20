@@ -428,7 +428,7 @@ describe('the fail-safe at start', () => {
     expect(await exists(path.join(second.dataDir, 'failed-once'))).toBe(false)
   })
 
-  // A start that hangs main can't be tested by hanging, so the gate's first push looks at the disk instead, and a
+  // A start that hangs main can't be tested by hanging, so the gate's first push looks at the disk instead and a
   // marker left in place stands for the hang the run before
   describe('the start marker', () => {
     const starting = (dataDir: string, id: string) => path.join(dataDir, 'starting', id)

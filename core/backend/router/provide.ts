@@ -227,7 +227,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     return thrown(c, pending, id, 'perform', err)
   }
   lister?.charge()
-  // A result that comes after the revoke is dropped, a write that landed included, and the caller hears why
+  // A result that comes after the revoke is dropped, a write that landed included and the caller hears why
   if (pending.revoked !== null) return finish(c, pending, no(pending.revoked))
   if (lister !== null) return finish(c, pending, listed(c, lister, performed))
   result(c, pending, id, performed)
