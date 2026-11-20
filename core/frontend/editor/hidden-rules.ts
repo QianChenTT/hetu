@@ -129,9 +129,16 @@ export function remove(state: EditorState, sets: Sets, forward: boolean): Transa
   let span = range.empty ? null : trim(state, sets, range.from, range.to)
   if (span === null) {
     const spot = spotAt(sets, range.head)
-    const at = forward ? spot.to : spot.from
-    const other = charFrom(state, sets, at, forward)
-    span = { from: Math.min(at, other), to: Math.max(at, other) }
+    const line = state.doc.lineAt(spot.from)
+    if (line.length > 0 && spot.from === line.from && spot.to === line.to) {
+      // A line hidden whole, such as a rule, goes whole with one line break
+      const after = forward ? line.to < state.doc.length : line.from === 0
+      span = after ? { from: line.from, to: Math.min(line.to + 1, state.doc.length) } : { from: line.from - 1, to: line.to }
+    } else {
+      const at = forward ? spot.to : spot.from
+      const other = charFrom(state, sets, at, forward)
+      span = { from: Math.min(at, other), to: Math.max(at, other) }
+    }
   }
   if (span.from >= span.to) return null
   return { changes: span, selection: { anchor: span.from }, scrollIntoView: true, userEvent: forward ? 'delete.forward' : 'delete.backward' }

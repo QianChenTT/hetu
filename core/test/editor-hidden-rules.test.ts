@@ -148,6 +148,14 @@ describe('Backspace and Delete', () => {
     expect(press(note(bold, boldMarks, 16), backspace).doc.toString()).toBe('x **bold** y## Title')
   })
 
+  it('take a line hidden whole, such as a rule, with one line break', () => {
+    const text = 'abc\n\n---\ndef'
+    const rule: Mark[] = [{ kind: 'line', from: 5, style: 'rule' }, { kind: 'hide', from: 5, to: 8 }]
+    expect(press(note(text, rule, 8), backspace).doc.toString()).toBe('abc\n\ndef')
+    expect(press(note(text, rule, 8), del).doc.toString()).toBe('abc\n\ndef')
+    expect(press(note('---', [{ kind: 'hide', from: 0, to: 3 }], 3), backspace).doc.toString()).toBe('')
+  })
+
   it('take a widget whole', () => {
     expect(press(note(list, listMarks, 10), backspace).doc.toString()).toBe('**a** b\n**c**')
     expect(press(note(list, listMarks, 7), del).doc.toString()).toBe('**a** b- **c**')
