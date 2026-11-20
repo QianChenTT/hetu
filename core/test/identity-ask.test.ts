@@ -319,7 +319,7 @@ describe('a revoke of a pair', () => {
 
 describe('the pair of a field with a #', () => {
   it('keys the pair on the field up to its first #, so each session of a client shares its ask, items and revoke', async () => {
-    const { pluginsManager, ask, granted, identities, list, snapshot } = await started()
+    const { pluginsManager, ask, granted, identities, list, snapshot, link } = await started()
     await granted('claude-code#1', [inbox])
     expect(snapshot().pairs).toEqual({ 'mcp-http-handler': { 'claude-code': [item(inbox)] } })
     // Another session holds the client's items already and asks only for what the client lacks, once for the client
@@ -333,9 +333,10 @@ describe('the pair of a field with a #', () => {
     expect(await identities(['claude-code#1', 'claude-code#7', 'claude-code', 'other#1'])).toEqual([
       { field: 'claude-code#1', holds: 'items' }, { field: 'claude-code#7', holds: 'items' }, { field: 'claude-code', holds: 'items' }, { field: 'other#1', holds: 'none' },
     ])
-    // A revoke naming any session revokes the client
+    // A revoke naming any session revokes the client, which its record names
     expect(await pluginsManager.request({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'claude-code#9' }, trusted)).toEqual({ applied: true })
     expect(snapshot().revoked).toEqual({ 'mcp-http-handler': ['claude-code'] })
+    expect(link.events('security.applied').at(-1)).toMatchObject({ kind: 'identity.revoke', target: 'mcp-http-handler', field: 'claude-code', by: 'narrows' })
     expect(await identities(['claude-code#1', 'claude-code'])).toEqual([{ field: 'claude-code#1', holds: 'revoked' }, { field: 'claude-code', holds: 'revoked' }])
     expect(await code(ask('claude-code#4', [inbox]))).toBe('not-granted')
   })

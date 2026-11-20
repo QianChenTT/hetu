@@ -62,8 +62,12 @@ describe("the core's words for a change", () => {
       ],
     })
     expect(describeChange(one({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' }))).toEqual({
-      text: 'Revoke "client#1" under mcp-http-handler', notes: ['It loses every item at once and asks for nothing again until hetu quits'],
+      text: 'Revoke "client" under mcp-http-handler', notes: ['It loses every item at once and asks for nothing again until hetu quits'],
     })
+  })
+
+  it('names the client a revoke of one session\'s field revokes, the field up to its first #', () => {
+    expect(describeChange(one({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'claude-code#9' })).text).toBe('Revoke "claude-code" under mcp-http-handler')
   })
 
   it('quotes a field a plugin chose that reads as the core\'s words', () => {
