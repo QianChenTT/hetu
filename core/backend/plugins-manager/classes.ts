@@ -57,8 +57,8 @@ export abstract class PluginsClasses extends PluginsAgents {
     return this.modules.grantRiskClassifier() !== null ? 'on' : 'down'
   }
 
-  // What the classifier is handed: every plugin the plugins manager knows with what it holds and what its entry stores,
-  // a core plugin with none, and the change to one plugin, copied so nothing the classifier does reaches the state
+  // What the classifier is handed: every plugin the plugins manager knows with what it holds and what its entry stores
+  // (a core plugin with none) and the change to one plugin, copied so nothing the classifier does reaches the state
   protected classTable(
     cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean, requested?: readonly Capability[],
   ): ClassTable {
@@ -120,7 +120,7 @@ export abstract class PluginsClasses extends PluginsAgents {
 
   // One plugin's entry as a class change leaves it, from the classifier's verdict or, with none, from the fallback the
   // classifier's state names. A confirmed item stays confirmed while the plugin holds it, until new code applies with no
-  // Confirm on screen. Down, every item asks, confirmed ones too, and an entry stored with no Confirm on screen keeps the
+  // Confirm on screen. Down, every item asks (confirmed ones too) and an entry stored with no Confirm on screen keeps the
   // class it held as the class last shown in its mark, so a move up made while the class is not known is measured from it
   // once the class is known again. An entry marked as not classed held no class the human was shown
   protected decided(change: {

@@ -192,8 +192,8 @@ describe('the notice a move owes', () => {
   })
 })
 
-// Only a class 0 plugin whose new version asks for nothing it doesn't hold loads unasked, and never one holding a type
-// that asks on every update, as ui.layout does since a layout draws the whole window
+// Only a class 0 plugin whose new version asks for nothing it doesn't hold loads unasked. One holding a type that asks
+// on every update never does, as ui.layout asks since a layout draws the whole window
 describe('whether an update loads unasked', () => {
   const view: Capability = { type: 'ui.view' }
   const layout: Capability = { type: 'ui.layout' }

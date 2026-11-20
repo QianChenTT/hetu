@@ -345,7 +345,7 @@ ${capabilityKey(change.capability)}`)
     return [...new Set([...Object.keys(this.policyJobs()), ...guards])]
   }
 
-  // A core module's id, a provider and a guard name roles only a host half in main could hold, and the core runs none
+  // A core module's id, a provider and a guard name roles only a host half in main could hold. The core runs none
   protected needsHost(id: string): boolean {
     return isModule(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
