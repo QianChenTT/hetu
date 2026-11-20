@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, LiveCall } from '../api/policy-jobs.ts'
-import { cleanup, code, editor, harness, type HarnessOptions, host, tick, windowWay, worker, type Side } from './router-fakes.ts'
+import type { Recording } from '../backend/recording/header.ts'
+import { cleanup, code, editor, type FakeLog, harness, type HarnessOptions, host, tick, windowWay, worker, type Side } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -248,5 +249,232 @@ describe('who may call a core action from a utility process', () => {
     expect(code(await parts.connect(worker('another-door')).ask('core.refused', { reason: 'host', count: 1 }))).toBe('not-granted')
     expect(code(await parts.connect(host('in-main')).ask('core.refused', { reason: 'host', count: 1 }))).toBe('not-granted')
     await tick()
+  })
+})
+
+// The chain under mcp-http-handler's call, as the door makes it: the host half on its utility port
+// mcp-http-handler's host half on its utility port is the door. mcp serves handle for it only, search serves query and calls on.
+// Every plugin holds what the tests reach, so a refusal comes from the rule a test is about
+function agents(over: HarnessOptions = {}) {
+  const parts = harness(over)
+  const { pluginsManager, gate, connect } = parts
+  pluginsManager.utility('mcp-http-handler')
+  pluginsManager.sandboxed('mcp', { handle: { from: ['mcp-http-handler'] } })
+  pluginsManager.sandboxed('search', { query: {} })
+  pluginsManager.sandboxed('beta', { go: {} })
+  gate.grants['mcp-http-handler'] = [{ type: 'plugin.call', targets: ['mcp', 'search'] }]
+  gate.grants.mcp = [
+    { type: 'plugin.call', targets: ['search', 'beta'] }, { type: 'luoshu.read', paths: ['**'] }, { type: 'luoshu.write', paths: ['**'] },
+    { type: 'history', access: 'read', paths: ['**'] }, { type: 'storage' },
+  ]
+  gate.grants.search = [{ type: 'plugin.call', targets: ['mcp'] }, { type: 'luoshu.read', paths: ['**'] }]
+  gate.grants.beta = [{ type: 'plugin.call', targets: ['mcp'] }, { type: 'luoshu.read', paths: ['**'] }]
+  parts.luoshu.files.set('inbox/a.md', 'a')
+  return {
+    ...parts,
+    door: connect(host('mcp-http-handler')), httpWorker: connect(worker('mcp-http-handler')), mcp: connect(worker('mcp')), search: connect(worker('search')),
+    beta: connect(worker('beta')),
+  }
+}
+
+// The call mcp got for the door's mcp.handle on behalf of label, null for a call with no label. Each delivery is taken
+// once, so two calls with one label are two
+const handledOnce = new WeakSet<object>()
+async function handled(door: Side, mcp: Side, label: string | null = 'client#1') {
+  const id = door.call('mcp.handle', { body: '{}' }, label === null ? {} : { onBehalf: label })
+  const got = await mcp.waitFor(message => message.kind === 'call' && message.action === 'mcp.handle' && !handledOnce.has(message)
+    && (message.caller as { half?: string }).half === 'host' && message.onBehalf === (label ?? undefined))
+  handledOnce.add(got)
+  return { id, got, parent: { parent: got.callId as string } }
+}
+
+
+async function until(check: () => boolean, ms = 2000): Promise<void> {
+  for (let waited = 0; !check(); waited += 5) {
+    if (waited > ms) throw new Error('nothing arrived in time')
+    await tick(5)
+  }
+}
+
+async function written(recording: Recording, log: FakeLog) {
+  await recording.flush()
+  return log.events('audit.call').map(record => record.fields)
+}
+
+
+describe('a call under the door\'s call', () => {
+
+  it('refuses mcp\'s luoshu call under a parent from the door that already ended', async () => {
+    const { door, mcp } = agents()
+    const { id, got, parent } = await handled(door, mcp)
+    expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
+    mcp.answer(got.callId, null)
+    await door.reply(id)
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('invalid')
+  })
+
+  it('holds mcp\'s sub-call to the door\'s deadline, mcp\'s own longer one notwithstanding', async () => {
+    const { door, mcp, search, pluginsManager, luoshu } = agents()
+    pluginsManager.human.plugins['mcp-http-handler'] = { callDeadlineMs: 4000 }
+    pluginsManager.human.plugins.mcp = { callDeadlineMs: 60000 }
+    pluginsManager.human.plugins.search = { callDeadlineMs: 60000 }
+    const { got, parent } = await handled(door, mcp)
+    expect(got.deadline as number).toBeLessThan(Date.now() + 4001)
+    await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)
+    expect(luoshu.prepared.at(-1)!.deadline).toBe(got.deadline)
+    mcp.call('search.query', {}, parent)
+    const atSearch = await search.delivered('search.query')
+    expect(atSearch.deadline).toBe(got.deadline)
+    await search.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: atSearch.callId as string })
+    expect(luoshu.prepared.at(-1)!.deadline).toBe(got.deadline)
+  })
+})
+
+describe('the arguments core.identityAsk takes', () => {
+  const inbox = { type: 'luoshu.read', paths: ['inbox/**'] }
+  function asking() {
+    const seen: Call[] = []
+    const parts = agents({ core: async call => { seen.push(call); return { asked: 'waiting' } } })
+    parts.pluginsManager.sandboxed('mcp', { handle: { from: ['mcp-http-handler', 'beta'] } })
+    return { ...parts, seen }
+  }
+
+
+  it('refuses it under a door call that ended, with a label in its arguments, past eight items, with a scope a screen hides and with an item with no scope', async () => {
+    const { door, mcp, seen } = asking()
+    const one = await handled(door, mcp, 'client#1')
+    const two = await handled(door, mcp, 'client#2')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [inbox], agent: 'client#2' }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [] }, two.parent))).toBe('invalid')
+    const nine = Array.from({ length: 9 }, (_, i) => ({ type: 'luoshu.read', paths: [`n${i}/**`] }))
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: nine }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['in\nbox/**'] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: [`in${String.fromCharCode(0x202e)}box/**`] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [inbox, { type: 'luoshu.read', paths: [] }] }, two.parent))).toBe('invalid')
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [{ type: 'plugin.call', targets: [] }] }, two.parent))).toBe('invalid')
+    mcp.answer(one.got.callId, null)
+    await door.reply(one.id)
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: [inbox] }, one.parent))).toBe('invalid')
+    expect(seen).toEqual([])
+    expect(code(await mcp.ask('core.identityAsk', { capabilities: Array.from({ length: 8 }, (_, i) => ({ type: 'luoshu.read', paths: [`n${i}/**`] })) }, two.parent))).toBe(null)
+  })
+
+})
+
+describe('core.identities from a plugin\'s utility half', () => {
+  it('takes it from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
+    const seen: Call[] = []
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
+    const args = { agents: ['client#1'] }
+    expect((await door.ask('core.identities', args)).ok).toBe(true)
+    for (const side of [httpWorker, mcp, search]) expect(code(await side.ask('core.identities', args))).toBe('not-granted')
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    expect(code(await way.ask('trusted', 'core.identities', args))).toBe('not-granted')
+    expect(code(await door.ask('core.identities', { agents: ['client'] }))).toBe('invalid')
+    expect(code(await door.ask('core.identities', { agents: [] }))).toBe('invalid')
+    expect(seen.map(call => call.caller)).toEqual([host('mcp-http-handler')])
+  })
+})
+
+describe('core.consentAsk and core.consentAnswer from a plugin\'s utility half', () => {
+  const connect = { client: 'https://claude.ai/oauth/claude-code-client-metadata', name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 }
+  const collect = { handle: 'A'.repeat(32) }
+
+  it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
+    const seen: Call[] = []
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
+    for (const [action, args] of [['core.consentAsk', connect], ['core.consentAnswer', collect]] as const) {
+      expect((await door.ask(action, args)).ok).toBe(true)
+      for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
+      for (const role of ['trusted', 'editor']) expect(code(await way.ask(role, action, args))).toBe('not-granted')
+    }
+    expect(seen.map(call => [call.action, call.caller])).toEqual([['core.consentAsk', host('mcp-http-handler')], ['core.consentAnswer', host('mcp-http-handler')]])
+  })
+
+  it.each([
+    ['on the host', (pluginsManager: ReturnType<typeof agents>['pluginsManager']) => pluginsManager.installed('mcp-http-handler')],
+    ['in the sandbox, as a plugin named http from the plugin folder', (pluginsManager: ReturnType<typeof agents>['pluginsManager']) => pluginsManager.sandboxed('mcp-http-handler')],
+  ])('refuses both from http\'s host half with http placed %s', async (_place, place) => {
+    const seen: Call[] = []
+    const parts = agents({ core: async call => { seen.push(call); return null } })
+    place(parts.pluginsManager)
+    expect(code(await parts.door.ask('core.consentAsk', connect))).toBe('not-granted')
+    expect(code(await parts.door.ask('core.consentAnswer', collect))).toBe('not-granted')
+    expect(seen).toEqual([])
+  })
+
+  it('takes no handle from http and no label, a handle only in a token\'s form', async () => {
+    const seen: Call[] = []
+    const { door } = agents({ core: async call => { seen.push(call); return null } })
+    expect(code(await door.ask('core.consentAsk', { ...connect, handle: collect.handle }))).toBe('invalid')
+    expect(code(await door.ask('core.consentAsk', { ...connect, agent: 'client#3' }))).toBe('invalid')
+    expect(code(await door.ask('core.consentAnswer', { handle: 'not a token' }))).toBe('invalid')
+    expect(code(await door.ask('core.consentAnswer', {}))).toBe('invalid')
+    expect(seen).toEqual([])
+  })
+
+  it('serves both while the gate is not on, since a connect reaches no note', async () => {
+    const seen: Call[] = []
+    const { door, pluginsManager } = agents({ core: async call => { seen.push(call); return null } })
+    for (const state of ['off', 'failed', 'absent'] as const) {
+      pluginsManager.policyJobs.gate = state
+      expect((await door.ask('core.consentAsk', connect)).ok).toBe(true)
+      expect((await door.ask('core.consentAnswer', collect)).ok).toBe(true)
+    }
+    expect(seen).toHaveLength(6)
+  })
+})
+
+describe('the audit record of a call under a chain carrying a pair', () => {
+  it('names the inherited label on a sub-call and the parent\'s label, never its own, on one refused for setting its own', async () => {
+    const { recording, router, door, mcp, log } = agents()
+    const { id, got, parent } = await handled(door, mcp)
+    expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
+    expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { ...parent, onBehalf: 'client#2' }))).toBe('invalid')
+    mcp.answer(got.callId, null)
+    await door.reply(id)
+    const records = (await written(recording, log)).map(record => [record.action, record.code, record.caller, record.root, record.onBehalf])
+    expect(records).toEqual([
+      ['luoshu.read', null, 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
+      ['luoshu.read', 'invalid', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1'],
+      ['mcp.handle', null, 'mcp-http-handler/host#1', 'mcp-http-handler/host#1', 'client#1'],
+    ])
+    expect(JSON.stringify(log.records)).not.toContain('client#2')
+  })
+})
+
+describe('a path with a dot segment down a chain carrying a pair', () => {
+  it.each(['on', 'off'] as const)('answers invalid at shape with the gate %s, before the gate or the luoshu hears of it', async state => {
+    const { door, mcp, gate, luoshu, pluginsManager } = agents()
+    const { parent } = await handled(door, mcp)
+    pluginsManager.policyJobs.gate = state
+    const before = gate.asked.length
+    for (const path of ['.git/config', '.obsidian/x', 'inbox/.hidden.md']) {
+      expect(code(await mcp.ask('luoshu.read', { path }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('luoshu.write', { path, text: 'x' }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('history.log', { path }, parent)), path).toBe('invalid')
+    }
+    expect(gate.asked.length).toBe(before)
+    expect(luoshu.prepared).toEqual([])
+  })
+})
+
+describe('an open call for a pair once the human switched the gate off', () => {
+  // The gate off lets everything pass, so a call made for a pair while it was on is not judged again and runs to its end
+  it('judges no open call for a pair again on a new grants snapshot, its signal never aborted', async () => {
+    const { door, mcp, luoshu, pluginsManager, router } = agents()
+    router.changed()
+    const { parent } = await handled(door, mcp)
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const id = mcp.call('luoshu.write', { path: 'inbox/a.md', text: 'x' }, parent)
+    await until(() => luoshu.performed.length === 1)
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.current++
+    router.changed()
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(false)
+    open()
+    expect((await mcp.reply(id)).ok).toBe(true)
   })
 })
