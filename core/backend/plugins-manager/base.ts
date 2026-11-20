@@ -1,10 +1,10 @@
-import type { StateKind, StoppedMode } from '../../api/actions.ts'
+import type { CoreStatus, StateKind, StoppedMode } from '../../api/actions.ts'
 import { AGENT_ASK_PAUSE_MS, changeEffect, type Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
 import { defaultLimits, MAX_TIMER_MS, type LimitName } from '../../api/limits.ts'
 import {
-  coreModuleIds, corePluginIds, firstPartyIds, guardableActions, guards as expectedGuards, policyJobIds, providers,
+  coreModuleIds, corePluginIds, firstPartyIds, guardableActions, guards as expectedGuards, isSecurityControl, providers,
   utilityIds, type CoreModuleId, type GuardableAction,
 } from '../../api/ids.ts'
 import { FIRST_PARTY_SIGNER, type InstallList, type Listed } from '../../api/install.ts'
@@ -285,11 +285,11 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the router's seam
 
-  // A policy job or guard role: the gate and the grant risk classifier as their core modules read, starting until the
-  // modules are started, off only by the human's switch and failed while the module's last push threw or once the
-  // stopped mode closed it. Nothing that runs holds a guard role, so each is absent
+  // A policy job or guard role: a core module as it reads, starting until the modules are started, off only by the
+  // human's switch and failed while the module's last push threw or once the stopped mode closed it. Nothing that runs
+  // holds a guard role, so each is absent
   policyJob(id: string): PolicyJobState {
-    if (id !== 'gate' && id !== 'grant-risk-classifier') return 'absent'
+    if (!isModule(id)) return 'absent'
     const state = this.modules.state(id)
     return state === 'stopped' ? 'failed' : state
   }
@@ -334,25 +334,28 @@ ${capabilityKey(change.capability)}`)
     return this.dev(id) || this.state.switches.skipVerification
   }
 
-  protected isPolicyJob(id: string): boolean {
-    return isOne(policyJobIds, id)
+  // The gate's and the grant risk classifier's states, each read from its module, as the banner and core.ready show them
+  protected policyJobs(): CoreStatus['policyJobs'] {
+    return { gate: this.policyJob('gate'), 'grant-risk-classifier': this.policyJob('grant-risk-classifier') }
   }
 
+  // The policy jobs and every guard core/api expects, each recorded when its state moves
   protected expected(): string[] {
     const guards = guardableActions.flatMap(action => this.guardsFor(action))
-    return [...new Set([...policyJobIds, ...guards])]
+    return [...new Set([...Object.keys(this.policyJobs()), ...guards])]
   }
 
-  // Policy job holders, providers and guards fill roles only a host half in main could hold, and the core runs none
+  // A core module's id, a provider and a guard name roles only a host half in main could hold, and the core runs none
   protected needsHost(id: string): boolean {
-    return this.isPolicyJob(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
+    return isModule(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
 
-  // Policy job holders require nothing and can't be required. Core plugins require only core plugins and core modules
+  // A security control is required by nothing and a core module requires nothing in the graph. Core plugins require only
+  // core plugins and core modules
   protected requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
-    if (this.isPolicyJob(k.id) && requires.length > 0) return true
-    return requires.some(id => this.isPolicyJob(id) || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
+    if (isModule(k.id) && requires.length > 0) return true
+    return requires.some(id => isSecurityControl(id) || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the

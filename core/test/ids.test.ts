@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   coreModuleIds, coreNamespaces, firstPartyIds, guardableActions, guards, corePluginIds, isReservedId, localName, MAX_ID_LENGTH,
-  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, policyJobIds, utilityIds,
+  MAX_NAME_LENGTH, pluginId, providers, qualifiedName, reservedIds, utilityIds, judgingModuleIds, guardingModuleIds, isSecurityControl,
 } from '../api/ids.ts'
 import { plainProblem } from '../api/plain.ts'
 
@@ -68,8 +68,17 @@ describe('names', () => {
 })
 
 describe('policy jobs, providers and guards', () => {
-  it('has the two policy jobs, the log being the core\'s own', () => {
-    expect(policyJobIds).toEqual(['gate', 'grant-risk-classifier'])
+  it('keeps no list of policy jobs, the gate and the classifier being read through their doors', async () => {
+    expect(Object.keys(await import('../api/ids.ts'))).not.toContain('policyJobIds')
+  })
+
+  it('lists the core modules that judge yes or no apart from the security controls whose answer is no plain yes or no', () => {
+    expect(judgingModuleIds).toEqual(['gate', 'flood-control'])
+    expect(guardingModuleIds).toEqual(['grant-risk-classifier', 'recording', 'security-view'])
+    for (const id of [...judgingModuleIds, ...guardingModuleIds]) {
+      expect(coreModuleIds).toContain(id)
+      expect(isSecurityControl(id)).toBe(true)
+    }
   })
 
   it("names the provider of every namespace", () => {
@@ -101,14 +110,14 @@ describe('policy jobs, providers and guards', () => {
     expect(utilityIds).toEqual(['mcp-http-handler'])
     for (const id of utilityIds) {
       expect(corePluginIds).toContain(id)
-      expect(policyJobIds).not.toContain(id)
+      expect(isSecurityControl(id)).toBe(false)
       expect(Object.values(providers)).not.toContain(id)
       expect(Object.values(guards).flat()).not.toContain(id)
     }
   })
 
-  it('serves every provider and fills every policy job from a core module or a core plugin', () => {
-    for (const id of [...policyJobIds, ...Object.values(providers)]) expect([...coreModuleIds, ...corePluginIds]).toContain(id)
+  it('serves every provider from a core module or a core plugin', () => {
+    for (const id of Object.values(providers)) expect([...coreModuleIds, ...corePluginIds]).toContain(id)
   })
 })
 
@@ -157,7 +166,7 @@ describe('reserved ids', () => {
 describe('the tables', () => {
   it('are frozen, so code sharing the process can not change one', () => {
     expect(() => (reservedIds as unknown as string[]).push('mine')).toThrow()
-    expect(() => (policyJobIds as unknown as string[]).push('mine')).toThrow()
+    expect(() => (judgingModuleIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (coreNamespaces as unknown as string[]).push('mine')).toThrow()
     expect(() => (corePluginIds as unknown as string[]).push('mine')).toThrow()
     expect(() => (firstPartyIds as unknown as string[]).push('mine')).toThrow()

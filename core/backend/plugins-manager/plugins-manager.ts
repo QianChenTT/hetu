@@ -3,7 +3,7 @@ import { connectLabel, type Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
-import { coreModuleIds, firstPartyIds, isSecurityControl, policyJobIds } from '../../api/ids.ts'
+import { coreModuleIds, firstPartyIds, isSecurityControl } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
@@ -193,15 +193,16 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
   protected banner(): CoreStatus {
     const down = new Set(['crashed', 'failed', 'unresponsive'])
     const { switches } = this.state
+    const policyJobs = this.policyJobs()
     return {
-      policyJobs: Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])) as CoreStatus['policyJobs'],
+      policyJobs,
       crashed: [
         ...coreModuleIds.filter(id => this.modules.state(id) === 'failed'), ...this.list().filter(row => down.has(row.state)).map(row => row.id),
       ],
       devMode: [...switches.devMode],
       allowUnsigned: switches.allowUnsigned.length,
       skipVerification: switches.skipVerification,
-      modulesOff: coreModuleIds.filter(id => !isOne(policyJobIds, id) && this.modules.state(id) === 'off'),
+      modulesOff: coreModuleIds.filter(id => !Object.hasOwn(policyJobs, id) && this.modules.state(id) === 'off'),
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
       page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
@@ -257,6 +258,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     await this.scan()
     this.replan()
     await this.settled()
-    if (!this.closing) this.note('core.ready', Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])))
+    if (!this.closing) this.note('core.ready', { ...this.policyJobs() })
   }
 }

@@ -4,7 +4,7 @@ import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, M
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
@@ -419,7 +419,8 @@ export type SecurityList = {
 // plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
-  policyJobs: Record<typeof policyJobIds[number], PolicyJobState>
+  // The gate's and the grant risk classifier's states, each read from its module
+  policyJobs: { readonly gate: PolicyJobState, readonly 'grant-risk-classifier': PolicyJobState }
   crashed: string[]
   devMode: string[]
   allowUnsigned: number

@@ -32,10 +32,6 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the router asks, the gate and the grant risk classifier held by the core modules of the same id. The
-// log is the core's own
-export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
-
 // How the router reaches the part serving a namespace. provider: a core module, or a core plugin in a utility process,
 // through prepare and perform with the gate judging. action: an action of the core table, which the floor decides and
 // never the gate. bus: the event bus inside the router. served: a part that keeps its own checks
@@ -92,20 +88,25 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
-// The core modules whose switch is a security control's though they judge no call: flood control, which bounds what
-// plugins and windows may cost main, recording, which keeps what happened and the security view, which holds each
+// The core modules that judge yes or no: the gate on every call and flood control on every message, which bounds what
+// plugins and windows may cost main. With every guard core/api expects they are the security controls one rule holds:
+// switched off by the human, the step is as if it didn't exist and answers yes
+export const judgingModuleIds = frozen(['gate', 'flood-control'] as const)
+
+// The core modules whose switch is a security control's though their answer is no plain yes or no: the grant risk
+// classifier, which classes every plugin, recording, which keeps what happened and the security view, which holds each
 // change that widens for the human's Confirm
-export const guardingModuleIds = frozen(['flood-control', 'recording', 'security-view'] as const)
+export const guardingModuleIds = frozen(['grant-risk-classifier', 'recording', 'security-view'] as const)
 
 // The core modules whose off widens though they are no security control: the heartbeat, off leaving a hang unwatched.
 // Switching one off waits for one Confirm with no typed word and switching it on applies at once
 export const watchingModuleIds = frozen(['heartbeat'] as const)
 
-// The security controls: the policy job holders, every guard core/api expects and the guarding modules. Switching one
-// off widens what plugins may do and is typed. The log is the core's own and the providers serve powers without
-// limiting anyone, so neither is one
+// The security controls: the judging modules, every guard core/api expects and the guarding modules. Switching one off
+// widens what plugins may do and is typed. The log is the core's own and the providers serve powers without limiting
+// anyone, so neither is one
 export function isSecurityControl(id: string): boolean {
-  return (policyJobIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
+  return (judgingModuleIds as readonly string[]).includes(id) || Object.values(guards).some(list => list.includes(id))
     || (guardingModuleIds as readonly string[]).includes(id)
 }
 
@@ -131,7 +132,6 @@ const reserved = new Set<string>([
   ...coreNamespaces,
   ...Object.keys(providers),
   ...Object.values(providers),
-  ...policyJobIds,
   ...Object.values(guards).flat(),
   ...coreModuleIds,
   ...corePluginIds,

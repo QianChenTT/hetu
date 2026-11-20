@@ -245,6 +245,25 @@ describe('core plugins', () => {
     expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
     expect(stateOf(pluginsManager, MARKS)).toBe('ready')
   })
+
+  // A security control is no dependency: it judges or guards and serves nothing a plugin could wait on
+  it.each(['grant-risk-classifier', 'flood-control', 'security-view'])('refuses a plugin that requires the security control %s', async control => {
+    const { pluginsManager } = await harness({
+      folder: { outline: filesFor(workerManifest('outline', { requires: [control] })) }, entries: { outline: signed() },
+    })
+    await pluginsManager.start()
+    expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
+  })
+
+  it('reads a core module\'s state as its policy job state and none for an id that is no module', async () => {
+    const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })
+    await pluginsManager.start()
+    expect(pluginsManager.policyJob('gate')).toBe('on')
+    expect(pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
+    expect(pluginsManager.policyJob('outline')).toBe('absent')
+    expect(Object.keys((await pluginsManager.serve({ callId: 'c', caller: { kind: 'window', role: 'editor', n: 1 }, action: 'core.status', args: undefined, deadline: Date.now() + 1000 }) as { policyJobs: object }).policyJobs))
+      .toEqual(['gate', 'grant-risk-classifier'])
+  })
 })
 
 describe('starting', () => {
