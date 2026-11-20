@@ -4,7 +4,7 @@ import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, M
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
 import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
-import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName, type policyJobIds } from './ids.ts'
+import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
 import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
@@ -356,13 +356,14 @@ export type ActionArgs = ArgsOf<typeof coreTable> & ArgsOf<typeof eventTable> & 
 // plugin is named in. A window draws it as a notice that opens the trusted window
 export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | null }
 
-// Why hetu stopped: the install list didn't check out at start or the event log failed while hetu ran, with the
-// lifecycle reason. again says the run before already restarted hetu after a failure, so it didn't restart a second
-// time
-export type StoppedMode = { control: string, why: 'tampered' | 'failed', reason: string | null, again: boolean }
+// Why hetu stopped: the install list didn't check out at start, a control that judges yes or no failed at start or the
+// event log failed while hetu ran, with the lifecycle reason. again says the run before already restarted hetu after a
+// failure, so it didn't restart a second time
+export type StoppedMode = { control: string, why: 'tampered' | 'failed' | 'start-failed', reason: string | null, again: boolean }
 
 // The words that name why hetu stopped, the same in the trusted window and in the native box
 export function stoppedCause(mode: StoppedMode): string {
+  if (mode.why === 'start-failed') return `hetu stopped: ${mode.control} failed at start`
   return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
 }
 
@@ -419,7 +420,8 @@ export type SecurityList = {
 // plugins ready, the requests
 // waiting for the human and the stopped mode
 export type CoreStatus = {
-  policyJobs: Record<typeof policyJobIds[number], PolicyJobState>
+  // The gate's and the grant risk classifier's states, each read from its module
+  policyJobs: { readonly gate: PolicyJobState, readonly 'grant-risk-classifier': PolicyJobState }
   crashed: string[]
   devMode: string[]
   allowUnsigned: number

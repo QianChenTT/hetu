@@ -412,8 +412,11 @@ describe('what wireCore hands the router', () => {
     return { ...parts, luoshu }
   }
 
-  it('makes the router ask the guards the plugins manager expects, so a missing one refuses the write', async () => {
-    const { runtime, luoshu } = await writing({ guardsFor: () => ['leases'] })
+  // One expected from the start would stop hetu in the fail-safe, so this one goes missing once hetu runs
+  it('makes the router ask the guards the plugins manager expects, so one missing while hetu runs refuses the write', async () => {
+    let expected: string[] = []
+    const { runtime, luoshu } = await writing({ guardsFor: () => expected })
+    expected = ['leases']
     const reply = await runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
     expect(luoshu.performed).toEqual([])
@@ -537,7 +540,7 @@ describe('a guard down through the joined core', () => {
 
   it.each([
     ['it fails its hash check', { ...leases, hash: '0'.repeat(64) }, 'tampered'],
-  ] as const)('refuses the writes it guards with guard-down when %s', async (_name, listing, reason) => {
+  ] as const)('stops hetu at start in the fail-safe when %s, no plugin starting and no write reaching the luoshu', async (_name, listing, reason) => {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
       install: { ...coreInstall(), leases: listing },
@@ -551,8 +554,8 @@ describe('a guard down through the joined core', () => {
     await parts.pluginsManager.start()
     await parts.pluginsManager.settled()
     expect(reasonOf(parts.pluginsManager, 'leases')).toBe(reason)
-    const reply = await parts.runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
-    expect(code(reply!)).toBe('guard-down')
+    expect(parts.pluginsManager.stopped()).toEqual({ control: 'leases', why: 'start-failed', reason: 'absent', again: false })
+    expect(parts.runtime.order()).toEqual([])
     expect(luoshu.performed).toEqual([])
   })
 })

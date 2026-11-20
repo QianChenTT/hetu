@@ -65,7 +65,8 @@ export const retiredNames: readonly RetiredName[] = [
     allowed: [
       { place: 'core/api/changes.ts', text: 'slot-on', why: 'a class move\'s cause, in classCauses: the class.raised notice and owed.cause in state files store it and an old state file must still read' },
       { place: 'core/api/describe.ts', text: 'slot-on', why: 'describes the stored cause slot-on' },
-      { place: 'core/backend/plugins-manager/plugins-manager.ts', text: 'slot-on', why: 'raises and passes the stored cause slot-on' },
+      { place: 'core/backend/plugins-manager/classes.ts', text: 'slot-on', why: 'raises and passes the stored cause slot-on' },
+      { place: 'core/backend/plugins-manager/changes.ts', text: 'slot-on', why: 'the pass once the grant risk classifier is switched on again carries the stored cause slot-on' },
       { place: 'core/api/ui.ts', why: layoutSlot },
       { place: 'core/frontend/editor/', why: layoutSlot },
       { place: 'core-plugins/layout/src/', why: layoutSlot },

@@ -8,7 +8,8 @@ import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { Part } from '../api/ids.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
-import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
+import type { ClassTable, GrantRiskClassifier } from '../api/classes.ts'
+import type { ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Router } from '../backend/router/router.ts'
 import type { HumanLimits, PluginTable } from '../api/policy-jobs.ts'
@@ -378,15 +379,12 @@ export function fakeExec(): Exec & { views: ExecView[], started: number, closed:
 // The real grant risk classifier, each of whose calls throws while throws holds, as a classifier that fails per call
 export function throwingClassifier(): GrantRiskClassifier & { throws: boolean } {
   const real = createGrantRiskClassifier()
-  const made = { throws: true } as GrantRiskClassifier & { throws: boolean }
-  for (const name of Object.keys(real) as (keyof GrantRiskClassifier)[]) {
-    const own = real[name] as (...args: unknown[]) => unknown
-    Object.assign(made, {
-      [name]: (...args: unknown[]) => {
-        if (made.throws) throw new Error('the policy threw')
-        return own.apply(real, args)
-      },
-    })
+  const made = {
+    throws: true,
+    classes(table: ClassTable) {
+      if (made.throws) throw new Error('the policy threw')
+      return real.classes(table)
+    },
   }
   return made
 }

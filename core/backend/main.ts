@@ -15,7 +15,7 @@ import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
@@ -67,19 +67,19 @@ async function start(): Promise<void> {
   let code = 0
   // Restart hetu, and quitting after a failure, start a new run once this one has exited
   let again = false
-  // A quit after a failure keeps the restart marker, a clean one clears it
-  let failed = false
+  // A quit after a failure and one that starts hetu again keep the restart marker, a clean one clears it
+  const ending = new Ending()
   const seen = new Set<BrowserWindow>()
   app.on('before-quit', event => {
     event.preventDefault()
     quitting ??= (async () => {
       // A quit the human asked for: windows hear core.quitting and get a moment to keep their drafts, as after a failure
-      if (!failed && routerOf !== null && [...seen].some(window => !window.isDestroyed())) {
+      if (ending.asked() && routerOf !== null && [...seen].some(window => !window.isDestroyed())) {
         routerOf.quitting()
         await new Promise(resolve => setTimeout(resolve, DRAFT_GRACE_MS))
       }
       for (const window of seen) if (!window.isDestroyed()) window.close()
-      if (!failed) await pluginsManagerOf?.cleanQuit()
+      await ending.leave(pluginsManagerOf)
       const missed = parts === null ? (await booted.release(), []) : await quitInOrder(parts)
       for (const line of missed) console.error(`quit: ${line}`)
       workers?.close()
@@ -171,18 +171,16 @@ async function start(): Promise<void> {
     // starts once more. Or the plugins manager stopped in the stopped mode, which leaves only the trusted window
     const onFailure = (failure: Failure) => afterFailure(failure, {
       quitting: () => quitting !== null,
-      announce: () => {
-        failed = true
-        router?.quitting()
-      },
+      announce: () => router?.quitting(),
       quit: (exitCode, restart) => {
         code = exitCode
         again = restart
         app.quit()
       },
+      ending,
       showTrusted: () => trusted.show(),
       // Modal, so the quit follows once the human closed it
-      showBox: mode => void dialog.showMessageBoxSync({ type: 'error', buttons: ['Quit'], defaultId: 0, ...stoppedBox(mode) }),
+      showBox: mode => (dialog.showMessageBoxSync({ type: 'error', defaultId: 0, ...stoppedBox(mode) }) === 1 ? 'retry' : 'quit'),
       closeEditors,
       packaged: LOCKED,
       env: process.env,
@@ -221,6 +219,7 @@ async function start(): Promise<void> {
           }
           if (call.action === 'app.openSecurity') trusted.show()
           else if (call.action === 'app.relaunch') {
+            ending.relaunch()
             again = relaunches({ packaged: LOCKED, env: process.env })
             app.quit()
           } else if (call.action === 'app.quit') app.quit()

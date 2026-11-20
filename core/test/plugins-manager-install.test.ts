@@ -211,8 +211,9 @@ describe('core plugins', () => {
     expect(reasonOf(pluginsManager, MARKS)).toBe('invalid')
   })
 
-  // Only a host half in main could hold a policy job, a provider or a guard, and the core runs none
-  it('refuses a policy job, provider or guard id with place, whatever its entries, and stops nothing', async () => {
+  // Only a host half in main could hold a policy job, a provider or a guard. The core runs none. An expected guard
+  // nothing holds stops hetu in the fail-safe at start, the provider nothing
+  it('refuses a policy job, provider or guard id with place, whatever its entries', async () => {
     const { pluginsManager, runtime } = await harness({
       install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, leases: host('leases') },
       pluginsManager: { guardsFor: () => ['leases'] },
@@ -220,8 +221,12 @@ describe('core plugins', () => {
     await pluginsManager.start()
     for (const id of ['net', 'leases']) expect(reasonOf(pluginsManager, id)).toBe('place')
     expect(pluginsManager.policyJob('leases')).toBe('absent')
-    expect(pluginsManager.stopped()).toBe(null)
+    expect(pluginsManager.stopped()).toMatchObject({ control: 'leases', why: 'start-failed' })
     expect(runtime.order()).toEqual([])
+    const unguarded = await harness({ install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) } } })
+    await unguarded.pluginsManager.start()
+    expect(reasonOf(unguarded.pluginsManager, 'net')).toBe('place')
+    expect(unguarded.pluginsManager.stopped()).toBe(null)
   })
 
   it('refuses a host entry outside a utility process and a utility id with no host entry, place', async () => {
@@ -244,6 +249,25 @@ describe('core plugins', () => {
     expect(reasonOf(pluginsManager, HTTP)).toBe('requires')
     expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
     expect(stateOf(pluginsManager, MARKS)).toBe('ready')
+  })
+
+  // A security control is no dependency: it judges or guards and serves nothing a plugin could wait on
+  it.each(['grant-risk-classifier', 'flood-control', 'security-view'])('refuses a plugin that requires the security control %s', async control => {
+    const { pluginsManager } = await harness({
+      folder: { outline: filesFor(workerManifest('outline', { requires: [control] })) }, entries: { outline: signed() },
+    })
+    await pluginsManager.start()
+    expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
+  })
+
+  it('reads a core module\'s state as its policy job state and none for an id that is no module', async () => {
+    const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })
+    await pluginsManager.start()
+    expect(pluginsManager.policyJob('gate')).toBe('on')
+    expect(pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
+    expect(pluginsManager.policyJob('outline')).toBe('absent')
+    expect(Object.keys((await pluginsManager.serve({ callId: 'c', caller: { kind: 'window', role: 'editor', n: 1 }, action: 'core.status', args: undefined, deadline: Date.now() + 1000 }) as { policyJobs: object }).policyJobs))
+      .toEqual(['gate', 'grant-risk-classifier'])
   })
 })
 
@@ -273,7 +297,7 @@ describe('starting', () => {
     expect(reasonOf(pluginsManager, 'outline')).toBe('start-failed')
   })
 
-  it('hands the gate grants snapshot 1 as the core starts, and marks it failed when stateChanged throws', async () => {
+  it('hands the gate grants snapshot 1 as the core starts and stops hetu in the fail-safe when stateChanged throws', async () => {
     const gate = allowAll()
     const { pluginsManager, modules } = await harness({ modules: { gate } })
     await pluginsManager.start()
@@ -285,8 +309,8 @@ describe('starting', () => {
     broken.throws = true
     const other = await harness({ modules: { gate: broken } })
     await other.pluginsManager.start()
+    expect(other.pluginsManager.stopped()).toEqual({ control: 'gate', why: 'start-failed', reason: 'state-changed', again: false })
     expect(other.pluginsManager.policyJob('gate')).toBe('failed')
-    expect(other.modules.reason('gate')).toBe('state-changed')
     expect(other.modules.gate()).toBe(null)
   })
 })

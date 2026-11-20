@@ -55,7 +55,8 @@ export const change = z.discriminatedUnion('kind', [
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
 // and for the grant risk classifier switched on again
 export const classCauses = frozen(['approve', 'copy', 'update', 'widen', 'narrow', 'restore', 'remove', 'reset', 'start', 'slot-on'] as const)
-const classNumber = z.int().min(0).max(4)
+// A class as a state file or a notice holds it, from 0 to 4
+export const classNumber = z.int().min(0).max(4)
 
 // A notice the core raises alone, never one security.request carries: a plugin's class moved up past where the
 // grant risk classifier alerts with no Confirm on screen. The class and its asks are stored already, so the human answers

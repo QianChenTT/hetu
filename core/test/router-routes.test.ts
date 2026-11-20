@@ -6,7 +6,7 @@ import { simple } from 'acorn-walk'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreActions, eventActions, providerActions } from '../api/actions.ts'
 import { capabilityTypes } from '../api/capabilities.ts'
-import { namespaces, policyJobIds, providers, serverOf } from '../api/ids.ts'
+import { namespaces, providers, serverOf } from '../api/ids.ts'
 import type { Call, LiveCall } from '../api/policy-jobs.ts'
 import { cleanup, code, editor, harness, trusted, windowWay, worker } from './router-fakes.ts'
 
@@ -34,7 +34,7 @@ function stringsOf(source: string): string[] {
 // about, plugin among what a caller is and the policy jobs, whose states it reads by id until their doors say them. A
 // capability type an action spells too comes through the contract, as the action does
 const actionNames = new Set<string>([...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions)])
-const kept = new Set<string>([...capabilityTypes, 'plugin', ...policyJobIds].filter(word => !actionNames.has(word)))
+const kept = new Set<string>([...capabilityTypes, 'plugin', 'gate', 'grant-risk-classifier'].filter(word => !actionNames.has(word)))
 
 describe('the namespace table', () => {
   it('gives every action of the contract a server, by the route its table takes', () => {

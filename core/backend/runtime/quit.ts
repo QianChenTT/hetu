@@ -56,6 +56,33 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
   app.quit()
 }
 
+// How a run ends, which decides the restart marker. Only a clean Quit clears it: a quit after a failure keeps it and so
+// does one that starts hetu again, Try again on the stopped screen or in the native box and Restart hetu. A change
+// applied in the stopped mode clears it on its own
+export class Ending {
+  private failed = false
+  private again = false
+
+  // The log failed while hetu ran and the windows heard core.quitting
+  fail(): void {
+    this.failed = true
+  }
+
+  // Try again or Restart hetu
+  relaunch(): void {
+    this.again = true
+  }
+
+  // A quit the human asked for, which gives the windows a moment to keep their drafts
+  asked(): boolean {
+    return !this.failed
+  }
+
+  async leave(pluginsManager: { cleanQuit(): Promise<void> } | null): Promise<void> {
+    if (!this.failed && !this.again) await pluginsManager?.cleanQuit()
+  }
+}
+
 // How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
 export const QUIT_GRACE_MS = 2000
 // How long a quit the human asked for waits after core.quitting before its windows close, for the same drafts
@@ -66,22 +93,36 @@ export type FailureParts = {
   quitting(): boolean
   announce(): void
   quit(code: number, again: boolean): void
+  // How the run ends, told of a failure and of Try again in the native box
+  ending: Ending
   showTrusted(): void
   // The native box naming why hetu stopped, with quit only. It returns once the human closed it
-  showBox(mode: StoppedMode): void
+  // The human's answer, Try again offered only for a control that failed at start
+  showBox(mode: StoppedMode): 'quit' | 'retry'
   closeEditors(): void
   packaged: boolean
   env: Record<string, string | undefined>
   later(run: () => void, ms: number): void
 }
 
-// The native box for the stopped mode while the security view is off: the cause, and what to fix before hetu starts again
-export function stoppedBox(mode: StoppedMode): { title: string, message: string, detail: string } {
+// The native box for the stopped mode while the security view is off: the cause, what to fix before hetu starts again
+// and its buttons. A control that failed at start can be tried again, while starting with it switched off needs the
+// typed word the security view holds
+export function stoppedBox(mode: StoppedMode): { title: string, message: string, detail: string, buttons: string[] } {
+  if (mode.why === 'start-failed') {
+    return {
+      title: 'hetu stopped',
+      message: stoppedCause(mode),
+      detail: `The security view is off, so hetu can’t start with ${mode.control} switched off. Try again starts hetu again`,
+      buttons: ['Quit', 'Try again'],
+    }
+  }
   const fix = mode.control === 'log' ? 'Free space or fix the data folder’s permissions, then start hetu' : 'Repair hetu with its installer'
   return {
     title: 'hetu stopped',
     message: stoppedCause(mode),
     detail: `The security view is off, so the choices that would start hetu again can’t be made. ${fix}`,
+    buttons: ['Quit'],
   }
 }
 
@@ -94,8 +135,9 @@ export function afterFailure(
 ): void {
   if (failure.action === 'stopped' && failure.box) {
     parts.closeEditors()
-    parts.showBox(failure.mode)
-    parts.quit(1, false)
+    const retry = parts.showBox(failure.mode) === 'retry'
+    if (retry) parts.ending.relaunch()
+    parts.quit(1, retry && relaunches({ packaged: parts.packaged, env: parts.env }))
     return
   }
   if (failure.action === 'stopped') {
@@ -104,6 +146,7 @@ export function afterFailure(
     return
   }
   if (parts.quitting()) return
+  parts.ending.fail()
   parts.announce()
   const again = relaunches({ packaged: parts.packaged, env: parts.env })
   parts.later(() => parts.quit(1, again), QUIT_GRACE_MS)

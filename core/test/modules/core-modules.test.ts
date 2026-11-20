@@ -122,7 +122,7 @@ describe('the core modules', () => {
     expect(faults).toEqual([])
     for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) expect(modules.state(id)).toBe('on')
     expect(modules.gate()?.decide({ stage: 'raw', caller: editor, action: 'storage.get', capability: 'storage', scope: {} })).toEqual({ allow: true, view: 1 })
-    expect(typeof modules.grantRiskClassifier()?.classify([], [])).toBe('number')
+    expect(modules.grantRiskClassifier()?.classes({ cause: 'start', change: null, confirm: false, plugins: [] })).toEqual({ plugins: [], lines: [], unasked: false })
     const storage = modules.provider('storage')!
     await ask(storage, 'storage.set', { key: 'k', value: 1 })
     expect(await ask(storage, 'storage.get', { key: 'k' })).toBe(1)
@@ -193,17 +193,16 @@ describe('the core modules', () => {
 
   it('mark the gate failed when a push throws, which refuses its calls, and clear it on the next push that goes through', async () => {
     const { options, throws } = fakes()
-    throws.add('gate.stateChanged')
     const modules = made(options)
     const { handed, faults } = handing()
     await modules.start([], handed)
+    throws.add('gate.stateChanged')
+    // Exec is pushed beside it and stays on
+    modules.bumped()
     expect(modules.state('gate')).toBe('failed')
     expect(modules.reason('gate')).toBe('state-changed')
     expect(modules.gate()).toBeNull()
     expect(faults).toEqual(['gate stateChanged'])
-    // Exec is pushed beside it and stays on
-    modules.bumped()
-    expect(modules.state('gate')).toBe('failed')
     expect(modules.state('exec')).toBe('on')
     throws.delete('gate.stateChanged')
     modules.bumped()
@@ -232,7 +231,7 @@ describe('the core modules', () => {
     const { handed, next } = handing()
     await modules.start([], handed)
     expect(seen).toEqual([
-      'storage.open', 'history.start', 'exec.start', 'gate.stateChanged', 'luoshu.open', 'history.open', 'exec.stateChanged',
+      'gate.stateChanged', 'storage.open', 'history.start', 'exec.start', 'luoshu.open', 'history.open', 'exec.stateChanged',
     ])
     seen.length = 0
     await modules.apply(['luoshu', 'history', 'exec', 'storage', 'gate'])
@@ -249,6 +248,34 @@ describe('the core modules', () => {
       'gate.stateChanged', 'storage.open', 'luoshu.open', 'history.start', 'history.open', 'exec.start', 'exec.stateChanged',
     ])
     for (const id of ['luoshu', 'history', 'exec', 'storage', 'gate'] as const) expect(modules.state(id)).toBe('on')
+  })
+
+  // The controls that judge yes or no start alone first, so one that fails leaves the rest for the fail-safe
+  it('start the gate alone first and begin or hand nothing else once its first grants snapshot throws', async () => {
+    const { options, seen, throws } = fakes()
+    throws.add('gate.stateChanged')
+    const modules = made(options)
+    const { handed, changes } = handing(notes)
+    await modules.start([], handed)
+    expect(seen).toEqual(['gate.stateChanged'])
+    expect(modules.state('gate')).toBe('failed')
+    // The modules with no start of their own that serve the stopped mode read on
+    expect(changes).toEqual(['gate failed state-changed', 'flood-control started', 'recording started', 'security-view started'])
+    for (const id of ['grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'heartbeat'] as const) expect(modules.state(id)).toBe('starting')
+    for (const namespace of ['storage', 'luoshu', 'history', 'exec']) expect(modules.provider(namespace)).toBeNull()
+    expect(modules.grantRiskClassifier()).toBeNull()
+    expect(modules.heartbeat()).toBeNull()
+    // A new snapshot reaches the gate alone and a folder picked reaches no one
+    seen.length = 0
+    modules.bumped()
+    modules.picked()
+    expect(seen).toEqual(['gate.stateChanged'])
+    // The stopped mode closes nothing that never began
+    seen.length = 0
+    changes.length = 0
+    modules.stop([])
+    expect(seen).toEqual([])
+    expect(changes).toEqual(['gate stopped stopped-mode'])
   })
 
   it('hand the gate each new grants snapshot and exec its view with it', async () => {

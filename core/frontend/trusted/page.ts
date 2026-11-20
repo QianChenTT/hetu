@@ -64,12 +64,13 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     section.className = 'stopped'
     for (const line of shown.stopped.lines) section.append(element('p', line))
     const { control } = shown.stopped
-    const labels: Record<Choice, string> = { 'switch-off': 'Start with it switched off', quit: 'Quit' }
+    const labels: Record<Choice, string> = { retry: 'Try again', 'switch-off': 'Start with it switched off', quit: 'Quit' }
     for (const choice of shown.stopped.choices) {
       section.append(button(labels[choice], () => {
         const change = choiceChange(control, choice)
-        if (change === null) page.quit()
-        else page.ask(change)
+        if (change !== null) page.ask(change)
+        else if (choice === 'retry') page.relaunch()
+        else page.quit()
       }))
     }
     parts.push(section)

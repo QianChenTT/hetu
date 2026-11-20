@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { afterFailure, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
+import { afterFailure, Ending, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -98,6 +98,35 @@ describe('starting again after a failure', () => {
   })
 })
 
+describe('how a run ends', () => {
+  const quitting = () => {
+    const cleared: string[] = []
+    return { cleared, pluginsManager: { cleanQuit: async () => { cleared.push('cleared') } } }
+  }
+
+  it('clears the restart marker only on a clean Quit, which gives the windows their grace', async () => {
+    const clean = quitting()
+    const ending = new Ending()
+    expect(ending.asked()).toBe(true)
+    await ending.leave(clean.pluginsManager)
+    expect(clean.cleared).toEqual(['cleared'])
+  })
+
+  it('keeps it after a failure with no grace and through Try again or Restart hetu', async () => {
+    const failed = new Ending()
+    failed.fail()
+    const again = new Ending()
+    again.relaunch()
+    for (const ending of [failed, again]) {
+      const kept = quitting()
+      await ending.leave(kept.pluginsManager)
+      expect(kept.cleared).toEqual([])
+    }
+    expect(failed.asked()).toBe(false)
+    expect(again.asked()).toBe(true)
+  })
+})
+
 // Main's handling of a failure ran only end to end, where hetu never starts itself again
 describe('after a failure', () => {
   function parts(over: Partial<FailureParts> = {}) {
@@ -107,8 +136,12 @@ describe('after a failure', () => {
       quitting: () => false,
       announce: () => { did.push('announce') },
       quit: (code, again) => { did.push(`quit ${code} ${again}`) },
+      ending: new Ending(),
       showTrusted: () => { did.push('trusted') },
-      showBox: mode => { did.push(`box ${mode.control}`) },
+      showBox: mode => {
+        did.push(`box ${mode.control}`)
+        return 'quit'
+      },
       closeEditors: () => { did.push('close editors') },
       packaged: false,
       env: {},
@@ -122,6 +155,8 @@ describe('after a failure', () => {
     const { made, did, timers } = parts()
     afterFailure({ action: 'relaunch', control: 'gate', reason: 'state-changed' }, made)
     expect(did).toEqual(['announce'])
+    // A quit after a failure keeps the restart marker
+    expect(made.ending.asked()).toBe(false)
     expect(timers.map(timer => timer.ms)).toEqual([QUIT_GRACE_MS])
     timers[0].run()
     expect(did).toEqual(['announce', 'quit 1 true'])
@@ -154,11 +189,32 @@ describe('after a failure', () => {
     expect(timers).toEqual([])
   })
 
+  it('offers Try again in the box for a control that failed at start and starts hetu again once chosen', async () => {
+    const failed = { control: 'gate', why: 'start-failed', reason: 'state-changed', again: false } as const
+    const retried = parts({ showBox: () => 'retry' })
+    afterFailure({ action: 'stopped', mode: failed, box: true }, retried.made)
+    expect(retried.did).toEqual(['close editors', 'quit 1 true'])
+    // It keeps the restart marker
+    const cleared: string[] = []
+    await retried.made.ending.leave({ cleanQuit: async () => { cleared.push('cleared') } })
+    expect(cleared).toEqual([])
+    const left = parts({ showBox: () => 'retry', env: { HETU_NO_RELAUNCH: '1' } })
+    afterFailure({ action: 'stopped', mode: failed, box: true }, left.made)
+    expect(left.did).toEqual(['close editors', 'quit 1 false'])
+    expect(stoppedBox(failed)).toEqual({
+      title: 'hetu stopped',
+      message: 'hetu stopped: gate failed at start',
+      detail: 'The security view is off, so hetu can’t start with gate switched off. Try again starts hetu again',
+      buttons: ['Quit', 'Try again'],
+    })
+  })
+
   it('names the cause in the box\'s words', () => {
     expect(stoppedBox({ control: 'log', why: 'failed', reason: 'log-failing', again: false })).toEqual({
       title: 'hetu stopped',
       message: 'hetu stopped: the event log can’t write',
       detail: 'The security view is off, so the choices that would start hetu again can’t be made. Free space or fix the data folder’s permissions, then start hetu',
+      buttons: ['Quit'],
     })
     expect(stoppedBox({ control: 'install', why: 'tampered', reason: null, again: false }).message).toBe('hetu stopped: its install list doesn’t check out')
   })

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from '../../../api/capabilities.ts'
-import type { Flow } from '../../../api/policy-jobs.ts'
-import { createGrantRiskClassifier } from '../../../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
+import type { Flow } from '../../../backend/policy/grant-risk-classifier/rules.ts'
+import * as caps from '../../../backend/policy/grant-risk-classifier/rules.ts'
 
-const caps = createGrantRiskClassifier()
 const read: Capability = { type: 'luoshu.read', paths: ['notes/**'] }
 const list: Capability = { type: 'luoshu.list', paths: ['**'] }
 const write: Capability = { type: 'luoshu.write', paths: ['04 - Daily/**'] }

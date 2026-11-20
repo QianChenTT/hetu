@@ -1,6 +1,7 @@
-import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
+import { coreModuleIds, judgingModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
-import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { GrantRiskClassifier } from '../../api/classes.ts'
+import type { Gate, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
 import type { SecurityView } from '../security-view/header.ts'
@@ -22,6 +23,7 @@ const closing = [...coreModuleIds].reverse()
 const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
+const judging = (id: CoreModuleId) => (judgingModuleIds as readonly CoreModuleId[]).includes(id)
 
 // The one place the six core modules are held, made by the join. The router reads the gate and the providers through here and
 // the plugins manager the grant risk classifier and storage's clear, each null while its module is off or failed. A
@@ -55,6 +57,10 @@ export class CoreModules implements Holder {
   private handed: Handed | null = null
   // True while start runs: every module reads starting until all are started and handed what they need
   private booting = false
+  // The modules a judging module failed at start left never begun, which read starting, are handed nothing and are
+  // closed by nothing until the stopped mode. The lasting modules have no start and serve the stopped mode, so none is
+  // among them
+  private readonly unbegun = new Set<CoreModuleId>()
   // Shutdown began or the stopped mode: no module is started, handed anything or switched from then on
   private closed = false
   private halted = false
@@ -86,7 +92,7 @@ export class CoreModules implements Holder {
   state(id: CoreModuleId): ModuleState {
     if (this.off.has(id)) return 'off'
     if (this.stoppedFor.has(id)) return 'stopped'
-    if (this.handed === null || this.booting || this.beginning.has(id)) return 'starting'
+    if (this.handed === null || this.booting || this.beginning.has(id) || this.unbegun.has(id)) return 'starting'
     return this.startFailed.has(id) || this.pushFailed.has(id) ? 'failed' : 'on'
   }
 
@@ -96,7 +102,7 @@ export class CoreModules implements Holder {
     if (this.off.has(id)) return 'off'
     const stopped = this.stoppedFor.get(id)
     if (stopped !== undefined) return stopped
-    if (this.handed === null || this.booting || this.beginning.has(id)) return null
+    if (this.handed === null || this.booting || this.beginning.has(id) || this.unbegun.has(id)) return null
     return this.startFailed.has(id) ? 'start-failed' : this.pushFailed.has(id) ? 'state-changed' : null
   }
 
@@ -152,7 +158,9 @@ export class CoreModules implements Holder {
   }
 
   // Once, as the plugins manager starts, after the install list passed and before any plugin starts: every module that
-  // is on started one at a time, each start given readyMs, then each handed what it needs
+  // is on started one at a time, each start given readyMs, then each handed what it needs. The modules that judge yes
+  // or no go first and alone: one of them failed leaves every other module never begun and never handed anything, for
+  // the plugins manager's fail-safe
   async start(off: readonly string[], handed: Handed): Promise<void> {
     if (this.handed !== null || this.halted) return
     this.off = new Set(off)
@@ -160,16 +168,26 @@ export class CoreModules implements Holder {
     this.handed = handed
     this.booting = true
     try {
-      // Shutdown or the stopped mode during the start starts nothing more
-      for (const id of coreModuleIds) {
-        if (this.closed) break
-        if (!this.off.has(id)) await this.begin(id)
-      }
-      for (const id of coreModuleIds) this.push(id)
+      const first = coreModuleIds.filter(judging)
+      const rest = coreModuleIds.filter(id => !judging(id))
+      await this.bring(first)
+      if (first.some(id => this.startFailed.has(id) || this.pushFailed.has(id))) {
+        for (const id of rest) if (!lasting.has(id)) this.unbegun.add(id)
+      } else await this.bring(rest)
     } finally {
       this.booting = false
     }
     this.tell(before, null)
+  }
+
+  // The modules among ids that are on, each begun in turn and then each handed what it needs. Shutdown or the stopped
+  // mode during the start starts nothing more
+  private async bring(ids: readonly CoreModuleId[]): Promise<void> {
+    for (const id of ids) {
+      if (this.closed) break
+      if (!this.off.has(id)) await this.begin(id)
+    }
+    for (const id of ids) this.push(id)
   }
 
   // The human's switches as they now stand. A module switched off is closed where it has a close and its lookups answer
@@ -237,6 +255,7 @@ export class CoreModules implements Holder {
   // without it. History with no git to run is one, exec looking for a program on a path that stalls another. A start
   // that ran out of time and finishes late is closed again, unless a later start began meanwhile
   private async begin(id: CoreModuleId): Promise<void> {
+    this.unbegun.delete(id)
     const attempt = (this.attempts.get(id) ?? 0) + 1
     this.attempts.set(id, attempt)
     this.beginning.add(id)
@@ -284,7 +303,7 @@ export class CoreModules implements Holder {
   // next. A throw marks it failed until a push goes through
   private push(id: CoreModuleId): void {
     const handed = this.handed
-    if (handed === null || this.closed || this.off.has(id)) return
+    if (handed === null || this.closed || this.off.has(id) || this.unbegun.has(id)) return
     let step = 'stateChanged'
     try {
       if (id === 'gate') this.gateOf.stateChanged(handed.grants())
@@ -318,7 +337,7 @@ export class CoreModules implements Holder {
   private halt(id: CoreModuleId, why: 'shutdown' | 'stopped-mode'): void {
     if (this.stoppedFor.has(id)) return
     const before = this.states()
-    const ran = this.handed !== null && !this.off.has(id)
+    const ran = this.handed !== null && !this.off.has(id) && !this.unbegun.has(id)
     this.stoppedFor.set(id, why)
     if (ran) this.end(id)
     this.tell(before, why, [id])

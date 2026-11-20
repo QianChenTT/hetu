@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { folderCapabilities, screenText } from '../../api/capabilities.ts'
-import { classCauses, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
+import { classCauses, classNumber, MAX_FOLDER_LENGTH } from '../../api/changes.ts'
 import { agentLabel } from '../../api/envelope.ts'
 import { limitNames, MAX_TIMER_MS, timeLimitNames } from '../../api/limits.ts'
 import { coreModuleIds, corePluginIds, firstPartyIds, isReservedId, pluginId } from '../../api/ids.ts'
@@ -90,7 +90,7 @@ const plugin = z.strictObject({
   contentHash: sha256Hex,
   signer: text.nullable(), // null only for a plugin on allowUnsigned
   granted: folderCapabilities, // entries are for folder plugins only, which never hold an install-only type
-  class: z.int().min(0).max(4).nullable(), // null until classified, which counts as 4
+  class: classNumber.nullable(), // null until classified, which counts as 4
   enabled: z.boolean(), // the human's switch, which no check changes
   // Items of granted the human switched off, each as granted holds it. Left out of an entry written before the switches
   // came, which then has none off. One granted doesn't hold switches nothing off
@@ -107,7 +107,7 @@ const plugin = z.strictObject({
   unclassed: z.literal(true).optional(),
   // A notice owed for a move up with no Confirm on screen, written with the class it is about and kept until the human
   // answers it: the class last shown, null for one never known, what moved it and the plugin whose change it was
-  owed: z.strictObject({ from: z.int().min(0).max(4).nullable(), cause: z.enum(classCauses), by: pluginId.nullable() }).optional(),
+  owed: z.strictObject({ from: classNumber.nullable(), cause: z.enum(classCauses), by: pluginId.nullable() }).optional(),
   // The agents' own grants, each item with the label of the agent it is for, held apart from granted so none of them
   // counts as the plugin's own. Only the agent host's entry holds the list. Left out of an entry with none
   agents: agentItems.optional(),
