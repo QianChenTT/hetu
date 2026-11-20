@@ -56,8 +56,9 @@ function fakeCore() {
   return { call, asked, pair, identities, answer, fail: () => { failing = true } }
 }
 
-function started(core = fakeCore()) {
-  const clients = clientsOf({ call: core.call, answerEveryMs: 5, revokeEveryMs: 10 })
+// A clock at 1 unless the test moves it, so the labels count from 1
+function started(core = fakeCore(), options: { clock?: () => number, revokeEveryMs?: number } = {}) {
+  const clients = clientsOf({ call: core.call, answerEveryMs: 5, revokeEveryMs: options.revokeEveryMs ?? 10, clock: options.clock ?? (() => 1) })
   made.push(clients)
   // A connection of the client with a close the transport gives, which records that it was closed
   const closed: string[] = []
@@ -122,6 +123,20 @@ describe('a client joining', () => {
     expect(core.asked[1]).toEqual({ client: 'other-client', name: null, redirect: null, field: 'other-client#2' })
   })
 
+  it('numbers labels from the clock and above the last, so a restarted handler never gives one again', async () => {
+    const core = fakeCore()
+    core.pair.set('claude-code', 'items')
+    let now = 1_763_600_000_000
+    const before = started(core, { clock: () => now })
+    expect([(await before.join('claude-code'))?.label, (await before.join('claude-code'))?.label]).toEqual(['claude-code#1763600000000', 'claude-code#1763600000001'])
+    // Starting the half again takes longer than a millisecond, so its clock reads past every label given before
+    before.clients.close()
+    now += 50
+    const after = started(core, { clock: () => now })
+    expect((await after.join('claude-code'))?.label).toBe('claude-code#1763600000050')
+    expect((await after.join('claude-code'))?.label).toBe('claude-code#1763600000051')
+  })
+
   it('refuses a client id outside the label\'s form with no connect', async () => {
     const { core, join } = started()
     for (const client of ['', 'a#b', 'cl aude', 'x'.repeat(256), 'café']) expect(await join(client), client).toBeNull()
@@ -145,7 +160,7 @@ describe('a client the core holds already', () => {
       expect((await join('claude-code'))?.label, holds).toBe('claude-code#1')
       expect(core.identities).toEqual([['claude-code']])
       expect((await join('claude-code'))?.label).toBe('claude-code#2')
-      expect(core.identities).toHaveLength(1)
+      expect(core.identities).toEqual([['claude-code'], ['claude-code']])
     }
   })
 
@@ -190,6 +205,26 @@ describe('a revoke', () => {
     const asked = core.identities.length
     await tick(50)
     expect(core.identities.length).toBe(asked)
+  })
+
+  it('turns away a confirmed client revoked while it had no open connection, before any poll', async () => {
+    const { core, clients, join } = started(fakeCore(), { revokeEveryMs: 60_000 })
+    const first = join('claude-code')
+    await until(() => core.asked.length === 1)
+    core.answer(1, 'yes')
+    ;(await first)!.leave()
+    core.pair.set('claude-code', 'revoked')
+    expect(await join('claude-code')).toBeNull()
+    expect(clients.connections()).toEqual([])
+    expect(core.asked).toHaveLength(1)
+  })
+
+  it('turns away a confirmed client when the core can\'t say it wasn\'t revoked', async () => {
+    const { core, join } = started()
+    core.pair.set('claude-code', 'items')
+    await join('claude-code')
+    core.fail()
+    expect(await join('claude-code')).toBeNull()
   })
 
   it('forgets a connection that left, so a revoke closes only those still open', async () => {
