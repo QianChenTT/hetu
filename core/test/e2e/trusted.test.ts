@@ -114,13 +114,25 @@ describe('an install list that doesn\'t check out', () => {
 // write fail. logFailMs lowered makes it count as failed soon
 describe('the core\'s log failing while hetu runs', () => {
   const folder = (dataDir: string) => path.join(dataDir, 'events')
+  // Windows refuses to rename a folder while a file in it is open, which the log's own append or a scanner holds for
+  // a moment, so a refused rename is tried again for up to 10 s
+  async function moved(from: string, to: string): Promise<void> {
+    for (let tries = 0; ; tries++) {
+      try {
+        return await rename(from, to)
+      } catch (err) {
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes((err as NodeJS.ErrnoException).code ?? '') || tries >= 50) throw err
+        await tick(200)
+      }
+    }
+  }
   async function breakLog(dataDir: string): Promise<void> {
-    await rename(folder(dataDir), `${folder(dataDir)}-away`)
+    await moved(folder(dataDir), `${folder(dataDir)}-away`)
     await writeFile(folder(dataDir), '')
   }
   async function mendLog(dataDir: string): Promise<void> {
-    await rm(folder(dataDir), { force: true })
-    await rename(`${folder(dataDir)}-away`, folder(dataDir))
+    await rm(folder(dataDir), { force: true, maxRetries: 5, retryDelay: 100 })
+    await moved(`${folder(dataDir)}-away`, folder(dataDir))
   }
   const readied = async (dataDir: string) => (await records(dataDir)).filter(record => record.event === 'core.ready').length
 
