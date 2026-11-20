@@ -121,6 +121,14 @@ describe('an ask for a pair\'s items', () => {
     expect(snapshot().pairs).toEqual({ 'mcp-http-handler': { x: [item(write)] }, beta: { x: [item(inbox)] } })
   })
 
+  it('holds sixteen asks waiting under one root plugin, its next refused, while an ask under another root plugin still waits', async () => {
+    const { pluginsManager, ask } = await started()
+    for (let n = 1; n <= 16; n++) expect(await ask(`spam#${n}`, [inbox], gamma, beta)).toEqual({ asked: 'waiting' })
+    expect(await code(ask('spam#17', [inbox], gamma, beta))).toBe('throttled')
+    expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })
+    expect(pluginsManager.pending()).toHaveLength(17)
+  })
+
   it('refuses a pair the human cancelled an ask of for a minute, then takes its ask again', async () => {
     const { pluginsManager, ask, clock } = await started()
     await ask('client#1', [inbox])

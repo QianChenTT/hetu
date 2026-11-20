@@ -103,7 +103,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (waiting !== undefined && (waiting.plugin !== change.plugin || waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n'))) {
       throw { code: 'throttled' }
     }
-    if (typeof this.requests.raise(change, null, MAX_PENDING, 'identity.ask') !== 'string') throw { code: 'throttled' }
+    // The asks for one root plugin's pairs take places of their own, so no plugin's asks crowd out another's
+    if (typeof this.requests.raise(change, null, MAX_PENDING, `identity.ask ${change.root}`) !== 'string') throw { code: 'throttled' }
     return { asked: 'waiting' }
   }
 
