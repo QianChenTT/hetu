@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { CoreStatus, SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/runtime/header.ts'
+import { afterFailure, Ending } from '../backend/runtime/quit.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
@@ -370,6 +371,41 @@ describe('the fail-safe at start', () => {
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+  })
+
+  // Only a clean Quit or a change applied in the stopped mode clears the restart marker, so a failure that comes back
+  // after Try again still stops hetu instead of starting it again
+  it.each([
+    ['on the stopped screen', false],
+    ['in the native box', true],
+  ])('keeps the restart marker the run before wrote through Try again %s', async (_where, box) => {
+    const base = await tempBase()
+    const marker = (dataDir: string) => readFile(path.join(dataDir, 'failed-once'), 'utf8')
+    const first = await harness({ base, pluginsManager: { onFailure: () => {} } })
+    await first.pluginsManager.start()
+    first.pluginsManager.controlFailed('log', 'log-failing')
+    await first.pluginsManager.shutdown()
+    expect(await marker(first.dataDir)).toBe('log')
+    const second = await harness({ base, modules: { gate: failing() }, switches: box ? { off: ['security-view'] } : {} })
+    await second.pluginsManager.start()
+    const mode = second.pluginsManager.stopped()!
+    expect(mode).toMatchObject({ control: 'gate', why: 'start-failed' })
+    expect(second.pluginsManager.stoppedBox()).toBe(box)
+    // What main does for each: the screen's Try again asks for app.relaunch, the box answers retry
+    const ending = new Ending()
+    const quits: string[] = []
+    if (box) {
+      afterFailure({ action: 'stopped', mode, box }, {
+        quitting: () => false, announce: () => {}, quit: (code, again) => { quits.push(`quit ${code} ${again}`) },
+        ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, packaged: false, env: {}, later: () => {},
+      })
+      expect(quits).toEqual(['quit 1 true'])
+    } else ending.relaunch()
+    await ending.leave(second.pluginsManager)
+    expect(await marker(second.dataDir)).toBe('log')
+    // A clean Quit is what clears it
+    await new Ending().leave(second.pluginsManager)
+    expect(await exists(path.join(second.dataDir, 'failed-once'))).toBe(false)
   })
 
   it('refuses everything and stops nothing for the gate failing in use', async () => {

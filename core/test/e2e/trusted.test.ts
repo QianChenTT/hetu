@@ -159,6 +159,24 @@ describe('the core\'s log failing while hetu runs', () => {
     await showing(page, 'hetu already started again once after a failure')
     await until(async () => (await visibleWindows(again)).length === 1)
   })
+
+  // Restart hetu goes the way Try again goes, through app.relaunch
+  it('keeps the restart marker through Restart hetu and clears it on a clean Quit', async () => {
+    const dataDir = await data({ before: async dir => writeFile(path.join(dir, 'failed-once'), 'log') })
+    const installDir = await install()
+    for (const [button, kept] of [['Restart hetu', true], ['Quit', false]] as const) {
+      const app = await start(dataDir, installDir)
+      const editor = await editorPage(app)
+      await tick(PAST_DELAY)
+      await editor.getByRole('button', { name: 'Plugins and security' }).click()
+      const page = await trustedPage(app)
+      await tick(PAST_DELAY)
+      const done = exited(app)
+      await page.getByRole('button', { name: button, exact: true }).click()
+      expect(await done).toBe(0)
+      expect(await readFile(path.join(dataDir, 'failed-once'), 'utf8').then(() => true, () => false), button).toBe(kept)
+    }
+  })
 })
 
 describe('a prompt a plugin\'s call raises', () => {

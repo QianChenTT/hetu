@@ -56,6 +56,33 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
   app.quit()
 }
 
+// How a run ends, which decides the restart marker. Only a clean Quit clears it: a quit after a failure keeps it and so
+// does one that starts hetu again, Try again on the stopped screen or in the native box and Restart hetu. A change
+// applied in the stopped mode clears it on its own
+export class Ending {
+  private failed = false
+  private again = false
+
+  // The log failed while hetu ran and the windows heard core.quitting
+  fail(): void {
+    this.failed = true
+  }
+
+  // Try again or Restart hetu
+  relaunch(): void {
+    this.again = true
+  }
+
+  // A quit the human asked for, which gives the windows a moment to keep their drafts
+  asked(): boolean {
+    return !this.failed
+  }
+
+  async leave(pluginsManager: { cleanQuit(): Promise<void> } | null): Promise<void> {
+    if (!this.failed && !this.again) await pluginsManager?.cleanQuit()
+  }
+}
+
 // How long windows hear core.quitting before a quit after a failure goes on, so the editor can keep a draft
 export const QUIT_GRACE_MS = 2000
 // How long a quit the human asked for waits after core.quitting before its windows close, for the same drafts
@@ -66,6 +93,8 @@ export type FailureParts = {
   quitting(): boolean
   announce(): void
   quit(code: number, again: boolean): void
+  // How the run ends, told of a failure and of Try again in the native box
+  ending: Ending
   showTrusted(): void
   // The native box naming why hetu stopped, with quit only. It returns once the human closed it
   // The human's answer, Try again offered only for a control that failed at start
@@ -107,6 +136,7 @@ export function afterFailure(
   if (failure.action === 'stopped' && failure.box) {
     parts.closeEditors()
     const retry = parts.showBox(failure.mode) === 'retry'
+    if (retry) parts.ending.relaunch()
     parts.quit(1, retry && relaunches({ packaged: parts.packaged, env: parts.env }))
     return
   }
@@ -116,6 +146,7 @@ export function afterFailure(
     return
   }
   if (parts.quitting()) return
+  parts.ending.fail()
   parts.announce()
   const again = relaunches({ packaged: parts.packaged, env: parts.env })
   parts.later(() => parts.quit(1, again), QUIT_GRACE_MS)
