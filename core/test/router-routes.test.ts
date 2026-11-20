@@ -89,7 +89,7 @@ describe('the namespace table', () => {
     const way = windowWay(router, { trusted })
     for (const [action, spec] of Object.entries(coreActions)) {
       const args = action === 'security.confirm' ? { requestId: 'req-1' } : undefined
-      if (spec.from === 'http' || spec.from === 'agent' || !spec.args.safeParse(args).success) continue
+      if (spec.from === 'utility' || spec.from === 'pair' || !spec.args.safeParse(args).success) continue
       const reply = await way.ask('trusted', action, args)
       if (spec.reads === true) expect([action, code(reply)]).not.toEqual([action, 'throttled'])
       else expect([action, code(reply)]).toEqual([action, 'throttled'])
@@ -118,8 +118,8 @@ describe('the namespace table', () => {
     expect(code(await search.ask('gate.filterReadable', { call: 'a'.repeat(22), paths: ['notes/a.md'] }))).toBe('invalid')
     expect(seen).toHaveLength(1)
     const live = seen[0].live as LiveCall
-    expect([seen[0].caller, live.caller, live.agent, live.door, live.open()]).toEqual([worker('search'), worker('scribe'), undefined, false, true])
-    expect(Object.keys(live).sort()).toEqual(['caller', 'door', 'open', 'plugin', 'principal'])
+    expect([seen[0].caller, live.caller, live.root, live.onBehalf, live.pair, live.open()]).toEqual([worker('search'), worker('scribe'), worker('scribe'), undefined, undefined, true])
+    expect(Object.keys(live).sort()).toEqual(['caller', 'open', 'plugin', 'principal', 'root'])
     search.answer(got.callId, [])
     await scribe.reply(id)
     expect(live.open()).toBe(false)

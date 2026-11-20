@@ -266,7 +266,7 @@ describe('core plugins', () => {
     expect(pluginsManager.policyJob('gate')).toBe('on')
     expect(pluginsManager.policyJob('grant-risk-classifier')).toBe('off')
     expect(pluginsManager.policyJob('outline')).toBe('absent')
-    expect(Object.keys((await pluginsManager.serve({ callId: 'c', caller: { kind: 'window', role: 'editor', n: 1 }, action: 'core.status', args: undefined, deadline: Date.now() + 1000 }) as { policyJobs: object }).policyJobs))
+    expect(Object.keys((await pluginsManager.serve({ callId: 'c', caller: { kind: 'window', role: 'editor', n: 1 }, root: { kind: 'window', role: 'editor', n: 1 }, action: 'core.status', args: undefined, deadline: Date.now() + 1000 }) as { policyJobs: object }).policyJobs))
       .toEqual(['gate', 'grant-risk-classifier'])
   })
 })

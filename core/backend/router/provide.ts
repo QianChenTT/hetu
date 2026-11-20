@@ -6,7 +6,7 @@ import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
-import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
+import { no, isOne, field, pairOf, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
 import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
@@ -76,9 +76,10 @@ function decideFor(c: Context, asker: Asker, stage: Access['stage'], capability:
   if (open !== 'decide') return { code: open }
   const gate = c.holder(() => c.options.gate())
   if (gate === null) return { code: c.down('policy-down') }
+  const pair = pairOf(asker.root.caller, asker.agent)
   const access: Access = frozen({
-    stage, caller: asker.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
-    ...(asker.agent !== undefined ? { agent: asker.agent } : {}), action: asker.action, capability, scope,
+    stage, caller: asker.caller, root: asker.root.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
+    ...(pair !== undefined ? { pair } : {}), action: asker.action, capability, scope,
   })
   let allow: unknown, view: unknown, code: unknown, ask: unknown
   try {
@@ -158,7 +159,7 @@ export function listable(c: Context, caller: Caller, path: string): boolean {
 // An ask is the item's first use: the prompt holds a request for the human or can't for now, while the subscription
 // waits for the Confirm. A declined ask refuses
 export function recheck(c: Context, caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
-  const asker: Asker = { caller, onBehalf: undefined, action: subscribeAction.action }
+  const asker: Asker = { caller, root: { caller }, onBehalf: undefined, action: subscribeAction.action }
   const scope: Scope = frozen({ topics: [topic] })
   for (const stage of ['raw', 'canonical'] as const) {
     const refused = decideFor(c, asker, stage, subscribeAction.capability, scope)
@@ -296,7 +297,7 @@ function guard(c: Context, pending: Pending, prepared: Prepared): RefusalCode | 
     const guard = state === 'on' ? c.holder(() => c.options.guards(id)) : null
     if (guard === null) return c.down('guard-down')
     const call: GuardCall = frozen({
-      callId: pending.callId, caller: pending.caller,
+      callId: pending.callId, caller: pending.caller, root: pending.root.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       action: pending.action, scope: prepared.scope,
       ...(prepared.baseVersion !== undefined ? { baseVersion: prepared.baseVersion } : {}),
@@ -338,6 +339,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
   const off = c.policyJob('gate') === 'off'
   const gate = off ? null : c.holder(() => c.options.gate())
   const { agent } = pending
+  const pair = pairOf(pending.root.caller, agent)
   let threw = false
   const started = c.clock()
   let charged = false
@@ -346,7 +348,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
       if (off) return agent === undefined
       if (gate === null || threw) return false
       try {
-        return gate.canList(pending.caller, path, agent) === true
+        return gate.canList(pending.caller, path, pair) === true
       } catch {
         threw = true
         return false

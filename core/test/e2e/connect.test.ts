@@ -26,8 +26,8 @@ import { definePlugin } from '${sdk}'
 const settled = work => work.then(result => ({ result }), err => ({ refused: err.code ?? String(err) }))
 export default definePlugin({
   start(ctx) {
-    ctx.provide('connect', (_call, args) => settled(ctx.call('core', 'agentConnect', args, { timeoutMs: 500 })))
-    ctx.provide('collect', (_call, args) => settled(ctx.call('core', 'agentConnected', args, { timeoutMs: 500 })))
+    ctx.provide('connect', (_call, args) => settled(ctx.call('core', 'consentAsk', args, { timeoutMs: 500 })))
+    ctx.provide('collect', (_call, args) => settled(ctx.call('core', 'consentAnswer', args, { timeoutMs: 500 })))
   },
 })
 `
@@ -97,7 +97,7 @@ const connect = async (worker: Worker, args: unknown) => through(worker, 'connec
 const collect = async (worker: Worker, handle: string) => (await through(worker, 'collect', { handle })).result
 
 async function trustedPage(app: ElectronApplication, editor: Page): Promise<Page> {
-  const notice = editor.getByRole('button', { name: 'A security change is waiting: agent.connect "mcp-http-handler"' })
+  const notice = editor.getByRole('button', { name: 'A security change is waiting: consent.ask "mcp-http-handler"' })
   await notice.waitFor()
   await tick(PAST_DELAY)
   await notice.click()
@@ -149,7 +149,7 @@ describe('a connect in the trusted window', () => {
 
     await tick(PAST_DELAY)
     await confirm.click()
-    await until(() => logged(dataDir, 'security.applied', { kind: 'agent.connect', target: 'mcp-http-handler', by: 'confirm' }))
+    await until(() => logged(dataDir, 'security.applied', { kind: 'consent.ask', target: 'mcp-http-handler', by: 'confirm' }))
     expect(await collect(worker, handle)).toEqual({ answer: 'yes' })
     expect(await collect(worker, handle)).toEqual({ answer: 'gone' })
   })

@@ -25,7 +25,7 @@ const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
 const worker = (id: string, capabilities: Capability[] = []): Files => filesFor(workerManifest(id, { capabilities }))
 // The grant risk classifier down: the core holds one each of whose calls throws, so no class is known
 const down = () => ({ grantRiskClassifier: throwingClassifier() })
-const call = (caller: Caller, action: string, args?: unknown) => ({ callId: `c${Math.random()}`, caller, action, args, deadline: Date.now() + 30_000 })
+const call = (caller: Caller, action: string, args?: unknown) => ({ callId: `c${Math.random()}`, caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 
 async function listed(made: Awaited<ReturnType<typeof harness>>): Promise<SecurityList> {
   return await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList
@@ -619,7 +619,7 @@ describe('a class another plugin\'s change moves', () => {
     expect(entry.firstUse).toEqual([fetchOne, hears('reader.done')])
     expect(gate.seen.at(-1)!.plugins.listener.map(item => item.firstUse)).toEqual([true, true])
     const asked = made.pluginsManager.asks.raise(capabilityKey(fetchOne), {
-      stage: 'canonical', caller: { kind: 'plugin', id: 'listener', half: 'worker', incarnation: 1 }, action: 'net.fetch',
+      stage: 'canonical', caller: { kind: 'plugin', id: 'listener', half: 'worker', incarnation: 1 }, root: { kind: 'plugin', id: 'listener', half: 'worker', incarnation: 1 }, action: 'net.fetch',
       capability: 'net.fetch', scope: {},
     })
     expect(typeof asked).toBe('string')

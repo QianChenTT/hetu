@@ -362,7 +362,7 @@ describe('recording off and on', () => {
 describe('first-use asks', () => {
   const key = (capability: Capability) => capabilityKey(capability)
   const access = (id: string, capability: Capability = notes) => ({
-    stage: 'canonical' as const, caller: { kind: 'plugin' as const, id, half: 'worker', incarnation: 1 }, action: 'luoshu.read',
+    stage: 'canonical' as const, caller: { kind: 'plugin' as const, id, half: 'worker', incarnation: 1 }, root: { kind: 'plugin' as const, id, half: 'worker', incarnation: 1 }, action: 'luoshu.read',
     capability: capability.type, scope: { paths: ['notes/a.md'] },
   })
   // Each of alpha's items is class 4, so the grant risk classifier has each ask at its first use. beta's read of notes
@@ -451,7 +451,7 @@ describe('the wiring', () => {
 })
 
 describe('the core actions the plugins manager serves', () => {
-  const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
+  const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 
   it('takes a security request from a window and confirms or cancels it from the trusted one', async () => {
     const made = await harness()
@@ -641,7 +641,7 @@ describe('the request to approve a plugin', () => {
   it('lists its version and every grant its manifest asks for', async () => {
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: [notes, { type: 'net.fetch', hosts: ['example.com'] }] }) } })
     await made.pluginsManager.start()
-    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0]).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for: luoshu.read on "notes/**"', 'It asks for: net.fetch to "example.com"', 'Class 4, Powerful: it can read notes and reach the network, so it could send notes out'])
   })
@@ -653,7 +653,7 @@ describe('the request to approve a plugin', () => {
     ]
     const made = await harness({ folder: { alpha: worker('alpha', { capabilities: asks }) } })
     await made.pluginsManager.start()
-    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0].notes.slice(0, 4)).toEqual([
       'Version 1.0.0', 'It asks for: plugin.call to "notes"', 'It asks for: events.subscribe to "notes.saved"',
       'It asks for: exec of ["git","status"] with "HOME" from your environment',
@@ -663,7 +663,7 @@ describe('the request to approve a plugin', () => {
   it('says when it asks for nothing', async () => {
     const made = await harness({ folder: { alpha: worker('alpha') } })
     await made.pluginsManager.start()
-    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
+    const list = await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 }) as SecurityList
     expect(list.requests[0].notes).toEqual(['Version 1.0.0', 'It asks for nothing', 'Class 0, Contained'])
   })
 })
@@ -701,7 +701,7 @@ describe('stopping recording with the log down', () => {
 
 // A record recording throws on counts as one that didn't land, so a change that waits on it applies nothing
 describe('a record recording throws on', () => {
-  const call = (caller: Caller, action: string) => ({ callId: 'c1', caller, action, args: undefined, deadline: Date.now() + 30_000 })
+  const call = (caller: Caller, action: string) => ({ callId: 'c1', caller, root: caller, action, args: undefined, deadline: Date.now() + 30_000 })
 
   it('fails the Confirm and applies nothing', async () => {
     const made = await harness()
@@ -717,7 +717,7 @@ describe('a record recording throws on', () => {
 // editor window may only switch it on again. A throw applies nothing
 describe('the security view', () => {
   const list = async (made: Awaited<ReturnType<typeof harness>>) =>
-    (await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 })) as SecurityList
+    (await made.pluginsManager.serve({ callId: 'c1', caller: trusted, root: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 })) as SecurityList
 
   it('is a row of its own, a security control switched off only in a Confirm with its id typed', async () => {
     const made = await harness()

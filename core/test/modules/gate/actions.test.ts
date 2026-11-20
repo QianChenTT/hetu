@@ -36,11 +36,11 @@ function made(over: { state?: PolicyJobState, gate?: Gate | null, budget?: numbe
   return { actions, gate, faults, set: (next: PolicyJobState) => { state = next }, bump: () => { view++ } }
 }
 
-const live = (open = true): LiveCall => ({ caller: word, principal: 'plugin:word-count', plugin: 'word-count', door: false, open: () => open })
+const live = (open = true): LiveCall => ({ caller: word, principal: 'plugin:word-count', plugin: 'word-count', root: word, open: () => open })
 const filter = (paths: string[], view: LiveCall | null = live()): Call =>
-  ({ callId: 'c1', caller: search, action: 'gate.filterReadable', args: { call: 'x', paths }, deadline: Date.now() + 30_000, ...(view !== null ? { live: view } : {}) })
+  ({ callId: 'c1', caller: search, root: search, action: 'gate.filterReadable', args: { call: 'x', paths }, deadline: Date.now() + 30_000, ...(view !== null ? { live: view } : {}) })
 const reach = (path?: string): Call =>
-  ({ callId: 'c2', caller: { kind: 'window', role: 'editor', n: 1 }, action: 'gate.reach', args: { plugin: 'search', ...(path ? { path } : {}) }, deadline: Date.now() + 30_000 })
+  ({ callId: 'c2', caller: { kind: 'window', role: 'editor', n: 1 }, root: { kind: 'window', role: 'editor', n: 1 }, action: 'gate.reach', args: { plugin: 'search', ...(path ? { path } : {}) }, deadline: Date.now() + 30_000 })
 
 const refusal = async (promise: Promise<unknown>) => {
   try {

@@ -27,7 +27,7 @@ const switches = ['skipVerification', 'confirmOff'] as const
 // What security.request carries, the only way the security state changes. Only hetu windows send one and only the
 // trusted window's Confirm applies one that widens. Each names one target and never the state as a whole
 export const changeKinds = frozen([
-  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'agent.revoke',
+  ...pluginKinds, ...grantKinds, 'luoshu.pick', ...perPluginSwitches, ...switches, 'allowUnsigned', 'limit.set', 'identity.revoke',
 ] as const)
 
 export const change = z.discriminatedUnion('kind', [
@@ -50,7 +50,7 @@ export const change = z.discriminatedUnion('kind', [
     plugin: pluginId.nullable(),
   }).refine(set => !timeLimitNames.includes(set.constant) || set.value <= MAX_TIMER_MS, { message: `a time past ${MAX_TIMER_MS} ms` }),
   // Every item of one agent's grant goes at once and the label is kept as revoked until mcp-http-handler says it ended its tokens
-  z.strictObject({ kind: z.literal('agent.revoke'), agent: agentLabel }),
+  z.strictObject({ kind: z.literal('identity.revoke'), agent: agentLabel }),
 ])
 // What moved a class up with no Confirm on screen. by is the plugin whose change it was, null for the classing at start
 // and for the grant risk classifier switched on again
@@ -83,11 +83,11 @@ const scoped = (item: object) => Object.entries(item).every(([field, value]) => 
 // An item an agent may ask for: any type a plugin-folder plugin may hold, with a scope where its type has one
 export const askedCapability = folderCapability.refine(scoped, 'an item with no scope')
 
-// An agent's ask the core raises alone from the agent host's core.agentAsk, never one security.request carries. agent
+// An agent's ask the core raises alone from the agent host's core.identityAsk, never one security.request carries. agent
 // is the label of the call from the door the ask was made under and never an argument, capabilities the items it lacks
 // in key order. A Confirm adds them to that label's items on the host's entry
 export const agentAsk = z.strictObject({
-  kind: z.literal('agent.ask'),
+  kind: z.literal('identity.ask'),
   plugin: z.literal(agentHost),
   agent: agentLabel,
   capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS),
@@ -112,12 +112,12 @@ export function connectLabel(connect: { client: string, number: number }): strin
   return `${connect.client}#${connect.number}`
 }
 
-// A client's connect through mcp-http-handler's door the core raises alone from core.agentConnect, never one security.request
+// A client's connect through mcp-http-handler's door the core raises alone from core.consentAsk, never one security.request
 // carries. client is the client id, clientHost its host when it is a URL with one and null otherwise, name the one its
 // document gives or null, redirect where the client gets its answer and redirectHost that address's host. The core
 // took both hosts. number is the authorization's, which with the client id makes the label. A Confirm changes no state
 export const agentConnect = z.strictObject({
-  kind: z.literal('agent.connect'),
+  kind: z.literal('consent.ask'),
   plugin: z.literal(agentDoor.plugin),
   client: z.string().max(MAX_CLIENT_ID_LENGTH),
   clientHost: screenText(MAX_CLIENT_ID_LENGTH).nullable(),
@@ -154,7 +154,7 @@ export function changeEffect(change: Change): ChangeEffect {
       return 'widens'
     case 'grant.narrow':
     case 'item.off':
-    case 'agent.revoke':
+    case 'identity.revoke':
       return 'narrows'
     case 'plugin.remove':
     case 'plugin.clearStorage':
@@ -174,8 +174,8 @@ export function changeEffect(change: Change): ChangeEffect {
       return 'widens'
     // Only the core raises one and it always waits for the human
     case 'class.raised':
-    case 'agent.ask':
-    case 'agent.connect':
+    case 'identity.ask':
+    case 'consent.ask':
       return 'widens'
   }
 }
@@ -183,13 +183,13 @@ export function changeEffect(change: Change): ChangeEffect {
 // How long a request of this kind waits for the human before it lapses, null for one that waits until answered. Only
 // a request a plugin's call brought about lapses, since the call that asked is long over
 export function lapseOf(change: Change): number | null {
-  if (change.kind === 'agent.connect') return AGENT_CONNECT_LAPSE_MS
-  return change.kind === 'agent.ask' ? AGENT_ASK_LAPSE_MS : null
+  if (change.kind === 'consent.ask') return AGENT_CONNECT_LAPSE_MS
+  return change.kind === 'identity.ask' ? AGENT_ASK_LAPSE_MS : null
 }
 
 // The plugins whose stop withdraws a waiting request of this kind, since what it would apply is theirs to use. An ask
 // is for an agent of the agent host that mcp-http-handler's door named, a connect is mcp-http-handler's to collect
 export function withdrawnWith(change: Change): readonly string[] {
-  if (change.kind === 'agent.connect') return [agentDoor.plugin]
-  return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
+  if (change.kind === 'consent.ask') return [agentDoor.plugin]
+  return change.kind === 'identity.ask' ? [change.plugin, 'mcp-http-handler'] : []
 }

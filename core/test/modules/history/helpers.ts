@@ -34,10 +34,10 @@ export async function started(where: Place, options: HistoryOptions = {}): Promi
 }
 
 let n = 0
-export type Asking = { caller?: Caller, onBehalf?: string }
+export type Asking = { caller?: Caller, root?: Caller, onBehalf?: string }
 
 export const callOf = (action: string, args: unknown, as: Asking = {}): Call => ({
-  callId: `c${++n}`, caller: as.caller ?? git, action, args, deadline: Date.now() + 30000,
+  callId: `c${++n}`, caller: as.caller ?? git, root: as.root ?? as.caller ?? git, action, args, deadline: Date.now() + 30000,
   ...(as.onBehalf !== undefined ? { onBehalf: as.onBehalf } : {}),
 })
 

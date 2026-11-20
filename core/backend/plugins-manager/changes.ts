@@ -7,7 +7,7 @@ import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
-import { agentHost } from '../../api/policy-jobs.ts'
+import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
@@ -110,12 +110,12 @@ export abstract class PluginsChanges extends PluginsInstall {
       // Answered: the class and its asks were stored when the notice was raised
       case 'class.raised':
         return this.answered(change.plugin)
-      case 'agent.ask':
+      case 'identity.ask':
         return this.agentGrant(change)
-      case 'agent.revoke':
+      case 'identity.revoke':
         return this.agentRevoke(change.agent)
       // Hands mcp-http-handler its yes and changes no state
-      case 'agent.connect':
+      case 'consent.ask':
         return this.connects.confirmed(change)
     }
   }
@@ -244,8 +244,9 @@ export abstract class PluginsChanges extends PluginsInstall {
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    // Each agent's items by its label, from the agent host's entry while the human has the host on. None of them is the
-    // host's own, so none switches off or asks at first use
+    // Each agent's items by its label, from the agent host's entry while the human has the host on, as the pairs of the
+    // door's plugin, which sets the label at the root of an agent's chain. None of them is the host's own, so none
+    // switches off or asks at first use
     const agents: Record<string, GrantedItem[]> = Object.create(null)
     const host = this.state.plugins[agentHost]
     if (host?.enabled === true && this.known.get(agentHost)?.from !== 'install') {
@@ -254,7 +255,7 @@ export abstract class PluginsChanges extends PluginsInstall {
         agents[agent].push({ capability: structuredClone(capability), off: false, firstUse: false })
       }
     }
-    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], agents })
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], pairs: { [agentDoor.plugin]: agents } })
   }
 
   // What exec checks a command against on its own, read from the grants snapshot: each plugin's exec items that are on. Exec

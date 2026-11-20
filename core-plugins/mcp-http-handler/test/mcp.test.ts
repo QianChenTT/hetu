@@ -196,7 +196,7 @@ describe('the refusals told to the core', () => {
     const reports: [RefusalReason, number][] = []
     const counter = refusalCounter(async (reason, count) => {
       reports.push([reason, count])
-      if (reason === 'rate') throw new Refused('throttled', 'core.agentRefused')
+      if (reason === 'rate') throw new Refused('throttled', 'core.refused')
     })
     counter.hit('rate')
     counter.hit('token')

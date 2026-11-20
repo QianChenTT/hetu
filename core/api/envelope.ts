@@ -110,7 +110,8 @@ export const caller = z.discriminatedUnion('kind', [
 export type Caller = z.infer<typeof caller>
 
 // A call as the callee gets it. callId names it in the callee's answer and as the parent of the callee's sub-calls.
-// deadline is in ms since the epoch. args were measured against the caller's cap on the way in
+// deadline is in ms since the epoch. args were measured against the caller's cap on the way in. root is the caller at
+// the root of the chain, beside onBehalf only, which that root set
 export const delivery = z.strictObject({
   v: z.literal(VERSION),
   kind: z.literal('call'),
@@ -120,7 +121,8 @@ export const delivery = z.strictObject({
   args: z.unknown(),
   deadline: z.int().nonnegative(),
   onBehalf: label.optional(),
-})
+  root: caller.optional(),
+}).refine(given => (given.onBehalf === undefined) === (given.root === undefined), 'root beside onBehalf only')
 export type Delivery = z.infer<typeof delivery>
 
 // The callee's answer to a delivered call. The router measures the result against the callee's own cap and builds the

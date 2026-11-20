@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
 import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
 import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
-import { LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
+import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
@@ -26,8 +26,7 @@ export function actionPathProblem(value: string): string | null {
 // A path as the caller wrote it, for every action. The matcher judges this text at precheck and the provider's prepare
 // canonicalises it. A spelling no canonical path holds or a dot segment is refused here, so it answers invalid before
 // precheck could answer not-granted whatever the gate's state. A caller can so tell its own bad spelling from a
-// missing grant. Shape reads only the caller's own text. Its length is spelled as checks the JSON Schema an agent reads
-// keeps, since a refinement leaves it
+// missing grant. Shape reads only the caller's own text
 const path = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
   const problem = actionPathProblem(value)
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
@@ -61,19 +60,20 @@ const topic = qualifiedName.refine(name => {
 }, 'not a topic')
 const topics = z.strictObject({ topics: z.array(topic).min(1).max(MAX_CALL_TOPICS) })
 
-// Who may call a core action: any caller, a hetu window, the trusted window, mcp-http-handler's host half in its
-// utility process or the agent host under a live call from that door, which names the agent. The floor decides these
-// and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses every caller
-export type CoreFrom = 'any' | 'windows' | 'trusted' | 'http' | 'agent'
+// Who may call a core action: any caller, a hetu window, the trusted window, a plugin's host half in its utility
+// process or the plugin the root of a chain called, under that call, when the chain carries a pair. The floor decides
+// these and never the gate, so a failed gate can't block the way out. A value the floor has no rule for refuses every
+// caller
+export type CoreFrom = 'any' | 'windows' | 'trusted' | 'utility' | 'pair'
 
-// Why mcp-http-handler refused an agent at the door, the only reasons core.agentRefused takes: the Host, an Origin or a
+// Why mcp-http-handler refused an agent at the door, the only reasons core.refused takes: the Host, an Origin or a
 // Sec-Fetch-Site, the route or method, a size, the rate, the token, bytes or headers that don't parse and a request
 // too slow
 export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)
 export type AgentRefusal = typeof agentRefusals[number]
 // The most refusals one report counts, far above what the door can refuse in the second a report covers
 export const MAX_REFUSAL_COUNT = 1_000_000
-// The most labels one core.agents call names in each list
+// The most labels one core.identities call names in each list
 export const MAX_AGENTS_ASKED = 64
 // reads: the trusted window may send it inside its input delay, since it only reads. Anything else the trusted window
 // sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on. live: args.call names a
@@ -85,8 +85,7 @@ export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, re
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
 // which the router puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
-// filter list keeps only the result's paths the gate's canList allows. agent makes the action a tool an agent may call
-// through mcp and an action with none stays closed to agents
+// filter list keeps only the result's paths the gate's canList allows
 export type ProviderAction = {
   readonly capability: CapabilityType | null
   readonly args: z.ZodType
@@ -95,15 +94,7 @@ export type ProviderAction = {
   readonly also?: { readonly capability: CapabilityType, readonly ends: readonly End[] }
   readonly write: boolean
   readonly filter?: 'list'
-  readonly agent?: AgentTool
 }
-
-// A provider action as an agent sees it: the tool's name, the core's words for it and the arguments an agent sends. The
-// tool calls its own row's action with what args parsed and the action's own args parse that again, so args only
-// narrow them. Each argument's words go in its schema, since a refinement never reaches the JSON Schema an agent reads
-export type AgentTool = { readonly name: string, readonly description: string, readonly args: z.ZodObject }
-
-const tool = (name: string, description: string, args: z.ZodObject): AgentTool => Object.freeze({ name, description, args })
 
 // A move's two ends, in the order its raw and canonical scopes hold them
 export const ends = frozen(['from', 'to'] as const)
@@ -170,29 +161,29 @@ const coreTable = {
   'editor.frame': { from: 'windows', args: z.strictObject({ plugin: pluginId, frame: frameName }) },
   // The frame at that URL is gone. navigated says it loaded again, which the core records
   'editor.frameGone': { from: 'windows', args: z.strictObject({ url: frameUrl, navigated: z.boolean() }) },
-  // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as http.refused coalesced
-  // by reason
-  'core.agentRefused': {
-    from: 'http',
+  // The refusals at the door since mcp-http-handler's last report for one reason, which the core writes as
+  // <plugin id>.refused coalesced by reason
+  'core.refused': {
+    from: 'utility',
     args: z.strictObject({ reason: z.enum(agentRefusals), count: z.int().positive().max(MAX_REFUSAL_COUNT) }),
   },
   // mcp-http-handler's bind on its port failed. The plugins manager ends the calling half with the reason and the plugin reads failed. It
   // names no plugin, so a half speaks only about itself
-  'core.bindFailed': { from: 'http', args: z.strictObject({ reason: z.enum(bindFailures) }) },
-  // The agent host asks the human for items for the agent whose call from the door is live. The agent is that call's
-  // label and never an argument. Answers at once: waiting for the human, or granted when the agent holds them all
-  'core.agentAsk': { from: 'agent', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
+  'core.bindFailed': { from: 'utility', args: z.strictObject({ reason: z.enum(bindFailures) }) },
+  // The plugin the root of a chain called asks the human for items for the chain's pair, read from the chain and never
+  // from an argument. Answers at once: waiting for the human, or granted when the pair holds them all
+  'core.identityAsk': { from: 'pair', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
   // What mcp-http-handler asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
   // heard names the revoked labels whose tokens mcp-http-handler ended, whose marks then go
-  'core.agents': {
-    from: 'http',
+  'core.identities': {
+    from: 'utility',
     args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
   },
   // mcp-http-handler's door asks the human to connect a client as the agent the client id and the number make. The core raises the
   // request and answers at once with a handle it made, which mcp-http-handler collects the answer with. Never a label or a handle
   // from mcp-http-handler
-  'core.agentConnect': {
-    from: 'http',
+  'core.consentAsk': {
+    from: 'utility',
     args: z.strictObject({
       client: z.string().max(MAX_CLIENT_ID_LENGTH, { abort: true }),
       name: clientName.nullable(),
@@ -201,7 +192,7 @@ const coreTable = {
     }),
   },
   // The human's answer to the connect a handle names: waiting, yes or no, each of yes and no once, then gone
-  'core.agentConnected': { from: 'http', args: z.strictObject({ handle: token }) },
+  'core.consentAnswer': { from: 'utility', args: z.strictObject({ handle: token }) },
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
@@ -234,20 +225,12 @@ const commitMessage = z.string().min(1).max(MAX_COMMIT_MESSAGE, { abort: true })
 // A commit by its full id, never a name git would resolve
 const commitId = z.string().regex(/^[0-9a-f]{40}$/)
 
-// A path's grammar in words, for the agent tools
-const PATH_WORDS = 'A note path inside the notes folder, its segments split by /, at most 512 characters. No segment is empty, . or .. or starts with a dot and none holds a backslash, a colon or a control character'
-
 const providerTable = {
   'luoshu.read': {
     capability: 'luoshu.read',
     args: z.strictObject({ path }),
     scope: 'path',
     write: false,
-    agent: tool(
-      'read_note',
-      'Read one note from the notes folder. Answers its text, its path and its version, the SHA-256 of its bytes in hex. Only a note this agent holds a grant to read is answered',
-      z.strictObject({ path: path.describe(PATH_WORDS) }),
-    ),
   },
   // The file paths under folder, the whole luoshu when it is left out, in name order after the one named, a page at a
   // time. A caller sees the names it may list or read and never a version, which would say what a note holds
@@ -257,14 +240,6 @@ const providerTable = {
     scope: null,
     write: false,
     filter: 'list',
-    agent: tool(
-      'list_notes',
-      `List the paths of the notes under a folder, or in the whole notes folder when none is named, in name order and at most ${LIST_PAGE} at a time. Answers paths and next, the after of the next page or null on the last. Only paths this agent holds a grant to list or read are listed`,
-      z.strictObject({
-        folder: path.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
-        after: path.describe('The next of the page before. Left out for the first page').optional(),
-      }),
-    ),
   },
   // baseVersion is the hash of the bytes the writer read, left out for a note that doesn't exist yet
   'luoshu.write': {
@@ -272,15 +247,6 @@ const providerTable = {
     args: z.strictObject({ path, text: z.string(), baseVersion: sha256.optional() }),
     scope: 'path',
     write: true,
-    agent: tool(
-      'write_note',
-      'Write the whole text of one note. Answers its new version. baseVersion is the version the note has now, left out only when no note is at that path, or the write answers stale and changes nothing. Only a path this agent holds a grant to write is written',
-      z.strictObject({
-        path: path.describe(PATH_WORDS),
-        text: z.string().describe('The whole new text of the note'),
-        baseVersion: sha256.describe('The version the note has now, 64 lowercase hex digits. Left out for a new note').optional(),
-      }),
-    ),
   },
   // To the OS's bin. baseVersion is the hash of the bytes the remover read, and a note that moved on since answers
   // stale, so a plugin that writes a note and can't read it can't bin it any more than it can write over it
@@ -327,14 +293,6 @@ const providerTable = {
     args: z.strictObject({ path, limit: z.int().min(1).max(MAX_LOG_PAGE).optional() }),
     scope: 'path',
     write: false,
-    agent: tool(
-      'note_history',
-      'List the commits in hetu\'s history that changed one note, newest first, each with its id, author, committer, date and message. Only a note this agent holds a grant to read the history of is answered',
-      z.strictObject({
-        path: path.describe(PATH_WORDS),
-        limit: z.int().min(1).max(MAX_LOG_PAGE).describe(`The most commits to answer, ${LOG_PAGE} when left out`).optional(),
-      }),
-    ),
   },
   // One note's text as a commit holds it. A restore writes it back through luoshu.write
   'history.read': {
@@ -449,12 +407,12 @@ export type ActionResults = {
   'security.list': SecurityList
   'security.request': { applied: true } | { held: string }
   'gate.filterReadable': string[]
-  'core.agentRefused': null
+  'core.refused': null
   'core.bindFailed': null
-  'core.agentAsk': { asked: 'waiting' | 'granted' }
-  'core.agents': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
-  'core.agentConnect': { handle: string }
-  'core.agentConnected': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
+  'core.identityAsk': { asked: 'waiting' | 'granted' }
+  'core.identities': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
+  'core.consentAsk': { handle: string }
+  'core.consentAnswer': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
   'log.segments': LogSegment[]
   'log.verify': LogVerification
   'events.subscribe': { standing: string[] }

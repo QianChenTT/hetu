@@ -8,8 +8,10 @@ afterEach(cleanup)
 
 const host = (id: string, extra: object = {}): Listing => ({ files: filesFor(hostManifest(id, extra)) })
 const utilityCaller = (incarnation = 1): Caller => ({ kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation })
-const windowCall = (action: string, plugin: string, role: 'editor' | 'trusted' = 'trusted') =>
-  ({ callId: 'c', caller: { kind: 'window', role, n: 1 } as Caller, action, args: { plugin }, deadline: Date.now() + 1000 })
+const windowCall = (action: string, plugin: string, role: 'editor' | 'trusted' = 'trusted') => {
+  const caller: Caller = { kind: 'window', role, n: 1 }
+  return { callId: 'c', caller, root: caller, action, args: { plugin }, deadline: Date.now() + 1000 }
+}
 
 // http, whose host entry runs in a utility process, requiring storage, a core module
 const install = (http: Listing = host('mcp-http-handler', { requires: ['storage'] })) => ({ ...coreInstall(), 'mcp-http-handler': http })
@@ -241,7 +243,7 @@ describe('stops and restarts of a utility half', () => {
     await expect(made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler', 'editor'))).rejects.toEqual({ code: 'not-granted' })
     expect(made.runtime.killed).toEqual([])
     expect(made.pluginsManager.plugin('mcp-http-handler')).toMatchObject({ state: 'ready', incarnation: 1 })
-    await made.pluginsManager.serve({ callId: 'c', caller: utilityCaller(), action: 'core.bindFailed', args: { reason: 'port-taken' }, deadline: Date.now() + 1000 })
+    await made.pluginsManager.serve({ callId: 'c', caller: utilityCaller(), root: utilityCaller(), action: 'core.bindFailed', args: { reason: 'port-taken' }, deadline: Date.now() + 1000 })
     await expect(made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler', 'editor'))).rejects.toEqual({ code: 'not-granted' })
     expect(stateOf(made.pluginsManager, 'mcp-http-handler')).toBe('failed')
     await made.pluginsManager.serve(windowCall('core.restart', 'mcp-http-handler'))
@@ -253,7 +255,7 @@ describe('stops and restarts of a utility half', () => {
 
 describe('a utility half whose bind failed', () => {
   const bindFailed = (reason: string, caller: Caller = utilityCaller()) =>
-    ({ callId: 'c', caller, action: 'core.bindFailed', args: { reason }, deadline: Date.now() + 1000 })
+    ({ callId: 'c', caller, root: caller, action: 'core.bindFailed', args: { reason }, deadline: Date.now() + 1000 })
 
   it.each(['port-taken', 'bind-failed'])('reads failed with %s, not crashed, its process ended and its dependents waiting', async reason => {
     const made = await harness({ install: install() })

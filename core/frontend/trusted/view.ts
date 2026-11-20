@@ -55,7 +55,7 @@ const AGENTS_LINE = 'Each agent is the client id and the number of one authoriza
 function agentRow(agent: ListedAgent): AgentRow {
   const label = JSON.stringify(agent.agent)
   if (agent.revoked) return { label, line: ' · revoked, its tokens end once mcp-http-handler hears', change: null }
-  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'agent.revoke', agent: agent.agent } }
+  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'identity.revoke', agent: agent.agent } }
 }
 
 // A request's heading with the agent's label in quotes as a part of its own, the whole text as one part for any other
@@ -74,7 +74,7 @@ export function headingOf(request: HeldRequest): Part[] {
 // The request drawn first. An agent's ask gets Cancel and revoke beside Confirm and Cancel, the revoke naming the label
 // the request holds, which is the one its heading draws
 function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
-  const revoke: Change | null = request.kind === 'agent.ask' && request.agent !== null ? { kind: 'agent.revoke', agent: request.agent } : null
+  const revoke: Change | null = request.kind === 'identity.ask' && request.agent !== null ? { kind: 'identity.revoke', agent: request.agent } : null
   return { ...request, heading: headingOf(request), revoke }
 }
 

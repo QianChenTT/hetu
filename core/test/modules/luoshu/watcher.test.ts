@@ -46,7 +46,7 @@ async function until(check: () => boolean, ms = 5000): Promise<void> {
 }
 
 async function write(luoshu: Luoshu, at: string, text: string, baseVersion?: string): Promise<unknown> {
-  const call: Call = { callId: `w${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.write', args: { path: at, text, baseVersion }, deadline: Date.now() + 30000 }
+  const call: Call = { callId: `w${++n}`, caller: { kind: 'window', role: 'editor', n: 0 }, root: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.write', args: { path: at, text, baseVersion }, deadline: Date.now() + 30000 }
   const prepared = await luoshu.provider.prepare(call)
   return luoshu.provider.perform(call, prepared as Prepared)
 }

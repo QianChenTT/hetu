@@ -356,7 +356,7 @@ describe('the agent list', () => {
     const entry = (await new StateStore(dataDir).load()).state.plugins.mcp
     expect(entry.agents).toEqual([{ agent: 'client#10', capability: inbox }])
     expect(entry.revoked).toEqual(['client#2', 'https://claude.ai/oauth/claude-code-client-metadata#3'])
-    expect(await logged(dataDir, 'security.applied', { kind: 'agent.revoke', target: 'https://claude.ai/oauth/claude-code-client-metadata#3', by: 'narrows' })).toBe(true)
+    expect(await logged(dataDir, 'security.applied', { kind: 'identity.revoke', target: 'https://claude.ai/oauth/claude-code-client-metadata#3', by: 'narrows' })).toBe(true)
   })
 
   it('draws each label in a fixed-width face that wraps, so a client id of 255 characters keeps its number in view and I reads apart from l', async () => {

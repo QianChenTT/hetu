@@ -38,9 +38,9 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   })
   await made.pluginsManager.start()
   let n = 0
-  // core.agentAsk as the router hands it over once its floor passed: from mcp, on behalf of the chain's label
+  // core.identityAsk as the router hands it over once its floor passed: from mcp, on behalf of the chain's label
   const ask = (label: string, capabilities: Capability[]) => made.pluginsManager.serve({
-    callId: `call-${++n}`, caller: mcpWorker, onBehalf: label, action: 'core.agentAsk', args: { capabilities }, deadline: Date.now() + 30_000,
+    callId: `call-${++n}`, caller: mcpWorker, onBehalf: label, action: 'core.identityAsk', args: { capabilities }, deadline: Date.now() + 30_000,
   } as Call)
   const list = async () => await made.pluginsManager.serve({ callId: `list-${++n}`, caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 } as Call) as SecurityList
   const stored = async () => (await new StateStore(made.dataDir).load()).state.plugins.mcp
@@ -52,7 +52,7 @@ describe('an agent\'s ask', () => {
     const { pluginsManager, ask, list, stored, link } = await started()
     expect(await ask('client#1', [inbox, write])).toEqual({ asked: 'waiting' })
     const pending = pluginsManager.pending()
-    expect(pending).toEqual([{ id: pending[0].id, kind: 'agent.ask', plugin: 'mcp' }])
+    expect(pending).toEqual([{ id: pending[0].id, kind: 'identity.ask', plugin: 'mcp' }])
     const shown = (await list()).requests[0]
     expect(shown.text).toBe('Give the agent "client#1" what it asks for through mcp')
     expect(shown.agent).toBe('client#1')
@@ -62,7 +62,7 @@ describe('an agent\'s ask', () => {
     ])
     expect(shown.type).toBeNull()
     expect((await stored()).agents).toBeUndefined()
-    expect(link.events('security.request')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', window: 'core' }])
+    expect(link.events('security.request')).toMatchObject([{ kind: 'identity.ask', target: 'client#1', window: 'core' }])
   })
 
   it('answers a second ask for the same items as the first and refuses a different ask while one waits', async () => {
@@ -78,7 +78,7 @@ describe('an agent\'s ask', () => {
   it('holds one ask for each of two labels asking at once', async () => {
     const { pluginsManager, ask, list } = await started()
     await Promise.all([ask('client#1', [inbox]), ask('client#2', [write])])
-    expect(pluginsManager.pending().map(one => one.kind)).toEqual(['agent.ask', 'agent.ask'])
+    expect(pluginsManager.pending().map(one => one.kind)).toEqual(['identity.ask', 'identity.ask'])
     expect((await list()).requests.map(one => one.text).sort()).toEqual([
       'Give the agent "client#1" what it asks for through mcp', 'Give the agent "client#2" what it asks for through mcp',
     ])
@@ -191,10 +191,10 @@ describe('the Confirm of an agent\'s ask', () => {
       { agent: 'client#1', capability: inbox }, { agent: 'client#10', capability: inbox }, { agent: 'client#1', capability: write },
     ])
     const view = gate.seen.at(-1)!
-    expect(view.agents).toEqual({ 'client#1': [item(inbox), item(write)], 'client#10': [item(inbox)] })
+    expect(view.pairs?.['mcp-http-handler']).toEqual({ 'client#1': [item(inbox), item(write)], 'client#10': [item(inbox)] })
     expect(view.plugins.mcp).toEqual([item(read)])
     expect(pluginsManager.pending()).toEqual([])
-    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', by: 'confirm' }])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'identity.ask', target: 'client#1', by: 'confirm' }])
   })
 
   it('writes and shows an item of a type the tool table never maps, as the entry takes any type', async () => {
@@ -214,7 +214,7 @@ describe('the Confirm of an agent\'s ask', () => {
     await pluginsManager.confirm(one.id, {})
     expect(await code(pluginsManager.confirm(two.id, {}))).toBe('stale')
     expect(pluginsManager.pending()).toEqual([])
-    expect(link.events('security.stale')).toMatchObject([{ kind: 'agent.ask', target: 'client#2' }])
+    expect(link.events('security.stale')).toMatchObject([{ kind: 'identity.ask', target: 'client#2' }])
     expect((await stored()).agents).toEqual([{ agent: 'client#1', capability: inbox }])
     expect(await ask('client#2', [write])).toEqual({ asked: 'waiting' })
     await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
@@ -250,7 +250,7 @@ describe('agents\' items across an update of mcp and a Recover', () => {
     expect(entry.granted).toEqual([read])
     expect(entry.agents).toEqual(agents)
     expect(entry.revoked).toEqual(['client#5'])
-    expect(gate.seen.at(-1)!.agents).toEqual({ 'client#1': [item(inbox)], 'client#2': [item(write)] })
+    expect(gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({ 'client#1': [item(inbox)], 'client#2': [item(write)] })
   })
 
   it('drops every agent\'s items on a Recover of mcp and keeps the revoked marks, granted back to the manifest\'s', async () => {
@@ -263,7 +263,7 @@ describe('agents\' items across an update of mcp and a Recover', () => {
     expect(entry.agents).toBeUndefined()
     // A revoked label stays marked until http ends its tokens, Recover or not
     expect(entry.revoked).toEqual(['client#5'])
-    expect(gate.seen.at(-1)!.agents).toEqual({})
+    expect(gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({})
   })
 })
 
@@ -275,38 +275,38 @@ describe('revoke of an agent', () => {
 
   it('takes every item of the label at once with no Confirm, keeps a label it prefixes and marks the label revoked', async () => {
     const { pluginsManager, stored, gate, link } = await started({ agents: seeded })
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
     const entry = await stored()
     expect(entry.agents).toEqual([{ agent: 'client#10', capability: inbox }])
     expect(entry.revoked).toEqual(['client#1'])
     expect(entry.granted).toEqual([read])
-    expect(gate.seen.at(-1)!.agents).toEqual({ 'client#10': [item(inbox)] })
+    expect(gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({ 'client#10': [item(inbox)] })
     expect(pluginsManager.pending()).toEqual([])
-    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', by: 'narrows' }])
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'identity.revoke', by: 'narrows' }])
   })
 
   it('applies a revoke from any window, as every narrowing change does', async () => {
     const { pluginsManager, stored } = await started({ agents: seeded })
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#10' }, editor)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#10' }, editor)).toEqual({ applied: true })
     expect((await stored()).revoked).toEqual(['client#10'])
   })
 
   it('withdraws the label\'s waiting ask and refuses the revoked label\'s next ask', async () => {
     const { pluginsManager, ask, link } = await started({ agents: seeded })
     await ask('client#1', [read])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     expect(pluginsManager.pending()).toEqual([])
-    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.ask' }])
+    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'identity.ask' }])
     expect(await code(ask('client#1', [inbox]))).toBe('not-granted')
   })
 
   it('withdraws a waiting ask of a label that holds nothing yet and marks it, changing nothing for a label that never asked', async () => {
     const { pluginsManager, ask, stored } = await started({ agents: seeded })
     await ask('client#2', [read])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#2' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#2' }, trusted)
     expect(pluginsManager.pending()).toEqual([])
     expect((await stored()).revoked).toEqual(['client#2'])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#9' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#9' }, trusted)
     expect((await stored()).revoked).toEqual(['client#2'])
     expect((await stored()).agents).toEqual(seeded)
   })
@@ -315,9 +315,9 @@ describe('revoke of an agent', () => {
     const { pluginsManager, ask, list, clock } = await started()
     await ask('nag#1', [read])
     await pluginsManager.cancel(pluginsManager.pending()[0].id)
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'nag#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'nag#1' }, trusted)).toEqual({ applied: true })
     expect((await list()).agents).toEqual([{ agent: 'nag#1', items: [], revoked: true }])
-    const agents = await pluginsManager.serve({ callId: 'c', caller: door, action: 'core.agents', args: { agents: ['nag#1'] }, deadline: Date.now() + 30_000 } as Call)
+    const agents = await pluginsManager.serve({ callId: 'c', caller: door, action: 'core.identities', args: { agents: ['nag#1'] }, deadline: Date.now() + 30_000 } as Call)
     expect(agents).toEqual([{ agent: 'nag#1', holds: 'revoked' }])
     clock.now += 60_000
     expect(await code(ask('nag#1', [read]))).toBe('not-granted')
@@ -328,14 +328,14 @@ describe('revoke of an agent', () => {
     await ask('nag#1', [read])
     await pluginsManager.cancel(pluginsManager.pending()[0].id)
     clock.now += 60_000
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'nag#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'nag#1' }, trusted)
     expect((await stored()).revoked).toBeUndefined()
     expect(link.events('security.applied')).toEqual([])
   })
 
   it('marks no real label out and writes no record for 256 revokes from the editor window of labels that never asked', async () => {
     const { pluginsManager, stored, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: ['client#3'] })
-    for (let n = 1; n <= 256; n++) expect(await pluginsManager.request({ kind: 'agent.revoke', agent: `made-up#${n}` }, editor)).toEqual({ applied: true })
+    for (let n = 1; n <= 256; n++) expect(await pluginsManager.request({ kind: 'identity.revoke', agent: `made-up#${n}` }, editor)).toEqual({ applied: true })
     const entry = await stored()
     expect(entry.revoked).toEqual(['client#3'])
     expect(entry.agents).toEqual([{ agent: 'client#1', capability: inbox }])
@@ -350,8 +350,8 @@ describe('revoke of an agent', () => {
     const held = await pluginsManager.request({ kind: 'plugin.reset', plugin: 'mcp' }, trusted)
     if ('held' in held) await pluginsManager.confirm(held.held, {})
     await pluginsManager.settled()
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#4' }, trusted)
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#5' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#4' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#5' }, trusted)
     expect((await new StateStore(dataDir).load()).state.switches.revokedAgents).toEqual(['client#4'])
   })
 
@@ -361,7 +361,7 @@ describe('revoke of an agent', () => {
       { agent: 'client#1', items: [inbox, write], revoked: false }, { agent: 'client#10', items: [inbox], revoked: false },
       { agent: 'client#3', items: [], revoked: true },
     ])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     expect((await list()).agents).toEqual([
       { agent: 'client#10', items: [inbox], revoked: false }, { agent: 'client#3', items: [], revoked: true }, { agent: 'client#1', items: [], revoked: true },
     ])
@@ -369,7 +369,7 @@ describe('revoke of an agent', () => {
 
   it('answers http for each label it names and drops a revoked mark only once http says it heard', async () => {
     const { pluginsManager, stored } = await started({ agents: seeded, revoked: ['client#3', 'client#4'] })
-    const agents = (args: object) => pluginsManager.serve({ callId: 'c', caller: door, action: 'core.agents', args, deadline: Date.now() + 30_000 } as Call)
+    const agents = (args: object) => pluginsManager.serve({ callId: 'c', caller: door, action: 'core.identities', args, deadline: Date.now() + 30_000 } as Call)
     expect(await agents({ agents: ['client#1', 'client#2', 'client#3'] })).toEqual([
       { agent: 'client#1', holds: 'items' }, { agent: 'client#2', holds: 'none' }, { agent: 'client#3', holds: 'revoked' },
     ])
@@ -392,7 +392,7 @@ describe('revoke of an agent', () => {
       writes.push(id)
       return writePlugin(id, entry)
     }
-    await pluginsManager.serve({ callId: 'c', caller: door, action: 'core.agents', args: { agents: ['client#2'], heard: ['client#2'] }, deadline: Date.now() + 30_000 } as Call)
+    await pluginsManager.serve({ callId: 'c', caller: door, action: 'core.identities', args: { agents: ['client#2'], heard: ['client#2'] }, deadline: Date.now() + 30_000 } as Call)
     expect(writes).toEqual([])
     expect(await stored()).toEqual(before)
     await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
@@ -404,12 +404,12 @@ describe('the revoked marks at their cap and through a Reset or a Remove of mcp'
   const door: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
   const marks = Array.from({ length: 256 }, (_, n) => `gone#${n + 1}`)
   const agentsOf = (pluginsManager: { serve(call: Call): Promise<unknown> }, args: object) =>
-    pluginsManager.serve({ callId: 'c', caller: door, action: 'core.agents', args, deadline: Date.now() + 30_000 } as Call)
+    pluginsManager.serve({ callId: 'c', caller: door, action: 'core.identities', args, deadline: Date.now() + 30_000 } as Call)
   const switchesOf = async (dataDir: string) => (await new StateStore(dataDir).load()).state.switches
 
   it('takes the label\'s items with 256 marks held, the oldest mark dropped to make room with a record naming it', async () => {
     const { pluginsManager, stored, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: inbox }], revoked: marks })
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
     const entry = await stored()
     expect(entry.agents).toEqual([{ agent: 'client#2', capability: inbox }])
     expect(entry.revoked).toHaveLength(256)
@@ -423,14 +423,14 @@ describe('the revoked marks at their cap and through a Reset or a Remove of mcp'
 
   it('drops no mark below the cap', async () => {
     const { pluginsManager, stored, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: marks.slice(0, 255) })
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     expect((await stored()).revoked).toEqual([...marks.slice(0, 255), 'client#1'])
     expect(link.events('agent.markDropped')).toEqual([])
   })
 
   it.each(['plugin.reset', 'plugin.remove'] as const)('keeps the marks through a %s of mcp and hands them to the entry a Restore writes', async kind => {
     const { pluginsManager, stored, ask, list, dataDir } = await started({ agents: [{ agent: 'client#1', capability: inbox }, { agent: 'client#2', capability: inbox }], revoked: ['client#3'] })
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     const held = await pluginsManager.request({ kind, plugin: 'mcp' }, trusted)
     if ('held' in held) await pluginsManager.confirm(held.held, {})
     await pluginsManager.settled()
@@ -477,7 +477,7 @@ describe('the revoked marks at their cap and through a Reset or a Remove of mcp'
     const { pluginsManager } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: marks })
     expect(pluginsManager.revoked('gone#1')).toBe(true)
     expect(pluginsManager.revoked('client#1')).toBe(false)
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     expect(pluginsManager.revoked('client#1')).toBe(true)
     expect(pluginsManager.revoked('gone#1')).toBe(false)
     expect(pluginsManager.revoked('gone#2')).toBe(true)
@@ -506,10 +506,10 @@ describe('the records of an agent\'s ask, its Confirm and its revoke', () => {
     const { pluginsManager, ask, link } = await started()
     await ask(label, [inbox])
     await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: label }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: label }, trusted)).toEqual({ applied: true })
     expect(link.records.filter(record => record.event.startsWith('security.')).map(record => [record.event, record.fields.kind, record.fields.target])).toEqual([
-      ['security.request', 'agent.ask', label], ['security.confirm', 'agent.ask', label], ['security.applied', 'agent.ask', label],
-      ['security.applied', 'agent.revoke', label],
+      ['security.request', 'identity.ask', label], ['security.confirm', 'identity.ask', label], ['security.applied', 'identity.ask', label],
+      ['security.applied', 'identity.revoke', label],
     ])
   })
 
@@ -517,7 +517,7 @@ describe('the records of an agent\'s ask, its Confirm and its revoke', () => {
     const { pluginsManager, ask, link, base } = await started()
     await ask(label, [inbox])
     await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
-    await pluginsManager.request({ kind: 'agent.revoke', agent: label }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: label }, trusted)
     const written = link.records.filter(record => record.event.startsWith('security.'))
     const log = new EventLog(path.join(base, 'records'))
     await log.open()
@@ -530,11 +530,11 @@ describe('the records of an agent\'s ask, its Confirm and its revoke', () => {
 
   it('leave out a revoke that changed nothing, of a label that never asked or of one revoked already', async () => {
     const { pluginsManager, link } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'never#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'never#1' }, trusted)).toEqual({ applied: true })
     expect(link.events('security.applied')).toEqual([])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
-    expect(link.events('security.applied')).toMatchObject([{ kind: 'agent.revoke', target: 'client#1' }])
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
+    expect(link.events('security.applied')).toMatchObject([{ kind: 'identity.revoke', target: 'client#1' }])
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     expect(link.events('security.applied')).toHaveLength(1)
   })
 })
@@ -552,7 +552,7 @@ describe('an agent\'s ask that lapses or is withdrawn', () => {
     clock.now += 1
     expect(pluginsManager.pending()).toEqual([])
     expect((await list()).requests).toEqual([])
-    expect(link.events('security.lapsed')).toMatchObject([{ kind: 'agent.ask', target: 'client#1', window: 'core' }])
+    expect(link.events('security.lapsed')).toMatchObject([{ kind: 'identity.ask', target: 'client#1', window: 'core' }])
     expect(await code(pluginsManager.confirm(id, {}))).toBe('not-found')
     // The agent may ask again, as a new request
     expect(await ask('client#1', [inbox])).toEqual({ asked: 'waiting' })
@@ -583,7 +583,7 @@ describe('an agent\'s ask that lapses or is withdrawn', () => {
     const id = pluginsManager.pending()[0].id
     pluginsManager.crashed(caller, 'closed')
     expect(pluginsManager.pending().map(one => one.kind)).toEqual(['skipVerification'])
-    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'agent.ask' }, { kind: 'agent.ask' }])
+    expect(link.events('security.withdrawn')).toMatchObject([{ kind: 'identity.ask' }, { kind: 'identity.ask' }])
     expect(await code(pluginsManager.confirm(id, {}))).toBe('not-found')
     expect((await stored()).agents).toBeUndefined()
   })

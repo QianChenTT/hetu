@@ -185,15 +185,15 @@ describe('agents\' items in the grants snapshot', () => {
     const view = gate.seen.at(-1)!
     expect(view.plugins.mcp).toEqual([item(read)])
     expect(view.plugins.alpha).toEqual([item(read)])
-    expect(view.agents).toEqual({ 'client#1': [item(inbox), item(write)], 'client#2': [item(write)] })
-    expect(Object.getPrototypeOf(view.agents)).toBe(null)
-    expect(Object.isFrozen(view.agents!['client#1'][0].capability)).toBe(true)
+    expect(view.pairs?.['mcp-http-handler']).toEqual({ 'client#1': [item(inbox), item(write)], 'client#2': [item(write)] })
+    expect(Object.getPrototypeOf(view.pairs?.['mcp-http-handler'])).toBe(null)
+    expect(Object.isFrozen(view.pairs?.['mcp-http-handler']!['client#1'][0].capability)).toBe(true)
   })
 
   it('carries no agent while mcp\'s entry holds none or the human switched mcp off', async () => {
-    expect((await started({ agents: undefined })).gate.seen.at(-1)!.agents).toEqual({})
+    expect((await started({ agents: undefined })).gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({})
     const off = await started({ enabled: false })
-    expect(off.gate.seen.at(-1)!.agents).toEqual({})
+    expect(off.gate.seen.at(-1)!.pairs?.['mcp-http-handler']).toEqual({})
     expect(off.gate.seen.at(-1)!.plugins.mcp).toBeUndefined()
   })
 })

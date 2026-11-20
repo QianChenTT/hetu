@@ -83,10 +83,10 @@ export function describeChange(change: Change): Described {
         text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,
         notes: [`Why: ${why(change)}`, 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
       }
-    case 'agent.revoke':
+    case 'identity.revoke':
       return { text: `Revoke the agent ${quoted(change.agent)}`, notes: ['It loses every item at once. Its number is never used again'] }
     // The label is the agent's client id and the number of its authorization, in quotes as data
-    case 'agent.ask':
+    case 'identity.ask':
       return {
         text: `Give the agent ${quoted(change.agent)} what it asks for through ${change.plugin}`,
         notes: [
@@ -96,7 +96,7 @@ export function describeChange(change: Change): Described {
       }
     // Where the client comes from first, then what it calls itself, where it gets its answer and the label it gets last,
     // each in quotes as data. The label's place last is where the trusted window finds it to draw apart
-    case 'agent.connect': {
+    case 'consent.ask': {
       const from = change.clientHost === null ? `the client ${quoted(change.client)}` : `the client from ${quoted(change.clientHost)}`
       const named = change.name === null ? 'with no name' : `named ${quoted(change.name)}`
       return {

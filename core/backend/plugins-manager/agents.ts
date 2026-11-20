@@ -66,7 +66,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // An agent's ask for items through the agent host, raised as a request only the core raises. The items the agent
   // holds already are left out and the rest put in key order, so the same ask in another order finds the request
   // waiting. One ask waits for a label at a time and a label whose ask the human cancelled waits AGENT_ASK_PAUSE_MS
-  protected agentAsk(label: string | undefined, capabilities: Capability[]): ActionResults['core.agentAsk'] {
+  protected agentAsk(label: string | undefined, capabilities: Capability[]): ActionResults['core.identityAsk'] {
     if (!agentLabel.safeParse(label).success) throw { code: 'invalid' }
     const agent = label!
     const entry = this.hostEntry()
@@ -80,7 +80,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     for (const capability of capabilities) if (!held.has(capabilityKey(capability))) wanted.set(capabilityKey(capability), capability)
     if (wanted.size === 0) return { asked: 'granted' }
     const keys = [...wanted.keys()].sort()
-    const change: AgentAsk = { kind: 'agent.ask', plugin: agentHost, agent, capabilities: keys.map(key => wanted.get(key)!) }
+    const change: AgentAsk = { kind: 'identity.ask', plugin: agentHost, agent, capabilities: keys.map(key => wanted.get(key)!) }
     // Refused here what a Confirm could never write, so no ask waits in front of the human only to fail: an item with
     // no scope or the items every agent holds with these added past the entry's caps for one agent or for all
     if (!agentAskChange.safeParse(change).success) throw { code: 'invalid' }
@@ -88,9 +88,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const unknown = (capability: Capability) => capability.type === 'plugin.call' && capability.targets.some(target => !this.known.has(target))
     if (change.capabilities.some(unknown)) throw { code: 'not-found' }
     if (!agentItems.safeParse(withAsked(entry.agents ?? [], change)).success) throw { code: 'invalid', reason: 'too-large' }
-    const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'agent.ask' && one.agent === agent)?.change as AgentAsk | undefined
+    const waiting = this.requests.changes().find(({ change: one }) => one.kind === 'identity.ask' && one.agent === agent)?.change as AgentAsk | undefined
     if (waiting !== undefined && waiting.capabilities.map(capabilityKey).join('\n') !== keys.join('\n')) throw { code: 'throttled' }
-    if (typeof this.requests.raise(change, null, MAX_PENDING, 'agent.ask') !== 'string') throw { code: 'throttled' }
+    if (typeof this.requests.raise(change, null, MAX_PENDING, 'identity.ask') !== 'string') throw { code: 'throttled' }
     return { asked: 'waiting' }
   }
 
@@ -106,7 +106,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
     return (entry?.agents ?? []).some(item => item.agent === label) || marksOf(entry, this.state.switches).includes(label)
-      || this.requests.changes().some(({ change }) => change.kind === 'agent.ask' && change.agent === label)
+      || this.requests.changes().some(({ change }) => change.kind === 'identity.ask' && change.agent === label)
   }
 
   // Every item of the label goes with its ask waiting, then the label is marked revoked until mcp-http-handler says it ended its
@@ -117,7 +117,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   protected async agentRevoke(agent: string): Promise<void | 'unchanged'> {
     const k = this.known.get(agentHost)
     const entry = k?.from === 'folder' ? k.entry : null
-    const waiting = (change: Change) => change.kind === 'agent.ask' && change.agent === agent
+    const waiting = (change: Change) => change.kind === 'identity.ask' && change.agent === agent
     const asked = this.requests.changes().some(({ change }) => waiting(change))
     this.requests.withdraw(waiting)
     const holds = (entry?.agents ?? []).some(item => item.agent === agent)
@@ -168,7 +168,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
 
   // For mcp-http-handler, whether each label holds items, holds none or is revoked, after the marks of the labels mcp-http-handler heard went.
   // A mark goes only for a label marked, so a heard naming none writes nothing and stales no ask
-  protected agentsFor(agents: string[], heard: string[]): Promise<ActionResults['core.agents']> {
+  protected agentsFor(agents: string[], heard: string[]): Promise<ActionResults['core.identities']> {
     return this.serial(async () => {
       const k = this.known.get(agentHost)
       let entry = k?.from === 'folder' ? k.entry : null

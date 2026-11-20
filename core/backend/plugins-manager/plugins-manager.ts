@@ -51,20 +51,21 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       case 'security.list':
         return this.securityList()
       // The router's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
-      case 'core.agentAsk':
+      case 'core.identityAsk':
         return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
       // The floor let only mcp-http-handler's half on its utility port through
-      case 'core.agents':
+      case 'core.identities':
         return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
       // The floor let only mcp-http-handler's half on its utility port through. The handle is the core's own, never an argument
-      case 'core.agentConnect':
+      case 'core.consentAsk':
         return { handle: this.connects.ask(args as ConnectAsked) }
-      case 'core.agentConnected':
+      case 'core.consentAnswer':
         return { answer: this.connects.answer(args.handle as string) }
-      // Coalesced by reason with the counts added up. A throw in recording is that record lost
-      case 'core.agentRefused':
+      // Under the calling plugin's id, coalesced by reason with the counts added up. A throw in recording is that record
+      // lost
+      case 'core.refused':
         try {
-          this.recording.coalesced('http.refused', { reason: args.reason as string }, undefined, args.count as number)
+          if (call.caller.kind === 'plugin') this.recording.coalesced(`${call.caller.id}.refused`, { reason: args.reason as string }, undefined, args.count as number)
         } catch {}
         return null
       case 'core.stop':
@@ -127,7 +128,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: this.requests.typed(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
+        type: this.requests.typed(change), agent: change.kind === 'identity.ask' ? change.agent : change.kind === 'consent.ask' ? connectLabel(change) : null,
       }
     })
     return {

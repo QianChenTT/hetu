@@ -25,7 +25,7 @@ export function connectChange(asked: ConnectAsked): AgentConnect | null {
   const from = hostOf(asked.client)
   if (to === null || to.user || from?.user === true) return null
   const change = {
-    kind: 'agent.connect' as const, plugin: agentDoor.plugin, client: asked.client, clientHost: from?.host ?? null, name: asked.name,
+    kind: 'consent.ask' as const, plugin: agentDoor.plugin, client: asked.client, clientHost: from?.host ?? null, name: asked.name,
     redirect: asked.redirect, redirectHost: to.host, number: asked.number,
   }
   return agentConnect.safeParse(change).success ? change : null

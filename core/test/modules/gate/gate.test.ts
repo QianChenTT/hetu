@@ -17,7 +17,7 @@ function view(plugins: Record<string, GrantedItem[]>, more: Partial<GrantsSnapsh
 }
 
 function access(caller: Caller, capability: Access['capability'], scope: Scope, stage: Access['stage'] = 'canonical'): Access {
-  return { stage, caller, action: 'test.action', capability, scope }
+  return { stage, caller, root: caller, action: 'test.action', capability, scope }
 }
 
 // A gate given one grants snapshot

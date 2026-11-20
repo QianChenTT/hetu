@@ -48,7 +48,7 @@ describe('the walk taken when the watch began', () => {
     made = createLuoshu({ publish: () => {}, settleMs: 100 })
     made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     await vi.waitFor(() => expect(held.reached).toBe(true))
-    const call: Call = { callId: 'w1', caller: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.write', args: { path: 'b.md', text: 'saved' }, deadline: Date.now() + 30000 }
+    const call: Call = { callId: 'w1', caller: { kind: 'window', role: 'editor', n: 0 }, root: { kind: 'window', role: 'editor', n: 0 }, action: 'luoshu.write', args: { path: 'b.md', text: 'saved' }, deadline: Date.now() + 30000 }
     const saving = (async () => made!.provider.perform(call, await made!.provider.prepare(call) as Prepared))()
     const answer = await Promise.race([saving, new Promise(resolve => setTimeout(() => resolve('still waiting'), 2000))])
     expect(answer).toEqual({ version: expect.any(String) })

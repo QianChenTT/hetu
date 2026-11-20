@@ -2,7 +2,7 @@ import { capabilityKey, type Capability, type CapabilityType } from '../../../ap
 import type { Caller } from '../../../api/envelope.ts'
 import { commandKey } from '../../../api/exec.ts'
 import { compileScopes } from '../../../api/scope.ts'
-import type { Access, Decision, Gate, GrantedItem, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
+import type { Access, Decision, Gate, GrantedItem, Pair, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
 import { windowGrants } from '../../../api/windows.ts'
 
 // How the gate reads each type's scope: paths through the matcher, every topic named, the target, held with no scope
@@ -56,6 +56,13 @@ function compile(item: GrantedItem, foldCase: boolean, any = false): Compiled {
   return { type: capability.type, off, firstUse, key: capabilityKey(capability), covers }
 }
 
+// A table of the grants snapshot by key, none for one left out. Anything else marks the gate failed
+function tableOf(given: unknown, what: string): Record<string, unknown> {
+  if (given === undefined) return {}
+  if (typeof given !== 'object' || given === null || Array.isArray(given)) throw new Error(`a grants snapshot whose ${what} the gate can't read`)
+  return given as Record<string, unknown>
+}
+
 function set(values: readonly string[]): (part: string) => boolean {
   const held = new Set(values)
   return part => held.has(part)
@@ -80,7 +87,7 @@ function partsOf(rule: Rule, scope: Scope): readonly string[] | null {
 }
 
 type Held = {
-  view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]>, agents: Map<string, Compiled[]>
+  view: number, foldCase: boolean, plugins: Map<string, Compiled[]>, windows: Map<string, Compiled[]>, pairs: Map<string, Map<string, Compiled[]>>
 }
 
 // One list of items against one access: allowed, asking for the first item whose first use asks, switched off or not
@@ -121,11 +128,11 @@ export function createGate(): Gate {
     return []
   }
 
-  // An agent's items that are on, none for a label the view doesn't hold. An agent's item has no first use of its own
-  // to ask about, so one switched off or asking covers nothing
-  function agentItems(agent: string): readonly Compiled[] {
+  // A pair's items that are on, none for a pair the view doesn't hold. A pair's item has no first use of its own to ask
+  // about, so one switched off or asking covers nothing
+  function pairItems(pair: Pair): readonly Compiled[] {
     if (held === null) throw new Error('no grants snapshot yet')
-    return (held.agents.get(agent) ?? []).filter(on)
+    return (held.pairs.get(pair.plugin)?.get(pair.field) ?? []).filter(on)
   }
 
   const reads = (items: readonly Compiled[], path: string) => items.some(item => item.type === 'luoshu.read' && on(item) && item.covers(path))
@@ -134,23 +141,23 @@ export function createGate(): Gate {
     items.some(item => (item.type === 'luoshu.list' || item.type === 'luoshu.read') && on(item) && item.covers(path))
 
   return {
-    // A call for an agent needs the caller's own items and the agent's both to hold it. The agent's items are judged
-    // first and their refusal is not-granted, so an agent learns nothing of the caller's own items it isn't granted. The
-    // caller's answer stands once the agent's allow. An ask is only ever for the caller's own item
+    // A call for a pair needs the caller's own items and the pair's both to hold it. The pair's items are judged first
+    // and their refusal is not-granted, so a pair learns nothing of the caller's own items it isn't granted. The
+    // caller's answer stands once the pair's allow. An ask is only ever for the caller's own item
     decide(access: Access): Decision {
       const own = judgeItems(itemsOf(access.caller), access, held!.view)
-      if (access.agent === undefined) return own
-      const agent = judgeItems(agentItems(access.agent), access, held!.view)
-      if (!('allow' in agent) || agent.allow !== true) return { allow: false, code: 'not-granted', view: held!.view }
+      if (access.pair === undefined) return own
+      const pair = judgeItems(pairItems(access.pair), access, held!.view)
+      if (!('allow' in pair) || pair.allow !== true) return { allow: false, code: 'not-granted', view: held!.view }
       return own
     },
 
-    canRead(caller: Caller, path: string, agent?: string): boolean {
-      return reads(itemsOf(caller), path) && (agent === undefined || reads(agentItems(agent), path))
+    canRead(caller: Caller, path: string, pair?: Pair): boolean {
+      return reads(itemsOf(caller), path) && (pair === undefined || reads(pairItems(pair), path))
     },
 
-    canList(caller: Caller, path: string, agent?: string): boolean {
-      return lists(itemsOf(caller), path) && (agent === undefined || lists(agentItems(agent), path))
+    canList(caller: Caller, path: string, pair?: Pair): boolean {
+      return lists(itemsOf(caller), path) && (pair === undefined || lists(pairItems(pair), path))
     },
 
     verbs(plugin: string, window: string): string[] {
@@ -178,16 +185,18 @@ export function createGate(): Gate {
       for (const [role, grants] of Object.entries(windowGrants)) {
         windows.set(role, grants.map((capability: Capability) => compile({ capability, off: false, firstUse: false }, foldCase)))
       }
-      // By label in a Map, so a label every object knows finds only its own items. exec's any command is a plugin's
-      // switch and lifts no agent's item
-      const agents = new Map<string, Compiled[]>()
-      const given: unknown = next.agents === undefined ? {} : next.agents
-      if (typeof given !== 'object' || given === null || Array.isArray(given)) throw new Error('a grants snapshot whose agents the gate can\'t read')
-      for (const [label, items] of Object.entries(given)) {
-        if (!Array.isArray(items)) throw new Error('an agent with no items')
-        agents.set(label, items.map(item => compile(item as GrantedItem, foldCase)))
+      // By the root plugin's id and then the field in Maps, so a field every object knows finds only its own items.
+      // exec's any command is a plugin's switch and lifts no pair's item
+      const pairs = new Map<string, Map<string, Compiled[]>>()
+      for (const [plugin, fields] of Object.entries(tableOf(next.pairs, 'pairs'))) {
+        const compiledFields = new Map<string, Compiled[]>()
+        for (const [field, items] of Object.entries(tableOf(fields, 'pairs'))) {
+          if (!Array.isArray(items)) throw new Error('a pair with no items')
+          compiledFields.set(field, items.map(item => compile(item as GrantedItem, foldCase)))
+        }
+        pairs.set(plugin, compiledFields)
       }
-      held = { view: n, foldCase, plugins: compiled, windows, agents }
+      held = { view: n, foldCase, plugins: compiled, windows, pairs }
     },
   }
 }

@@ -38,7 +38,7 @@ describe('the fixed values', () => {
     expect(Object.isFrozen(doorLimits)).toBe(true)
   })
 
-  it('records a refusal under the eight fixed reasons core.agentRefused takes and no others', () => {
+  it('records a refusal under the eight fixed reasons core.refused takes and no others', () => {
     expect(refusalReasons).toEqual(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'])
     expect(refusalReasons).toEqual(agentRefusals)
   })

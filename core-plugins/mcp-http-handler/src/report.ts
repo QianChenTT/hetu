@@ -1,6 +1,6 @@
 import type { RefusalReason } from './checks.ts'
 
-// The most refusals one report counts, core.agentRefused's own cap
+// The most refusals one report counts, core.refused's own cap
 export const MAX_REPORT_COUNT = 1_000_000
 
 // Tells the core how many refusals of one reason came since the last report

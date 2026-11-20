@@ -607,7 +607,7 @@ describe('the core record lane', () => {
 
   // The door counts and main counts again, so a taken-over http calling at its whole rate still leaves two records a
   // reason a second
-  it('writes the refusals http reports as http.refused, at most two records a reason a second whose counts add up', async () => {
+  it('writes the refusals http reports as mcp-http-handler.refused, at most two records a reason a second whose counts add up', async () => {
     const { router, connect, pluginsManager, log } = harness()
     pluginsManager.utility('mcp-http-handler')
     const http = connect(host('mcp-http-handler'))
@@ -617,17 +617,17 @@ describe('the core record lane', () => {
       const reason = reasons[i % reasons.length]
       const count = (i % 7) + 1
       sent[reason] = (sent[reason] ?? 0) + count
-      return http.ask('core.agentRefused', { reason, count })
+      return http.ask('core.refused', { reason, count })
     })
     expect((await Promise.all(asked)).every(reply => reply.ok === true)).toBe(true)
     await tick()
     // The first of each reason at once, with the count it reported
-    expect(log.events('http.refused').map(record => record.fields)).toEqual([
+    expect(log.events('mcp-http-handler.refused').map(record => record.fields)).toEqual([
       { reason: 'host', count: 1 }, { reason: 'origin', count: 2 }, { reason: 'token', count: 3 },
     ])
     router.close()
     await tick()
-    const records = log.events('http.refused')
+    const records = log.events('mcp-http-handler.refused')
     for (const reason of reasons) {
       const own = records.filter(record => record.fields.reason === reason)
       expect(own).toHaveLength(2)

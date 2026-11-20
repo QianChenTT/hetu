@@ -52,7 +52,7 @@ let n = 0
 
 // prepare then perform, as the router makes a call
 async function ask(served: Provider, action: string, args: unknown): Promise<unknown> {
-  const call: Call = { callId: `c${++n}`, caller: editor, action, args, deadline: Date.now() + 30000 }
+  const call: Call = { callId: `c${++n}`, caller: editor, root: editor, action, args, deadline: Date.now() + 30000 }
   const prepared = await served.prepare(call)
   if (!('scope' in prepared)) return { refused: prepared }
   return served.perform(call, prepared)
@@ -121,7 +121,7 @@ describe('the core modules', () => {
     await modules.start([], handed)
     expect(faults).toEqual([])
     for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) expect(modules.state(id)).toBe('on')
-    expect(modules.gate()?.decide({ stage: 'raw', caller: editor, action: 'storage.get', capability: 'storage', scope: {} })).toEqual({ allow: true, view: 1 })
+    expect(modules.gate()?.decide({ stage: 'raw', caller: editor, root: editor, action: 'storage.get', capability: 'storage', scope: {} })).toEqual({ allow: true, view: 1 })
     expect(modules.grantRiskClassifier()?.classes({ cause: 'start', change: null, confirm: false, plugins: [] })).toEqual({ plugins: [], lines: [], unasked: false })
     const storage = modules.provider('storage')!
     await ask(storage, 'storage.set', { key: 'k', value: 1 })

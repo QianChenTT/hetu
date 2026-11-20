@@ -246,16 +246,16 @@ describe('the floor', () => {
     expect(code(await connect(worker('search')).ask('git.log'))).toBe('unavailable')
   })
 
-  it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
+  it.each(['on', 'off', 'failed'] as const)('takes core.refused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
     const { router, connect, pluginsManager, gate, log } = harness()
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     const http = connect(host('mcp-http-handler'))
-    expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
+    expect(await http.ask('core.refused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
     expect(gate.asked).toEqual([])
     router.close()
     await tick()
-    expect(log.events('http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
+    expect(log.events('mcp-http-handler.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
   })
 
   it.each(['on', 'off', 'failed'] as const)('hands core.bindFailed from http\'s host half on its utility port to the plugins manager with the gate %s, asking no gate', async state => {
@@ -269,7 +269,7 @@ describe('the floor', () => {
   })
 
   // The two actions only http's utility half may call
-  const doorActions = [['core.agentRefused', { reason: 'host', count: 1 }], ['core.bindFailed', { reason: 'port-taken' }]] as const
+  const doorActions = [['core.refused', { reason: 'host', count: 1 }], ['core.bindFailed', { reason: 'port-taken' }]] as const
 
   it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
     const seen: Call[] = []
@@ -300,7 +300,7 @@ describe('the floor', () => {
     expect(seen).toEqual([])
     router.close()
     await tick()
-    expect(log.events('http.refused')).toEqual([])
+    expect(log.events('mcp-http-handler.refused')).toEqual([])
   })
 
   it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
@@ -315,7 +315,7 @@ describe('the floor', () => {
     expect(seen).toEqual([])
     router.close()
     await tick()
-    expect(log.events('http.refused')).toEqual([])
+    expect(log.events('mcp-http-handler.refused')).toEqual([])
   })
 
   it('holds the trusted window to core actions, with the gate on or off', async () => {

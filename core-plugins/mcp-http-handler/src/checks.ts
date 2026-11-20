@@ -33,7 +33,7 @@ export const doorLimits = Object.freeze({
   mcpHeaderValueBytes: 256,
 })
 
-// What a refusal at the door is recorded under, the reasons core.agentRefused takes. malformed is bytes Node's parser
+// What a refusal at the door is recorded under, the reasons core.refused takes. malformed is bytes Node's parser
 // or the door's own reading of the body and the mcp- headers refused and timeout a request too slow. Never the text of
 // a header, a body or a target
 export const refusalReasons = Object.freeze(['host', 'origin', 'method', 'size', 'rate', 'token', 'malformed', 'timeout'] as const)

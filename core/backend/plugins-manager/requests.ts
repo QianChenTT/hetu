@@ -70,7 +70,7 @@ function canonical(value: unknown): string {
 // What the records say of a change: its kind, its target and the hash of the change as stored. Never a folder or a
 // scope, which the hash stands for. An agent's ask and its revoke name the agent, whose label's form holds ASCII alone
 function fieldsOf(change: Change, key: string): Record<string, Field> {
-  const agent = change.kind === 'agent.ask' || change.kind === 'agent.revoke' ? change.agent : null
+  const agent = change.kind === 'identity.ask' || change.kind === 'identity.revoke' ? change.agent : null
   const target = agent ?? ('plugin' in change ? change.plugin : change.kind === 'allowUnsigned' ? change.hash : null)
   return {
     kind: change.kind,

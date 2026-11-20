@@ -181,7 +181,7 @@ describe('agents through the joined core', () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const before = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
-    const asked = await ask(mcp, 'core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, before)
+    const asked = await ask(mcp, 'core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, before)
     expect(asked.result).toEqual({ asked: 'waiting' })
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
     await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
@@ -197,20 +197,20 @@ describe('agents through the joined core', () => {
     const { parent } = await request(door, mcp, 'client#1')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('inbox text')
     const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
-    expect(await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')
-    expect((await ask(door, 'core.agents', { agents: ['client#1', 'client#3'] })).result).toEqual([
+    expect((await ask(door, 'core.identities', { agents: ['client#1', 'client#3'] })).result).toEqual([
       { agent: 'client#1', holds: 'revoked' }, { agent: 'client#3', holds: 'items' },
     ])
     // A revoked label asks again only under a number never used again
-    expect(outcome(await ask(mcp, 'core.agentAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, { parent }))).toBe('not-granted')
-    expect((await ask(door, 'core.agents', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
+    expect(outcome(await ask(mcp, 'core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, { parent }))).toBe('not-granted')
+    expect((await ask(door, 'core.identities', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
   })
 
   it('refuses the door\'s next call for agent #1 once revoked before mcp sees it with no word from http and still delivers agent #3\'s', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
-    await pluginsManager.request({ kind: 'agent.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
     const delivered = () => mcp.inbox.filter(message => message.kind === 'call' && message.action === 'mcp.handle').length
     const before = delivered()
     expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')

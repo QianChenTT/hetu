@@ -6,7 +6,7 @@ import { cleanup, coreInstall, entryFor, filesFor, harness, manifest, stateOf, w
 afterEach(cleanup)
 
 const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
-const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
+const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 const wrongHash = 'b'.repeat(64)
 
 // hidden-marks as the build puts it in the install: a manifest with a page entry and the module's bundle

@@ -246,14 +246,14 @@ export abstract class PluginsBase {
       effect: change => changeEffect(change),
       // A notice of a class moved up and a connect change nothing when answered, so no state they read can go stale under
       // them. A connect's Confirm looks at the label again instead
-      fingerprint: change => (change.kind === 'class.raised' || change.kind === 'agent.connect'
+      fingerprint: change => (change.kind === 'class.raised' || change.kind === 'consent.ask'
         ? Promise.resolve(change.kind) : this.store.fingerprint('plugin' in change ? change.plugin : null)),
       exclusive: work => this.serial(work),
       applyNow: (change, confirmed) => this.applyNow(change, confirmed),
       cancelled: change => {
         if (change.kind === 'class.raised') return this.answered(change.plugin)
-        if (change.kind === 'agent.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
-        if (change.kind === 'agent.connect') this.connects.cancelled(change)
+        if (change.kind === 'identity.ask') this.askPaused.set(change.agent, this.clock() + AGENT_ASK_PAUSE_MS)
+        if (change.kind === 'consent.ask') this.connects.cancelled(change)
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.record(event, fields, signal),
@@ -276,7 +276,7 @@ ${capabilityKey(change.capability)}`)
       clock: () => this.clock(),
       held: change => this.requests.changes().some(one => one.change === change),
       raise: change => {
-        const id = this.requests.raise(change, null, 1, 'agent.connect')
+        const id = this.requests.raise(change, null, 1, 'consent.ask')
         return typeof id === 'string' && this.requests.changes().some(one => one.id === id && one.change === change)
       },
       inUse: label => this.labelHeld(label),

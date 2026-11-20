@@ -65,7 +65,7 @@ function opened(folder: string): Opened {
 // prepare then perform, as the router makes a call, with every listed name allowed as the gate off allows. The scope
 // prepare gave is what the gate and the event log see
 async function ask(made: Luoshu, action: string, args: unknown): Promise<{ scope: unknown, answer: unknown }> {
-  const call: Call = { callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000, ...(action === 'luoshu.list' ? { canList: () => true } : {}) }
+  const call: Call = { callId: `c${++n}`, caller, root: caller, action, args, deadline: Date.now() + 30000, ...(action === 'luoshu.list' ? { canList: () => true } : {}) }
   const prepared = await made.provider.prepare(call)
   if (!('scope' in prepared)) return { scope: null, answer: { refused: prepared } }
   try {

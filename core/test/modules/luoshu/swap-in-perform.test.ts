@@ -79,7 +79,7 @@ async function swap(): Promise<void> {
 async function performed(action: string, args: unknown): Promise<unknown> {
   const made = createLuoshu()
   made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
-  const call = { callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 }
+  const call = { callId: `c${++n}`, caller, root: caller, action, args, deadline: Date.now() + 30000 }
   const prepared = await made.provider.prepare(call) as Prepared
   try {
     return await made.provider.perform(call, prepared)
@@ -135,7 +135,7 @@ describe('a folder swapped for a junction while a listing walks it', () => {
     const made = createLuoshu()
     made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     await new Promise(resolve => setTimeout(resolve, 100))
-    const call = { callId: `c${++n}`, caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
+    const call = { callId: `c${++n}`, caller, root: caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
     const prepared = await made.provider.prepare(call) as Prepared
     await swap()
     read.length = 0
@@ -151,7 +151,7 @@ describe('a folder swapped for a junction while a listing walks it', () => {
     made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     // The walk of the whole folder that opening starts reads names too, so the hook waits for it
     await new Promise(resolve => setTimeout(resolve, 100))
-    const call = { callId: `c${++n}`, caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
+    const call = { callId: `c${++n}`, caller, root: caller, action: 'luoshu.list', args: { folder: 'journal' }, deadline: Date.now() + 30000, canList: () => true }
     const prepared = await made.provider.prepare(call) as Prepared
     beforeReaddir = swap
     await expect(made.provider.perform(call, prepared)).rejects.toEqual({ code: 'not-granted' })
@@ -169,7 +169,7 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     const made = createLuoshu({ publish: (_topic, at) => heard.push(at) })
     made.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
     const call = {
-      callId: `c${++n}`, caller, action: 'luoshu.write', args: { path: 'journal/x.md', text: 'x' }, deadline: Date.now() + 30000,
+      callId: `c${++n}`, caller, root: caller, action: 'luoshu.write', args: { path: 'journal/x.md', text: 'x' }, deadline: Date.now() + 30000,
       judge: (paths: readonly string[]) => {
         asked.push([...paths])
         return answer

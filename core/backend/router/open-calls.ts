@@ -3,7 +3,7 @@ import { MAX_TIMER_MS } from '../../api/limits.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import type { Call, LiveCall } from '../../api/policy-jobs.ts'
 import type { Charged, Held } from '../flood-control/header.ts'
-import { no, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
+import { no, pairOf, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
 
 // 4 ceiling and the life of an open call: its deadline, cancel, stop and finish, the one exit of every call, where
 // 11 record happens
@@ -159,7 +159,7 @@ function refusalOf(action: string, refused: No): Refusal {
 export function callOf(pending: Pending, args: unknown, live?: LiveCall): Call {
   return Object.freeze({
     ...frozen({
-      callId: pending.callId, caller: pending.caller,
+      callId: pending.callId, caller: pending.caller, root: pending.root.caller,
       ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
       ...(pending.parent !== null ? { parent: pending.parent.callId } : {}),
       action: pending.action, args, deadline: pending.deadline, ...(live !== undefined ? { live } : {}),
@@ -186,12 +186,15 @@ export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
 // The view of a live call a part gets with an action that names it, the same object for the call's life. The door's
 // own call lends its label with no agent of its own
 export function liveOf(pending: Pending): LiveCall {
-  pending.live ??= frozen({
-    caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin,
-    ...(pending.lends !== undefined ? { agent: pending.lends } : {}),
-    door: pending.lends !== undefined && pending.agent === undefined,
-    open: () => !pending.done,
-  })
+  if (pending.live === null) {
+    const pair = pairOf(pending.root.caller, pending.lends)
+    pending.live = frozen({
+      caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin, root: pending.root.caller,
+      ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
+      ...(pair !== undefined ? { pair } : {}),
+      open: () => !pending.done,
+    })
+  }
   return pending.live
 }
 

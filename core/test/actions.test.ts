@@ -33,12 +33,12 @@ describe('the core actions', () => {
       'core.views': 'windows',
       'editor.frame': 'windows',
       'editor.frameGone': 'windows',
-      'core.agentRefused': 'http',
-      'core.bindFailed': 'http',
-      'core.agentAsk': 'agent',
-      'core.agents': 'http',
-      'core.agentConnect': 'http',
-      'core.agentConnected': 'http',
+      'core.refused': 'utility',
+      'core.bindFailed': 'utility',
+      'core.identityAsk': 'pair',
+      'core.identities': 'utility',
+      'core.consentAsk': 'utility',
+      'core.consentAnswer': 'utility',
     })
   })
 
@@ -107,19 +107,19 @@ describe('the core actions', () => {
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/dist/board.html', navigated: true }, true],
     ['editor.frameGone', { url: 'https://example.com/', navigated: false }, false],
     ['editor.frameGone', { url: 'hetu://views/0123456789abcdef0123456789abcdef/', navigated: 'yes' }, false],
-    ...agentRefusals.map((reason): [string, unknown, boolean] => ['core.agentRefused', { reason, count: 1 }, true]),
-    ['core.agentRefused', { reason: 'token', count: MAX_REFUSAL_COUNT }, true],
-    ['core.agentRefused', { reason: 'token', count: MAX_REFUSAL_COUNT + 1 }, false],
-    ['core.agentRefused', { reason: 'token', count: 0 }, false],
-    ['core.agentRefused', { reason: 'token', count: -1 }, false],
-    ['core.agentRefused', { reason: 'token', count: 1.5 }, false],
-    ['core.agentRefused', { reason: 'token', count: '3' }, false],
-    ['core.agentRefused', { reason: 'token' }, false],
-    ['core.agentRefused', { count: 1 }, false],
-    ['core.agentRefused', { reason: 'Token', count: 1 }, false],
-    ['core.agentRefused', { reason: 'refused at the door', count: 1 }, false],
-    ['core.agentRefused', { reason: 'token', count: 1, host: 'evil.example' }, false],
-    ['core.agentRefused', { reason: 'token', count: 1, plugin: 'search' }, false],
+    ...agentRefusals.map((reason): [string, unknown, boolean] => ['core.refused', { reason, count: 1 }, true]),
+    ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT }, true],
+    ['core.refused', { reason: 'token', count: MAX_REFUSAL_COUNT + 1 }, false],
+    ['core.refused', { reason: 'token', count: 0 }, false],
+    ['core.refused', { reason: 'token', count: -1 }, false],
+    ['core.refused', { reason: 'token', count: 1.5 }, false],
+    ['core.refused', { reason: 'token', count: '3' }, false],
+    ['core.refused', { reason: 'token' }, false],
+    ['core.refused', { count: 1 }, false],
+    ['core.refused', { reason: 'Token', count: 1 }, false],
+    ['core.refused', { reason: 'refused at the door', count: 1 }, false],
+    ['core.refused', { reason: 'token', count: 1, host: 'evil.example' }, false],
+    ['core.refused', { reason: 'token', count: 1, plugin: 'search' }, false],
     ['core.bindFailed', { reason: 'port-taken' }, true],
     ['core.bindFailed', { reason: 'bind-failed' }, true],
     ['core.bindFailed', { reason: 'crashed' }, false],
@@ -205,6 +205,11 @@ describe('the provider actions', () => {
       'history.read': 'history',
       'exec.run': 'exec',
     })
+  })
+
+  it('holds only what the router and the providers read, no row naming who outside the core may call it', () => {
+    const fields = ['capability', 'args', 'scope', 'access', 'also', 'write', 'filter']
+    for (const spec of Object.values(providerActions)) expect(Object.keys(spec).every(field => fields.includes(field))).toBe(true)
   })
 
   it('belongs only to provider namespaces', () => {
@@ -320,10 +325,21 @@ describe('the envelope beside a request', () => {
   it('shapes a delivery with the caller and no parent', () => {
     const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }, action: 'mcp.handle', args: {}, deadline: 1 }
     expect(delivery.safeParse(delivered).success).toBe(true)
-    expect(delivery.safeParse({ ...delivered, onBehalf: 'agent-a' }).success).toBe(true)
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'agent-a' }).success).toBe(false)
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'agent-a', root: delivered.caller }).success).toBe(true)
     expect(delivery.safeParse({ ...delivered, parent: 'p1' }).success).toBe(false)
     expect(delivery.safeParse({ ...delivered, caller: { kind: 'agent' } }).success).toBe(false)
     expect(delivery.safeParse({ ...delivered, deadline: 1.5 }).success).toBe(false)
+  })
+
+  it('hands the root caller beside onBehalf only, so a callee reads whose field it is', () => {
+    const delivered = { v: 1, kind: 'call', callId: 'c1', caller: { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }, action: 'search.query', args: {}, deadline: 1 }
+    const root = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 2 }
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'client#1', root }).success).toBe(true)
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'client#1', root: { kind: 'window', role: 'editor', n: 3 } }).success).toBe(true)
+    expect(delivery.safeParse({ ...delivered, root }).success).toBe(false)
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'client#1', root: { kind: 'plugin', id: 'mcp-http-handler' } }).success).toBe(false)
+    expect(delivery.safeParse({ ...delivered, onBehalf: 'client#1', root: 'mcp-http-handler' }).success).toBe(false)
   })
 
   it('shapes a callee\'s answer by call id with a refusal inside its schema', () => {

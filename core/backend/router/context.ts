@@ -2,8 +2,9 @@ import { randomBytes } from 'node:crypto'
 import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
+import { frozen } from '../../api/plain.ts'
 import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
-import { pluginStates, policyJobStates, type GateTime, type LiveCall, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
+import { pluginStates, policyJobStates, type GateTime, type LiveCall, type Pair, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
@@ -106,13 +107,18 @@ export type Outcome = { ok: true, result: unknown } | ({ ok: false } & No)
 export type About = { id: number | null, action: string, onBehalf: string | undefined, parent: Pending | null }
 
 // Who the gate is asked for: a call, or a subscription the bus asks about again
-export type Asker = { caller: Caller, onBehalf: string | undefined, agent?: string | undefined, action: string }
+export type Asker = { caller: Caller, root: { readonly caller: Caller }, onBehalf: string | undefined, agent?: string | undefined, action: string }
 
 export type Shaped =
   | ({ ok: false, no: No } & About)
   | ({ ok: true, id: number, target: Target, args: unknown, bytes: number, agent: string | undefined, lends: string | undefined } & About)
 
 export const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
+
+// The pair a field makes under a root: the root plugin's id and the field. A window root makes none
+export function pairOf(root: Caller, field: string | undefined): Pair | undefined {
+  return field !== undefined && root.kind === 'plugin' ? frozen({ plugin: root.id, field }) : undefined
+}
 
 // Random, in core/api's token grammar
 export const newId = () => randomBytes(16).toString('base64url')

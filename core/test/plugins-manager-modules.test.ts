@@ -12,7 +12,7 @@ import {
 afterEach(cleanup)
 
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
-const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, action, args, deadline: Date.now() + 30_000 })
+const call = (caller: Caller, action: string, args?: unknown) => ({ callId: 'c1', caller, root: caller, action, args, deadline: Date.now() + 30_000 })
 const worker = (id: string, requires: string[] = []): Files => filesFor(workerManifest(id, requires.length > 0 ? { requires } : {}))
 // A plugin-folder plugin that requires the given core module
 const needing = (id: string, module: string) => ({ folder: { [id]: worker(id, [module]) }, entries: { [id]: (root: string) => entryFor(root) } })

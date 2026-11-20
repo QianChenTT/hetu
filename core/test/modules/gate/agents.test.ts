@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Capability } from '../../../api/capabilities.ts'
 import type { Caller } from '../../../api/envelope.ts'
-import type { Access, GrantedItem, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
+import type { Access, GrantedItem, Pair, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
 import { createGate } from '../../../backend/policy/gate/gate.ts'
 
 const mcp: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
@@ -10,9 +10,13 @@ const search: Caller = { kind: 'plugin', id: 'search', half: 'worker', incarnati
 const item = (capability: Capability, more: Partial<GrantedItem> = {}): GrantedItem => ({ capability, off: false, firstUse: false, ...more })
 const read = (...paths: string[]): Capability => ({ type: 'luoshu.read', paths })
 const table = <T>(entries: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), entries)
+// Pairs under mcp-http-handler, the root that sets each field
+const root = 'mcp-http-handler'
+const pair = (field: string): Pair => ({ plugin: root, field })
+const pairs = (fields: Record<string, GrantedItem[]>) => table({ [root]: table(fields) })
 
 function access(caller: Caller, agent: string | undefined, capability: Access['capability'], scope: Scope, stage: Access['stage'] = 'canonical'): Access {
-  return { stage, caller, action: 'test.action', capability, scope, ...(agent === undefined ? {} : { agent, onBehalf: agent }) }
+  return { stage, caller, root: caller, action: 'test.action', capability, scope, ...(agent === undefined ? {} : { pair: pair(agent), onBehalf: agent }) }
 }
 
 // mcp holds inbox and private, agent #1 inbox and secret, agent #3 private. search holds everything
@@ -21,7 +25,7 @@ function gateWith(more: Partial<GrantsSnapshot> = {}) {
   gate.stateChanged({
     n: 4, foldCase: false, execAny: [],
     plugins: table({ mcp: [item(read('inbox/**', 'private/**'))], search: [item(read('**'))] }),
-    agents: table({ 'client#1': [item(read('inbox/**', 'secret/**'))], 'client#3': [item(read('private/**'))] }),
+    pairs: pairs({ 'client#1': [item(read('inbox/**', 'secret/**'))], 'client#3': [item(read('private/**'))] }),
     ...more,
   })
   return gate
@@ -46,8 +50,8 @@ describe('an agent\'s call', () => {
     const gate = gateWith()
     expect(gate.decide(access(mcp, 'client#2', 'luoshu.read', reads('inbox/a.md')))).toEqual({ allow: false, code: 'not-granted', view: 4 })
     expect(gate.decide(access(search, 'client#2', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: false, code: 'not-granted' })
-    expect(gate.canRead(mcp, 'inbox/a.md', 'client#2')).toBe(false)
-    expect(gate.canList(mcp, 'inbox/a.md', 'client#2')).toBe(false)
+    expect(gate.canRead(mcp, 'inbox/a.md', pair('client#2'))).toBe(false)
+    expect(gate.canList(mcp, 'inbox/a.md', pair('client#2'))).toBe(false)
   })
 
   it('reads one agent\'s items for its own label only', () => {
@@ -79,10 +83,10 @@ describe('an agent\'s call', () => {
     // An agent outside its own items is refused before the caller's item asks
     expect(asking.decide(access(mcp, 'client#2', 'luoshu.read', reads('inbox/a.md')))).toEqual({ allow: false, code: 'not-granted', view: 4 })
     for (const more of [{ off: true }, { firstUse: true }]) {
-      const gate = gateWith({ agents: table({ 'client#1': [item(read('inbox/**'), more)] }) })
+      const gate = gateWith({ pairs: pairs({ 'client#1': [item(read('inbox/**'), more)] }) })
       expect(gate.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md')))).toEqual({ allow: false, code: 'not-granted', view: 4 })
       expect(gate.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md'), 'raw'))).toEqual({ allow: false, code: 'not-granted', view: 4 })
-      expect(gate.canRead(mcp, 'inbox/a.md', 'client#1')).toBe(false)
+      expect(gate.canRead(mcp, 'inbox/a.md', pair('client#1'))).toBe(false)
     }
   })
 
@@ -97,7 +101,7 @@ describe('an agent\'s call', () => {
     const own = [item(read('on/**')), item(read('off/**'), { off: true }), item(read('asks/**'), { firstUse: true })]
     const gate = gateWith({
       plugins: table({ mcp: own, search: own }),
-      agents: table({ 'client#1': [item(read('on/**', 'off/**', 'asks/**', 'none/**'))], 'client#4': [item(read('elsewhere/**'))] }),
+      pairs: pairs({ 'client#1': [item(read('on/**', 'off/**', 'asks/**', 'none/**'))], 'client#4': [item(read('elsewhere/**'))] }),
     })
     const asked = { ask: JSON.stringify([['paths', ['asks/**']], ['type', 'luoshu.read']]), view: 4 }
     const allow = { allow: true, view: 4 }
@@ -128,15 +132,16 @@ describe('an agent\'s call', () => {
   })
 
   it('gives every agent nothing on a view with no agents and fails on one whose agents it can\'t read', () => {
-    const none = gateWith({ agents: undefined })
+    const none = gateWith({ pairs: undefined })
     expect(none.decide(access(mcp, 'client#1', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: false, code: 'not-granted' })
-    for (const agents of [null, [], { 'client#1': 'inbox/**' }, { 'client#1': [{ capability: read('inbox/**') }] }]) {
-      expect(() => gateWith({ agents: agents as never })).toThrow()
+    for (const fields of [null, [], { 'client#1': 'inbox/**' }, { 'client#1': [{ capability: read('inbox/**') }] }]) {
+      expect(() => gateWith({ pairs: { [root]: fields } as never })).toThrow()
     }
+    for (const given of [null, [], 'client#1']) expect(() => gateWith({ pairs: given as never })).toThrow()
   })
 
   it('keeps a label every object knows as one agent\'s', () => {
-    const gate = gateWith({ agents: table({ ['__proto__']: [item(read('inbox/**'))] }) })
+    const gate = gateWith({ pairs: pairs({ ['__proto__']: [item(read('inbox/**'))] }) })
     expect(gate.decide(access(mcp, '__proto__', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: true })
     expect(gate.decide(access(mcp, 'constructor', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: false })
     expect(gate.decide(access(mcp, 'toString', 'luoshu.read', reads('inbox/a.md')))).toMatchObject({ allow: false })
@@ -146,19 +151,19 @@ describe('an agent\'s call', () => {
 describe('what an agent may read and list', () => {
   it('answers canRead and canList inside both the caller\'s items and the agent\'s, the caller\'s alone with no agent', () => {
     const gate = gateWith()
-    expect(gate.canRead(mcp, 'inbox/a.md', 'client#1')).toBe(true)
-    expect(gate.canRead(mcp, 'private/b.md', 'client#1')).toBe(false)
-    expect(gate.canRead(mcp, 'secret/c.md', 'client#1')).toBe(false)
+    expect(gate.canRead(mcp, 'inbox/a.md', pair('client#1'))).toBe(true)
+    expect(gate.canRead(mcp, 'private/b.md', pair('client#1'))).toBe(false)
+    expect(gate.canRead(mcp, 'secret/c.md', pair('client#1'))).toBe(false)
     expect(gate.canRead(mcp, 'private/b.md')).toBe(true)
-    expect(gate.canList(mcp, 'inbox/a.md', 'client#1')).toBe(true)
-    expect(gate.canList(mcp, 'private/b.md', 'client#1')).toBe(false)
-    expect(gate.canList(mcp, 'private/b.md', 'client#3')).toBe(true)
+    expect(gate.canList(mcp, 'inbox/a.md', pair('client#1'))).toBe(true)
+    expect(gate.canList(mcp, 'private/b.md', pair('client#1'))).toBe(false)
+    expect(gate.canList(mcp, 'private/b.md', pair('client#3'))).toBe(true)
     expect(gate.canList(mcp, 'private/b.md')).toBe(true)
   })
 
   it('lists for an agent through its luoshu.list item as a plugin lists through one', () => {
-    const gate = gateWith({ agents: table({ 'client#1': [item({ type: 'luoshu.list', paths: ['private/**'] })] }) })
-    expect(gate.canList(mcp, 'private/b.md', 'client#1')).toBe(true)
-    expect(gate.canRead(mcp, 'private/b.md', 'client#1')).toBe(false)
+    const gate = gateWith({ pairs: pairs({ 'client#1': [item({ type: 'luoshu.list', paths: ['private/**'] })] }) })
+    expect(gate.canList(mcp, 'private/b.md', pair('client#1'))).toBe(true)
+    expect(gate.canRead(mcp, 'private/b.md', pair('client#1'))).toBe(false)
   })
 })

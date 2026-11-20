@@ -153,7 +153,7 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
   callee.delivered.set(pending.callId, pending)
   callee.send({
     v: VERSION, kind: 'call', callId: pending.callId, caller: pending.caller, action: pending.action, args,
-    deadline: pending.deadline, ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
+    deadline: pending.deadline, ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf, root: pending.root.caller } : {}),
   })
 }
 
