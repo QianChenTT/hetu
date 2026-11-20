@@ -134,5 +134,29 @@ export const retiredNames: readonly RetiredName[] = [
   { name: 'http.refused', now: '<plugin id>.refused', pattern: /\bhttp\.refused\b/g, allowed: [] },
   { name: 'from http', now: 'from utility', pattern: /\bfrom(?::| ===) 'http'/g, allowed: [] },
   { name: 'from agent', now: 'from pair', pattern: /\bfrom(?::| ===) 'agent'/g, allowed: [] },
-  { name: 'the tool table', now: 'the types a pair may hold, in the gate', pattern: /\bapi\/tools\.ts\b|\btoolList\b|\btoolFor\b/g, allowed: [] },
+  { name: 'the tool table', now: 'the types a pair may hold, in the contract', pattern: /\bapi\/tools\.ts\b|\btoolList\b|\btoolFor\b/g, allowed: [] },
+  // The agent names the core held, each now a pair's, an identity's or a consent's. Any word agent in the core is
+  // refused by no-agent-word.test.ts, these catch the old names in the core plugins too
+  { name: 'agentLabel', now: 'labelOk in mcp-http-handler, the core taking any field', pattern: /\bagentLabel\b/g, allowed: [] },
+  { name: 'agentDoor and agentHost', now: 'the pair of the root plugin and the field', pattern: /\bagent(?:Door|Host|Own)\b/g, allowed: [] },
+  { name: 'agentAsk and AgentAsk', now: 'identityAsk and IdentityAsk', pattern: /\b[aA]gentAsk\b/g, allowed: [] },
+  { name: 'agentConnect and AgentConnect', now: 'consentAsk and ConsentAsk', pattern: /\b[aA]gentConnect\b/g, allowed: [] },
+  { name: 'connectLabel', now: 'the field the connect names', pattern: /\bconnectLabel\b/g, allowed: [] },
+  { name: 'ListedAgent', now: 'ListedIdentity', pattern: /\bListedAgents?\b/g, allowed: [] },
+  { name: 'agentRefusals', now: 'refusedReasons', pattern: /\b[aA]gentRefusals?\b/g, allowed: [] },
+  { name: 'MAX_AGENTS_ASKED', now: 'MAX_FIELDS_ASKED', pattern: /\bMAX_AGENTS_ASKED\b/g, allowed: [] },
+  {
+    name: 'the agent constants',
+    now: 'IDENTITY_ASK_LAPSE_MS, IDENTITY_ASK_PAUSE_MS, CONSENT_LAPSE_MS, CONSENT_PAUSE_MS, MAX_CONSENT_ANSWERS, MAX_PAIR_ITEMS',
+    pattern: /\b(?:AGENT_ASK_LAPSE_MS|AGENT_ASK_PAUSE_MS|AGENT_CONNECT_LAPSE_MS|AGENT_CONNECT_PAUSE_MS|MAX_CONNECT_ANSWERS|MAX_AGENT_NUMBER(?:_DIGITS)?|MAX_AGENT_ITEMS)\b/g,
+    allowed: [],
+  },
+  { name: 'agentItems and agent-items.ts', now: 'the pairs held in memory by the plugins manager', pattern: /\bagentItems\b|\bagent-items\.ts\b/g, allowed: [] },
+  {
+    name: 'the revoked marks',
+    now: 'the pairs revoked in memory for the run',
+    pattern: /\b(?:marksOf|setMarksAside|withMarks|marksHandedBack|markDropped|revokedAside|heardOut)\b|plugins-manager\/marks\.ts\b/g,
+    allowed: [],
+  },
+  { name: 'PluginsAgents', now: 'PluginsIdentities', pattern: /\bPluginsAgents\b/g, allowed: [] },
 ]

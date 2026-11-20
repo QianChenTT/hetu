@@ -5,7 +5,7 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `changes.ts`: the change kinds a security request carries, whether each widens, narrows or destroys data (`changeEffect`) and what the human types to switch protection off (`mustType`)
 - `describe.ts`: the core's own words for each change, which the trusted window draws above Confirm
 - `trusted.ts`: what the trusted page shares with the core, apart from zod: the input delay and how a capability reads
-- `capabilities.ts`: the fixed capability list with the install-only types marked
+- `capabilities.ts`: the fixed capability list with the install-only types marked and the types a pair may hold (`pairTypes`), which the gate and the ask for a pair's items read
 - `scope.ts`: the scope grammar, the path matcher and the check for characters that could hide on a screen. The matcher matches no path with a dot segment
 - `names.ts`: `isDotName`, the one check for a segment no note path holds, with `withoutIgnorable` and apart from zod so the SDK hands `isDotName` to plugins
 - `manifest.ts`: `hetu-plugin.json` from the install and from the plugin folder, and `supportsApi`: this core's major or an older one every major since only added to (`apiChanges`), with no type in the manifest added, removed or reshaped since
