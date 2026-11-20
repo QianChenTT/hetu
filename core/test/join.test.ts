@@ -348,6 +348,21 @@ describe('shutdown through the joined core', () => {
     expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'failed']])
   })
 
+  // The gate module hears that shutdown began as the router does, so a gate that is down answers stopped there too
+  it('answers gate.reach stopped once the gate failed during shutdown', async () => {
+    const { router, pluginsManager, runtime, gate } = await quitting({ alphaHolds: true })
+    const way = windowWay(router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const alpha = runtime.half('alpha')
+    const shutdown = pluginsManager.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    gate.throws = true
+    await pluginsManager.apply({ kind: 'confirmOff', on: true })
+    await until(() => pluginsManager.policyJob('gate') === 'failed')
+    expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('stopped')
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+  })
+
   it('keeps the audit queue through shutdown and writes it on the flush after close', async () => {
     const { recording, router, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')

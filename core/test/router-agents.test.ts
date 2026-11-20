@@ -958,3 +958,22 @@ describe('a path with a dot segment down an agent\'s chain', () => {
     expect(luoshu.prepared).toEqual([])
   })
 })
+
+describe('an agent\'s open call once the human switched the gate off', () => {
+  // The gate off lets everything pass, so a call an agent made while it was on is not judged again and runs to its end
+  it('judges no open call for an agent again on a new grants snapshot, its signal never aborted', async () => {
+    const { door, mcp, luoshu, pluginsManager, router } = agents()
+    router.changed()
+    const { parent } = await handled(door, mcp)
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const id = mcp.call('luoshu.write', { path: 'inbox/a.md', text: 'x' }, parent)
+    await until(() => luoshu.performed.length === 1)
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.current++
+    router.changed()
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(false)
+    open()
+    expect((await mcp.reply(id)).ok).toBe(true)
+  })
+})
