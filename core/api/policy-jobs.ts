@@ -108,9 +108,6 @@ export type Access = {
 export const agentDoor = frozen({ plugin: 'mcp-http-handler', half: 'host', action: 'mcp.handle' } as const)
 // The plugin agents act through, whose entry holds their grants as labelled items
 export const agentHost = 'mcp'
-// The providers the agent host reaches with no live call from the door: its own storage and cache, which hold nothing
-// of the notes. Every other provider and every other plugin it reaches only under that call
-export const agentOwn = frozen(['storage'] as const)
 
 // view is the number of the grants snapshot the answer was made on. ask names what a Confirm would grant, at the canonical
 // stage only
@@ -244,8 +241,6 @@ export type PluginTable = {
   // null for no such plugin
   plugin(id: string): PluginInfo | null
   limits(): HumanLimits
-  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens
-  revoked(label: string): boolean
 }
 
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a

@@ -151,11 +151,6 @@ class FakePluginsManager implements PluginTable {
     return { all: { ...this.all }, plugins: {} }
   }
 
-  // No agent's label is revoked here
-  revoked(): boolean {
-    return false
-  }
-
   crashed(caller: Caller, reason: 'closed' | 'flood' | 'malformed'): void {
     for (const listener of [...this.listeners]) listener(caller, reason)
   }

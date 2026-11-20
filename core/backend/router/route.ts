@@ -1,10 +1,10 @@
 import type { EventAction } from '../../api/actions.ts'
-import { answer as answerSchema, calleeRefusalCodes, VERSION, type RefusalCode } from '../../api/envelope.ts'
+import { answer as answerSchema, calleeRefusalCodes, VERSION } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
 import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Target, type Kind } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf } from './open-calls.ts'
-import { gateOpen, judge, judgeAll, askable, provide } from './provide.ts'
+import { judge, judgeAll, askable, provide } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
 
 // The entry of every call through its steps, then 6 route by the namespace table: the parts handed in under their
@@ -20,7 +20,7 @@ export async function call(c: Context, way: Way, message: unknown, answer: Send)
     const callId = newId()
     const shaped = shape(c, way, message)
     if (!shaped.ok) return early(c, way, answer, callId, shaped, shaped.no, started)
-    const kind = floorOf(c, way, shaped.target, shaped.args, shaped.agent)
+    const kind = floorOf(c, way, shaped.target, shaped.args, shaped.parent)
     if ('code' in kind) return early(c, way, answer, callId, shaped, kind, started)
     const charged = charge(c, way, shaped.parent, shaped.bytes)
     if (!('release' in charged)) return early(c, way, answer, callId, shaped, charged, started)
@@ -35,10 +35,6 @@ export async function call(c: Context, way: Way, message: unknown, answer: Send)
 }
 
 async function run(c: Context, pending: Pending, target: Target, args: unknown, kind: Kind): Promise<void> {
-  // A call for an agent goes on only while the gate is on, a free one or a core action with nothing to judge included,
-  // so no call for an agent runs while the agent's grant can't be judged. The door's own call lends its label, so it is
-  // refused here before mcp sees any of the agent's request. A call with power is judged at decideFor too
-  if (pending.lends !== undefined && !lent(c, pending, pending.lends)) return
   // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
   if (target.kind === 'bus') return events(c, pending, target.spec, args, kind)
   // 5 precheck, for calls with power only
@@ -101,21 +97,12 @@ function events(c: Context, pending: Pending, spec: EventAction, args: unknown, 
   finish(c, pending, { ok: true, result: { standing } })
 }
 
-// A call for an agent goes on only while the gate can judge the agent. Otherwise the call ends with the gate's code
-function lent(c: Context, pending: Pending, agent: string): boolean {
-  const open = gateOpen(c, agent)
-  if (open !== 'decide') finish(c, pending, no(open as RefusalCode))
-  return open === 'decide'
-}
-
 // 6 route to a part handed in, then 10 perform by it. An action that names a live call goes on only while that call
-// is open and was delivered on the caller's own way. The part gets a view of it. A live call that acts for an
-// agent is let on only while the gate can judge the agent
+// is open and was delivered on the caller's own way. The part gets a view of it
 async function serve(c: Context, pending: Pending, served: Served | undefined, args: unknown, names: boolean): Promise<void> {
   if (served === undefined) return finish(c, pending, no('unavailable'))
   const named = names ? pending.way.delivered.get(field(args, 'call') as string) : undefined
   if (names && (named === undefined || named.done)) return finish(c, pending, no('invalid'))
-  if (named?.lends !== undefined && !lent(c, pending, named.lends)) return
   let given: unknown
   try {
     given = await served(callOf(pending, args, named === undefined ? undefined : liveOf(named)))

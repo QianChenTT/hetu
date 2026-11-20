@@ -6,7 +6,7 @@ import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
-import { no, isOne, field, pairOf, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
+import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
 import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
@@ -36,16 +36,12 @@ function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
 }
 
 // The gate policy job's state: decide asks the gate, pass skips it and a code refuses. With the gate off by the human a
-// call with power passes, whatever the log's state, which decides nothing of a call. A call for an agent never passes:
-// with the gate off nothing judges the agent's own grant, so it answers as a gate that is down. Once shutdown began a
-// call for an agent answers stopped whatever the gate's state, so the door's call during a shutdown answers the same
-// with the gate on as with it off
-export function gateOpen(c: Context, agent?: string): 'decide' | 'pass' | RefusalCode {
-  if (agent !== undefined && c.shutting) return 'stopped'
+// call with power passes, whatever the log's state, which decides nothing of a call, a call for a pair included
+function gateOpen(c: Context): 'decide' | 'pass' | RefusalCode {
   const gate = c.policyJob('gate')
   if (gate === 'on') return 'decide'
   if (gate === 'starting') return 'starting'
-  if (gate !== 'off' || agent !== undefined) return c.down('policy-down')
+  if (gate !== 'off') return c.down('policy-down')
   return 'pass'
 }
 
@@ -68,15 +64,15 @@ export function judgeAll(c: Context, pending: Pending, stage: Access['stage'], k
 }
 
 // The gate's answer for a call or for a subscription the bus asks about again. An ask raises the prompt for both,
-// since a live subscription is its item in use. Every judgement of a call comes here, so a call for an agent is
-// judged against the agent's own grant beside the caller's at each one and passes at none while the gate isn't on
+// since a live subscription is its item in use. Every judgement of a call comes here, so a call for a pair is judged
+// against the pair's items beside the caller's at each one
 function decideFor(c: Context, asker: Asker, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-  const open = gateOpen(c, asker.agent)
+  const open = gateOpen(c)
   if (open === 'pass') return null
   if (open !== 'decide') return { code: open }
   const gate = c.holder(() => c.options.gate())
   if (gate === null) return { code: c.down('policy-down') }
-  const pair = pairOf(asker.root.caller, asker.agent)
+  const { pair } = asker
   const access: Access = frozen({
     stage, caller: asker.caller, root: asker.root.caller, ...(asker.onBehalf !== undefined ? { onBehalf: asker.onBehalf } : {}),
     ...(pair !== undefined ? { pair } : {}), action: asker.action, capability, scope,
@@ -332,20 +328,19 @@ function tampered(c: Context, pending: Pending, part: string, args: unknown): vo
 }
 
 // What a listing's provider gets to filter with and the charge for the whole listing. canList asks the gate for the
-// caller and the agent it acts for, every name passing with the gate off by the human and none for an agent then. A
-// throw counts as a no and fails the listing. The whole listing, the walk and the gate's time alike, counts against
-// the caller's second of the gate's time as gate.filterReadable's does
+// caller and the pair the call is judged for, every name passing with the gate off by the human. A throw counts as a no
+// and fails the listing. The whole listing, the walk and the gate's time alike, counts against the caller's second of
+// the gate's time as gate.filterReadable's does
 function listerOf(c: Context, pending: Pending): { canList: (path: string) => boolean, threw: () => boolean, charge: () => void } {
   const off = c.policyJob('gate') === 'off'
   const gate = off ? null : c.holder(() => c.options.gate())
-  const { agent } = pending
-  const pair = pairOf(pending.root.caller, agent)
+  const { pair } = pending
   let threw = false
   const started = c.clock()
   let charged = false
   return {
     canList: path => {
-      if (off) return agent === undefined
+      if (off) return true
       if (gate === null || threw) return false
       try {
         return gate.canList(pending.caller, path, pair) === true

@@ -148,24 +148,19 @@ describe('agents through the joined core', () => {
     expect((listed.result as { paths: string[] }).paths).toEqual(['inbox/a.md'])
   })
 
-  it('lets agent #2 with no item and mcp with no parent read nothing, with the gate on', async () => {
+  it('lets agent #2 with no item read nothing and mcp with no parent read on its own grant, with the gate on', async () => {
     const { door, mcp } = await joined('on')
     const { parent } = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, { parent }))).toBe('not-granted')
     expect((await ask(mcp, 'luoshu.list', {}, { parent })).result).toEqual({ paths: [], next: null })
-    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
-    expect(outcome(await ask(mcp, 'luoshu.list', {}))).toBe('not-granted')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
-  it('refuses mcp\'s search with no call from the door live and filters search\'s answer for agent #1 under its call', async () => {
+  it('filters search\'s answer for agent #1 under its call', async () => {
     const { door, mcp, search } = await joined('on')
     const notes = ['inbox/a.md', 'private/b.md']
-    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }))).toBe('not-granted')
     const { parent } = await request(door, mcp, 'client#1')
-    // The parent left out while agent #1's call is live
-    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }))).toBe('not-granted')
-    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
     const id = 5000 + next++
     mcp.send({ v: 1, kind: 'call', id, action: 'search.query', args: { text: 'SECRET' }, parent })
     let got: Message | undefined
@@ -207,22 +202,18 @@ describe('agents through the joined core', () => {
     expect((await ask(door, 'core.identities', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
   })
 
-  it('refuses the door\'s next call for agent #1 once revoked before mcp sees it with no word from http and still delivers agent #3\'s', async () => {
+  it('lets agent #1 reach nothing under the door\'s next call once revoked, with no word from http, and still serves agent #3', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
     await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
-    const delivered = () => mcp.inbox.filter(message => message.kind === 'call' && message.action === 'mcp.handle').length
-    const before = delivered()
-    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('not-granted')
-    expect(delivered()).toBe(before)
-    await request(door, mcp, 'client#3')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, await request(door, mcp, 'client#1')))).toBe('not-granted')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, await request(door, mcp, 'client#3')))).toBe('inbox text')
   })
 
-  it('refuses the door\'s call for agent #1 policy-down with the gate off before mcp sees it', async () => {
+  it('lets every call under the door\'s call for agent #1 through with the gate off, as any call', async () => {
     const { door, mcp } = await joined('off')
-    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#1' }))).toBe('policy-down')
-    expect(mcp.inbox.filter(message => message.kind === 'call' && message.action === 'mcp.handle')).toEqual([])
-    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('not-granted')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, await request(door, mcp, 'client#1')))).toBe('SECRET')
+    expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
   // The luoshu resolves inbox/a.md again once inbox is renamed INBOX after prepare and asks the judge about INBOX/a.md,

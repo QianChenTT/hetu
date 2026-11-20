@@ -118,7 +118,7 @@ const outcome = (reply: Message) => (reply.ok === true ? (reply.result as { text
 const read = async (mcp: Half, under: { parent: string }, note: string) => outcome(await ask(mcp, 'luoshu.read', { path: note }, under))
 
 describe('step 5a part A in the joined core', () => {
-  it('asks, confirms, goes stale, revokes, carries across an update, drops on Recover, withdraws on a stop and refuses with the gate off', async () => {
+  it('asks, confirms, goes stale, revokes, carries across an update, drops on Recover, withdraws on a stop and passes with the gate off', async () => {
     const proof = await world()
     let run = await proof.start()
     let mcp = run.runtime.half('mcp')
@@ -189,7 +189,7 @@ describe('step 5a part A in the joined core', () => {
     await expect(run.pluginsManager.confirm(waiting, {})).rejects.toMatchObject({ code: 'not-found' })
     expect((await proof.stored()).agents).toBeUndefined()
 
-    // With the gate switched off the door's call is refused before mcp sees it
+    // With the gate switched off by the human every call under the door's call passes, as any call does
     expect(await run.pluginsManager.request({ kind: 'plugin.on', plugin: 'mcp' }, trusted)).toMatchObject({ held: expect.any(String) })
     await run.pluginsManager.confirm(run.pluginsManager.pending()[0].id, {})
     await run.pluginsManager.settled()
@@ -197,9 +197,7 @@ describe('step 5a part A in the joined core', () => {
     if (!('held' in off)) throw new Error('the gate went off at once')
     await run.pluginsManager.confirm(off.held, { typed: 'gate' })
     mcp = run.runtime.half('mcp', 3)
-    const before = mcp.inbox.length
-    expect(outcome(await ask(run.door, 'mcp.handle', { body: '{}' }, { onBehalf: 'client#2' }))).toBe('policy-down')
-    expect(mcp.inbox.slice(before).filter(message => message.kind === 'call')).toEqual([])
+    expect(await read(mcp, await request(run.door, mcp, 'client#2'), 'inbox/a.md')).toBe('inbox text')
   })
 })
 
@@ -219,7 +217,7 @@ describe('step 5a part B, the connect, in the joined core', () => {
   }
   const answerOf = async (door: Half, handle: string) => ((await ask(door, 'core.consentAnswer', { handle })).result as { answer: string }).answer
 
-  it('connects a new agent under a client id another agent holds a grant under, once, refuses a second, drops it with http and refuses a revoked label', async () => {
+  it('connects a new agent under a client id another agent holds a grant under, once, refuses a second, drops it with http and lets a revoked label reach nothing', async () => {
     const proof = await world({ agents: [{ agent: `${CLAUDE}#1`, capability: inbox }], revoked: [`${CLAUDE}#2`] })
     const run = await proof.start()
     const mcp = run.runtime.half('mcp')
@@ -256,15 +254,13 @@ describe('step 5a part B, the connect, in the joined core', () => {
     await expect(run.pluginsManager.confirm(id, {})).rejects.toMatchObject({ code: 'not-found' })
     expect(await answerOf(door, waiting)).toBe('gone')
 
-    // A connect for a revoked label is refused and a door call under it never reaches mcp
+    // A connect for a revoked label is refused and a call under a door call for it reaches nothing
     expect(outcome(await ask(door, 'core.consentAsk', asked(2)))).toBe('not-granted')
     expect(run.pluginsManager.pending()).toEqual([])
     const mcpThen = latest(run.runtime, 'mcp')
-    const before = mcpThen.inbox.length
-    expect(outcome(await ask(door, 'mcp.handle', { body: '{}' }, { onBehalf: `${CLAUDE}#2` }))).toBe('not-granted')
-    expect(mcpThen.inbox.slice(before).filter(message => message.kind === 'call')).toEqual([])
+    expect(await read(mcpThen, await request(door, mcpThen, `${CLAUDE}#2`), 'inbox/a.md')).toBe('not-granted')
 
-    // With the gate switched off a connect is raised and confirmed while the new agent's door call is refused before mcp
+    // With the gate switched off a connect is raised and confirmed and every call under the new agent's door call passes
     const off = await run.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trusted)
     if (!('held' in off)) throw new Error('the gate went off at once')
     await run.pluginsManager.confirm(off.held, { typed: 'gate' })
@@ -274,9 +270,7 @@ describe('step 5a part B, the connect, in the joined core', () => {
     await run.pluginsManager.confirm(run.pluginsManager.pending()[0]!.id, {})
     expect(await answerOf(now, five)).toBe('yes')
     const mcpNow = latest(run.runtime, 'mcp')
-    const seen = mcpNow.inbox.length
-    expect(outcome(await ask(now, 'mcp.handle', { body: '{}' }, { onBehalf: `${CLAUDE}#5` }))).toBe('policy-down')
-    expect(mcpNow.inbox.slice(seen).filter(message => message.kind === 'call')).toEqual([])
+    expect(await read(mcpNow, await request(now, mcpNow, `${CLAUDE}#5`), 'inbox/a.md')).toBe('inbox text')
   })
 })
 
