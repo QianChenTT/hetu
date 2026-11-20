@@ -11,13 +11,13 @@ import { type DecorationSet, type EditorView, keymap, ViewPlugin } from '@codemi
 export const hiddenText = Facet.define<(view: EditorView) => DecorationSet>()
 
 type Sets = readonly DecorationSet[]
-type Piece = { from: number, to: number, widget: boolean, group: string | undefined }
+type Piece = { from: number, to: number, widget: boolean, group: string | undefined, edge: string | undefined }
 
 function near(sets: Sets, from: number, to: number): Piece[] {
   const out: Piece[] = []
   for (const set of sets) {
     set.between(from, to, (start, end, value) => {
-      out.push({ from: start, to: end, widget: value.spec.widget !== undefined, group: value.spec.group as string | undefined })
+      out.push({ from: start, to: end, widget: value.spec.widget !== undefined, group: value.spec.group as string | undefined, edge: value.spec.edge as string | undefined })
     })
   }
   return out
@@ -137,6 +137,26 @@ export function remove(state: EditorState, sets: Sets, forward: boolean): Transa
   return { changes: span, selection: { anchor: span.from }, scrollIntoView: true, userEvent: forward ? 'delete.forward' : 'delete.backward' }
 }
 
+// Enter: the caret moved to where the line breaks without splitting an element from its hidden markers, after those
+// that close and before those that open, before them all when they start the line. A marker with no edge opens when it
+// follows a space. CodeMirror's own Enter then breaks the line there
+export function beforeBreak(state: EditorState, sets: Sets): TransactionSpec | null {
+  const range = state.selection.main
+  const spot = spotAt(sets, range.head)
+  if (!range.empty || spot.from === spot.to) return null
+  const line = state.doc.lineAt(spot.from)
+  let at = spot.from
+  if (line.from !== at) {
+    const opens = (piece: Piece) => piece.edge === 'open' || (piece.edge === undefined && piece.from === spot.from && /\s/.test(state.sliceDoc(at - 1, at)))
+    for (;;) {
+      const piece = near(sets, at, at).find(one => !one.widget && one.from === at && one.to > at)
+      if (piece === undefined || opens(piece)) break
+      at = piece.to
+    }
+  }
+  return at === range.head ? null : { selection: { anchor: at } }
+}
+
 // Ctrl+Backspace or Ctrl+Delete: CodeMirror's word from the spot's edge, less any hidden text inside it
 export function removeGroup(state: EditorState, sets: Sets, forward: boolean): TransactionSpec | null {
   if (!state.selection.main.empty) return remove(state, sets, forward)
@@ -196,7 +216,16 @@ const settler = ViewPlugin.define(view => {
   }
 })
 
+// Enter moves the caret and lets the next binding, markdown's or CodeMirror's, break the line where it now is
+function breakHere(view: EditorView): boolean {
+  if (view.composing) return false
+  const spec = beforeBreak(view.state, setsOf(view))
+  if (spec !== null) view.dispatch(spec)
+  return false
+}
+
 export const hiddenRules: Extension = [
+  Prec.highest(keymap.of([{ key: 'Enter', run: breakHere, shift: breakHere }])),
   Prec.high(keymap.of([
     { key: 'ArrowLeft', run: bound((state, sets) => move(state, sets, false, false)), shift: bound((state, sets) => move(state, sets, false, true)) },
     { key: 'ArrowRight', run: bound((state, sets) => move(state, sets, true, false)), shift: bound((state, sets) => move(state, sets, true, true)) },

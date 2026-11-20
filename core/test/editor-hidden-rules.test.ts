@@ -1,9 +1,10 @@
+import { insertNewlineAndIndent } from '@codemirror/commands'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
 import { pluginMarks, setMarks } from '../frontend/editor/editor.ts'
-import { move, remove, removeGroup, settle } from '../frontend/editor/hidden-rules.ts'
+import { beforeBreak, move, remove, removeGroup, settle } from '../frontend/editor/hidden-rules.ts'
 
 // x **bold** y, then ## Title: the bold markers at 2-4 and 8-10, the heading's marker at 13-16
 const bold = 'x **bold** y\n## Title'
@@ -167,5 +168,28 @@ describe('Backspace and Delete', () => {
     expect(word(8, false)).toBe('x **** y\n## Title')
     expect(word(11, false)).toBe('x **bold**y\n## Title')
     expect(word(2, true)).toBe('x **** y\n## Title')
+  })
+})
+
+describe('Enter', () => {
+  // The caret moved where the break goes, then CodeMirror's own Enter
+  function enter(state: EditorState): string {
+    const spec = beforeBreak(state, sets(state))
+    let out = spec === null ? state : state.update(spec).state
+    insertNewlineAndIndent({ state: out, dispatch: tr => { out = tr.state } })
+    return out.doc.toString()
+  }
+
+  it('breaks the line after a closing marker and before an opening one, never inside hidden text', () => {
+    expect(enter(note('x **bold**', boldMarks.slice(0, 3), 8))).toBe('x **bold**\n')
+    expect(enter(note(list, listMarks, 13))).toBe('**a** b\n- **c**\n')
+    expect(enter(note(bold, boldMarks, 2))).toBe('x \n**bold** y\n## Title')
+    expect(enter(note(bold, boldMarks, 16))).toBe('x **bold** y\n\n## Title')
+  })
+
+  it('takes a marker with no edge after a space as opening and any other as closing', () => {
+    const plain: Mark[] = [{ kind: 'hide', from: 2, to: 4 }, { kind: 'hide', from: 8, to: 10 }]
+    expect(enter(note('x **bold**', plain, 8))).toBe('x **bold**\n')
+    expect(enter(note('x **bold**', plain, 2))).toBe('x \n**bold**')
   })
 })
