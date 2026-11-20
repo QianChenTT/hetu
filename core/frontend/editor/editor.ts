@@ -60,7 +60,7 @@ function hullsOf(sets: ReadonlyMap<string, readonly Mark[]> | undefined): Map<st
   return hulls
 }
 
-// What an Alt+click at pos shows: each plugin's innermost group whose span holds pos, and the cursor put there. Null when
+// What an Alt+click at pos shows: each plugin's innermost group whose span holds pos and the cursor put there. Null when
 // pos is in no group, so the click goes on as a plain one
 export function revealClick(state: EditorState, pos: number): TransactionSpec | null {
   const shown: Shown[] = []
