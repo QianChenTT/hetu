@@ -107,3 +107,8 @@ export function checkedAnswer(table: ClassTable, answer: unknown): ClassAnswer |
   if (!owedAnswers.every(id => answered.has(id))) return null
   return { plugins: verdicts, lines: [...lines as string[]] }
 }
+
+// The grant risk classifier: handed the whole table at every class change, it answers for every plugin the change moves.
+// The core checks each answer. A throw or an answer the check refuses counts as the classifier down for that one
+// decision: the class not known and counted as the highest, every item asking
+export type GrantRiskClassifier = { classes(table: ClassTable): ClassAnswer }

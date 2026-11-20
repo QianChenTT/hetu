@@ -81,7 +81,7 @@
       "hash": "bbcb827062805cf9",
       "at": [
         "core/api/install.ts:51-56",
-        "core/backend/plugins-manager/plugins-manager.ts:196-197"
+        "core/backend/plugins-manager/plugins-manager.ts:169-170"
       ],
       "judged": "not yet"
     },
@@ -165,7 +165,7 @@
       "hash": "5d309f3c66d9cbdb",
       "at": [
         "core/backend/boot/state.ts:274-279",
-        "core/backend/plugins-manager/plugins-manager.ts:1979-1984"
+        "core/backend/plugins-manager/plugins-manager.ts:1810-1815"
       ],
       "judged": "not yet"
     },
@@ -177,7 +177,7 @@
       "hash": "70d4e08a14265d00",
       "at": [
         "core/backend/boot/state.ts:43-48",
-        "core/backend/plugins-manager/plugins-manager.ts:251-255"
+        "core/backend/plugins-manager/plugins-manager.ts:205-209"
       ],
       "judged": "not yet"
     },
@@ -260,8 +260,8 @@
       ],
       "hash": "beac8d99d4a56024",
       "at": [
-        "core/backend/modules/header.ts:4-8",
-        "core/backend/modules/modules.ts:5-9"
+        "core/backend/modules/header.ts:5-9",
+        "core/backend/modules/modules.ts:6-10"
       ],
       "judged": "not yet"
     },
@@ -282,22 +282,10 @@
         "core/backend/plugins-manager/plugins-manager.ts",
         "core/backend/plugins-manager/plugins-manager.ts"
       ],
-      "hash": "17dbea35030c637d",
-      "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1269-1276",
-        "core/backend/plugins-manager/plugins-manager.ts:2386-2393"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/backend/plugins-manager/plugins-manager.ts",
-        "core/backend/plugins-manager/plugins-manager.ts"
-      ],
       "hash": "250543b0714139e9",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1401-1408",
-        "core/backend/plugins-manager/plugins-manager.ts:1436-1440"
+        "core/backend/plugins-manager/plugins-manager.ts:1232-1239",
+        "core/backend/plugins-manager/plugins-manager.ts:1267-1271"
       ],
       "judged": "not yet"
     },
@@ -308,8 +296,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2183-2187",
-        "core/backend/plugins-manager/plugins-manager.ts:2542-2546"
+        "core/backend/plugins-manager/plugins-manager.ts:2014-2018",
+        "core/backend/plugins-manager/plugins-manager.ts:2373-2377"
       ],
       "judged": "not yet"
     },
@@ -320,8 +308,8 @@
       ],
       "hash": "7d4841ea4bba5f2a",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2220-2224",
-        "core/backend/plugins-manager/plugins-manager.ts:2408-2412"
+        "core/backend/plugins-manager/plugins-manager.ts:2051-2055",
+        "core/backend/plugins-manager/plugins-manager.ts:2239-2243"
       ],
       "judged": "not yet"
     },
@@ -332,8 +320,20 @@
       ],
       "hash": "91353fb6522643e5",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2183-2187",
-        "core/backend/plugins-manager/plugins-manager.ts:2450-2454"
+        "core/backend/plugins-manager/plugins-manager.ts:2014-2018",
+        "core/backend/plugins-manager/plugins-manager.ts:2281-2285"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/plugins-manager/plugins-manager.ts",
+        "core/backend/plugins-manager/plugins-manager.ts"
+      ],
+      "hash": "ac898c5d09136cd6",
+      "at": [
+        "core/backend/plugins-manager/plugins-manager.ts:1100-1107",
+        "core/backend/plugins-manager/plugins-manager.ts:2217-2224"
       ],
       "judged": "not yet"
     },
@@ -344,7 +344,7 @@
       ],
       "hash": "2d6bec0f2ae7db04",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1904-1909",
+        "core/backend/plugins-manager/plugins-manager.ts:1735-1740",
         "core/backend/plugins-manager/requests.ts:197-204"
       ],
       "judged": "not yet"

@@ -1,5 +1,6 @@
 import type { CoreModuleId } from '../../api/ids.ts'
-import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { GrantRiskClassifier } from '../../api/classes.ts'
+import type { ExecView, Gate, GrantsSnapshot, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Heartbeat, HeartbeatCore, HeartbeatModule } from '../heartbeat/header.ts'
 import type { SecurityView } from '../security-view/header.ts'

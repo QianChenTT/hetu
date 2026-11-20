@@ -23,10 +23,11 @@ import { API_VERSION } from '../../api/manifest.ts'
 import { frozen } from '../../api/plain.ts'
 import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type {
-  GrantRiskClassifier, ClassMove, ExecGrant, ExecView, Flow, GrantedItem, HumanLimits, Opening, PluginInfo, PluginState, PluginTable, PolicyJobState,
+  ExecGrant, ExecView, GrantedItem, HumanLimits, Opening, PluginInfo, PluginState, PluginTable, PolicyJobState,
   GrantsSnapshot,
 } from '../../api/policy-jobs.ts'
 import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
+import { checkedAnswer, highestClass, type ClassAnswer, type ClassCause, type ClassTable, type ClassVerdict } from '../../api/classes.ts'
 import { retried } from '../../lib/disk.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
@@ -140,46 +141,18 @@ type Known = {
 
 type Staged = { dir: string, read: Read }
 
-// A change to one plugin not applied yet: what that plugin would hold, null once it is gone
-type Pending = { readonly id: string, readonly granted: readonly Capability[] | null }
-
-// What moves a class, in three groups. Install: a first approval, a first-party copy at start, an update. Running: a
-// widen, a narrow, a restore, a remove, a reset, another plugin's change that moves this one, the grant risk classifier
-// switched on again. Stationary: the pass at start, which finds what changed while hetu was not running
-type Cause = ClassRaised['cause'] | 'moved'
-
-// The grant risk classifier policy job as classing reads it: on with its role ready, off once the human switched it off, down any
-// other way
+// The grant risk classifier as classing reads it: on with its module serving, off once the human switched it off, down
+// any other way
 type Classing = 'on' | 'off' | 'down'
 
-// One class change: the plugin, its entry before, null for a first approval, the entry the change leaves before it is
-// classed, null once the plugin goes, the cause, whether a Confirm for the change is on screen and the change to one
-// plugin whose state it is classed under
-type ClassChange = {
-  readonly id: string
-  readonly before: Plugin | null
-  readonly after: Plugin | null
-  readonly cause: Cause
-  readonly confirm: boolean
-  readonly pending?: Pending
-  // What a notice for this change says moved it: the cause of the change and the plugin it changed, null for a pass
-  readonly notice: { readonly cause: ClassRaised['cause'], readonly by: string | null }
-}
+// What a class change comes to for one plugin: the entry stored, null once the plugin goes, whether its class, first-use
+// list, confirmed record, mark or owed notice differ from the entry before and whether it rises and so is written before
+// the change that causes it
+type Decided = { readonly id: string, readonly entry: Plugin | null, readonly changed: boolean, readonly rises: boolean }
 
-// What a class change comes to: the entry stored, null once the plugin goes, whether its class, first-use list,
-// confirmed record or mark differ from the entry before, the move shown on the Confirm on screen, the move a notice of
-// its own names with no Confirm on screen, the items that start to ask, whether the entry rises and so is written before
-// the change that causes it and the policy job's state it was decided under
-type Decided = {
-  readonly id: string
-  readonly entry: Plugin | null
-  readonly changed: boolean
-  readonly move: ClassMove | null
-  readonly raised: ClassMove | null
-  readonly asks: readonly Capability[]
-  readonly rises: boolean
-  readonly policyJob: Classing
-}
+// A class change: the changed plugin, null in a pass, every other entry that comes out different, the lines its Confirm
+// shows and how the classifier stood for it
+type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly classing: Classing }
 
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
@@ -196,25 +169,6 @@ const osFiles = new Set(['.ds_store', 'thumbs.db', 'desktop.ini'])
 const isOne = (list: readonly string[], value: string) => list.includes(value)
 const isModule = (id: string): id is CoreModuleId => isOne(coreModuleIds, id)
 const refused = (reason: string): Status => ({ kind: 'refused', reason })
-
-const targetsOf = (granted: readonly Capability[]) => granted.flatMap(item => (item.type === 'plugin.call' ? item.targets : []))
-// The plugins whose topics a grant hears, each topic published as <id>.<name> by that plugin alone
-const publishersOf = (granted: readonly Capability[]) =>
-  granted.flatMap(item => (item.type === 'events.subscribe' ? item.topics.map(topic => topic.slice(0, topic.indexOf('.'))) : []))
-
-// Every plugin the links lead to from the plugins in start, followed in turn and never through the one asking
-function followed(links: ReadonlyMap<string, ReadonlySet<string>>, start: readonly string[], asking: string): Set<string> {
-  const seen = new Set<string>([asking])
-  const queue = start.flatMap(from => [...(links.get(from) ?? [])])
-  while (queue.length > 0) {
-    const other = queue.shift()!
-    if (seen.has(other)) continue
-    seen.add(other)
-    queue.push(...(links.get(other) ?? []))
-  }
-  seen.delete(asking)
-  return seen
-}
 
 // The human's item switches carried over to a new set of grants, a first-party copy's or a restore's. An item switched
 // off stays off. A new version can change an item's paths, so an item of a type the human switched one off in starts
@@ -606,7 +560,7 @@ ${capabilityKey(change.capability)}`)
       const asks = manifest.capabilities ?? []
       return [
         `Version ${manifest.version}`, ...(asks.length === 0 ? ['It asks for nothing'] : asks.map(granted => `It asks for: ${capabilityText(granted)}`)),
-        ...this.screen(change.plugin, asks), ...this.shown(this.changeOf('approve', change.plugin, this.approval(k), true)),
+        ...this.classes('approve', change.plugin, this.approval(k), true).lines,
       ]
     }
     if (change.kind === 'plugin.update') {
@@ -615,24 +569,24 @@ ${capabilityKey(change.capability)}`)
       const entry = this.known.get(change.plugin)?.entry
       if (read === undefined || to === undefined || entry === undefined || entry === null) return []
       const after: Plugin = { ...entry, version: to, contentHash: read.hash! }
-      return [`From ${entry.version} to ${to}`, ...this.screen(change.plugin, entry.granted), ...this.shown(this.changeOf('update', change.plugin, after, true))]
+      return [`From ${entry.version} to ${to}`, ...this.classes('update', change.plugin, after, true).lines]
     }
     if (change.kind === 'grant.widen') {
       const entry = this.known.get(change.plugin)?.entry
       if (entry === undefined || entry === null) return []
       const after: Plugin = { ...entry, granted: [...entry.granted, change.capability] }
-      return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('widen', change.plugin, after, true))]
+      return [...this.classes('widen', change.plugin, after, true).lines]
     }
     if (change.kind === 'plugin.restore') {
       const read = this.bundled.get(change.plugin)
       const listed = this.install?.plugins[change.plugin]
       if (read?.manifest === undefined || read.manifest === null || listed === undefined) return []
       const after = this.copied(change.plugin, read, listed, this.state.plugins[change.plugin]?.enabled ?? true, 'restore')
-      return [...this.screen(change.plugin, after.granted), ...this.shown(this.changeOf('restore', change.plugin, after, true))]
+      return [...this.classes('restore', change.plugin, after, true).lines]
     }
     if (change.kind === 'plugin.remove' || change.kind === 'plugin.reset') {
       const k = this.known.get(change.plugin)
-      return k?.from === 'folder' && k.entry !== null ? this.shown(this.changeOf(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true)) : []
+      return k?.from === 'folder' && k.entry !== null ? [...this.classes(change.kind === 'plugin.remove' ? 'remove' : 'reset', change.plugin, null, true).lines] : []
     }
     return []
   }
@@ -655,11 +609,6 @@ ${capabilityKey(change.capability)}`)
 
   // ---- classes
 
-  // The grant risk classifier while its module is on, null otherwise
-  private grantRiskClassifier(): GrantRiskClassifier | null {
-    return this.modules.grantRiskClassifier()
-  }
-
   // What a plugin holds: a plugin-folder plugin's entry, a core plugin's manifest
   private grantsOf(id: string): readonly Capability[] {
     const k = this.known.get(id)
@@ -667,168 +616,112 @@ ${capabilityKey(change.capability)}`)
     return this.state.plugins[id]?.granted ?? []
   }
 
-  // Every plugin the plugins manager knows and what each holds, id's own being granted, which may be a change not applied yet,
-  // and another plugin's as a pending change to it would leave it
-  private holders(id: string, granted: readonly Capability[], pending?: Pending) {
-    const gone = pending?.granted === null ? pending.id : null
-    const ids = [...new Set([
-      ...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id), id,
-      ...(pending === undefined ? [] : [pending.id]),
-    ])].filter(other => other === id || other !== gone)
-    const held = (other: string) => (other === id ? granted : other === pending?.id ? pending.granted ?? [] : this.grantsOf(other))
-    return { ids, held }
-  }
-
-  // Every plugin connected to id through plugin.call, either way round and followed in turn, with what each holds. A
-  // callee answers its caller, so data moves both ways along a call: a reader and a network plugin that share a callee
-  // can pass notes out through it
-  private connected(id: string, granted: readonly Capability[], pending?: Pending): { id: string, granted: readonly Capability[] }[] {
-    const { ids, held } = this.holders(id, granted, pending)
-    const links = new Map<string, Set<string>>(ids.map(other => [other, new Set<string>()]))
-    for (const from of ids) {
-      for (const to of targetsOf(held(from))) {
-        if (to === from) continue
-        if (!links.has(to)) links.set(to, new Set())
-        links.get(from)!.add(to)
-        links.get(to)!.add(from)
-      }
-    }
-    return [...followed(links, [id], id)].sort().map(other => ({ id: other, granted: held(other) }))
-  }
-
-  // Where data can move to and from id, for the pair rule: along plugin.call both ways, and along a subscription to
-  // another plugin's topics from the plugin that owns the topic to id, never back. Publishing needs no grant, so a
-  // plugin can signal every plugin that hears its topics by what and when it publishes, while a plugin that hears
-  // another passes it nothing. Two plugins hearing one topic share nothing through it
-  private flow(id: string, granted: readonly Capability[], pending?: Pending): Flow {
-    const { ids, held } = this.holders(id, granted, pending)
-    const out = new Map<string, Set<string>>()
-    const into = new Map<string, Set<string>>()
-    const link = (from: string, to: string) => {
-      if (from === to) return
-      if (!out.has(from)) out.set(from, new Set())
-      if (!into.has(to)) into.set(to, new Set())
-      out.get(from)!.add(to)
-      into.get(to)!.add(from)
-    }
-    for (const from of ids) {
-      for (const to of targetsOf(held(from))) {
-        link(from, to)
-        link(to, from)
-      }
-      for (const owner of publishersOf(held(from))) link(owner, from)
-    }
-    const peers = (others: Set<string>) => [...others].sort().map(other => ({ id: other, granted: held(other) }))
-    const heard = granted.flatMap(item => {
-      const owners = publishersOf([item]).filter(owner => owner !== id)
-      if (owners.length === 0) return []
-      const upstream = new Set([...owners, ...followed(into, owners, id)])
-      upstream.delete(id)
-      return [{ item, upstream: peers(upstream).flatMap(peer => [...peer.granted]) }]
-    })
-    return { upstream: peers(followed(into, [id], id)), downstream: peers(followed(out, [id], id)), heard }
-  }
-
-  private reachable(id: string, granted: readonly Capability[], pending?: Pending): Capability[] {
-    return this.connected(id, granted, pending).flatMap(other => [...other.granted])
-  }
-
-  // What a plugin's class rests on past its own grants: what it reaches through plugin.call and where data moves to and
-  // from it
-  private links(id: string, granted: readonly Capability[], pending?: Pending): string {
-    return JSON.stringify([this.reachable(id, granted, pending), this.flow(id, granted, pending)])
-  }
-
-  // The grant risk classifier policy job as classing reads it: on while its module is, off only once the human switched
-  // it off and down for anything else, a failed module included
+  // The grant risk classifier as classing reads it: on while its module serves, off only once the human switched it off
+  // and down for anything else, a failed module included
   private classing(): Classing {
     const state = this.policyJob('grant-risk-classifier')
     if (state === 'off') return 'off'
-    return this.grantRiskClassifier() !== null ? 'on' : 'down'
+    return this.modules.grantRiskClassifier() !== null ? 'on' : 'down'
   }
 
-  // The one function every class change goes through, whatever causes it. With the policy job on the policy classes the
-  // plugin under the state the change asks for and an item asks unless the entry records the human confirmed it. With
-  // the policy job switched off by the human the change passes: the class stays the last one classed, the entry is marked as
-  // not classed and lists every item not confirmed, which the gate is handed only once the policy job is on again. Down any
-  // other way, or a role that fails, the class is not known and every item asks. A pass over every entry leaves each as
-  // stored only with the policy job switched off. With the policy job on a move goes on the Confirm on screen. With none on screen it gets a
-  // notice of its own where the policy says it alerts. Which moves show and which alert is the policy's. A confirmed
-  // item stays confirmed while the plugin holds it, until an update of its code applies with no Confirm on screen
-  private decide(change: ClassChange): Decided {
-    const { id, before, after, cause, confirm, pending, notice } = change
-    let policyJob = this.classing()
-    if (after === null) return { id, entry: null, changed: before !== null, move: null, raised: null, asks: [], rises: false, policyJob }
+  // What the classifier is handed: every plugin the plugins manager knows with what it holds and what its entry stores,
+  // a core plugin with none, and the change to one plugin, copied so nothing the classifier does reaches the state
+  private classTable(cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean): ClassTable {
+    const ids = new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id)])
+    const plugins = [...ids].map(other => {
+      const entry = this.known.get(other)?.from === 'install' ? null : this.state.plugins[other] ?? null
+      const stored = entry === null ? null
+        : { class: entry.class, firstUse: entry.firstUse ?? [], unclassed: entry.unclassed === true, owed: entry.owed ?? null }
+      return { id: other, granted: this.grantsOf(other), stored }
+    })
+    return frozen(structuredClone({ cause, change: id === null ? null : { id, granted }, confirm, plugins }))
+  }
+
+  // The classifier's answer once the shape check takes it. Null with the classifier not serving, for a throw and for an
+  // answer the check refuses, each a fault
+  private askClasses(table: ClassTable): ClassAnswer | null {
+    const classifier = this.modules.grantRiskClassifier()
+    if (classifier === null) return null
+    let answer: unknown
+    try {
+      answer = classifier.classes(table)
+    } catch {}
+    const checked = checkedAnswer(table, answer)
+    if (checked === null) this.note('fault', { plugin: 'grant-risk-classifier', step: 'classify' })
+    return checked
+  }
+
+  // The one function every class change goes through, whatever causes it: a change to one plugin, which after is the
+  // entry it leaves before it is classed, null once the plugin goes, or with id null a pass over every entry. The
+  // classifier is handed the whole table and answers for every plugin the change moves. Without it the core can't tell
+  // which plugins a change moves, so with the classifier switched off by the human or down every entry comes out of the
+  // change as below. Switched off, a pass leaves each as stored and a change passes: the class the last one classed, the
+  // entry marked as not classed and every item not confirmed listed, which the gate is handed only once the classifier
+  // is on again. Down, a throw or an answer the check refuses, the class is not known and every item asks. Whether an
+  // entry rises is read here from the class numbers stored, never from the classifier
+  private classes(cause: ClassCause, id: string | null, after: Plugin | null, confirm: boolean): Classed {
+    let classing = this.classing()
+    if (id === null && classing === 'off') return { own: null, others: [], lines: [], classing }
+    const answer = classing === 'on' ? this.askClasses(this.classTable(cause, id, after?.granted ?? null, confirm)) : null
+    if (answer === null && classing === 'on') classing = 'down'
+    const verdicts = new Map(answer?.plugins.map(verdict => [verdict.id, verdict]))
+    const notice = { cause, by: id }
+    const decide = (other: string, before: Plugin | null, next: Plugin) =>
+      this.decided({ id: other, before, after: next, verdict: verdicts.get(other) ?? null, classing, confirm, notice,
+        fresh: other === id && cause === 'update' && !confirm })
+    const before = id === null ? null : this.state.plugins[id] ?? null
+    const own = id === null ? null : after === null ? { id, entry: null, changed: before !== null, rises: false } : decide(id, before, after)
+    const others: Decided[] = []
+    for (const [other, entry] of Object.entries(this.state.plugins)) {
+      if (other === id || this.known.get(other)?.from === 'install' || (answer !== null && !verdicts.has(other))) continue
+      const decided = decide(other, entry, entry)
+      if (decided.changed) others.push(decided)
+    }
+    const down = `The grant risk classifier is down, so the class is unknown and counted as ${highestClass}: every item asks at its first use`
+    const lines = answer !== null ? answer.lines : classing === 'down' && after !== null ? [down] : []
+    return { own, others, lines, classing }
+  }
+
+  // One plugin's entry as a class change leaves it, from the classifier's verdict or, with none, from the fallback the
+  // classifier's state names. A confirmed item stays confirmed while the plugin holds it, until new code applies with no
+  // Confirm on screen. Down, every item asks, confirmed ones too, and an entry stored with no Confirm on screen keeps the
+  // class it held as the class last shown in its mark, so a move up made while the class is not known is measured from it
+  // once the class is known again. An entry marked as not classed held no class the human was shown
+  private decided(change: {
+    id: string, before: Plugin | null, after: Plugin, verdict: ClassVerdict | null, classing: Classing, confirm: boolean,
+    notice: { cause: ClassCause, by: string | null }, fresh: boolean,
+  }): Decided {
+    const { id, before, after, verdict, classing, confirm, notice } = change
     const held = new Set(after.granted.map(capabilityKey))
-    // New code that applied with no Confirm on screen inherits no confirmation the old code was given
-    const carried = cause === 'update' && !confirm ? [] : before?.confirmed ?? []
-    const confirmed = carried.filter(item => held.has(capabilityKey(item)))
+    const confirmed = (change.fresh ? [] : before?.confirmed ?? []).filter(item => held.has(capabilityKey(item)))
     const known = new Set(confirmed.map(capabilityKey))
-    const classed = policyJob === 'on' ? this.classed(id, after.granted, pending) : null
-    if (classed === null && policyJob === 'on') policyJob = 'down'
-    if ((cause === 'start' || cause === 'slot-on') && this.policyJob('grant-risk-classifier') === 'off') return { id, entry: before, changed: false, move: null, raised: null, asks: [], rises: false, policyJob }
-    const n = classed !== null ? classed.class : policyJob === 'off' ? before?.class ?? null : null
-    const asking = classed !== null
-      ? classed.firstUse.filter(item => !known.has(capabilityKey(item)))
-      : after.granted.filter(item => policyJob === 'down' || !known.has(capabilityKey(item)))
+    const was = before?.owed
+    const forgets = classing === 'down' && !confirm && was === undefined && before !== null && before.class !== null && before.unclassed !== true
+    const n = verdict !== null ? verdict.class : classing === 'off' ? before?.class ?? null : null
+    const asking = verdict !== null ? verdict.firstUse.filter(item => !known.has(capabilityKey(item)))
+      : after.granted.filter(item => classing === 'down' || !known.has(capabilityKey(item)))
+    const owed = verdict !== null ? verdict.owed ?? undefined : forgets ? { from: before.class, cause: notice.cause, by: notice.by } : was
     const next: Plugin = { ...after, class: n }
     delete next.firstUse
     delete next.confirmed
     delete next.unclassed
-    if (asking.length > 0) next.firstUse = asking
-    if (confirmed.length > 0) next.confirmed = confirmed
-    if (policyJob === 'off' || (policyJob === 'down' && after.unclassed === true)) next.unclassed = true
-    const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
-    const asks = asking.filter(item => !listed.has(capabilityKey(item)))
-    // A plugin never classed, approved while the policy job was off or approved now, moves from a class not known. For its
-    // notice that class counts as 0, since nothing showed the human any class, or as the class last shown when its mark
-    // holds one. Everywhere else it counts as 4
-    const unknown = before === null ? cause === 'approve' : before.class === null && before.unclassed === true
-    const moving: ClassMove | null = policyJob === 'on' && (before !== null || unknown) && n !== (before?.class ?? null) ? { id, from: before?.class ?? null, to: n } : null
-    const raised = !confirm && moving !== null && this.alerts(unknown ? { ...moving, from: before?.owed?.from ?? 0 } : moving) ? moving : null
-    // A notice owed is kept until answered, from the class last shown. One no move alerts for any more is owed no longer.
-    // An entry stored strict with no Confirm on screen keeps the class it held in the mark as the class last shown, so a
-    // move up made while the class is not known is measured from it once the class is known again and a plugin back there
-    // owes nothing. An entry marked as not classed held no class the human was shown
-    const was = before?.owed
-    const forgets = policyJob === 'down' && !confirm && was === undefined && before !== null && before.class !== null && before.unclassed !== true
-    const owed = forgets ? { from: before.class, cause: notice.cause, by: notice.by }
-      : policyJob !== 'on' ? was
-      : raised !== null ? { from: was !== undefined ? was.from : raised.from, cause: notice.cause, by: notice.by }
-        : was !== undefined && n !== null && this.alerts({ id, from: was.from ?? 0, to: n }) ? was : undefined
     delete next.owed
+    if (asking.length > 0) next.firstUse = [...asking]
+    if (confirmed.length > 0) next.confirmed = confirmed
+    if (classing === 'off' || (classing === 'down' && after.unclassed === true)) next.unclassed = true
     if (owed !== undefined) next.owed = owed
+    const listed = new Set((before?.firstUse ?? []).map(capabilityKey))
+    const rank = (m: number | null | undefined) => m ?? highestClass
     const changed = before === null || n !== before.class || !sameItems(asking, before.firstUse) || !sameItems(confirmed, before.confirmed)
       || next.unclassed !== before.unclassed || JSON.stringify(owed) !== JSON.stringify(before.owed)
-    return {
-      id, entry: next, changed, asks, policyJob,
-      rises: asks.length > 0 || (next.unclassed === true && before?.unclassed !== true) || (n ?? 4) > (before?.class ?? 4),
-      move: confirm ? moving : null,
-      raised,
-    }
-  }
-
-  // Whether a move made with no Confirm on screen alerts, as the policy says, or for a policy job that doesn't say, whether it
-  // would show the move on a Confirm. A policy job that fails alerts
-  private alerts(move: ClassMove): boolean {
-    const policyJob = this.grantRiskClassifier()
-    if (policyJob === null) return false
-    try {
-      if (typeof policyJob.alerts === 'function') {
-        const answer = policyJob.alerts(move)
-        if (typeof answer === 'boolean') return answer
-      } else {
-        const lines = typeof policyJob.moves === 'function' ? policyJob.moves([move]) : []
-        if (Array.isArray(lines)) return lines.length > 0
-      }
-    } catch {}
-    this.note('fault', { plugin: 'grant-risk-classifier', step: 'alerts' })
-    return true
+    const rises = asking.some(item => !listed.has(capabilityKey(item))) || (next.unclassed === true && before?.unclassed !== true)
+      || rank(n) > rank(before?.class)
+    return { id, entry: next, changed, rises }
   }
 
   // The plugins a change decided for
-  private touched(change: { own: Decided, others: readonly Decided[] }): string[] {
-    return [change.own, ...change.others].map(decided => decided.id)
+  private touched(change: Classed): string[] {
+    return [...(change.own === null ? [] : [change.own]), ...change.others].map(decided => decided.id)
   }
 
   // A notice in the trusted window for each of these plugins whose entry owes one, from the class last shown to the one
@@ -864,22 +757,6 @@ ${capabilityKey(change.capability)}`)
     this.raiseOwed(Object.keys(this.state.plugins))
   }
 
-  // A change to one plugin as class changes: its own, then one for every other plugin-folder plugin whose links it
-  // moves and whose entry it changes, each decided under the state the change asks for
-  private changeOf(cause: ClassRaised['cause'], id: string, after: Plugin | null, confirm: boolean): { own: Decided, others: Decided[] } {
-    const pending: Pending = { id, granted: after?.granted ?? null }
-    const notice = { cause, by: id }
-    const own = this.decide({ id, before: this.state.plugins[id] ?? null, after, cause, confirm, pending, notice })
-    const others: Decided[] = []
-    for (const [other, entry] of Object.entries(this.state.plugins)) {
-      if (other === id || this.known.get(other)?.from === 'install') continue
-      if (this.links(other, entry.granted) === this.links(other, entry.granted, pending)) continue
-      const decided = this.decide({ id: other, before: entry, after: entry, cause: 'moved', confirm, pending, notice })
-      if (decided.changed) others.push(decided)
-    }
-    return { own, others }
-  }
-
   // An approval's entry before it is classed, from the one read the request was made on: its hash, version and the
   // manifest's grants
   private approval(k: Known): Plugin {
@@ -909,10 +786,9 @@ ${capabilityKey(change.capability)}`)
   // A move up there that alerts gets its notice
   private async classAll(cause: 'start' | 'slot-on'): Promise<void> {
     let changed = false
-    for (const [id, entry] of Object.entries(this.state.plugins)) {
-      if (this.known.get(id)?.from === 'install') continue
-      const decided = this.decide({ id, before: entry, after: entry, cause, confirm: false, notice: { cause, by: null } })
-      if (!decided.changed || decided.entry === null) continue
+    for (const decided of this.classes(cause, null, null, false).others) {
+      const { id } = decided
+      if (decided.entry === null) continue
       try {
         await this.store.writePlugin(id, decided.entry)
       } catch {
@@ -941,51 +817,6 @@ ${capabilityKey(change.capability)}`)
       }
       this.putEntry(other.id, other.entry)
     }
-  }
-
-  // The lines a request's Confirm shows for the classes its change moves, the changed plugin's own first, each as the
-  // policy job words it. A policy job without moves shows none
-  private shown(change: { own: Decided, others: readonly Decided[] }): string[] {
-    const moves = [change.own, ...change.others].flatMap(decided => (decided.move === null ? [] : [decided.move]))
-    const policyJob = this.grantRiskClassifier()
-    if (moves.length === 0 || policyJob === null || typeof policyJob.moves !== 'function') return []
-    try {
-      const lines = policyJob.moves(moves)
-      if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
-    } catch {}
-    this.note('fault', { plugin: 'grant-risk-classifier', step: 'moves' })
-    return []
-  }
-
-  // A plugin's class and the items that ask at first use, from the policy job. Null with the policy job down or a role that fails
-  private classed(id: string, granted: readonly Capability[], pending?: Pending): { class: number, firstUse: Capability[] } | null {
-    const policyJob = this.grantRiskClassifier()
-    if (policyJob === null) return null
-    try {
-      const reachable = this.reachable(id, granted, pending)
-      const flow = this.flow(id, granted, pending)
-      const n = policyJob.classify(granted, reachable, flow)
-      const asking = policyJob.firstUse(granted, reachable, flow)
-      if (Number.isInteger(n) && n >= 0 && n <= 4 && Array.isArray(asking)) return { class: n, firstUse: asking }
-    } catch {}
-    this.note('fault', { plugin: 'grant-risk-classifier', step: 'classify' })
-    return null
-  }
-
-  // The policy job's lines under the core's words, or with the policy job down what that means. Nothing with the policy job switched off
-  // by the human, who chose to see nothing about classes
-  private screen(id: string, granted: readonly Capability[]): string[] {
-    if (this.classing() === 'off') return []
-    const policyJob = this.grantRiskClassifier()
-    if (policyJob !== null) {
-      try {
-        const connected = this.connected(id, granted)
-        const lines = policyJob.screen({ granted, reachable: connected.flatMap(other => [...other.granted]), callers: connected, flow: this.flow(id, granted) })
-        if (Array.isArray(lines) && lines.every(line => typeof line === 'string')) return lines
-      } catch {}
-      this.note('fault', { plugin: 'grant-risk-classifier', step: 'screen' })
-    }
-    return ['The grant risk classifier is down, so the class is unknown and counted as 4: every item asks at its first use']
   }
 
   // What a window's banner shows, from the plugins manager's own states and the state it runs with
@@ -1266,8 +1097,8 @@ ${capabilityKey(change.capability)}`)
     }
     await swapIn(this.dataDir, id, dir)
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
-    const change = this.changeOf(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
-    const entry = this.withMarks(id, change.own.entry!)
+    const change = this.classes(cause, id, this.copied(id, read, listed, enabled, cause), confirm)
+    const entry = this.withMarks(id, change.own!.entry!)
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -2167,8 +1998,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (entry.off !== undefined) changed.off = entry.off.filter(item => capabilityKey(item) !== key)
     // Classed whole as any other entry is, since one item's ask rests on every item and every link: a widened read makes
     // the plugin's own network ask. A widen is asked for on a Confirm, a narrow applies at once
-    const change = this.changeOf(add ? 'widen' : 'narrow', id, changed, confirm)
-    const next = change.own.entry!
+    const change = this.classes(add ? 'widen' : 'narrow', id, changed, confirm)
+    const next = change.own!.entry!
     await this.settle(change.others, true)
     await this.store.writePlugin(id, next)
     this.putEntry(id, next)
@@ -2215,7 +2046,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         await this.writeSwitches({ ...this.state.switches, limits: { all: limits.all, plugins } })
       }
       if (k.from === 'folder' && k.entry !== null) {
-        const change = this.changeOf('reset', id, null, confirm)
+        const change = this.classes('reset', id, null, confirm)
         await this.settle(change.others, true)
         await this.setMarksAside(id)
         await this.store.removePlugin(id)
@@ -2383,8 +2214,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k === undefined || k.from !== 'folder' || k.entry !== null || this.status(k).kind !== 'found') {
       throw new Error(`nothing to approve for ${id}`)
     }
-    const change = this.changeOf('approve', id, this.approval(k), confirm)
-    const entry = this.withMarks(id, change.own.entry!)
+    const change = this.classes('approve', id, this.approval(k), confirm)
+    const entry = this.withMarks(id, change.own!.entry!)
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.putEntry(id, entry)
@@ -2400,7 +2231,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   private async remove(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
-    const change = this.changeOf('remove', id, null, confirm)
+    const change = this.classes('remove', id, null, confirm)
     await this.settle(change.others, true)
     if (isOne(firstPartyIds, id) && !isOne(this.state.switches.removed, id)) {
       await this.writeSwitches({ ...this.state.switches, removed: [...this.state.switches.removed, id] })
@@ -2500,8 +2331,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     const holds = new Set(k.entry.granted.map(capabilityKey))
     const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
     const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
-    const now = this.decide({ id, before: k.entry, after: k.entry, cause: 'update', confirm: false, notice: { cause: 'update', by: id } })
-    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.policyJob === 'on' && now.entry?.class === 0) {
+    const now = this.classes('update', id, k.entry, false)
+    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.classing === 'on' && now.own?.entry?.class === 0) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }
@@ -2531,8 +2362,8 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     await swapIn(this.dataDir, id, await stage(this.dataDir, id, read.files))
     const relative = path.relative(folders.staging(this.dataDir), staged.dir)
     if (relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)) await clear(staged.dir).catch(() => {})
-    const change = this.changeOf('update', id, { ...old, version: to, contentHash: read.hash! }, confirm)
-    const entry = change.own.entry!
+    const change = this.classes('update', id, { ...old, version: to, contentHash: read.hash! }, confirm)
+    const entry = change.own!.entry!
     await this.settle(change.others, true)
     await this.store.writePlugin(id, entry)
     this.state.plugins[id] = entry

@@ -1,6 +1,7 @@
 import { coreModuleIds, providers, type CoreModuleId } from '../../api/ids.ts'
 import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
-import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
+import type { GrantRiskClassifier } from '../../api/classes.ts'
+import type { Gate, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
 import type { SecurityView } from '../security-view/header.ts'

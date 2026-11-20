@@ -141,47 +141,6 @@ export type Gate = {
 // The class names, from 0 to 4. A class is read from what a plugin asks for and what it reaches, never from its author
 export const classNames = frozen(['Contained', 'Reader', 'Writer', 'Network', 'Powerful'] as const)
 
-// A plugin with what it holds
-export type Peer = { readonly id: string, readonly granted: readonly Capability[] }
-
-// Where data can move to and from a plugin, followed in turn: along plugin.call both ways, since a callee answers its
-// caller, and along a subscription from the plugin that owns the topic to the plugin that hears it, never back. Hearing
-// a plugin gives the listener none of its grants, so this feeds the pair rule alone. heard is each of the plugin's
-// subscriptions to another plugin's topics with what every plugin upstream through it holds. With no flow given the
-// links are plugin.call's alone, so upstream and downstream are both what plugin.call reaches
-export type Flow = {
-  readonly upstream: readonly Peer[]
-  readonly downstream: readonly Peer[]
-  readonly heard: readonly { readonly item: Capability, readonly upstream: readonly Capability[] }[]
-}
-
-// What the trusted window shows under the core's words is made from: what the plugin asks for, what it reaches through
-// plugin.call followed in turn, every plugin connected to it that way with what each holds and where data moves to and
-// from it. Which of those read is policy
-export type ScreenSubject = {
-  readonly granted: readonly Capability[]
-  readonly reachable: readonly Capability[]
-  readonly callers: readonly Peer[]
-  readonly flow?: Flow
-}
-
-// A plugin whose class a change moves, the changed plugin or another whose links it moves: the class its entry holds
-// and the one the change gives it, null for a class not known
-export type ClassMove = { readonly id: string, readonly from: number | null, readonly to: number | null }
-
-// The grant risk classifier policy job. A plugin's class from 0 to 4, the items that ask at first use and the screen. The plugins manager asks
-// it at every class change, the changed plugin's and every other plugin's whose links the change moves. A throw counts
-// as the policy job down, which leaves a class null, counted as 4. moves gives the lines a request's Confirm shows for the
-// classes the change moves, which a policy job without it shows none of. alerts says whether a move made with no Confirm on
-// screen raises a notice of its own, which a policy job without it decides by whether moves shows the move
-export type GrantRiskClassifier = {
-  classify(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): number
-  firstUse(granted: readonly Capability[], reachable: readonly Capability[], flow?: Flow): Capability[]
-  screen(subject: ScreenSubject): string[]
-  moves?(moves: readonly ClassMove[]): string[]
-  alerts?(move: ClassMove): boolean
-}
-
 // How the plugins manager clears a space through storage, so the clear runs after every call already queued on the
 // space and nothing a stopped plugin queued lands after it
 export type StorageRole = { clear(kind: 'storage' | 'cache', space: string): Promise<void> }
