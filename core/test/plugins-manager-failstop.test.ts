@@ -503,6 +503,30 @@ describe('the fail-safe at start', () => {
       expect(again.pluginsManager.stopped()).toMatchObject({ control: 'gate', reason: START_HUNG })
     })
 
+    // A second hang leaves a new marker, so Try again can't loop the fail-safe for good
+    it.each([
+      ['on the stopped screen', false],
+      ['in the native box', true],
+    ])('clears the marker through Try again %s, so the next launch starts as usual', async (_where, box) => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), switches: box ? { off: ['security-view'] } : {}, before: marked('gate') })
+      await made.pluginsManager.start()
+      const mode = made.pluginsManager.stopped()!
+      expect(mode).toMatchObject({ control: 'gate', reason: START_HUNG })
+      const ending = new Ending()
+      if (box) {
+        afterFailure({ action: 'stopped', mode, box }, {
+          quitting: () => false, announce: () => {}, quit: () => {},
+          ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, packaged: false, env: {}, later: () => {},
+        })
+      } else ending.relaunch()
+      await made.pluginsManager.shutdown()
+      await ending.leave(made.pluginsManager)
+      const third = await harness({ base, switches: box ? { off: ['security-view'] } : {} })
+      await third.pluginsManager.start()
+      expect(third.pluginsManager.stopped()).toBe(null)
+    })
+
     it('holds nothing back for a marker naming no control the fail-safe covers', async () => {
       const made = await harness({ ...plugins(), before: marked('storage') })
       await made.pluginsManager.start()

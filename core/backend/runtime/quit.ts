@@ -58,7 +58,8 @@ export function relaunch(app: { relaunch(): void, quit(): void }): void {
 
 // How a run ends, which decides the restart marker. Only a clean Quit clears it: a quit after a failure keeps it and so
 // does one that starts hetu again, Try again on the stopped screen or in the native box and Restart hetu. A change
-// applied in the stopped mode clears it on its own
+// applied in the stopped mode clears it on its own. Try again and Restart hetu clear the start markers instead, so a
+// control whose start hung starts as usual at the next launch
 export class Ending {
   private failed = false
   private again = false
@@ -78,8 +79,9 @@ export class Ending {
     return !this.failed
   }
 
-  async leave(pluginsManager: { cleanQuit(): Promise<void> } | null): Promise<void> {
-    if (!this.failed && !this.again) await pluginsManager?.cleanQuit()
+  async leave(pluginsManager: { cleanQuit(): Promise<void>, triedAgain?(): Promise<void> } | null): Promise<void> {
+    if (this.again) await pluginsManager?.triedAgain?.()
+    else if (!this.failed) await pluginsManager?.cleanQuit()
   }
 }
 
