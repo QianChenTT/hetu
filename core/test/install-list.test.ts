@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { FIRST_PARTY_SIGNER, installList, isNewer, MAX_INSTALL_LIST_BYTES, pluginVersion } from '../api/install.ts'
 import { bindFailures, dependencyReason, depsMessage, init, reason, ready, stop, stopped, stopReasons } from '../api/lifecycle.ts'
@@ -87,7 +87,8 @@ describe('the lifecycle messages', () => {
 
   // Each reason a crash, a kill, a missed beat or a failed bind leaves is the lastStop a restarted half's init carries
   it('holds every reason the plugins manager ends a plugin with, read from the plugins manager\'s own source', () => {
-    const source = readFileSync(new URL('../backend/plugins-manager/plugins-manager.ts', import.meta.url), 'utf8')
+    const folder = new URL('../backend/plugins-manager/', import.meta.url)
+    const source = readdirSync(folder).filter(name => name.endsWith('.ts')).map(name => readFileSync(new URL(name, folder), 'utf8')).join('\n')
     const quoted = (text: string) => [...text.matchAll(/'([a-z-]+)'/g)].map(match => match[1])
     const given = [...source.matchAll(/this\.die\(([^)]*)\)/g)].flatMap(match => quoted(match[1]))
     // A crash's reason comes in through crashed and a failed bind's through core.bindFailed

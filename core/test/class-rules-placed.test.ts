@@ -44,9 +44,9 @@ const capabilityType = new RegExp(`\\b(type|capability)\\s*(===|!==|:)\\s*'(${ca
 
 // The places a capability type is named outside the policies, each with why. None of them classes a plugin
 const typesAllowed: readonly { place: string, text: string, why: string }[] = [
-  { place: 'backend/plugins-manager/plugins-manager.ts', text: "item.type === 'plugin.call' ? item.targets", why: 'a plugin\'s plugin.call targets are dependencies its lifecycle waits on' },
-  { place: 'backend/plugins-manager/plugins-manager.ts', text: "capability.type === 'plugin.call' && capability.targets", why: 'an agent\'s ask names only plugins hetu knows as targets' },
-  { place: 'backend/plugins-manager/plugins-manager.ts', text: "capability.type === 'exec' && !off", why: 'exec is handed each plugin\'s own exec items to check a command against' },
+  { place: 'backend/plugins-manager/lifecycle.ts', text: "item.type === 'plugin.call' ? item.targets", why: 'a plugin\'s plugin.call targets are dependencies its lifecycle waits on' },
+  { place: 'backend/plugins-manager/agents.ts', text: "capability.type === 'plugin.call' && capability.targets", why: 'an agent\'s ask names only plugins hetu knows as targets' },
+  { place: 'backend/plugins-manager/changes.ts', text: "capability.type === 'exec' && !off", why: 'exec is handed each plugin\'s own exec items to check a command against' },
   { place: 'backend/router/shape.ts', text: "capability: 'plugin.call'", why: 'a plugin call is judged under plugin.call' },
 ]
 
