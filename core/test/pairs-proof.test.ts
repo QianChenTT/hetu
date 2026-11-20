@@ -127,7 +127,7 @@ describe('a pair\'s items in the joined core', () => {
     let run = await proof.start()
     let mcp = run.runtime.half('mcp')
 
-    // alpha#1 asks for luoshu.read on inbox/**. The pair is the client's, the field up to its first #, and the trusted
+    // alpha#1 asks for luoshu.read on inbox/**. The pair is the client's, the field up to its first # and the trusted
     // window shows it and the scope in quotes
     const one = await request(run.door, mcp, 'alpha#1')
     expect(await read(mcp, one, 'inbox/a.md')).toBe('not-granted')
