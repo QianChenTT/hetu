@@ -1,7 +1,7 @@
 // The trusted window's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
 // function that draws a screen as text. Every word on it is the core's or this file's, a plugin's only as an id or a
 // quoted scope
-import type { HeldRequest, ListedAgent, ListedPlugin, SecurityList, StoppedMode } from '../../api/actions.ts'
+import { stoppedCause, type HeldRequest, type ListedAgent, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
@@ -81,7 +81,7 @@ function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
 // which only its installer puts back
 function stoppedScreen(mode: StoppedMode): Screen['stopped'] {
   const log = mode.control === 'log'
-  const lines = [log ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out']
+  const lines = [stoppedCause(mode)]
   if (mode.again) lines.push('hetu already started again once after a failure, so it didn’t start again on its own')
   lines.push(log
     ? 'Free space or fix the data folder’s permissions, or stop recording to start without the log'

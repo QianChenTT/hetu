@@ -1,3 +1,6 @@
+import { stoppedCause, type StoppedMode } from '../../api/actions.ts'
+import type { Failure } from './header.ts'
+
 // What Quit needs from the joined core and from boot
 export type QuitParts = {
   pluginsManager: { shutdown(): Promise<void> }
@@ -64,19 +67,37 @@ export type FailureParts = {
   announce(): void
   quit(code: number, again: boolean): void
   showTrusted(): void
+  // The native box naming why hetu stopped, with quit only. It returns once the human closed it
+  showBox(mode: StoppedMode): void
   closeEditors(): void
   packaged: boolean
   env: Record<string, string | undefined>
   later(run: () => void, ms: number): void
 }
 
+// The native box for the stopped mode while the security view is off: the cause, and what to fix before hetu starts again
+export function stoppedBox(mode: StoppedMode): { title: string, message: string, detail: string } {
+  const fix = mode.control === 'log' ? 'Free space or fix the data folder’s permissions, then start hetu' : 'Repair hetu with its installer'
+  return {
+    title: 'hetu stopped',
+    message: stoppedCause(mode),
+    detail: `The security view is off, so the choices that would start hetu again can’t be made. ${fix}`,
+  }
+}
+
 // A control that failed while hetu ran: windows hear core.quitting, then after the grace hetu quits with exit code 1
 // and starts again, unless HETU_NO_RELAUNCH says not to. Once the plugins manager stopped in the stopped mode instead, only the
 // trusted window stays
 export function afterFailure(
-  failure: { action: 'relaunch', control: string, reason: string } | { action: 'stopped', mode: unknown },
+  failure: Failure,
   parts: FailureParts,
 ): void {
+  if (failure.action === 'stopped' && failure.box) {
+    parts.closeEditors()
+    parts.showBox(failure.mode)
+    parts.quit(1, false)
+    return
+  }
   if (failure.action === 'stopped') {
     parts.showTrusted()
     parts.closeEditors()

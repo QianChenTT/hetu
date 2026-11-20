@@ -1,8 +1,15 @@
+import type { StoppedMode } from '../../api/actions.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
 import type { Port } from '../carrier/header.ts'
 
 // What the runtime provides, the only part that touches Electron. The plugins manager starts and ends plugins through it
 // and its tests fake it
+
+// What the runtime does about the log failing while hetu ran: quit and start again, or show the stopped mode, in the
+// native box with quit only where box says so, since the security view that would hold its choices is off
+export type Failure =
+  | { action: 'relaunch', control: string, reason: string }
+  | { action: 'stopped', mode: StoppedMode, box: boolean }
 
 // drawer says the plugin holds a ui item, so the runtime gives its worker a port to each editor page as well
 // files and frames come only with drawer: the bytes the plugins manager checked, which serve the plugin's frames and icons

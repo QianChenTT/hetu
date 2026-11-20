@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
-import type { Failure } from '../backend/plugins-manager/plugins-manager.ts'
+import type { Failure } from '../backend/runtime/header.ts'
 import {
   allowAll, cleanup, coreInstall, entryFor, fakeExec, fakeHistory, fakeLuoshu, filesFor, harness, hostManifest, reasonOf, stateOf, until,
   workerManifest, type Files,

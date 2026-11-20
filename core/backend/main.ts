@@ -7,14 +7,15 @@ import type { Carrier } from './carrier/carrier.ts'
 import { pacedLimit } from './flood-control/flood-control.ts'
 import type { CoreModules } from './modules/header.ts'
 import type { Recording } from './recording/header.ts'
-import type { Failure, PluginsManager } from './plugins-manager/plugins-manager.ts'
+import type { PluginsManager } from './plugins-manager/plugins-manager.ts'
+import type { Failure } from './runtime/header.ts'
 import { beforeReady, installDirFor } from './runtime/before-ready.ts'
 import { LOCKED, PACKAGED } from './runtime/packaged.ts'
 import { DrawerPorts, withDrawers } from './runtime/drawer-ports.ts'
 import { electronRuntime } from './runtime/electron.ts'
 import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
-import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, type QuitParts } from './runtime/quit.ts'
+import { afterFailure, DRAFT_GRACE_MS, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
@@ -180,6 +181,8 @@ async function start(): Promise<void> {
         app.quit()
       },
       showTrusted: () => trusted.show(),
+      // Modal, so the quit follows once the human closed it
+      showBox: mode => void dialog.showMessageBoxSync({ type: 'error', buttons: ['Quit'], defaultId: 0, ...stoppedBox(mode) }),
       closeEditors,
       packaged: LOCKED,
       env: process.env,
@@ -276,7 +279,7 @@ async function start(): Promise<void> {
     app.on('second-instance', () => {
       if (quitting !== null) return
       if (wired.pluginsManager.stopped() !== null) {
-        trusted.show()
+        if (!wired.pluginsManager.stoppedBox()) trusted.show()
         return
       }
       if (editor === null || editor.isDestroyed()) {
@@ -291,8 +294,9 @@ async function start(): Promise<void> {
     freezeIntrinsics()
     await wired.pluginsManager.start()
     if (quitting !== null) return
-    // The install list didn't check out: only the trusted window opens
-    if (wired.pluginsManager.stopped() !== null) trusted.show()
+    // The install list didn't check out: only the trusted window opens, or the native box with the security view off
+    const stopped = wired.pluginsManager.stopped()
+    if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
     else editor = show(editorWindow())
   } catch (err) {
     tell(err)

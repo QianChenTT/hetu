@@ -19,9 +19,9 @@ import { createExec } from './providers/exec/exec.ts'
 import { createHistory } from './providers/history/history.ts'
 import { createLuoshu } from './providers/luoshu/luoshu.ts'
 import { createStorage } from './providers/storage/store.ts'
-import { PluginsManager, type Failure } from './plugins-manager/plugins-manager.ts'
+import { PluginsManager } from './plugins-manager/plugins-manager.ts'
 import type { CarrierLink } from './plugins-manager/header.ts'
-import type { Runtime } from './runtime/header.ts'
+import type { Failure, Runtime } from './runtime/header.ts'
 
 export type WireOptions = {
   booted: Booted

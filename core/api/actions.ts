@@ -340,7 +340,12 @@ export type PendingRequest = { id: string, kind: ChangeKind, plugin: string | nu
 // Why hetu stopped: the install list didn't check out at start or the event log failed while hetu ran, with the
 // lifecycle reason. again says the run before already restarted hetu after a failure, so it didn't restart a second
 // time
-export type StoppedMode = { control: string, why: 'tampered' | 'absent' | 'failed', reason: string | null, again: boolean }
+export type StoppedMode = { control: string, why: 'tampered' | 'failed', reason: string | null, again: boolean }
+
+// The words that name why hetu stopped, the same in the trusted window and in the native box
+export function stoppedCause(mode: StoppedMode): string {
+  return mode.control === 'log' ? 'hetu stopped: the event log can’t write' : 'hetu stopped: its install list doesn’t check out'
+}
 
 // One plugin as the trusted window's plugin list shows it: where its code came from (the core's own modules, the install
 // or the plugin folder) and where it runs (in the core, in main, in a utility process, in a sandboxed worker or in the

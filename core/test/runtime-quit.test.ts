@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { afterFailure, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, type FailureParts } from '../backend/runtime/quit.ts'
+import { afterFailure, QUIT_GRACE_MS, quitInOrder, relaunch, relaunches, stoppedBox, type FailureParts } from '../backend/runtime/quit.ts'
 
 const never = () => new Promise<void>(() => {})
 const later = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
@@ -108,6 +108,7 @@ describe('after a failure', () => {
       announce: () => { did.push('announce') },
       quit: (code, again) => { did.push(`quit ${code} ${again}`) },
       showTrusted: () => { did.push('trusted') },
+      showBox: mode => { did.push(`box ${mode.control}`) },
       closeEditors: () => { did.push('close editors') },
       packaged: false,
       env: {},
@@ -141,8 +142,24 @@ describe('after a failure', () => {
 
   it('opens the trusted window and closes the editors in the stopped mode, and quits nothing', () => {
     const { made, did, timers } = parts()
-    afterFailure({ action: 'stopped', mode: { control: 'gate', why: 'failed', reason: 'state-changed', again: true } }, made)
+    afterFailure({ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: false }, made)
     expect(did).toEqual(['trusted', 'close editors'])
     expect(timers).toEqual([])
+  })
+
+  it('shows the native box with quit only when the plugins manager says so, then quits with exit code 1 and starts nothing again', () => {
+    const { made, did, timers } = parts()
+    afterFailure({ action: 'stopped', mode: { control: 'log', why: 'failed', reason: 'log-failing', again: true }, box: true }, made)
+    expect(did).toEqual(['close editors', 'box log', 'quit 1 false'])
+    expect(timers).toEqual([])
+  })
+
+  it('names the cause in the box\'s words', () => {
+    expect(stoppedBox({ control: 'log', why: 'failed', reason: 'log-failing', again: false })).toEqual({
+      title: 'hetu stopped',
+      message: 'hetu stopped: the event log can’t write',
+      detail: 'The security view is off, so the choices that would start hetu again can’t be made. Free space or fix the data folder’s permissions, then start hetu',
+    })
+    expect(stoppedBox({ control: 'install', why: 'tampered', reason: null, again: false }).message).toBe('hetu stopped: its install list doesn’t check out')
   })
 })

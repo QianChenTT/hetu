@@ -39,7 +39,7 @@ import { plan, type Node, type Plan, type Status, type Verdict } from './graph.t
 import { Connects, type ConnectAsked } from './connects.ts'
 import { cleared, handedBack, heardOut, marksOf, revoked, revokedAside, setAside } from './marks.ts'
 import type { Beating } from '../heartbeat/header.ts'
-import type { Runtime } from '../runtime/header.ts'
+import type { Failure, Runtime } from '../runtime/header.ts'
 import type { CarrierLink, PluginsRecording } from './header.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, unread, type Read } from './verify.ts'
@@ -78,11 +78,6 @@ export type PluginsManagerOptions = {
   // waits. performance.now unless a test names another
   clock?: () => number
 }
-
-// What the runtime does about the log failing while hetu ran
-export type Failure =
-  | { action: 'relaunch', control: string, reason: string }
-  | { action: 'stopped', mode: StoppedMode }
 
 // What an update staged beside the old version came to
 export type UpdateOutcome =
@@ -1075,9 +1070,13 @@ ${capabilityKey(change.capability)}`)
     if (!this.closing) this.note('core.ready', Object.fromEntries(policyJobIds.map(id => [id, this.policyJob(id)])))
   }
 
-  // The stopped mode hetu is in, null while it runs
+  // The stopped mode hetu is in, null while it runs, and whether the native box shows it with quit only, since the
+  // security view that holds its choices is off
   stopped(): StoppedMode | null {
     return this.stoppedMode
+  }
+  stoppedBox(): boolean {
+    return this.modules.securityView() === null
   }
 
   // The stopped mode: every plugin stops and none starts, then the core modules close in the reverse of their start, the
@@ -1093,18 +1092,18 @@ ${capabilityKey(change.capability)}`)
     this.replan()
   }
 
-  // The core's log failed while hetu ran. The first time, the restart marker goes down and the runtime quits with an
+  // The core's log failed while hetu ran, the one failure that stops hetu. The first time, the restart marker goes down and the runtime quits with an
   // error to start hetu again. When the run before already restarted for a failure, hetu stops in the stopped mode
   // instead, so a log failing again and again can't restart it forever. A marker that can't be written stops it too,
   // since nothing would then bound the restarts. One failure is enough, the ones after it change nothing. Answers
   // whether it took the failure, so a failure told while hetu starts or stops can be told again
-  controlFailed(control: string, reason: string): boolean {
+  controlFailed(control: 'log', reason: 'log-failing'): boolean {
     if (this.closing || this.phase !== 'all' || this.failing) return false
     this.failing = true
     this.note('core.failed', { control, reason })
     const stop = (again: boolean) => {
       const mode: StoppedMode = { control, why: 'failed', reason, again }
-      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode }))
+      void this.enterStopped(mode).finally(() => this.tell({ action: 'stopped', mode, box: this.stoppedBox() }))
     }
     if (this.failedBefore !== null) {
       stop(true)
