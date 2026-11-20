@@ -47,7 +47,8 @@ export const MAX_CALL_TOPICS = 64
 // The topics the core sends, to windows only and never with a path: core.status says to read core.status again,
 // core.security that a security change was applied and core.quitting that hetu ends after a short grace, so a window can
 // keep a draft
-export const coreTopics = frozen(['core.status', 'core.security', 'core.quitting'] as const)
+export const coreTopic = frozen({ status: 'core.status', security: 'core.security', quitting: 'core.quitting' } as const)
+export const coreTopics = frozen(Object.values(coreTopic))
 export type CoreTopic = typeof coreTopics[number]
 
 // A topic a subscriber names: one the core sends or a plugin's <id>.<name>. The core's other namespaces carry no
@@ -73,7 +74,9 @@ export type AgentRefusal = typeof agentRefusals[number]
 export const MAX_REFUSAL_COUNT = 1_000_000
 // The most labels one core.agents call names in each list
 export const MAX_AGENTS_ASKED = 64
-export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
+// reads: the trusted window may send it inside its input delay, since it only reads. Anything else the trusted window
+// sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on
+export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
 // leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
@@ -122,19 +125,20 @@ const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-
 
 const coreTable = {
   // The caller as its way in names it
-  'core.self': { from: 'any', args: nothing },
+  'core.self': { from: 'any', args: nothing, reads: true },
   // Only for a live call delivered to the caller on the same way in. Gives back the paths both the caller and the
   // call's own caller may read
   'gate.filterReadable': {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
+    reads: true,
   },
   // What a window's banner shows, read again whenever core.status is sent
-  'core.status': { from: 'windows', args: nothing },
+  'core.status': { from: 'windows', args: nothing, reads: true },
   // The event log the core writes: each file's chain as history reads it and whether the open file checks out. A
   // window only, until the first-party shipper, which log.read is kept for
-  'log.segments': { from: 'windows', args: nothing },
-  'log.verify': { from: 'windows', args: nothing },
+  'log.segments': { from: 'windows', args: nothing, reads: true },
+  'log.verify': { from: 'windows', args: nothing, reads: true },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
   // attention, which the core checks where the change asks for it
@@ -144,7 +148,7 @@ const coreTable = {
   // human's click on a core control sends it, a notice's included
   'app.openSecurity': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
   // What the trusted window draws: the plugin list, the switches, the requests waiting and the stopped mode
-  'security.list': { from: 'trusted', args: nothing },
+  'security.list': { from: 'trusted', args: nothing, reads: true },
   // The human's stop of a sandboxed plugin, from the plugin list only. A restart widens nothing, so any window may
   'core.stop': { from: 'trusted', args: target },
   'core.restart': { from: 'windows', args: target },
@@ -155,7 +159,7 @@ const coreTable = {
   'app.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
   // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
-  'gate.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
+  'gate.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }), reads: true },
   // Each plugin's declared views and theme with whether it runs, which the drawer reads again on core.status and
   // core.security
   'core.views': { from: 'windows', args: nothing },
@@ -200,13 +204,14 @@ export const coreActions = lookup<CoreAction>(coreTable)
 
 // The bus's actions, which the carrier serves itself. The floor decides who may name which topic and the gate judges a
 // subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
-// caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call
-export type EventAction = { readonly args: z.ZodType }
+// caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call.
+// does is what the bus does with it
+export type EventAction = { readonly args: z.ZodType, readonly does: 'subscribe' | 'unsubscribe' | 'publish' }
 
 const eventTable = {
-  'events.subscribe': { args: topics },
-  'events.unsubscribe': { args: topics },
-  'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }) },
+  'events.subscribe': { args: topics, does: 'subscribe' },
+  'events.unsubscribe': { args: topics, does: 'unsubscribe' },
+  'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }), does: 'publish' },
 } satisfies Record<string, EventAction>
 export const eventActions = lookup<EventAction>(eventTable)
 

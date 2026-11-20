@@ -398,7 +398,7 @@ ${capabilityKey(change.capability)}`)
       inUse: label => this.labelHeld(label),
     })
     // Handed to the carrier through its door, which calls them and never names the plugins manager
-    for (const namespace of ['core', 'security']) this.link.serve(namespace, this.serve)
+    this.link.serve('plugins-manager', this.serve)
     this.link.asks(this.asks)
     this.link.onWayClosed((caller, reason) => this.crashed(caller, reason))
     this.link.onHeard((caller, kind) => this.heard(caller, kind))

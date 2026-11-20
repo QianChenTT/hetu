@@ -1,6 +1,6 @@
-import { coreActions, ends, eventActions, providerActions } from '../../api/actions.ts'
+import { coreActions, coreTopics, ends, eventActions, providerActions, type EventAction } from '../../api/actions.ts'
 import { agentLabel, callEnvelope, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
-import { coreNamespaces, providers as providerIds, qualifiedName } from '../../api/ids.ts'
+import { qualifiedName, serverOf } from '../../api/ids.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import { agentDoor, agentHost, agentOwn } from '../../api/policy-jobs.ts'
 import { no, isOne, field, namespaceOf, type Context, type Way, type Target, type Kind, type No, type Shaped } from './context.ts'
@@ -41,32 +41,12 @@ export function shape(c: Context, way: Way, message: unknown): Shaped {
   if (way.made.has(id)) return refuse('invalid')
 
   const dot = action.indexOf('.')
-  const namespace = action.slice(0, dot)
-  let target: Target
-  let args = parsed.data.args
-  if (namespace === 'events') {
-    const spec = eventActions[action]
-    const checked = spec?.args.safeParse(args)
-    if (spec === undefined || !checked?.success) return refuse('invalid')
-    target = { kind: 'events', action }
-    args = checked.data
-  } else if (namespace === 'ui') {
-    target = { kind: 'served', namespace }
-  } else if (isOne(coreNamespaces, namespace)) {
-    const spec = coreActions[action]
-    const checked = spec?.args.safeParse(args)
-    if (spec === undefined || !checked?.success) return refuse('invalid')
-    target = { kind: 'core', spec }
-    args = checked.data
-  } else if (providerIds[namespace as keyof typeof providerIds] !== undefined) {
-    const spec = providerActions[action]
-    const checked = spec?.args.safeParse(args)
-    if (spec === undefined || !checked?.success) return refuse('invalid')
-    target = { kind: 'provider', provider: providerIds[namespace as keyof typeof providerIds], spec }
-    args = checked.data
-  } else {
-    target = { kind: 'plugin', target: namespace, name: action.slice(dot + 1) }
-  }
+  const target = targetOf(serverOf(action.slice(0, dot)), action, dot)
+  if (target === null) return refuse('invalid')
+  // The contract's schema for an action of the core, a plugin's and a served part's arguments opaque
+  const schema = target.kind === 'action' || target.kind === 'bus' || target.kind === 'provider' ? target.spec.args.safeParse(parsed.data.args) : null
+  if (schema !== null && !schema.success) return refuse('invalid')
+  const args = schema !== null ? schema.data : parsed.data.args
 
   if (parentId !== undefined) {
     if (parent === null || parsed.data.onBehalf !== undefined) return refuse('invalid')
@@ -82,6 +62,23 @@ export function shape(c: Context, way: Way, message: unknown): Shaped {
   // A label the human revoked is refused at the door with no word from mcp-http-handler, so a revoke holds while mcp-http-handler's token lives
   if (door && c.revoked(onBehalf as string)) return refuse('not-granted')
   return { ok: true, id, action, onBehalf, target, args, bytes: measured.bytes, parent, agent, lends: door ? onBehalf : agent }
+}
+
+// The route the namespace table gives the action's namespace, with the contract's entry for the action. null for an
+// action the contract has no entry for in a namespace the core keeps
+function targetOf(server: ReturnType<typeof serverOf>, action: string, dot: number): Target | null {
+  if (server === undefined) return { kind: 'plugin', target: action.slice(0, dot), name: action.slice(dot + 1) }
+  if (server.route === 'served') return { kind: 'served', part: server.part }
+  if (server.route === 'bus') {
+    const spec = eventActions[action]
+    return spec === undefined ? null : { kind: 'bus', spec }
+  }
+  if (server.route === 'action') {
+    const spec = coreActions[action]
+    return spec === undefined ? null : { kind: 'action', part: server.part, spec, each: server.each === true }
+  }
+  const spec = providerActions[action]
+  return spec === undefined ? null : { kind: 'provider', provider: server.part, spec }
 }
 
 // 3 floor: who may call a core action, security.* included, the trusted window held to core actions,
@@ -101,7 +98,7 @@ export function floorOf(c: Context, way: Way, target: Target, args: unknown, age
   if (agent !== undefined && target.kind === 'provider' && target.spec.agent === undefined && !isOne(agentOwn, target.provider)) {
     return { code: 'not-granted' }
   }
-  if (target.kind === 'core') {
+  if (target.kind === 'action') {
     const { from } = target.spec
     const admitted = from === 'any'
       || (from === 'windows' && caller.kind === 'window')
@@ -110,12 +107,16 @@ export function floorOf(c: Context, way: Way, target: Target, args: unknown, age
       // The agent host under a live call from the door, so the agent it asks for is that call's and no other
       || (from === 'agent' && host && agent !== undefined)
     // A from with no rule here refuses every caller
-    return admitted ? { kind: 'core' } : { code: 'not-granted' }
+    if (!admitted) return { code: 'not-granted' }
+    // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
+    // with confirmOff on a request that applies at once. The reads the contract marks answer
+    if (trusted && target.spec.reads !== true && !c.armed(caller)) return { code: 'throttled' }
+    return { kind: 'action' }
   }
-  if (target.kind === 'events') {
+  if (target.kind === 'bus') {
     // A subscription outlives the call it was made under and what it delivers is filtered for the subscriber alone,
     // so the agent host subscribes to no topic but its own, under an agent's call or not
-    const kind = eventsFloor(c, caller, target.action, args)
+    const kind = eventsFloor(c, caller, target.spec, args)
     return host && 'kind' in kind && kind.kind === 'power' ? { code: 'not-granted' } : kind
   }
   // The trusted window holds core actions and the core topics only and never note content
@@ -155,17 +156,17 @@ function isDoor(c: Context, way: Way): boolean {
 // only the topics its manifest declared, from any of its halves. core.* comes only from the carrier and goes only to
 // windows. The trusted window hears nothing else. Publishing, a plugin hearing its own topics, a window hearing core.*
 // and unsubscribing skip the gate. A subscribe to anything else is judged under events.subscribe on those topics
-function eventsFloor(c: Context, caller: Caller, action: string, args: unknown): Kind | No {
-  if (action === 'events.unsubscribe') return { kind: 'free' }
-  if (action === 'events.publish') {
+function eventsFloor(c: Context, caller: Caller, spec: EventAction, args: unknown): Kind | No {
+  if (spec.does === 'unsubscribe') return { kind: 'free' }
+  if (spec.does === 'publish') {
     return caller.kind === 'plugin' && declares(c, caller.id, field(args, 'topic') as string) ? { kind: 'free' } : { code: 'not-granted' }
   }
   const topics = [...new Set(field(args, 'topics') as string[])]
-  const core = topics.filter(topic => namespaceOf(topic) === 'core')
+  const core = topics.filter(topic => isOne(coreTopics, topic))
   if (caller.kind !== 'window' && core.length > 0) return { code: 'not-granted' }
   if (caller.kind === 'window' && caller.role === 'trusted' && core.length < topics.length) return { code: 'not-granted' }
   const own = (topic: string) => caller.kind === 'plugin' && namespaceOf(topic) === caller.id
-  const gated = topics.filter(topic => namespaceOf(topic) !== 'core' && !own(topic))
+  const gated = topics.filter(topic => !isOne(coreTopics, topic) && !own(topic))
   if (gated.length === 0) return { kind: 'free' }
   return { kind: 'power', capability: 'events.subscribe', scope: frozen({ topics: gated }) }
 }

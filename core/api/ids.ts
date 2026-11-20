@@ -36,19 +36,51 @@ export const qualifiedName = z.string()
 // log is the core's own
 export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
 
-// The core module or core plugin that serves each provider namespace
-export const providers = table({
-  luoshu: 'luoshu',
-  leases: 'leases',
-  history: 'history',
-  exec: 'exec',
-  storage: 'storage',
-  cache: 'storage',
-  net: 'net',
-} as const)
+// How the router reaches the part serving a namespace. provider: a core module, or a core plugin in a utility process,
+// through prepare and perform with the gate judging. action: an action of the core table, which the floor decides and
+// never the gate. bus: the event bus inside the router. served: a part that keeps its own checks
+export type Route = 'provider' | 'action' | 'bus' | 'served'
 
-// Served by the carrier, the plugins manager and the runtime, never by a plugin. log.* reads the event log the core writes
-export const coreNamespaces = frozen(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app'] as const)
+// A namespace's server: the part, handed to the router under this name, and the route to it. each: every call is an
+// audit record of its own, never coalesced
+export type Server = { readonly part: string, readonly route: Route, readonly each?: true }
+
+// Every namespace the core keeps with its server, never a plugin. log.* reads the event log the core writes, ui.* is the
+// drawer's and plugin names plugin.call, an action of none. Any other namespace is a plugin's id
+export const namespaces = table({
+  core: { part: 'plugins-manager', route: 'action' },
+  security: { part: 'plugins-manager', route: 'action', each: true },
+  events: { part: 'router', route: 'bus' },
+  ui: { part: 'drawer', route: 'served' },
+  plugin: { part: 'plugins-manager', route: 'action' },
+  log: { part: 'recording', route: 'action' },
+  editor: { part: 'runtime', route: 'action' },
+  gate: { part: 'gate', route: 'action' },
+  app: { part: 'runtime', route: 'action' },
+  luoshu: { part: 'luoshu', route: 'provider' },
+  leases: { part: 'leases', route: 'provider' },
+  history: { part: 'history', route: 'provider' },
+  exec: { part: 'exec', route: 'provider' },
+  storage: { part: 'storage', route: 'provider' },
+  cache: { part: 'storage', route: 'provider' },
+  net: { part: 'net', route: 'provider' },
+} as const satisfies Record<string, Server>)
+type Namespaces = typeof namespaces
+// A part the router is handed under its name
+export type Part = Namespaces[keyof Namespaces]['part']
+
+// The server of a namespace, undefined for a plugin's id
+export function serverOf(namespace: string): (Server & { readonly part: Part }) | undefined {
+  return Object.hasOwn(namespaces, namespace) ? (namespaces as Readonly<Record<string, Server & { readonly part: Part }>>)[namespace] : undefined
+}
+
+type ProviderNamespace = { [N in keyof Namespaces]: Namespaces[N]['route'] extends 'provider' ? N : never }[keyof Namespaces]
+// The core module or core plugin that serves each provider namespace, read from the table
+export const providers = table(Object.fromEntries(Object.entries(namespaces).filter(([, server]) => server.route === 'provider')
+  .map(([namespace, server]) => [namespace, server.part]))) as { readonly [N in ProviderNamespace]: Namespaces[N]['part'] }
+
+// The namespaces the router and the parts handed to it serve, read from the table
+export const coreNamespaces = frozen(Object.keys(namespaces).filter(namespace => serverOf(namespace)?.route !== 'provider'))
 
 // The actions a guard may hook: each one that changes a note
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)

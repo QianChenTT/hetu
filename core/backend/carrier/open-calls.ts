@@ -51,8 +51,8 @@ export function admitted(c: Context,
     // no path. A plugin call's target is already the plugin's id
     scope: kind.kind === 'power' && kind.scope.paths === undefined ? kind.scope : undefined,
     refusedScope: undefined,
-    coalesce: target.kind === 'core'
-      ? !shaped.action.startsWith('security.')
+    coalesce: target.kind === 'action'
+      ? !target.each
       : target.kind === 'provider' ? !target.spec.write : kind.kind === 'free',
     filtering: null,
   }

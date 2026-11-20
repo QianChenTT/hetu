@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto'
-import type { CoreAction, ProviderAction } from '../../api/actions.ts'
+import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
-import { guards as expectedGuards, type GuardableAction } from '../../api/ids.ts'
+import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
 import { pluginStates, policyJobStates, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
@@ -80,16 +80,18 @@ export type Filtering = { hash: string, gate: object, view: number | null, asked
 
 export const hashOf = (paths: readonly string[]) => createHash('sha256').update(JSON.stringify(paths)).digest('hex')
 
+// Where a call goes, by the route the namespace table gives its namespace: the part serving it with the contract's entry
+// for the action, or a plugin. each: every call is an audit record of its own
 export type Target =
-  | { kind: 'core', spec: CoreAction }
-  | { kind: 'events', action: string }
-  | { kind: 'served', namespace: 'ui' }
-  | { kind: 'provider', provider: string, spec: ProviderAction }
+  | { kind: 'action', part: Part, spec: CoreAction, each: boolean }
+  | { kind: 'bus', spec: EventAction }
+  | { kind: 'served', part: Part }
+  | { kind: 'provider', provider: Part, spec: ProviderAction }
   | { kind: 'plugin', target: string, name: string }
 
 // also is a provider action's second requirement: its capability over the paths at these places in the scope
 export type Kind =
-  | { kind: 'core' | 'served' | 'free' }
+  | { kind: 'action' | 'served' | 'free' }
   | { kind: 'power', capability: CapabilityType, scope: Scope, also?: { capability: CapabilityType, at: readonly number[] } }
 
 export type No = { code: RefusalCode, reason?: ReasonCode, request?: string }
@@ -184,7 +186,7 @@ export class Context {
   // What the plugins manager handed in through the door: its table, the namespaces it serves with the runtime's, the
   // prompt behind an ask and the listeners for what the ways in heard. Every read before the table arrives is absent
   table: PluginTable | null = null
-  readonly served = new Map<string, Served>()
+  readonly served = new Map<Part, Served>()
   asks: Asks | null = null
   readonly wayClosed: WayClosed[] = []
   readonly heard: Heard[] = []

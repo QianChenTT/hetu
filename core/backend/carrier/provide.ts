@@ -222,7 +222,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   try {
     performed = await provider.perform(call, prepared)
   } catch (err) {
-    if (id === 'storage' && refusalIn(err)?.code === 'tampered') tampered(c, pending, args)
+    if (refusalIn(err)?.code === 'tampered') tampered(c, pending, id, args)
     lister?.charge()
     return thrown(c, pending, id, 'perform', err)
   }
@@ -300,13 +300,14 @@ function guard(c: Context, pending: Pending, prepared: Prepared): RefusalCode | 
   return null
 }
 
-// A stored key failed its hash line. The plugin decides what to do with it. A plugin can trigger this, so it is one
-// record per space each second, naming the first key and then the last with the count
-function tampered(c: Context, pending: Pending, args: unknown): void {
+// A stored key failed its hash line, as the part serving the namespace said. The plugin decides what to do with it. A
+// plugin can trigger this, so it is one record per space each second, naming the first key and then the last with the
+// count
+function tampered(c: Context, pending: Pending, part: string, args: unknown): void {
   const space = spaceOf(pending.caller)
   const key = field(args, 'key')
   if (space === null || typeof key !== 'string') return
-  c.coalesced('storage.tampered', { space, key }, { by: { space }, join: (_held, next) => next })
+  c.coalesced(`${part}.tampered`, { space, key }, { by: { space }, join: (_held, next) => next })
 }
 
 // What a listing's provider gets to filter with, and the charge for the whole listing. canList asks the gate for the

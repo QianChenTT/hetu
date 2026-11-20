@@ -1,12 +1,14 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
-import { actionPathProblem } from '../../api/actions.ts'
+import { actionPathProblem, coreTopic } from '../../api/actions.ts'
+import { namespaces, type Part } from '../../api/ids.ts'
 import { Bus } from './bus.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Asks, CarrierDoor, CarrierOptions, Heard, Port, Served, WayClosed } from './header.ts'
 import { topicsOf, whoOf, Context } from './context.ts'
 import { busState, listable, recheck } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
+import { gateActions } from './route.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
 // Policy comes from the policy jobs it asks: the gate decides and the carrier enforces
@@ -29,6 +31,7 @@ export class Carrier implements CarrierDoor {
         if (!c.shutting) c.recorded(recording => recording.coreRecord(`events.${change}`, { ...whoOf(caller), ...topicsOf(topics) }))
       },
     }))
+    this.c.served.set(namespaces.gate.part, gateActions(this.c))
   }
 
   // For the plugins manager, before it records core.stopping. The six policy job states have no stopping, so from here a policy job, guard
@@ -42,12 +45,12 @@ export class Carrier implements CarrierDoor {
 
   // Recording saw the log's health change: windows read core.status again, which says whether the log takes appends
   status(): void {
-    if (!this.c.closed && !this.c.shutting) this.c.bus.emit('core.status')
+    if (!this.c.closed && !this.c.shutting) this.c.bus.emit(coreTopic.status)
   }
 
   // hetu is about to quit, so windows that hear core.quitting can keep a draft within the grace main gives them
   quitting(): void {
-    if (!this.c.closed) this.c.bus.emit('core.quitting')
+    if (!this.c.closed) this.c.bus.emit(coreTopic.quitting)
   }
 
   // A core module's publish, as events.publish delivers one: <owner>.<topic> for a path. A path the contract's path
@@ -66,12 +69,12 @@ export class Carrier implements CarrierDoor {
   changed(): void {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
-    this.c.bus.emit('core.status')
+    this.c.bus.emit(coreTopic.status)
     const view = this.c.view()
     if (view === this.c.announced) return
     const first = this.c.announced === undefined
     this.c.announced = view
-    if (!first) this.c.bus.emit('core.security')
+    if (!first) this.c.bus.emit(coreTopic.security)
   }
 
   // The door's pipes, each in door.ts
@@ -108,8 +111,8 @@ export class Carrier implements CarrierDoor {
     this.c.table = table
   }
 
-  serve(namespace: string, served: Served): void {
-    this.c.served.set(namespace, served)
+  serve(part: Part, served: Served): void {
+    this.c.served.set(part, served)
   }
 
   asks(asks: Asks): void {

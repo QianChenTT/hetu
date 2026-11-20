@@ -391,7 +391,7 @@ describe('ui.*', () => {
   it('hands it to the part that serves it after the floor and the ceiling, which asks the gate itself', async () => {
     const seen: Call[] = []
     const ui = async (call: Call) => { seen.push(call); return 'mounted' }
-    const { carrier, connect, pluginsManager, gate } = harness({ served: { ui } })
+    const { carrier, connect, pluginsManager, gate } = harness({ drawer: ui })
     pluginsManager.policyJobs.gate = 'failed'
     const search = connect(worker('search'))
     expect((await search.ask('ui.view', { title: 'x' })).result).toBe('mounted')

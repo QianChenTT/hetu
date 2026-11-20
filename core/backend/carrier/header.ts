@@ -1,6 +1,6 @@
 import type { Caller } from '../../api/envelope.ts'
 import type { LimitName } from '../../api/limits.ts'
-import type { GuardableAction } from '../../api/ids.ts'
+import type { GuardableAction, Part } from '../../api/ids.ts'
 import type { Access, Call, Gate, Guard, PluginTable, Provider } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Recording } from '../recording/header.ts'
@@ -35,8 +35,8 @@ export type Asks = { raise(ask: string, access: Access): string | AskRefusal }
 // provider's or the gate's text can name paths
 export type Debug = (entry: { plugin: string | null, caller: Caller, action: string, text: string }) => void
 
-// A namespace a later part serves with its own checks: ui.* the runtime and the drawer. The bus serves events.* inside
-// the carrier
+// A part serving the namespaces the contract's namespace table gives it, handed in under the part's name. It answers
+// with its result or throws a refusal
 export type Served = (call: Call) => Promise<unknown>
 
 // What the carrier offers the plugins manager, which calls it and is never called back but through what it handed in:
@@ -57,8 +57,8 @@ export type CarrierDoor = {
   limit(plugin: string, name: LimitName): number
   // The plugin table the carrier reads plugin and policy job state from, on each call and with no copy
   read(table: PluginTable): void
-  // The server of a namespace of core actions
-  serve(namespace: string, served: Served): void
+  // A part serving the namespaces the namespace table gives it
+  serve(part: Part, served: Served): void
   // The prompt behind the gate's ask
   asks(asks: Asks): void
   onWayClosed(listener: WayClosed): void
@@ -78,7 +78,6 @@ export type CarrierOptions = {
   // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or
   // gained focus. The runtime keeps the times. With nothing to ask, no Confirm counts
   armed?: (caller: Caller) => boolean
-  served?: { ui?: Served }
   debug?: Debug
   // ms since the epoch, for deadlines and the times records carry
   now?: () => number

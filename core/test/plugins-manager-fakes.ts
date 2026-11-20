@@ -6,6 +6,7 @@ import path from 'node:path'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
+import type { Part } from '../api/ids.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
 import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
@@ -47,7 +48,7 @@ export async function until(check: () => boolean, ms = 3000): Promise<void> {
 // through the door is kept, so each carrier a test builds gets it
 export class FakeLink implements CarrierDoor, PluginsRecording {
   carrier: Carrier | null = null
-  readonly handed: { served: Map<string, Served>, asks: Asks | null, wayClosed: WayClosed[], heard: Heard[] } = {
+  readonly handed: { served: Map<Part, Served>, asks: Asks | null, wayClosed: WayClosed[], heard: Heard[] } = {
     served: new Map(), asks: null, wayClosed: [], heard: [],
   }
   readonly records: { event: string, fields: Record<string, Field> }[] = []
@@ -123,8 +124,8 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
     this.carrier?.read(table)
   }
 
-  serve(namespace: string, served: Served): void {
-    this.handed.served.set(namespace, served)
+  serve(part: Part, served: Served): void {
+    this.handed.served.set(part, served)
   }
 
   asks(asks: Asks): void {
@@ -143,7 +144,7 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
   attach(carrier: Carrier, table: PluginTable): void {
     this.carrier = carrier
     carrier.read(table)
-    for (const [namespace, served] of this.handed.served) carrier.serve(namespace, served)
+    for (const [part, served] of this.handed.served) carrier.serve(part, served)
     if (this.handed.asks !== null) carrier.asks(this.handed.asks)
     for (const listener of this.handed.wayClosed) carrier.onWayClosed(listener)
     for (const listener of this.handed.heard) carrier.onHeard(listener)

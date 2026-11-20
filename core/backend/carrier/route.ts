@@ -1,17 +1,15 @@
+import type { EventAction } from '../../api/actions.ts'
 import { capabilityTypes, scopedUiTypes } from '../../api/capabilities.ts'
 import { answer as answerSchema, calleeRefusalCodes, VERSION, type Caller, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
-import { hashOf, no, newId, isOne, keyOf, field, namespaceOf, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
+import { hashOf, no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Filtering, type Target, type Kind, type Outcome } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf } from './open-calls.ts'
 import { gateOpen, judge, judgeAll, askable, provide, secondOf } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
 
-// The entry of every call through its steps, then 6 route: core actions, the bus, the parts serving a namespace,
-// providers and plugins
-
-// The core actions the trusted window may send inside its input delay, since they only read
-const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.segments', 'log.verify'])
+// The entry of every call through its steps, then 6 route by the namespace table: the parts handed in under their
+// names, the bus, providers and plugins
 
 // Nothing escapes: a call no step could take is dropped and one in flight fails
 export async function call(c: Context, way: Way, message: unknown, answer: Send): Promise<void> {
@@ -46,34 +44,28 @@ async function run(c: Context, pending: Pending, target: Target, args: unknown, 
     if (open !== 'decide') return finish(c, pending, no(open as RefusalCode))
   }
   // A subscribe keeps its own precheck, since one made while the gate is down stands rather than being refused
-  if (target.kind === 'events') return events(c, pending, args, kind)
+  if (target.kind === 'bus') return events(c, pending, target.spec, args, kind)
   // 5 precheck, for calls with power only
   if (kind.kind === 'power') {
     const refused = judgeAll(c, pending, 'raw', kind, kind.scope)
     if (refused !== null) return finish(c, pending, { ok: false, ...refused })
   }
   // 6 route, then 7 to 10 by the route
-  if (target.kind === 'core') return coreAction(c, pending, args)
-  if (target.kind === 'served') return serve(c, pending, c.options.served?.[target.namespace], args)
+  if (target.kind === 'action' || target.kind === 'served') return serve(c, pending, c.served.get(target.part), args)
   if (target.kind === 'provider') return provide(c, pending, target.provider, args, kind)
   return deliver(c, pending, target, args, kind)
 }
 
-// Core actions: the carrier serves the gate's two and hands the rest to recording, the plugins manager and the runtime
-async function coreAction(c: Context, pending: Pending, args: unknown): Promise<void> {
-  if (pending.action === 'gate.filterReadable') return finish(c, pending, filterReadable(c, pending.way, args))
-  if (pending.action === 'gate.reach') return finish(c, pending, reach(c, args))
-  if (pending.action === 'log.segments' || pending.action === 'log.verify') {
-    const { recording } = c
-    return serve(c, pending, recording === null ? undefined : call => recording.serve(call), args)
+// The gate's two actions, served here until the gate module serves them: filterReadable names a live call, reach a
+// plugin. A refusal is thrown, as a part handed in refuses
+export function gateActions(c: Context): Served {
+  return async call => {
+    const way = c.ways.get(keyOf(call.caller))
+    if (way === undefined) throw { code: 'invalid' }
+    const outcome = field(call.args, 'call') !== undefined ? filterReadable(c, way, call.args) : reach(c, call.args)
+    if (!outcome.ok) throw { code: outcome.code, ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}) }
+    return outcome.result
   }
-  // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
-  // with confirmOff on a request that applies at once. Its reads answer
-  const { caller } = pending
-  if (caller.kind === 'window' && caller.role === 'trusted' && !trustedReads.has(pending.action) && !c.armed(caller)) {
-    return finish(c, pending, no('throttled'))
-  }
-  return serve(c, pending, c.served.get(namespaceOf(pending.action)), args)
 }
 
 // What a plugin may do with one note through the editor bridge, which the drawer asks before it serves the plugin
@@ -177,15 +169,15 @@ function filterReadable(c: Context, way: Way, args: unknown): Outcome {
 // start isn't lost. With the gate off it passes as any call with power does. A subscribe whose gated topics all
 // stand used no power yet, so its audit record names only the topics that went live and coalesces like a free call.
 // The standing ones go in an events.waiting record until asking again starts or ends them
-function events(c: Context, pending: Pending, args: unknown, kind: Kind): void {
+function events(c: Context, pending: Pending, spec: EventAction, args: unknown, kind: Kind): void {
   const { way } = pending
-  if (pending.action === 'events.publish') {
+  if (spec.does === 'publish') {
     const path = field(args, 'path') as string | undefined
     c.bus.publish(field(args, 'topic') as string, path)
     return finish(c, pending, { ok: true, result: null })
   }
   const topics = [...new Set(field(args, 'topics') as string[])]
-  if (pending.action === 'events.unsubscribe') {
+  if (spec.does === 'unsubscribe') {
     c.bus.unsubscribe(way, topics)
     return finish(c, pending, { ok: true, result: null })
   }

@@ -71,10 +71,6 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
   })
 }
 
-// The namespaces of core actions the runtime serves, since only it opens windows and dialogs, ends the process and
-// serves frames
-const runtimeNamespaces = ['app', 'editor'] as const
-
 // What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
 // that runs holds one. wireCore and the plugins manager's tests both build the carrier from it, so the tests run the
 // wiring that ships
@@ -129,7 +125,10 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
   }))
   parts.carrier = carrier
-  if (windows !== undefined) for (const namespace of runtimeNamespaces) carrier.serve(namespace, windows.serve)
+  // The runtime serves the windows' own actions, since only it opens windows and dialogs, ends the process and serves
+  // frames. Recording serves the log's reads
+  if (windows !== undefined) carrier.serve('runtime', windows.serve)
+  carrier.serve('recording', call => recording.serve(call))
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,

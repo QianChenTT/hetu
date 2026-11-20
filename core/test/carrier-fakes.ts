@@ -375,10 +375,10 @@ export type RecordingOver = { log?: CoreLog | null, coreRecordRetryMs?: number, 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
 // The carrier's options with what a test hands in through its door in place of the plugins manager's
-export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, asks?: Asks }
+export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, drawer?: Served, asks?: Asks }
 
 export function harness(given: HarnessOptions = {}) {
-  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, asks: asksGiven, ...over } = given
+  const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, drawer, asks: asksGiven, ...over } = given
   const pluginsManager = new FakePluginsManager()
   const gate = new FakeGate(pluginsManager)
   const luoshu = new FakeLuoshu()
@@ -428,7 +428,8 @@ export function harness(given: HarnessOptions = {}) {
     handed?.coalesced('http.refused', { reason }, undefined, count)
     return null
   })
-  for (const namespace of ['core', 'security', 'app', 'editor']) carrier.serve(namespace, core)
+  for (const part of ['plugins-manager', 'runtime'] as const) carrier.serve(part, core)
+  if (drawer !== undefined) carrier.serve('drawer', drawer)
   // A test that names asks as undefined has no prompt to raise
   const raising = 'asks' in given ? asksGiven : { raise: (ask: string, access: Access) => { asks.push({ ask, access }); return `req-${asks.length}` } }
   if (raising !== undefined) carrier.asks(raising)
@@ -444,9 +445,10 @@ export function harness(given: HarnessOptions = {}) {
     carrier.register(port1, caller)
     return new Side(port2)
   }
-  // recording is the one the carrier was handed, a test's own included
+  // recording is the one the carrier was handed, a test's own included, serving the log's reads as wire.ts hands it
   const handed = over.recording !== undefined ? over.recording : recording
   if (handed !== recording) recording?.close()
+  if (handed !== null) carrier.serve('recording', call => handed.serve(call))
   return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log: log as FakeLog, debug, asks, connect, recording: handed as Recording }
 }
 

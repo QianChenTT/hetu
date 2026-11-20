@@ -296,7 +296,8 @@ export class FakeCore {
       recording: this.recording,
     })
     this.carrier.read(this.pluginsManager)
-    for (const namespace of ['core', 'security']) this.carrier.serve(namespace, call => this.served(call))
+    this.carrier.serve('plugins-manager', call => this.served(call))
+    this.carrier.serve('recording', call => this.recording.serve(call))
     this.carrier.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
     this.carrier.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
     this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
