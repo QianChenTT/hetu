@@ -122,7 +122,7 @@ describe('the core modules', () => {
     expect(faults).toEqual([])
     for (const id of ['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec'] as const) expect(modules.state(id)).toBe('on')
     expect(modules.gate()?.decide({ stage: 'raw', caller: editor, action: 'storage.get', capability: 'storage', scope: {} })).toEqual({ allow: true, view: 1 })
-    expect(modules.grantRiskClassifier()?.classes({ cause: 'start', change: null, confirm: false, plugins: [] })).toEqual({ plugins: [], lines: [] })
+    expect(modules.grantRiskClassifier()?.classes({ cause: 'start', change: null, confirm: false, plugins: [] })).toEqual({ plugins: [], lines: [], unasked: false })
     const storage = modules.provider('storage')!
     await ask(storage, 'storage.set', { key: 'k', value: 1 })
     expect(await ask(storage, 'storage.get', { key: 'k' })).toBe(1)

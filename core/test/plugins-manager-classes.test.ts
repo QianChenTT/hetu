@@ -92,17 +92,18 @@ describe('an approval', () => {
   })
 })
 
-describe('a staged update', () => {
-  async function updating(entry: object, broken = false, next: Capability[] = []) {
-    const made = await harness({
-      ...(broken ? { modules: down() } : {}), folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) },
-    })
-    await made.pluginsManager.start()
-    const dir = path.join(made.dataDir, 'staging', 'calc-next')
-    await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: next })))
-    return { made, outcome: await made.pluginsManager.update('calc', dir) }
-  }
+// A class 0 update or another staged for calc, with what its entry holds and what the new version asks for
+async function updating(entry: object, broken = false, next: Capability[] = [], given: { modules?: object, switches?: Partial<Switches> } = {}) {
+  const made = await harness({
+    ...(broken ? { modules: down() } : {}), ...given, folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) },
+  })
+  await made.pluginsManager.start()
+  const dir = path.join(made.dataDir, 'staging', 'calc-next')
+  await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: next })))
+  return { made, outcome: await made.pluginsManager.update('calc', dir) }
+}
 
+describe('a staged update', () => {
   it('loads on its own for a class 0 plugin with views while the policy job is on', async () => {
     const { outcome } = await updating({ class: 0, granted: [{ type: 'ui.view' }] }, false, [{ type: 'ui.view' }])
     expect(outcome).toEqual({ outcome: 'applied' })
@@ -125,6 +126,38 @@ describe('a staged update', () => {
     const { made, outcome } = await updating(entry, broken, next)
     expect(outcome).toMatchObject({ outcome: 'confirm' })
     expect(made.pluginsManager.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'calc' }])
+  })
+})
+
+// Whether an update loads unasked is the classifier's answer alone
+describe('a staged update the classifier answers for', () => {
+  // The real classifier, its answer to an update's question replaced by this one
+  function unasking(unasked: boolean): GrantRiskClassifier {
+    const real = createGrantRiskClassifier()
+    return { classes: table => ({ ...real.classes(table), unasked: table.requested === undefined ? false : unasked }) }
+  }
+
+  it('loads on its own whatever class the entry holds when the classifier says it loads unasked', async () => {
+    const { outcome } = await updating({ class: 1, granted: [read] }, false, [read], { modules: { grantRiskClassifier: unasking(true) } })
+    expect(outcome).toEqual({ outcome: 'applied' })
+  })
+
+  it('waits for the Confirm for a class 0 plugin when the classifier says it does not load unasked', async () => {
+    const { outcome } = await updating({ class: 0 }, false, [], { modules: { grantRiskClassifier: unasking(false) } })
+    expect(outcome).toMatchObject({ outcome: 'confirm' })
+  })
+
+  it('waits for the Confirm for a class 0 plugin with the classifier switched off', async () => {
+    const { outcome } = await updating({ class: 0 }, false, [], { switches: { off: ['grant-risk-classifier'] } })
+    expect(outcome).toMatchObject({ outcome: 'confirm' })
+  })
+
+  it('hands the classifier what the new version asks for', async () => {
+    const tables: ClassTable[] = []
+    const real = createGrantRiskClassifier()
+    const keeping: GrantRiskClassifier = { classes: table => (tables.push(table), real.classes(table)) }
+    await updating({ class: 0 }, false, [{ type: 'storage' }], { modules: { grantRiskClassifier: keeping } })
+    expect(tables.at(-1)).toMatchObject({ cause: 'update', change: { id: 'calc', granted: [] }, confirm: false, requested: [{ type: 'storage' }] })
   })
 })
 

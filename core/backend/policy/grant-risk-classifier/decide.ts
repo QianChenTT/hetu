@@ -1,3 +1,4 @@
+import { askOnUpdateTypes, capabilityKey } from '../../../api/capabilities.ts'
 import type { ClassAnswer, ClassOwed, ClassTable, ClassVerdict, StoredClass } from '../../../api/classes.ts'
 import { alerts, classify, firstUse, moves, screen, type ClassMove } from './rules.ts'
 import { connected, flow, holders, links, reachable } from './walk.ts'
@@ -26,7 +27,18 @@ export function classes(table: ClassTable): ClassAnswer {
   const lines = subject === null || change === null ? [] : screen({
     granted: subject, reachable: reachable(after, change.id), callers: connected(after, change.id), flow: flow(after, change.id),
   })
-  return { plugins: verdicts, lines: [...lines, ...moves(shown)] }
+  return { plugins: verdicts, lines: [...lines, ...moves(shown)], unasked: unasked(table, verdicts) }
+}
+
+// An update loads unasked only for a plugin whose entry holds class 0 and that the table as it stands still classes 0,
+// whose new version asks for nothing it doesn't hold and that holds no type asking on every update
+function unasked(table: ClassTable, verdicts: readonly ClassVerdict[]): boolean {
+  const { change, requested } = table
+  if (table.cause !== 'update' || requested === undefined || change === null || change.granted === null) return false
+  const holds = new Set(change.granted.map(capabilityKey))
+  const stored = table.plugins.find(row => row.id === change.id)?.stored
+  return stored?.class === 0 && verdicts.find(verdict => verdict.id === change.id)?.class === 0
+    && requested.every(item => holds.has(capabilityKey(item))) && !change.granted.some(item => (askOnUpdateTypes as readonly string[]).includes(item.type))
 }
 
 // One plugin's class and the items that ask at first use under the table as the change leaves it, the move it makes from

@@ -21,7 +21,7 @@ import {
 import { bindFailures, type BindFailure, type DepState, type Init, type StopReason } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen } from '../../api/plain.ts'
-import { askOnUpdateTypes, capabilityKey, type Capability } from '../../api/capabilities.ts'
+import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type {
   ExecGrant, ExecView, GrantedItem, HumanLimits, Opening, PluginInfo, PluginState, PluginTable, PolicyJobState,
   GrantsSnapshot,
@@ -151,8 +151,8 @@ type Classing = 'on' | 'off' | 'down'
 type Decided = { readonly id: string, readonly entry: Plugin | null, readonly changed: boolean, readonly rises: boolean }
 
 // A class change: the changed plugin, null in a pass, every other entry that comes out different, the lines its Confirm
-// shows and how the classifier stood for it
-type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly classing: Classing }
+// shows and for an update asked so whether it loads unasked
+type Classed = { readonly own: Decided | null, readonly others: readonly Decided[], readonly lines: readonly string[], readonly unasked: boolean }
 
 // The same items whatever their order, an item being its type with its scope
 function sameItems(items: readonly Capability[], others: readonly Capability[] = []): boolean {
@@ -626,7 +626,9 @@ ${capabilityKey(change.capability)}`)
 
   // What the classifier is handed: every plugin the plugins manager knows with what it holds and what its entry stores,
   // a core plugin with none, and the change to one plugin, copied so nothing the classifier does reaches the state
-  private classTable(cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean): ClassTable {
+  private classTable(
+    cause: ClassCause, id: string | null, granted: readonly Capability[] | null, confirm: boolean, requested?: readonly Capability[],
+  ): ClassTable {
     const ids = new Set([...Object.keys(this.state.plugins), ...[...this.known.values()].filter(k => k.from === 'install').map(k => k.id)])
     const plugins = [...ids].map(other => {
       const entry = this.known.get(other)?.from === 'install' ? null : this.state.plugins[other] ?? null
@@ -634,7 +636,7 @@ ${capabilityKey(change.capability)}`)
         : { class: entry.class, firstUse: entry.firstUse ?? [], unclassed: entry.unclassed === true, owed: entry.owed ?? null }
       return { id: other, granted: this.grantsOf(other), stored }
     })
-    return frozen(structuredClone({ cause, change: id === null ? null : { id, granted }, confirm, plugins }))
+    return frozen(structuredClone({ cause, change: id === null ? null : { id, granted }, confirm, plugins, ...(requested === undefined ? {} : { requested }) }))
   }
 
   // The classifier's answer once the shape check takes it. Null with the classifier not serving, for a throw and for an
@@ -658,11 +660,12 @@ ${capabilityKey(change.capability)}`)
   // change as below. Switched off, a pass leaves each as stored and a change passes: the class the last one classed, the
   // entry marked as not classed and every item not confirmed listed, which the gate is handed only once the classifier
   // is on again. Down, a throw or an answer the check refuses, the class is not known and every item asks. Whether an
-  // entry rises is read here from the class numbers stored, never from the classifier
-  private classes(cause: ClassCause, id: string | null, after: Plugin | null, confirm: boolean): Classed {
+  // entry rises is read here from the class numbers stored, never from the classifier. requested is what an update's new
+  // version asks for when the classifier is asked whether it loads unasked, which it never does while off or down
+  private classes(cause: ClassCause, id: string | null, after: Plugin | null, confirm: boolean, requested?: readonly Capability[]): Classed {
     let classing = this.classing()
-    if (id === null && classing === 'off') return { own: null, others: [], lines: [], classing }
-    const answer = classing === 'on' ? this.askClasses(this.classTable(cause, id, after?.granted ?? null, confirm)) : null
+    if (id === null && classing === 'off') return { own: null, others: [], lines: [], unasked: false }
+    const answer = classing === 'on' ? this.askClasses(this.classTable(cause, id, after?.granted ?? null, confirm, requested)) : null
     if (answer === null && classing === 'on') classing = 'down'
     const verdicts = new Map(answer?.plugins.map(verdict => [verdict.id, verdict]))
     const notice = { cause, by: id }
@@ -679,7 +682,7 @@ ${capabilityKey(change.capability)}`)
     }
     const down = `The grant risk classifier is down, so the class is unknown and counted as ${highestClass}: every item asks at its first use`
     const lines = answer !== null ? answer.lines : classing === 'down' && after !== null ? [down] : []
-    return { own, others, lines, classing }
+    return { own, others, lines, unasked: answer?.unasked === true }
   }
 
   // One plugin's entry as a class change leaves it, from the classifier's verdict or, with none, from the fallback the
@@ -2295,8 +2298,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
   // An update staged beside the old version, resolved against the live graph before anything changes. One that closes
   // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
   // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
-  // stops, itself and its dependents included: only a class 0 update may load on its own and nothing reads a plugin's
-  // class before the grant risk classifier does. The signer is checked against the pin once provenance exists. A
+  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked. The signer is checked against the pin once provenance exists. A
   // first-party copy changes only with the install
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into
@@ -2326,13 +2328,9 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     if (k.live !== null) for (const other of [id, ...this.liveDependents(k)]) stopping.add(other)
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
-    // Only a class 0 update loads on its own, and only while the policy job can say so, with no grant asked for that the
-    // entry doesn't hold and none that always asks. Its record lands first as any update's does
-    const holds = new Set(k.entry.granted.map(capabilityKey))
-    const asksNothingNew = (read.manifest!.capabilities ?? []).every(item => holds.has(capabilityKey(item)))
-    const alwaysAsks = k.entry.granted.some(item => isOne(askOnUpdateTypes, item.type))
-    const now = this.classes('update', id, k.entry, false)
-    if (k.entry.class === 0 && asksNothingNew && !alwaysAsks && now.classing === 'on' && now.own?.entry?.class === 0) {
+    // An update loads on its own only when the grant risk classifier answers that it does, so never while it is off or
+    // down. Its record lands first as any update's does
+    if (this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }

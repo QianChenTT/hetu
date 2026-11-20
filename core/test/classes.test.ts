@@ -16,11 +16,13 @@ const table: ClassTable = {
 const pass: ClassTable = { cause: 'start', change: null, confirm: false, plugins: table.plugins }
 const removal: ClassTable = { ...table, cause: 'remove', change: { id: 'reader', granted: null } }
 const verdict = (over: object = {}) => ({ id: 'sync', class: 4, firstUse: [{ hosts: ['example.com'], type: 'net.fetch' }], owed: null, ...over })
-const answer = (over: object = {}) => ({ plugins: [verdict()], lines: ['Class 4, Powerful'], ...over })
+const answer = (over: object = {}) => ({ plugins: [verdict()], lines: ['Class 4, Powerful'], unasked: false, ...over })
+// An update asked whether it loads unasked: the new version asks for nothing sync doesn't hold
+const update: ClassTable = { ...table, cause: 'update', confirm: false, requested: [read] }
 
 describe('the shape check on the classifier\'s answer', () => {
   it('takes an answer of the right shape and hands back each item as the table holds it', () => {
-    expect(checkedAnswer(table, answer())).toEqual({ plugins: [{ id: 'sync', class: 4, firstUse: [fetchOne], owed: null }], lines: ['Class 4, Powerful'] })
+    expect(checkedAnswer(table, answer())).toEqual({ plugins: [{ id: 'sync', class: 4, firstUse: [fetchOne], owed: null }], lines: ['Class 4, Powerful'], unasked: false })
     expect(checkedAnswer(table, answer())!.plugins[0].firstUse[0]).toBe(fetchOne)
   })
 
@@ -36,8 +38,13 @@ describe('the shape check on the classifier\'s answer', () => {
   })
 
   it('takes a removal answered for no plugin and a pass answered for every entry', () => {
-    expect(checkedAnswer(removal, { plugins: [], lines: [] })).toEqual({ plugins: [], lines: [] })
-    expect(checkedAnswer(pass, { plugins: [verdict({ id: 'reader', class: 1, firstUse: [] })], lines: [] })).not.toBeNull()
+    expect(checkedAnswer(removal, { plugins: [], lines: [], unasked: false })).toEqual({ plugins: [], lines: [], unasked: false })
+    expect(checkedAnswer(pass, { plugins: [verdict({ id: 'reader', class: 1, firstUse: [] })], lines: [], unasked: false })).not.toBeNull()
+  })
+
+  it('takes an update answered as one that loads unasked', () => {
+    expect(checkedAnswer(update, answer({ unasked: true }))!.unasked).toBe(true)
+    expect(checkedAnswer(update, answer())!.unasked).toBe(false)
   })
 
   it.each([
@@ -62,12 +69,15 @@ describe('the shape check on the classifier\'s answer', () => {
     ['a notice from a class out of range', answer({ plugins: [verdict({ owed: { from: 7, cause: 'approve', by: null } })] })],
     ['a notice with a cause it does not know', answer({ plugins: [verdict({ owed: { from: 0, cause: 'moved', by: null } })] })],
     ['a notice naming a plugin not in the table', answer({ plugins: [verdict({ owed: { from: 0, cause: 'approve', by: 'stranger' } })] })],
+    ['no word on whether it loads unasked', { plugins: [verdict()], lines: [] }],
+    ['loads unasked as text', answer({ unasked: 'yes' })],
+    ['a change that is no update loading unasked', answer({ unasked: true })],
   ])('refuses %s', (_name, given) => {
     expect(checkedAnswer(table, given)).toBeNull()
   })
 
   it('refuses a verdict for the plugin a removal takes away and a pass that leaves an entry out', () => {
-    expect(checkedAnswer(removal, { plugins: [verdict({ id: 'reader', firstUse: [] })], lines: [] })).toBeNull()
-    expect(checkedAnswer(pass, { plugins: [], lines: [] })).toBeNull()
+    expect(checkedAnswer(removal, { plugins: [verdict({ id: 'reader', firstUse: [] })], lines: [], unasked: false })).toBeNull()
+    expect(checkedAnswer(pass, { plugins: [], lines: [], unasked: false })).toBeNull()
   })
 })

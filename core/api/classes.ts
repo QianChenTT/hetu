@@ -27,12 +27,14 @@ export type ClassRow = { readonly id: string, readonly granted: readonly Capabil
 
 // What the classifier is handed at every class change: the cause, the change to one plugin with what it would hold,
 // null once it goes, null for a pass over every entry, whether a Confirm for the change is on screen and every plugin
-// the core knows. A plugin approved now is in the change alone
+// the core knows. A plugin approved now is in the change alone. An update asked whether it loads unasked carries what
+// its new version asks for
 export type ClassTable = {
   readonly cause: ClassCause
   readonly change: { readonly id: string, readonly granted: readonly Capability[] | null } | null
   readonly confirm: boolean
   readonly plugins: readonly ClassRow[]
+  readonly requested?: readonly Capability[]
 }
 
 // The classifier's answer for one plugin: its class, the items that ask at first use whether or not the human confirmed
@@ -44,9 +46,10 @@ export type ClassVerdict = {
   readonly owed: ClassOwed | null
 }
 
-// One verdict for each plugin the change moves, the changed plugin while it stays and every entry in a pass, and the
-// lines the change's Confirm shows under the core's words
-export type ClassAnswer = { readonly plugins: readonly ClassVerdict[], readonly lines: readonly string[] }
+// One verdict for each plugin the change moves, the changed plugin while it stays and every entry in a pass, the lines
+// the change's Confirm shows under the core's words and for an update asked so whether it loads unasked, false for
+// every other change
+export type ClassAnswer = { readonly plugins: readonly ClassVerdict[], readonly lines: readonly string[], readonly unasked: boolean }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const hasOnly = (value: Record<string, unknown>, keys: readonly string[]) =>
@@ -78,11 +81,13 @@ function owedOf(value: unknown, known: ReadonlySet<string>): ClassOwed | null | 
 // The classifier's answer as the core takes it, or null for one it refuses: a class a whole number from 0 to the
 // highest, every field of its type and no other, a verdict only for a plugin with an entry or the changed plugin while
 // it stays, each once, one for the changed plugin and in a pass one for every entry, first-use items only of what the
-// plugin holds and a notice naming only plugins in the table. Each item comes back as the table holds it
+// plugin holds, a notice naming only plugins in the table and an update loading unasked only when the table asks.
+// Each item comes back as the table holds it
 export function checkedAnswer(table: ClassTable, answer: unknown): ClassAnswer | null {
-  if (!isRecord(answer) || !hasOnly(answer, ['plugins', 'lines'])) return null
-  const { plugins, lines } = answer
+  if (!isRecord(answer) || !hasOnly(answer, ['plugins', 'lines', 'unasked'])) return null
+  const { plugins, lines, unasked } = answer
   if (!Array.isArray(plugins) || !Array.isArray(lines) || !lines.every(line => typeof line === 'string')) return null
+  if (typeof unasked !== 'boolean' || (unasked && table.requested === undefined)) return null
   const held = answerable(table)
   const known = new Set([...table.plugins.map(row => row.id), ...(table.change === null ? [] : [table.change.id])])
   const verdicts: ClassVerdict[] = []
@@ -105,7 +110,7 @@ export function checkedAnswer(table: ClassTable, answer: unknown): ClassAnswer |
   const answered = new Set(verdicts.map(verdict => verdict.id))
   const owedAnswers = table.change === null ? [...held.keys()] : table.change.granted === null ? [] : [table.change.id]
   if (!owedAnswers.every(id => answered.has(id))) return null
-  return { plugins: verdicts, lines: [...lines as string[]] }
+  return { plugins: verdicts, lines: [...lines as string[]], unasked }
 }
 
 // The grant risk classifier: handed the whole table at every class change, it answers for every plugin the change moves.

@@ -192,6 +192,38 @@ describe('the notice a move owes', () => {
   })
 })
 
+// Only a class 0 plugin whose new version asks for nothing it doesn't hold loads unasked, and never one holding a type
+// that asks on every update, as ui.layout does since a layout draws the whole window
+describe('whether an update loads unasked', () => {
+  const view: Capability = { type: 'ui.view' }
+  const layout: Capability = { type: 'ui.layout' }
+  const update = (granted: Capability[], n: number | null, requested: Capability[], others: ClassRow[] = []): ClassTable =>
+    ({ cause: 'update', change: { id: 'calc', granted }, confirm: false, requested, plugins: [{ id: 'calc', granted, stored: stored(n) }, ...others] })
+
+  it('is yes for a class 0 plugin whose new version asks for nothing new', () => {
+    expect(classes(update([view], 0, [view])).unasked).toBe(true)
+    expect(classes(update([view], 0, [])).unasked).toBe(true)
+  })
+
+  it.each([
+    ['a class above 0', [read], 1, [read]],
+    ['a class not known', [], null, []],
+    ['a new version asking for a grant it does not hold', [], 0, [storage]],
+    ['a plugin holding ui.layout', [layout], 0, [layout]],
+  ] as [string, Capability[], number | null, Capability[]][])('is no for %s', (_name, granted, n, requested) => {
+    expect(classes(update(granted, n, requested)).unasked).toBe(false)
+  })
+
+  it('is no for a class 0 entry that what it now reaches lifts', () => {
+    expect(classes(update([calls('sync')], 0, [calls('sync')], rows({ sync: [[fetchOne], 3] }))).unasked).toBe(false)
+  })
+
+  it('is no for every change that is no update', () => {
+    expect(classes(change('approve', 'calc', [], [])).unasked).toBe(false)
+    expect(classes(change('update', 'calc', [], rows({ calc: [[], 0] }))).unasked).toBe(false)
+  })
+})
+
 describe('the screen with what a manifest chose in quotes', () => {
   it('quotes each target, topic and variable it names, on the class line and the line of what is connected', () => {
     const lines = screen({
