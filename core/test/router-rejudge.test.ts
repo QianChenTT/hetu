@@ -104,6 +104,27 @@ describe('open calls judged again on a new grants snapshot', () => {
     expect((await search.reply(id)).ok).toBe(true)
   })
 
+  // A change told before the router could read a grants snapshot leaves the start to the first one it reads
+  it('starts from the first grants snapshot it reads, not from a change told while none could be read', async () => {
+    const parts = harness()
+    const exec = new FakeExec()
+    parts.providers.exec = exec
+    parts.gate.grants.search = [{ type: 'exec', commands: [build], env: [] }]
+    const search = parts.connect(worker('search'))
+    parts.pluginsManager.current = Number.NaN
+    parts.router.changed()
+    parts.pluginsManager.current = 1
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    parts.gate.grants.search = []
+    parts.router.changed()
+    await tick(10)
+    expect(exec.signals[0].aborted).toBe(false)
+    exec.finish()
+    expect((await search.reply(id)).ok).toBe(true)
+  })
+
   it('judges nothing again while the grants snapshot stays the same', async () => {
     const { exec, search, gate, router } = made()
     search.call('exec.run', { command: build })

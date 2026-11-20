@@ -69,13 +69,13 @@ export class Router implements RouterDoor {
   // grants snapshot moved, the bus asks the gate again about every subscription it holds. Windows hear core.status, and
   // core.security once a new grants snapshot applied a security change. A new grants snapshot also has the gate judge
   // every open call with power again, stopping the ones it no longer lets on. The first grants snapshot the router
-  // reads is where it starts, not a change
+  // reads is where it starts, not a change. A grants snapshot it can't read is none, so it moves nothing
   changed(): void {
     if (this.c.closed || this.c.shutting) return
     this.c.bus.sync()
     this.c.bus.emit(coreTopic.status)
     const view = this.c.view()
-    if (view === this.c.announced) return
+    if (view === null || view === this.c.announced) return
     const first = this.c.announced === undefined
     this.c.announced = view
     if (first) return

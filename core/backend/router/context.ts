@@ -180,8 +180,8 @@ export class Context {
   readonly ports = new WeakSet<object>()
   readonly guardsFor: (action: GuardableAction) => readonly string[]
   readonly bus: Bus
-  // The grants snapshot number core.security last went out for
-  announced: number | null | undefined = undefined
+  // The grants snapshot number core.security last went out for, undefined until the first one the router reads
+  announced: number | undefined = undefined
   closed = false
   // Shutdown began: the plugins manager reports what it stops as failed, so a policy job, guard or provider that is down answers stopped
   shutting = false
