@@ -129,7 +129,7 @@ describe('core plugins', () => {
     expect(pluginsManager.stopped()).toBe(null)
   })
 
-  it('reads a guard role absent, which nothing holds, and the gate and the grant risk classifier from their modules', async () => {
+  it('reads a guard role absent, which nothing holds, with the gate and the grant risk classifier from their modules', async () => {
     const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })
     await pluginsManager.start()
     expect(pluginsManager.policyJob('leases')).toBe('absent')

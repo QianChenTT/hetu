@@ -34,7 +34,7 @@ export type Keyed = { by: Record<string, Field>, join: Join }
 // One call's audit record as the carrier hands it, before the queue numbers it
 export type CallRecord = Omit<AuditRecord, 'seq' | 'count'>
 
-// Nothing is taken in while the human has recording off, and every write answers muted then. Reads of the log answer
+// Nothing is taken in while the human has recording off, when every write answers muted. Reads of the log answer
 // whatever the switch
 export type Recording = {
   // A core record from the core, which never blocks its caller
@@ -67,10 +67,10 @@ export type RecordingOptions = {
   limit(name: 'auditQueue' | 'floorBacklog' | 'logFailMs'): number
   // SHA-256 of a text as hex, for an exec command's commandHash, handed so recording reaches no Node built-in
   hash(text: string): string
-  // ms since the epoch for a record's second, and a clock no change of the wall clock moves for the queue's age
+  // ms since the epoch for a record's second, with a clock no change of the wall clock moves for the queue's age
   now?: () => number
   clock?: () => number
-  // How long the core record lane waits before it tries a failed append again, and how often the audit writer writes
+  // How long the core record lane waits before it tries a failed append again and how often the audit writer writes
   retryMs?: number
   everyMs?: number
   // The log's health changed, so windows read core.status again

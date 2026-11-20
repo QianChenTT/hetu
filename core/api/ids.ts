@@ -61,7 +61,7 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
 })
 
 // The core modules whose switch is a security control's though they judge no call: flood control, which bounds what
-// plugins and windows may cost main, recording, which keeps what happened, and the security view, which holds each
+// plugins and windows may cost main, recording, which keeps what happened and the security view, which holds each
 // change that widens for the human's Confirm
 export const guardingModuleIds = frozen(['flood-control', 'recording', 'security-view'] as const)
 

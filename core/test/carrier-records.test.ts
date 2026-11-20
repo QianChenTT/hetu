@@ -1081,7 +1081,7 @@ describe('recording that throws', () => {
     }
   }
 
-  it('answers each call though its record threw, and closes', async () => {
+  it('answers each call though its record threw and closes', async () => {
     const { carrier, connect, pluginsManager } = harness({ recording: broken() })
     pluginsManager.sandboxed('search')
     const search = connect(worker('search'))

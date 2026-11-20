@@ -6,7 +6,7 @@ import type { SecurityView } from './header.ts'
 // unless the human has confirmOff on and the trusted window itself asked. A change that asks for typing waits for it
 // even then, since confirmOff skips the click and not the proof of attention. A Confirm counts once its request has
 // been first in line for the input delay, so a click aimed at the request before can't land on the next one drawn in
-// its place, and with the word typed exactly
+// its place, with the word typed exactly
 export function createSecurityView(): SecurityView {
   return {
     asked(change, effect, from, confirmOff) {

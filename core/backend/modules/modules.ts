@@ -17,7 +17,7 @@ import {
 const closing = [...coreModuleIds].reverse()
 
 // The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
-// human's way back in needs them: flood control, recording, which writes the last records, and the security view, which
+// human's way back in needs them: flood control, recording, which writes the last records and the security view, which
 // holds the stopped mode's choices for the Confirm
 const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view'])
 

@@ -2,7 +2,7 @@ import type { LimitName } from '../../api/limits.ts'
 import { countMessage, newRate, type Rate } from '../../api/rate.ts'
 import type { Charged, Counted, FloodControl, FloodControlOptions, Held } from './header.ts'
 
-// Flood control: each way's messages against its rate and its flood cap before the carrier reads them, and each caller's
+// Flood control: each way's messages against its rate and its flood cap before the carrier reads them, then each caller's
 // calls and bytes in flight, charged to the caller and to the root of its chain, once a call parsed. A count lives as
 // long as its way or its calls do
 export function createFloodControl(options: FloodControlOptions): FloodControl {

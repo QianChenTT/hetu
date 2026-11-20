@@ -1,9 +1,9 @@
 import type { LimitName } from '../../api/limits.ts'
 
-// What flood control provides: the message rate and the flood cap of each way in, and the call ceiling of each caller.
+// What flood control provides: the message rate and the flood cap of each way in and the call ceiling of each caller.
 // Definitions only, flood-control.ts implements them and the join makes the one the core modules hold
 
-// A way in as flood control counts it. The object itself names the way, so each way keeps its own count, and plugin
+// A way in as flood control counts it. The object itself names the way, so each way keeps its own count. plugin
 // is whose limits apply, null for a window
 export type Counted = { readonly plugin: string | null }
 
@@ -25,7 +25,7 @@ export type FloodControl = {
   release(held: Held): void
 }
 
-// The limits as they apply to one plugin, or to a window for null, and a clock no change of the wall clock moves
+// The limits as they apply to one plugin or to a window for null, with a clock no change of the wall clock moves
 export type FloodControlOptions = {
   limit(plugin: string | null, name: LimitName): number
   clock(): number

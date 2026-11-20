@@ -1,6 +1,6 @@
 import type { Caller } from '../../api/envelope.ts'
 
-// What the heartbeat provides: it sets how often a running plugin is pinged and how many misses it takes, and asks the
+// What the heartbeat provides: it sets how often a running plugin is pinged and how many misses it takes, then asks the
 // core to mark a plugin unresponsive or to kill a hung utility process. Definitions only, heartbeat.ts implements them
 
 // One running incarnation as the heartbeat watches it: the plugin, the half it pings and whether that half is a utility
@@ -8,7 +8,7 @@ import type { Caller } from '../../api/envelope.ts'
 export type Beating = { readonly plugin: string, readonly caller: Caller, readonly utility: boolean }
 
 // What the core does at the heartbeat's ask: a ping down the half's own way, the mark that answers calls to it timeout
-// at once, the kill of a utility process, and the limits that apply to one plugin
+// at once, the kill of a utility process and the limits that apply to one plugin
 export type HeartbeatCore = {
   ping(plugin: Beating): void
   unresponsive(plugin: Beating): void

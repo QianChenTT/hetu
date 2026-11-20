@@ -111,7 +111,7 @@ export class LinkToCarrier implements CarrierLink {
 }
 
 // What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
-// that runs holds one, and the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
+// that runs holds one, with the core actions from the plugins manager's serve. wireCore and the plugins manager's tests
 // both build the carrier from it, so the tests run the wiring that ships
 export function carrierOptions(
   pluginsManager: PluginsManager,

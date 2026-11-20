@@ -42,7 +42,7 @@ export type RequestHost = {
   delayMs: number
   // How long a Confirm waits for its record to land, CONFIRM_RECORD_MS unless a test names another
   recordMs?: number
-  // Recording, which drains what waits to be recorded within ms and gives back how many records still wait, and then
+  // Recording, which drains what waits to be recorded within ms and gives back how many records still wait, then
   // writes nothing until recording is off or resume is called
   recording: Pick<PluginsRecording, 'drain' | 'resume'>
 }
@@ -83,7 +83,7 @@ const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.ki
 // Security requests: the security view decides whether a change applies at once with its record, lands its record and
 // applies or waits under a core id with the fingerprint of the state it read, until the trusted window's Confirm or
 // Cancel. The Confirm record lands first, so a widening never applies without it. With the view off every change a
-// window asks for applies unasked, its record first, and the editor window may only switch the view on again
+// window asks for applies unasked with its record first, while the editor window may only switch the view on again
 export class Requests {
   private readonly held = new Map<string, Held>()
   private readonly host: RequestHost
@@ -222,7 +222,7 @@ export class Requests {
   }
 
   // The security view's word on a change a window asked for. Off, a narrowing one applies at once and every other one
-  // unasked, and the editor window may send only the change that switches it on again. A throw, or a word outside the
+  // unasked, while the editor window may send only the change that switches it on again. A throw, or a word outside the
   // list, applies nothing
   private asked(change: Change, from: Caller): Asked | 'unasked' {
     const effect = this.host.effect(change)

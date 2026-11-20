@@ -965,7 +965,7 @@ describe('newer formats', () => {
 
 // recordNothing, from before recording was a core module, reads once as recording switched off and is never written again
 describe('the retired recordNothing', () => {
-  it('reads true as recording in off and false as nothing, and writes the switches back without it', async () => {
+  it('reads true as recording in off and false as nothing, then writes the switches back without it', async () => {
     await store.writeSwitches(noSwitches)
     await plant(switchesPath(), JSON.stringify({ format: 2, ...noSwitches, off: ['gate'], recordNothing: true }))
     const loaded = await store.load()

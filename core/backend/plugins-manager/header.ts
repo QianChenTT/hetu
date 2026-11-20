@@ -13,7 +13,7 @@ export type { Landing }
 // an update or a restore applies only on landed or muted, so a record the log can't write yet holds the change back
 // until it lands or the plugins manager gives up. A plugins manager that gives up aborts signal, which takes a record
 // still waiting out of the backlog and settles it lost. drain writes what waits within ms and gives back how many
-// records still wait, so switching recording off writes its own record last, and resume lets the writer go on
+// records still wait, so switching recording off writes its own record last. resume lets the writer go on
 export type PluginsRecording = Pick<Recording, 'drain' | 'resume'> & {
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
 }

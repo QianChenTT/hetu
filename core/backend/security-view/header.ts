@@ -2,7 +2,7 @@ import type { Change, ChangeEffect } from '../../api/changes.ts'
 import type { Caller } from '../../api/envelope.ts'
 
 // What the security view provides: it sits in the path of every security change a window asks for and decides whether
-// the change waits for the trusted window's Confirm, and whether a click on that Confirm counts. Definitions only,
+// the change waits for the trusted window's Confirm and whether a click on that Confirm counts. Definitions only,
 // security-view.ts implements them. The plugins manager keeps the queue, the stale check, record-before-apply and
 // applying
 
@@ -13,7 +13,7 @@ export type Asked = 'apply' | 'land' | 'hold'
 // Whether a Confirm counts: yes, too soon or not first in line, or the word typed doesn't match
 export type Confirmed = 'ok' | 'throttled' | 'invalid'
 
-// How long the request has been first in line, null while it isn't, and how long it must be before a click counts
+// How long the request has been first in line, null while it isn't, with how long it must be before a click counts
 export type InLine = { waited: number, delayMs: number } | null
 
 export type SecurityView = {

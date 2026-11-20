@@ -3,7 +3,7 @@ import type { Caller } from '../api/envelope.ts'
 import { createHeartbeat } from '../backend/heartbeat/heartbeat.ts'
 import type { Beating, HeartbeatCore } from '../backend/heartbeat/header.ts'
 
-// The heartbeat on its own, on fake timers: what it asks the core to do, and when
+// The heartbeat on its own, on fake timers: what it asks the core to do and when
 function made(limits: { heartbeatMs?: number, heartbeatMisses?: number } = {}) {
   const asked: string[] = []
   const faults: string[] = []

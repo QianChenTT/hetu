@@ -4,7 +4,7 @@ import { AuditWriter } from './audit.ts'
 import type { CallRecord, Keyed, Landing, Recording, RecordingOptions } from './header.ts'
 import { AuditQueue, Coalesced, CoreRecordLane } from './records.ts'
 
-// Recording: core records go first, straight through the one EventLog, and audit records wait in a bounded queue the
+// Recording: core records go first, straight through the one EventLog, while audit records wait in a bounded queue the
 // writer takes in batches. It enforces nothing: the caller on the same step decides whether to wait for a record to
 // land. The log counts as failed once the oldest record the queue holds waited logFailMs unwritten, which it tells
 // until taken. With the human's switch off nothing is taken in and what the queue still holds is let go, since the

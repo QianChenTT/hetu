@@ -387,7 +387,7 @@ describe('the window way in', () => {
 })
 
 describe('the carrier\'s imports', () => {
-  it('imports nothing from boot, so the state store and the log arrive only through its header, and flood control and recording only through their doors', () => {
+  it('imports nothing from boot, so the state store and the log arrive only through its header, flood control and recording only through their doors', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
     expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'header.ts', 'limits.ts'])

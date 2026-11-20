@@ -146,7 +146,7 @@ function switchesOf(list: SecurityList): Switch[] {
   return rows
 }
 
-// The Dev group: the hash checks skipped, dev mode for each plugin-folder plugin, which then loads unhashed, and the
+// The Dev group: the hash checks skipped, dev mode for each plugin-folder plugin, which then loads unhashed and the
 // unsigned builds trusted, which a button with plugin provenance names
 function devOf(list: SecurityList): Switch[] {
   const { switches } = list

@@ -163,7 +163,7 @@ describe('the hidden renderer for workers', () => {
     ])
   })
 
-  it('hands a cutoff from the page to the plugins manager once, for a running worker, and has nothing left to end', () => {
+  it('hands a cutoff from the page to the plugins manager once for a running worker and has nothing left to end', () => {
     const { workers, renderers, cutoffs } = runtime()
     workers.start(start('search').start)
     renderers[0].says({ kind: 'ready' })
