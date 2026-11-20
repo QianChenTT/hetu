@@ -4,7 +4,7 @@ import type { Failure } from './header.ts'
 // What Quit needs from the joined core and from boot
 export type QuitParts = {
   pluginsManager: { shutdown(): Promise<void> }
-  carrier: { close(): void }
+  router: { close(): void }
   recording: { flush(): Promise<void> }
   release(): Promise<void>
 }
@@ -17,7 +17,7 @@ export const QUIT_DEADLINES: Deadlines = Object.freeze({ shutdown: 30_000, flush
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 // shutdown, flush, close, flush and release. The first flush writes what the audit queue holds and gives a core record
-// backlog waiting to retry one more try before close drops it. Closing the carrier ends every way and closes
+// backlog waiting to retry one more try before close drops it. Closing the router ends every way and closes
 // recording. The second flush writes the records of the calls close stopped and waits for the drain close leaves
 // running, which carries the counts close writes.
 // The lock goes last, once nothing more is written. Returns each step that didn't finish and why, since the log is
@@ -41,7 +41,7 @@ export async function quitInOrder(parts: QuitParts, deadlines: Deadlines = QUIT_
   await wait('shutdown', () => parts.pluginsManager.shutdown(), deadlines.shutdown)
   await wait('flush', () => parts.recording.flush(), deadlines.flush)
   try {
-    parts.carrier.close()
+    parts.router.close()
   } catch (err) {
     missed.push(`close: ${reason(err)}`)
   }

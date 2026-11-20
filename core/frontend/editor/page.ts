@@ -495,7 +495,7 @@ function start(bridge: Bridge): void {
   // Every dirty note kept as a draft before hetu quits, so nothing typed in the last second is lost
   async function quit(): Promise<void> {
     await theNotes.keepAll()
-    await link.call('core.quit')
+    await link.call('app.quit')
   }
 
   async function save(): Promise<void> {

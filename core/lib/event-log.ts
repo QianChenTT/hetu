@@ -26,7 +26,7 @@ const IDLE_GAP_MS = 2 * 60 * 60 * 1000
 export type Field = string | number | boolean | null
 // One record of a batch, its fields checked
 type Entry = { event: string, fields: Record<string, Field> }
-// history and verify answer with core/api's types, which the carrier hands on as log.segments and log.verify
+// history and verify answer with core/api's types, which the router hands on as log.segments and log.verify
 export type { Segment, Verification }
 // What open found before it wrote anything. lastSeq is 0 for a log with no good line, broken is set when open started
 // a new segment because the newest one didn't check out. unlinked is a newest segment that checks out but doesn't follow

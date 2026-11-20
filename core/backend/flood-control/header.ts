@@ -17,7 +17,7 @@ export type Held = { readonly principals: readonly string[], readonly bytes: num
 // A message's verdict before it is read: pass, drop with no reply or flood, which closes the way of a plugin
 export type Admitted = 'pass' | 'drop' | 'flood'
 
-// It counts and says yes or no. The carrier drops, closes and throttles. acquire is null for no: the caller or the root of
+// It counts and says yes or no. The router drops, closes and throttles. acquire is null for no: the caller or the root of
 // its chain is past its calls or bytes in flight
 export type FloodControl = {
   admit(way: Counted): Admitted

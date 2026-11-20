@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { checkSender, WindowWay, type WindowContents } from '../backend/runtime/window-way.ts'
-import { cleanup, harness, tick } from './carrier-fakes.ts'
+import { cleanup, harness, tick } from './router-fakes.ts'
 
 afterEach(() => {
   cleanup()
@@ -45,7 +45,7 @@ const call = (id: number, action: string, args?: unknown) => ({ v: 1, kind: 'cal
 function window() {
   const parts = harness()
   const contents = new FakeContents()
-  const way = new WindowWay(contents as unknown as WindowContents, 'editor', parts.carrier)
+  const way = new WindowWay(contents as unknown as WindowContents, 'editor', parts.router)
   contents.emit('did-navigate')
   return { ...parts, contents, way }
 }
@@ -93,18 +93,18 @@ describe('a window\'s way in', () => {
   })
 
   it('gives each load its own way: a new document ends the old one\'s way and takes the next n', async () => {
-    const { contents, carrier } = window()
+    const { contents, router } = window()
     contents.sends(contents.mainFrame, call(1, 'events.subscribe', { topics: ['core.status'] }))
     await tick(10)
-    // The window's own n check would hide a way left open in the carrier, so the end is checked where it happens
-    const end = vi.spyOn(carrier, 'end')
+    // The window's own n check would hide a way left open in the router, so the end is checked where it happens
+    const end = vi.spyOn(router, 'end')
     contents.emit('did-navigate')
     expect(end).toHaveBeenCalledWith({ kind: 'window', role: 'editor', n: 1 })
     contents.sends(contents.mainFrame, call(2, 'core.self'))
     await tick(10)
     expect(answers(contents.mainFrame).at(-1)).toMatchObject({ id: 2, result: { kind: 'window', role: 'editor', n: 2 } })
     // The first load's subscription went with its way, so nothing reaches the second load
-    carrier.changed()
+    router.changed()
     await tick(10)
     expect(answers(contents.mainFrame).filter(message => message.kind === 'event')).toEqual([])
   })
@@ -123,16 +123,16 @@ describe('a window\'s way in', () => {
   })
 
   it('ends the way for good when the window is gone', async () => {
-    const { contents, carrier } = window()
+    const { contents, router } = window()
     contents.sends(contents.mainFrame, call(1, 'events.subscribe', { topics: ['core.status'] }))
     await tick(10)
-    const end = vi.spyOn(carrier, 'end')
+    const end = vi.spyOn(router, 'end')
     contents.emit('destroyed')
     expect(end).toHaveBeenCalledWith({ kind: 'window', role: 'editor', n: 1 })
     contents.sends(contents.mainFrame, call(2, 'core.self'))
     await tick(10)
     expect(answers(contents.mainFrame).filter(message => message.id === 2)).toEqual([])
-    carrier.changed()
+    router.changed()
     await tick(10)
     expect(answers(contents.mainFrame).filter(message => message.kind === 'event')).toEqual([])
     contents.emit('did-navigate')
@@ -143,8 +143,8 @@ describe('a window\'s way in', () => {
 
   // A reload after the crash is a new load, so the window isn't lost until hetu restarts
   it('ends a crashed renderer\'s load, answers nothing until the next load and answers that one with the next n', async () => {
-    const { contents, carrier } = window()
-    const end = vi.spyOn(carrier, 'end')
+    const { contents, router } = window()
+    const end = vi.spyOn(router, 'end')
     contents.emit('render-process-gone')
     expect(end).toHaveBeenCalledWith({ kind: 'window', role: 'editor', n: 1 })
     contents.sends(contents.mainFrame, call(1, 'core.self'))

@@ -11,7 +11,7 @@ export function withoutIgnorable(text: string): string {
 
 // Whether a segment starts with a dot on some volume, once what HFS+ skips is taken out. Obsidian runs code from
 // .obsidian and GitHub from .github, so no note path reaches a dot folder or a dot file. The matcher, the
-// canonicaliser, the carrier and the SDK all ask this one check. Apart from zod, so a plugin bundles it through the SDK
+// canonicaliser, the router and the SDK all ask this one check. Apart from zod, so a plugin bundles it through the SDK
 export function isDotName(segment: string): boolean {
   return withoutIgnorable(segment).charCodeAt(0) === DOT
 }

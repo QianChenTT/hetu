@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { definePlugin, type PluginContext, type PluginSpec, run } from '../sdk/plugin.ts'
 import { Refused } from '../sdk/refused.ts'
-import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
+import { cleanup, harness, tick, worker } from './router-fakes.ts'
 import { sdkTransport } from './sdk-fakes.ts'
 
 afterEach(() => {
@@ -25,11 +25,11 @@ function running(spec: PluginSpec, first: object | null = init()) {
   const parts = harness()
   parts.pluginsManager.sandboxed('search')
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
-  const transport = sdkTransport(parts.carrier, worker('search'))
+  const transport = sdkTransport(parts.router, worker('search'))
   run(definePlugin(spec), transport)
-  if (first !== null) parts.carrier.send(worker('search'), first)
+  if (first !== null) parts.router.send(worker('search'), first)
   const heard = () => parts.pluginsManager.lifecycle.map(entry => entry.kind)
-  return { ...parts, transport, heard, send: (message: object) => parts.carrier.send(worker('search'), message) }
+  return { ...parts, transport, heard, send: (message: object) => parts.router.send(worker('search'), message) }
 }
 
 describe('a plugin\'s life through the SDK', () => {

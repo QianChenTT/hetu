@@ -45,7 +45,7 @@ export const ENVELOPE_ROOM = 64 * 1024
 // fails in the SDK before it is sent
 export const messageCap = (limit: (name: LimitName) => number): number => limit('resultBytes') + ENVELOPE_ROOM
 
-// What a message costs main to read: the larger of its text's length and what the carrier measures of the value, 8 a
+// What a message costs main to read: the larger of its text's length and what the router measures of the value, 8 a
 // value and slot and the bytes of each key and string. The measure bounds how many values main builds and the length
 // how much text it scans, so a message can't be cheap on one and costly on the other. Not JSON, not plain data, nested
 // past MAX_DEPTH or past the cap is refused, none of which the SDK sends. The text is parsed here, in the worker host

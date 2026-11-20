@@ -22,7 +22,7 @@ export const doorLimits = Object.freeze({
   // would mean nothing
   perSecond: 50,
   openPerSecond: 10,
-  // Calls in flight to MCP, for one client and in all, under the carrier's limit for http as one caller
+  // Calls in flight to MCP, for one client and in all, under the router's limit for http as one caller
   callsPerClient: 8,
   callsInAll: 32,
   // The largest answer passed back from MCP

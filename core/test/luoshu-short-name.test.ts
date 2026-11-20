@@ -10,7 +10,7 @@ import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.
 import { wireCore } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { cleanup, harness, worker } from './carrier-fakes.ts'
+import { cleanup, harness, worker } from './router-fakes.ts'
 import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, until, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 // What another plugin's write does once a write's temp file is open, after its version check and before its note lands
@@ -65,11 +65,11 @@ async function world(folders: Record<string, Capability[]>) {
   const luoshu = createLuoshu({ settleMs: 50 })
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu }
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()

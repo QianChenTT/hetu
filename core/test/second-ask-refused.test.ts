@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, GuardCall, Prepared } from '../api/policy-jobs.ts'
 import { createHistory } from '../backend/providers/history/history.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { cleanup, FakeGuard, harness, worker } from './carrier-fakes.ts'
+import { cleanup, FakeGuard, harness, worker } from './router-fakes.ts'
 
 const bases: string[] = []
 
@@ -21,7 +21,7 @@ type Case = {
   policyJob?: 'off' | 'failed' | 'absent'
 }
 
-// The real carrier and the real luoshu with a fake gate and guard. Another program renames the folder plain to Plain
+// The real router and the real luoshu with a fake gate and guard. Another program renames the folder plain to Plain
 // between prepare and perform, so the luoshu asks the call's judge about Plain/<name>
 async function renamedFolder(action: 'luoshu.read' | 'luoshu.write', name: string, given: Case) {
   const base = await realpath(await mkdtemp(path.join(tmpdir(), 'hetu-second-ask-')))

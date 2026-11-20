@@ -199,7 +199,7 @@ describe('the probes in a worker', () => {
     for (const plugin of ['objects', 'nested', 'past']) {
       expect(await logged(dataDir, 'plugin.crashed', { plugin, reason: 'malformed' }), plugin).toBe(true)
     }
-    // The heaviest message the relay passes reaches main, which reads it and the carrier drops it as no envelope
+    // The heaviest message the relay passes reaches main, which reads it and the router drops it as no envelope
     expect(await logged(dataDir, 'plugin.crashed', { plugin: 'heaviest' })).toBe(false)
     for (const [plugin, name] of sends) expect(stalls[name], name).toBeLessThan(plugin === 'heaviest' ? limits.heaviest : limits.cut)
   })

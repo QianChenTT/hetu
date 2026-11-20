@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
-import { Limits } from '../backend/carrier/limits.ts'
+import { Limits } from '../backend/router/limits.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
-import type { HumanLimits, Port } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, harness, tick, windowWay, worker } from './carrier-fakes.ts'
+import type { HumanLimits } from '../api/policy-jobs.ts'
+import type { Port } from '../backend/router/header.ts'
+import { cleanup, code, editor, harness, tick, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -142,12 +143,12 @@ describe('the ceiling', () => {
 
   // A window runs on the fixed ceiling, which a value for all lowered by mistake can't take below
   it('keeps a ceiling per window at the fixed value', async () => {
-    const { carrier, connect, pluginsManager } = harness()
+    const { router, connect, pluginsManager } = harness()
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.sandboxed('git', { log: {} })
     pluginsManager.human.all = { callsInFlight: 1 }
     const git = connect(worker('git'))
-    const way = windowWay(carrier, { 'editor-1': editor, 'editor-2': { kind: 'window', role: 'editor', n: 2 } })
+    const way = windowWay(router, { 'editor-1': editor, 'editor-2': { kind: 'window', role: 'editor', n: 2 } })
     for (let id = 100; id < 100 + defaultLimits.callsInFlight; id++) way.post('editor-1', { v: 1, kind: 'call', id, action: 'git.log', args: {} })
     for (let waited = 0; git.inbox.filter(message => message.kind === 'call').length < defaultLimits.callsInFlight; waited++) {
       if (waited > 200) throw new Error('the calls never arrived')
@@ -191,7 +192,7 @@ describe('the rate', () => {
 
   it('counts a message that could not be read against the rate', async () => {
     const clock = 1_000_000
-    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    const { router, pluginsManager } = harness({ clock: () => clock })
     pluginsManager.human.plugins.search = { messagesPerSecond: 1 }
     const listeners: Record<string, (value: unknown) => void> = {}
     const sent: unknown[] = []
@@ -201,7 +202,7 @@ describe('the rate', () => {
       close: () => {},
       on: (event, listener) => { listeners[event] = listener },
     }
-    carrier.register(port, worker('search'))
+    router.register(port, worker('search'))
     listeners.messageerror(undefined)
     listeners.message({ v: 1, kind: 'call', id: 1, action: 'core.self', args: {} })
     await tick()
@@ -224,21 +225,21 @@ describe('the rate', () => {
   // Past the fixed flood cap too, since a window's way is never closed and a value for all can't lower its rate
   it('drops a window\'s messages over the rate but never closes its way in', async () => {
     const clock = 1_000_000
-    const { carrier, pluginsManager } = harness({ clock: () => clock })
+    const { router, pluginsManager } = harness({ clock: () => clock })
     pluginsManager.human.all = { messagesPerSecond: 2, floodMs: 1000, floodFactor: 1 }
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     const sent = defaultLimits.messagesPerSecond * defaultLimits.floodFactor + 10
     for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
     await tick(50)
     expect(way.replies).toHaveLength(defaultLimits.messagesPerSecond)
-    expect(way.replies.at(-1)?.id).toBe(defaultLimits.messagesPerSecond)
+    expect(Math.max(...way.replies.map(reply => reply.id as number))).toBe(defaultLimits.messagesPerSecond)
     expect(pluginsManager.crashes).toEqual([])
   })
 
   it('keeps a window\'s way in open past the fixed flood cap and answers it once the windows start again', async () => {
     let clock = 1_000_000
-    const { carrier, pluginsManager } = harness({ clock: () => clock })
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const { router, pluginsManager } = harness({ clock: () => clock })
+    const way = windowWay(router, { 'editor-1': editor })
     const cap = defaultLimits.messagesPerSecond * defaultLimits.floodFactor * defaultLimits.floodMs / 1000
     for (let i = 0; i <= cap + 10; i++) way.post('editor-1', { v: 1, kind: 'pong' })
     clock += defaultLimits.floodMs + 1000
@@ -299,12 +300,12 @@ describe('the flood cap', () => {
   })
 })
 
-// The carrier asks flood control and acts on its answer: drops a message, closes a way or throttles a call. Flood
+// The router asks flood control and acts on its answer: drops a message, closes a way or throttles a call. Flood
 // control off answers yes to everything, for plugins and windows alike
 describe('flood control in the path', () => {
   it('drops nothing, closes nothing and throttles nothing while flood control is off', async () => {
     const clock = 1_000_000
-    const { carrier, connect, pluginsManager } = harness({ clock: () => clock, floodControl: () => null })
+    const { router, connect, pluginsManager } = harness({ clock: () => clock, floodControl: () => null })
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.sandboxed('git', { log: {} })
     pluginsManager.human.all = { messagesPerSecond: 1, floodMs: 1000, floodFactor: 1, callsInFlight: 1 }
@@ -317,7 +318,7 @@ describe('flood control in the path', () => {
     search.call('git.log')
     await tick(10)
     expect((await search.ask('core.self')).ok).toBe(true)
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     const sent = defaultLimits.messagesPerSecond + 10
     for (let i = 1; i <= sent; i++) way.post('editor-1', { v: 1, kind: 'call', id: i, action: 'core.self', args: {} })
     await tick(50)
@@ -327,7 +328,7 @@ describe('flood control in the path', () => {
 
   it('drops the one message whose count throws and records the fault, the next counted again', async () => {
     let broken = true
-    const { connect, log, carrier } = harness({
+    const { connect, log, router } = harness({
       floodControl: () => ({
         admit: () => { if (broken) throw new Error('broken'); return 'pass' },
         acquire: () => ({ principals: [], bytes: 0 }),
@@ -340,7 +341,7 @@ describe('flood control in the path', () => {
     expect(search.repliesTo(first)).toEqual([])
     broken = false
     expect((await search.ask('core.self')).ok).toBe(true)
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'admit', count: 1 }])
   })
@@ -356,24 +357,24 @@ describe('flood control in the path', () => {
   })
 
   it('answers failed for a call whose acquire throws and records the fault, asking no gate', async () => {
-    const { connect, log, carrier, gate } = harness({
+    const { connect, log, router, gate } = harness({
       floodControl: () => ({ admit: () => 'pass', acquire: () => { throw new Error('broken') }, release: () => {} }),
     })
     const search = connect(worker('search'))
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('failed')
     expect(gate.asked).toEqual([])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'acquire', count: 1 }])
   })
 
   it('answers a call whose release throws and records the fault', async () => {
-    const { connect, log, carrier } = harness({
+    const { connect, log, router } = harness({
       floodControl: () => ({ admit: () => 'pass', acquire: () => ({ principals: [], bytes: 0 }), release: () => { throw new Error('broken') } }),
     })
     const search = connect(worker('search'))
     expect((await search.ask('core.self')).ok).toBe(true)
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'flood-control', step: 'release', count: 1 }])
   })

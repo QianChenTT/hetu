@@ -76,11 +76,11 @@ async function joined(gate: 'on' | 'off') {
   }
   const runtime = new FakeRuntime()
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
@@ -174,7 +174,7 @@ describe('agents through the joined core', () => {
       if (got === undefined) await tick(5)
     }
     expect(got?.onBehalf).toBe('client#1')
-    expect((await ask(search, 'core.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
+    expect((await ask(search, 'gate.filterReadable', { call: got!.callId, paths: notes })).result).toEqual(['inbox/a.md'])
   })
 
   it('lets agent #2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {

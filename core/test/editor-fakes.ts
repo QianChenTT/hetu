@@ -26,7 +26,7 @@ export function fakeCore(answers: Record<string, (args: unknown, sent: Sent) => 
     answers,
     hears,
     calls: (action: string) => sent.filter(message => message.kind === 'call' && message.action === action),
-    // An event from the core, numbered as the carrier numbers them
+    // An event from the core, numbered as the router numbers them
     event: (topic: string, path?: string) => hears({ v: 1, kind: 'event', topic, seq: ++seq, ...(path === undefined ? {} : { path }) }),
   }
 }

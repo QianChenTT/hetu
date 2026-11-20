@@ -398,9 +398,9 @@ describe('the trusted page', () => {
   it('picks a folder through main’s dialog and asks for it as luoshu.pick, and asks nothing when the dialog was cancelled', () => {
     const { sent, page, hears } = started()
     page.pickFolder()
-    expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
+    expect(sent.at(-1)).toMatchObject({ action: 'app.pickFolder' })
     hears(replyTo(sent.at(-1)!, null))
-    expect(sent.at(-1)).toMatchObject({ action: 'core.pickFolder' })
+    expect(sent.at(-1)).toMatchObject({ action: 'app.pickFolder' })
     page.pickFolder()
     hears(replyTo(sent.at(-1)!, '/Users/someone/notes'))
     expect(sent.at(-1)).toMatchObject({ action: 'security.request', args: { change: { kind: 'luoshu.pick', folder: '/Users/someone/notes' } } })
@@ -417,14 +417,14 @@ describe('the trusted page', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
     page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { applied: true }))
-    expect(sent.map(message => message.action)).toContain('core.relaunch')
+    expect(sent.map(message => message.action)).toContain('app.relaunch')
   })
 
   it('starts nothing again for a choice that waits for its Confirm', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
     page.ask({ kind: 'plugin.off', plugin: 'recording' })
     hears(replyTo(sent[2], { held: 'r1' }))
-    expect(sent.map(message => message.action)).not.toContain('core.relaunch')
+    expect(sent.map(message => message.action)).not.toContain('app.relaunch')
   })
 
   it('says when too many requests wait, apart from a Confirm sent too soon', () => {
@@ -439,7 +439,7 @@ describe('the trusted page', () => {
     const { sent, page, hears } = started(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } }))
     page.confirm('r1', 'gate')
     hears(replyTo(sent[2], null))
-    expect(sent.map(message => message.action)).toContain('core.relaunch')
+    expect(sent.map(message => message.action)).toContain('app.relaunch')
   })
 
   it('asks for a change, stops and restarts a plugin, and quits', () => {
@@ -454,7 +454,7 @@ describe('the trusted page', () => {
       ['core.stop', { plugin: 'search' }],
       ['core.restart', { plugin: 'search' }],
       ['security.cancel', { requestId: 'r1' }],
-      ['core.quit', undefined],
+      ['app.quit', undefined],
     ])
   })
 })

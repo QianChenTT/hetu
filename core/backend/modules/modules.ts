@@ -23,7 +23,7 @@ const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording'
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
-// The one place the six core modules are held, made by the join. The carrier reads the gate and the providers through here and
+// The one place the six core modules are held, made by the join. The router reads the gate and the providers through here and
 // the plugins manager the grant risk classifier and storage's clear, each null while its module is off or failed. A
 // module that throws is refused per call and stops nothing
 export class CoreModules implements Holder {

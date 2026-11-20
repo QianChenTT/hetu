@@ -179,7 +179,7 @@ export function createExec(options: ExecOptions = {}): Exec {
       ready.delete(call.callId)
       const dir = home
       if (dir === null || view === null) throw refused('unavailable')
-      // The command the carrier had judged, which is the one prepare settled or the call fails
+      // The command the router had judged, which is the one prepare settled or the call fails
       const command = prepared.scope.command ?? (call.args as { command?: unknown }).command
       if (kept === undefined || !strings(command) || commandKey(command) !== kept.key || call.caller.kind !== 'plugin') throw refused('failed')
       const id = call.caller.id
@@ -190,8 +190,11 @@ export function createExec(options: ExecOptions = {}): Exec {
       try {
         await mkdir(cwd)
         const ran = await runClean(kept.program, command.slice(1), {
-          cwd, env: withDeclared(baseEnv(ambient), kept.env, ambient), maxOutput: outputBytes, deadline: call.deadline, signal: stopping.signal,
+          cwd, env: withDeclared(baseEnv(ambient), kept.env, ambient), maxOutput: outputBytes, deadline: call.deadline,
+          // Killed when exec closes or when the call's signal aborts, a call the gate no longer lets on among them
+          signal: call.signal instanceof AbortSignal ? AbortSignal.any([stopping.signal, call.signal]) : stopping.signal,
         })
+        if (call.signal?.aborted === true) throw refused('stale')
         if (ran.timedOut) throw refused('timeout')
         return {
           code: ran.code, signal: ran.signal, stdout: ran.stdout.toString('utf8'), stderr: ran.stderr.toString('utf8'), truncated: ran.truncated,

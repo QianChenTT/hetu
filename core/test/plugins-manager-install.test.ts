@@ -51,7 +51,7 @@ describe('the start order', () => {
     for (const id of [HTTP, MARKS, 'outline', 'indexer']) expect(stateOf(pluginsManager, id)).toBe('ready')
   })
 
-  it('mints each port and registers it with the carrier in the same step, before the half starts', async () => {
+  it('mints each port and registers it with the router in the same step, before the half starts', async () => {
     const seen: string[] = []
     const made = await harness({
       install: { ...coreInstall(), [HTTP]: http() },

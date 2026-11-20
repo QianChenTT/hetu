@@ -138,7 +138,7 @@ describe('a new note', () => {
     expect(await readFile(at('box', 'n.md'), 'utf8')).toBe('MINE')
   })
 
-  // Whichever prepare takes the key's lock first lands
+  // Whichever prepare takes the key's latch first lands
   it('refuses the later of two creates of one name sent together stale and keeps the earlier one\'s note', async () => {
     const luoshu = opened()
     const answers = await Promise.all([write(luoshu, 'box/n.md', 'ONE'), write(luoshu, 'box/n.md', 'TWO')])

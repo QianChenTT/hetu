@@ -457,8 +457,8 @@ describe('a plugin’s class', () => {
 // The roadmap's first proof end to end: a plugin's worker reaches no security or window lifecycle action
 describe('a plugin', () => {
   it('reaches no security.* or window lifecycle action, each refused not-granted and recorded', async () => {
-    const actions = ['security.request', 'security.confirm', 'security.cancel', 'security.open', 'security.list', 'core.stop', 'core.restart', 'core.quit', 'core.relaunch']
-    const calls = actions.map((action, i) => `send({ v: 1, kind: 'call', id: ${i + 1}, action: '${action}', args: ${action === 'security.request' ? "{ change: { kind: 'plugin.off', plugin: 'gate' } }" : action.startsWith('core.') && action !== 'core.quit' && action !== 'core.relaunch' ? "{ plugin: 'reacher' }" : action === 'security.confirm' || action === 'security.cancel' ? "{ requestId: 'r1' }" : '{}'} })`).join('\n')
+    const actions = ['security.request', 'security.confirm', 'security.cancel', 'app.openSecurity', 'security.list', 'core.stop', 'core.restart', 'app.quit', 'app.relaunch']
+    const calls = actions.map((action, i) => `send({ v: 1, kind: 'call', id: ${i + 1}, action: '${action}', args: ${action === 'security.request' ? "{ change: { kind: 'plugin.off', plugin: 'gate' } }" : action.startsWith('core.') && action !== 'app.quit' && action !== 'app.relaunch' ? "{ plugin: 'reacher' }" : action === 'security.confirm' || action === 'security.cancel' ? "{ requestId: 'r1' }" : '{}'} })`).join('\n')
     const dataDir = await data({ workers: { reacher: { code: lifecycle(calls) } } })
     const app = await start(dataDir, await install())
     await editorPage(app)

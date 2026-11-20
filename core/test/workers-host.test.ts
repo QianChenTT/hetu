@@ -125,8 +125,8 @@ describe('the worker host page', () => {
     ['a number', 5],
     ['text past the cap', 'x'.repeat(cap + 1)],
     ['text that isn\'t JSON', 'ready'],
-    ['JSON nested past the carrier\'s depth', '['.repeat(65) + ']'.repeat(65)],
-    ['a key the carrier refuses', '{"__proto__":{"v":1}}'],
+    ['JSON nested past the router\'s depth', '['.repeat(65) + ']'.repeat(65)],
+    ['a key the router refuses', '{"__proto__":{"v":1}}'],
     ['JSON that weighs one past the cap', JSON.stringify('x'.repeat(cap - 7))],
   ])('cuts a worker off at once for %s, ending it before it tells main', (_name, data) => {
     const { worker, own, main, reports } = running()
@@ -135,7 +135,7 @@ describe('the worker host page', () => {
     expect(own.closed).toBe(true)
     expect(reports).toEqual([{ kind: 'cutoff', id: 'search', incarnation: 1, reason: 'malformed' }])
     expect(main.posted).toEqual([])
-    // main's port is the carrier's to close, so the reason reaches main first
+    // main's port is the router's to close, so the reason reaches main first
     expect(main.closed).toBe(false)
     own.gets('{"v":1,"kind":"ready"}')
     expect(main.posted).toEqual([])
@@ -164,7 +164,7 @@ describe('the worker host page', () => {
     expect(main.posted).toEqual([])
   })
 
-  it('drops a message over the rate, as the carrier does', () => {
+  it('drops a message over the rate, as the router does', () => {
     const { own, main, page, reports, at } = running()
     at(1000)
     for (let i = 0; i < 4; i++) own.gets(text(`m${i}`))
@@ -192,7 +192,7 @@ describe('the worker host page', () => {
     const { own, main, at } = running({ bytesPerSecond: 10, resultBytes: 1 })
     at(0)
     own.gets(JSON.stringify('x'.repeat(1 + ENVELOPE_ROOM - 8)))
-    // Weighs 9, the carrier's 8 for a value and 1 for its byte
+    // Weighs 9, the router's 8 for a value and 1 for its byte
     own.gets(text('y'))
     expect(main.posted).toHaveLength(1)
     at(1000)
@@ -200,7 +200,7 @@ describe('the worker host page', () => {
     expect(main.posted.at(-1)).toBe(text('z'))
   })
 
-  it('charges a message by what the carrier measures, so many small values cost more than their text', () => {
+  it('charges a message by what the router measures, so many small values cost more than their text', () => {
     const { own, main, at } = running({ bytesPerSecond: 100, resultBytes: 1 })
     at(0)
     // 3300 empty objects weigh about 64,900, near the bucket's 65,537, in under 10,000 characters of text. A message
@@ -212,7 +212,7 @@ describe('the worker host page', () => {
     expect(main.posted).toEqual([values])
   })
 
-  it('cuts a worker off at the flood cap, the carrier\'s rule: floodFactor times the rate across floodMs', () => {
+  it('cuts a worker off at the flood cap, the router\'s rule: floodFactor times the rate across floodMs', () => {
     const { own, reports, worker, at } = running()
     at(0)
     // 3 a second times 2 across 2 s is 12

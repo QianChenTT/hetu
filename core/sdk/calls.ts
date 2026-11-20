@@ -6,7 +6,7 @@ import { Refused, refusedFrom } from './refused.ts'
 // onBehalf names one of the caller's own clients, which grants nothing. timeoutMs only shortens the call's deadline
 export type CallOptions = { signal?: AbortSignal, timeoutMs?: number, onBehalf?: string }
 
-// parent names the call this one serves and deadline is that call's, in ms since the epoch. The carrier holds a
+// parent names the call this one serves and deadline is that call's, in ms since the epoch. The router holds a
 // sub-call to its parent's deadline, so retries stop there too
 export type RequestOptions = CallOptions & { parent?: string, deadline?: number }
 
@@ -16,7 +16,7 @@ export type Limits = { callsInFlight: number, callDeadlineMs: number }
 const retried = new Set<RefusalCode>(['starting', 'throttled'])
 const FIRST_RETRY_MS = 25
 const LAST_RETRY_MS = 1000
-// How long past a deadline the carrier holds to the call waits for the carrier's own timeout
+// How long past a deadline the router holds to the call waits for the router's own timeout
 const REPLY_SLACK_MS = 1000
 // The longest delay a timer takes. A longer one fires at once
 const MAX_TIMER_MS = 2 ** 31 - 1
@@ -28,13 +28,13 @@ type Pending = {
   readonly args: unknown
   readonly options: RequestOptions
   readonly deadline: number
-  // The deadline is the caller's own timeoutMs, which the carrier never hears of
+  // The deadline is the caller's own timeoutMs, which the router never hears of
   readonly own: boolean
   readonly settle: (outcome: { value: unknown } | { error: unknown }) => void
   // The id of the message in flight, null while the call waits for a turn or a retry
   id: number | null
   delay: number
-  // The carrier's deadline passed and the call waits a second more for the carrier's own timeout
+  // The router's deadline passed and the call waits a second more for the router's own timeout
   slack: boolean
   // The refusal a retry answers, which the call settles with once its deadline leaves no room for another
   last: Refused | null
@@ -48,7 +48,7 @@ const timer = (fn: () => void, ms: number) => setTimeout(fn, Math.min(Math.max(0
 // The half's own calls. Args that can't cross are refused invalid at once. Past callsInFlight a call waits its turn.
 // starting and throttled are tried again after a delay that doubles from 25 ms to a second, while the deadline allows.
 // A call settles timeout at its deadline wherever it is. One still waiting is never sent. One the caller's own
-// timeoutMs gave up on is cancelled at once. One held to the carrier's deadline waits a second more for the carrier's
+// timeoutMs gave up on is cancelled at once. One held to the router's deadline waits a second more for the router's
 // own answer before it is cancelled too. An aborted signal cancels a call that went out
 export class Calls {
   private readonly sender: Sender
@@ -72,14 +72,14 @@ export class Calls {
     if (signal?.aborted === true) return Promise.reject(signal.reason)
     if (!isPlain(args)) return Promise.reject(new Refused('invalid', action))
     const now = Date.now()
-    const carrier = Math.min(now + this.limits.callDeadlineMs, options.deadline ?? Infinity)
+    const router = Math.min(now + this.limits.callDeadlineMs, options.deadline ?? Infinity)
     const { timeoutMs } = options
     const mine = timeoutMs === undefined ? Infinity : now + (Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0)
-    const deadline = Math.min(carrier, mine)
+    const deadline = Math.min(router, mine)
     if (deadline <= now) return Promise.reject(new Refused('timeout', action))
     return new Promise((resolve, reject) => {
       const pending: Pending = {
-        action, args, options, deadline, own: mine < carrier, id: null, delay: FIRST_RETRY_MS, slack: false, last: null,
+        action, args, options, deadline, own: mine < router, id: null, delay: FIRST_RETRY_MS, slack: false, last: null,
         retryTimer: null, deadlineTimer: null,
         // Settled first and forgotten after, so a call waiting its turn can't hold up one that already has its answer
         settle: outcome => {
@@ -148,7 +148,7 @@ export class Calls {
     const message: Record<string, unknown> = { v: VERSION, kind: 'call', id, action: pending.action, args: pending.args }
     if (pending.options.parent !== undefined) message.parent = pending.options.parent
     if (pending.options.onBehalf !== undefined) message.onBehalf = pending.options.onBehalf
-    // A message the port can't copy never reached the carrier, so the call is refused here
+    // A message the port can't copy never reached the router, so the call is refused here
     this.sender.send(message, () => {
       if (pending.id === id) pending.settle({ error: new Refused('invalid', pending.action) })
     })
@@ -166,7 +166,7 @@ export class Calls {
   }
 
   // The call's deadline came. One that never went out settles with its last refusal or timeout. One that went out is
-  // cancelled, at once for the caller's own deadline and a second later for the carrier's, whose own timeout answers
+  // cancelled, at once for the caller's own deadline and a second later for the router's, whose own timeout answers
   // first when the message arrived
   private due(pending: Pending): void {
     pending.deadlineTimer = null

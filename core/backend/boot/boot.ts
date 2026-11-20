@@ -126,7 +126,7 @@ async function record(log: EventLog, event: string, fields: Record<string, strin
 }
 
 // Holds no policy and starts nothing, it reads and checks the state and says what it found. wireCore hands what it
-// found to the plugins manager and its log to the carrier
+// found to the plugins manager and its log to the router
 export async function boot(options: BootOptions): Promise<Booted> {
   const { dataDir, dev } = resolveDataDir(options)
   await mkdir(dataDir, { recursive: true })

@@ -7,7 +7,7 @@ import type { AuditRecord } from '../api/policy-jobs.ts'
 import { AuditWriter, auditFields } from '../backend/recording/audit.ts'
 import type { AuditLog } from '../backend/recording/header.ts'
 import { AuditQueue } from '../backend/recording/records.ts'
-import { sha256 } from './carrier-fakes.ts'
+import { sha256 } from './router-fakes.ts'
 import { EventLog } from '../lib/event-log.ts'
 
 const alpha: Caller = { kind: 'plugin', id: 'alpha', half: 'worker', incarnation: 2 }

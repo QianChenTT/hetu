@@ -67,7 +67,7 @@ export type FolderDialog = (
   options: { properties: ('openDirectory' | 'createDirectory')[], title: string },
 ) => Promise<{ canceled: boolean, filePaths: string[] }>
 
-// The OS folder dialog over the trusted window for core.pickFolder, answering the folder or null when the human
+// The OS folder dialog over the trusted window for app.pickFolder, answering the folder or null when the human
 // cancelled. With no trusted window open it opens nothing, since only that window may ask
 export async function pickFolder(trusted: TrustedWindow, dialog: FolderDialog): Promise<string | null> {
   const parent = trusted.window

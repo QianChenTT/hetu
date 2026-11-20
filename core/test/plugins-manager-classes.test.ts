@@ -1178,8 +1178,8 @@ describe('what the human confirmed, recorded in the entry', () => {
   const shape = (entry: Plugin) => ({ class: entry.class, firstUse: entry.firstUse ?? [] })
   async function closed(made: Made): Promise<void> {
     await made.pluginsManager.shutdown().catch(() => {})
-    made.carrier.close()
-    made.link.carrier?.close()
+    made.router.close()
+    made.link.router?.close()
   }
 
   it('records an item the human lets the plugin use once it asks and takes it off the list', async () => {
@@ -1657,8 +1657,8 @@ describe('a notice owed until the human answers it', () => {
   const notice = (id: string, from: string, to: string) => `${JSON.stringify(id)} moved from ${from} to ${to} with no Confirm on screen`
   async function closed(made: Made): Promise<void> {
     await made.pluginsManager.shutdown().catch(() => {})
-    made.carrier.close()
-    made.link.carrier?.close()
+    made.router.close()
+    made.link.router?.close()
   }
   // p stored at a class right under the first install, the install then updated
   async function updated(granted: Capability[], n: number, second: () => ReturnType<typeof v1>): Promise<{ base: string, made: Made }> {
@@ -1801,8 +1801,8 @@ describe('a notice owed across an entry stored strict', () => {
   const failing = (type: Capability['type']) => ({ grantRiskClassifier: failingFor(type) })
   async function closed(made: Made): Promise<void> {
     await made.pluginsManager.shutdown().catch(() => {})
-    made.carrier.close()
-    made.link.carrier?.close()
+    made.router.close()
+    made.link.router?.close()
   }
   // A start on the same data, the role failing for that type when one is named
   async function started(base: string, install: () => ReturnType<typeof v1>, type?: Capability['type']): Promise<Made> {
@@ -1954,8 +1954,8 @@ describe('a notice for a plugin never classed', () => {
   const fromNothing = (id: string, to: string) => `${JSON.stringify(id)} moved from a class not known to ${to} with no Confirm on screen`
   async function closed(made: Made): Promise<void> {
     await made.pluginsManager.shutdown().catch(() => {})
-    made.carrier.close()
-    made.link.carrier?.close()
+    made.router.close()
+    made.link.router?.close()
   }
 
   it('raises one at the next start with the policy job on for a plugin approved while off', async () => {

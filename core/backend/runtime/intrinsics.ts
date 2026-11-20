@@ -15,7 +15,7 @@ export function freezeIntrinsics(): void {
     'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
     'Float64Array', 'BigInt64Array', 'BigUint64Array', 'JSON', 'Math', 'Reflect', 'Atomics', 'Intl', 'Proxy', 'Iterator',
   ]
-  // Bound for good with the built-ins, though they hold no prototype to freeze. The carrier copies with structuredClone
+  // Bound for good with the built-ins, though they hold no prototype to freeze. The router copies with structuredClone
   const bound = [...named, 'structuredClone', 'globalThis']
   const generator = Object.getPrototypeOf(function* () {}) as object
   const asyncGenerator = Object.getPrototypeOf(async function* () {}) as object

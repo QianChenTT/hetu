@@ -1,5 +1,6 @@
 import type { Capability, CapabilityType } from './capabilities.ts'
 import type { Caller, Refusal, RefusalCode } from './envelope.ts'
+import type { LimitName } from './limits.ts'
 import { frozen } from './plain.ts'
 
 // What a call reaches as the gate and the guards judge it. paths are luoshu paths, the caller's own text at precheck and
@@ -15,7 +16,7 @@ export type Scope = {
   readonly command?: readonly string[]
 }
 
-// A call as the carrier hands it to a provider, a callee or a core action. callId is the carrier's own and deadline is
+// A call as the router hands it to a provider, a callee or a core action. callId is the router's own and deadline is
 // in ms since the epoch, never later than the parent's
 export type Call = {
   readonly callId: string
@@ -32,6 +33,40 @@ export type Call = {
   // provider would act on now, one for each path prepare gave. A provider asks when a look at the disk after the first
   // judgement reads a path otherwise. null lets the call go on on those paths
   readonly judge?: (paths: readonly string[]) => ProviderRefusal | null
+  // For an action that names a live call delivered to its caller: a view of that call, the same object for as long as
+  // the call lives
+  readonly live?: LiveCall
+  // Aborts once the call ends, answered or stopped, or once a new grants snapshot no longer covers a call let on. A
+  // provider that can stop what it does stops then and throws, a single write finishes
+  readonly signal?: CallSignal
+}
+
+// What a call's signal offers, as an AbortSignal does. reason is the refusal code the call ends with
+export type CallSignal = {
+  readonly aborted: boolean
+  readonly reason: unknown
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void
+  removeEventListener(type: 'abort', listener: () => void): void
+}
+
+// A live call as the router hands it on with an action that names it, never the call itself: its own caller, whose
+// principal and plugin its gate time counts against, the agent it lends to, whether it is the door's own call and
+// whether it is still open
+export type LiveCall = {
+  readonly caller: Caller
+  readonly principal: string
+  readonly plugin: string | null
+  readonly agent?: string
+  readonly door: boolean
+  open(): boolean
+}
+
+// The gate's time a caller may spend in a second, filterMsPerSecond of it, counted by the gate module for
+// gate.filterReadable and for the listings the router filters through the gate alike. principal is the caller's plugin
+// across its halves and incarnations or its window, plugin the one whose limit applies, null for a window
+export type GateTime = {
+  spent(principal: string, plugin: string | null): boolean
+  charge(principal: string, ms: number): void
 }
 
 // What a guard judges. Never the arguments, so a guard can't act on note text or leak it
@@ -45,7 +80,7 @@ export type GuardCall = {
 }
 
 // What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing. agent is set by the carrier alone for a call under a chain that started at
+// never decided on, so it grants nothing. agent is set by the router alone for a call under a chain that started at
 // the agent door. It names the agent whose own grant the call is judged against beside the caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
@@ -78,7 +113,7 @@ export type Decision =
 // use still asks for a Confirm
 export type GrantedItem = { readonly capability: Capability, readonly off: boolean, readonly firstUse: boolean }
 
-// What the plugins manager pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
+// What the plugins manager pushes to the gate, numbered so the router can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
 // volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
@@ -190,17 +225,17 @@ export type Prepared = { readonly scope: Scope, readonly baseVersion?: string }
 // A provider refuses with a fixed code and a fixed reason, never with text
 export type ProviderRefusal = Pick<Refusal, 'code' | 'reason'>
 
-// A provider serves a namespace. prepare may hold its per-path lock until perform. perform and release get the frozen
+// A provider serves a namespace. prepare may hold its latch on a path until perform. perform and release get the frozen
 // copy the gate and the guards judged, not the object prepare gave, so anything else a provider keeps across a call it
 // keys by callId. perform refuses by throwing a ProviderRefusal and anything else it throws answers failed
 export type Provider = {
   prepare(call: Call): Promise<Prepared | ProviderRefusal>
   perform(call: Call, prepared: Prepared): Promise<unknown>
-  // A call refused after prepare never reaches perform, so the provider lets go of its lock here
+  // A call refused after prepare never reaches perform, so the provider lets go of its latch here
   release?(call: Call, prepared: Prepared): void
 }
 
-// A policy job or guard role as the carrier applies it: on, off by the human, starting until its module is started,
+// A policy job or guard role as the router applies it: on, off by the human, starting until its module is started,
 // failed (its module's last push threw, or the stopped mode closed it) or absent, held by nothing that runs
 export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent'] as const)
 export type PolicyJobState = typeof policyJobStates[number]
@@ -210,6 +245,37 @@ export const pluginStates = frozen([
   'found', 'refused', 'waiting', 'off', 'starting', 'ready', 'unresponsive', 'stopping', 'stopped', 'crashed', 'failed',
 ] as const)
 export type PluginState = typeof pluginStates[number]
+
+// A plugin as a call target. actions are the manifest's provides.actions and serves is the half that answers them.
+// topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
+export type PluginInfo = {
+  state: PluginState
+  place: 'host' | 'utility' | 'sandboxed' | 'page'
+  incarnation: number
+  serves: string
+  actions: Readonly<Record<string, { readonly from?: readonly string[] }>>
+  topics: readonly string[]
+}
+
+type LimitValues = Readonly<Partial<Record<LimitName, number>>>
+
+// The human's limits from the state, a value per constant for all plugins and per plugin. A value replaces the fixed
+// value whether it raises or lowers it. One for the plugin wins over one for all
+export type HumanLimits = { all: LimitValues, plugins: Readonly<Record<string, LimitValues>> }
+
+// The plugins manager's state as the router reads it, on each call and with no copy. Read only: nothing here changes a
+// plugin, a policy job or the grants snapshot
+export type PluginTable = {
+  // The state of a policy job or a guard role, as the core module holding it reads
+  policyJob(id: string): PolicyJobState
+  // The number of the newest grants snapshot pushed to the gate
+  view(): number
+  // null for no such plugin
+  plugin(id: string): PluginInfo | null
+  limits(): HumanLimits
+  // Whether the human revoked an agent's label and mcp-http-handler has not yet said it ended its tokens
+  revoked(label: string): boolean
+}
 
 // One call in the audit queue, or a run of like calls from one caller in one second once coalesced. code is null for a
 // call that succeeded. at, ms and scope are the first call's. scope is the canonical one prepare gave or a plugin call's

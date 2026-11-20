@@ -52,8 +52,8 @@ describe('the gate on and the core\'s log', () => {
   it('decides a window\'s call on its grants, and the core writes its record and serves the log to the window', async () => {
     const { dataDir, page } = await started()
     expect(await read(page)).toBe('unavailable')
-    // ** leaves dot files out of the editor's grant
-    expect(await read(page, '.scratch.md')).toBe('not-granted')
+    // A dot file is no note: the contract's path schema refuses it before the editor's grant is asked
+    expect(await read(page, '.scratch.md')).toBe('invalid')
     await until(async () => (await records(dataDir)).some(record =>
       record.event === 'audit.call' && record.action === 'luoshu.read' && record.code === 'unavailable' && record.gate === 'on'
       && String(record.caller).startsWith('window/editor#')))

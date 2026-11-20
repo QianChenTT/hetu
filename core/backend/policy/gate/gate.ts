@@ -156,7 +156,7 @@ export function createGate(): Gate {
     verbs(plugin: string, window: string): string[] {
       if (held === null || window !== 'editor') return []
       const items = held.plugins.get(plugin) ?? []
-      // A ui item scoped by paths reaches only the notes it names, so editor.reach asks about it per note
+      // A ui item scoped by paths reaches only the notes it names, so gate.reach asks about it per note
       const whole = (item: Compiled) => item.type.startsWith('ui.') && scopeRules[item.type as CapabilityType] === 'held' && on(item)
       return [...new Set(items.filter(whole).map(item => item.type))]
     },

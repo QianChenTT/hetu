@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, GuardCall } from '../api/policy-jobs.ts'
-import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -173,10 +173,10 @@ describe('guards', () => {
   })
 
   it.each(['failed', 'absent'] as const)('answers guard-down for every writer while a guard is %s, the human included', async state => {
-    const { carrier, connect, pluginsManager, luoshu, guards } = setup()
+    const { router, connect, pluginsManager, luoshu, guards } = setup()
     pluginsManager.policyJobs.leases = state
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     expect(guards.second.calls).toEqual([])
     expect(luoshu.performed).toEqual([])
@@ -209,11 +209,11 @@ describe('guards', () => {
   })
 
   it('counts a throw as guard-down and records the fault', async () => {
-    const { carrier, connect, guards, log, debug } = setup()
+    const { router, connect, guards, log, debug } = setup()
     guards.leases.answer = () => { throw new Error('table broke') }
     expect(code(await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' }))).toBe('guard-down')
     expect(debug.map(entry => [entry.plugin, entry.text])).toEqual([['leases', 'table broke']])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'leases', step: 'guard', count: 1 }])
   })
@@ -285,7 +285,7 @@ describe('perform', () => {
   })
 
   it('maps a thrown error to failed and sends its text to debug only', async () => {
-    const { carrier, connect, gate, luoshu, debug, log } = harness()
+    const { router, connect, gate, luoshu, debug, log } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.perform_ = () => { throw new Error('EACCES: permission denied, open /Users/han/luoshu/secret.md') }
     const reply = await connect(worker('search')).ask('luoshu.read', { path: 'a.md' })
@@ -293,18 +293,18 @@ describe('perform', () => {
     expect(JSON.stringify(reply)).not.toContain('EACCES')
     // The provider's text, for the provider's own debug and never the caller's
     expect(debug).toEqual([{ plugin: 'luoshu', caller: worker('search'), action: 'luoshu.read', text: 'EACCES: permission denied, open /Users/han/luoshu/secret.md' }])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'luoshu', step: 'perform', count: 1 }])
   })
 
   it('records a throw in prepare as a fault at prepare', async () => {
-    const { carrier, connect, gate, luoshu, debug, log } = harness()
+    const { router, connect, gate, luoshu, debug, log } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     luoshu.prepare = async () => { throw new Error('ENOENT: no such file, lstat /Users/han/luoshu/a.md') }
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('failed')
     expect(debug.map(entry => [entry.plugin, entry.text])).toEqual([['luoshu', 'ENOENT: no such file, lstat /Users/han/luoshu/a.md']])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'luoshu', step: 'prepare', count: 1 }])
   })

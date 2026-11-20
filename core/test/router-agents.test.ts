@@ -2,15 +2,15 @@ import type { Recording } from '../backend/recording/header.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import type { Access, Call, Gate } from '../api/policy-jobs.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, type FakeLog, harness, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import type { Router } from '../backend/router/router.ts'
+import type { RouterOptions } from '../backend/router/header.ts'
+import { cleanup, code, editor, type FakeLog, harness, type HarnessOptions, host, hostHalf, tick, windowWay, worker, type Side } from './router-fakes.ts'
 
 afterEach(cleanup)
 
 // http's host half on its utility port is the door. mcp serves handle for http only, search serves query and calls on.
 // Every plugin holds what the tests reach, so a refusal comes from the rule a test is about
-function agents(over: Partial<CarrierOptions> = {}) {
+function agents(over: HarnessOptions = {}) {
   const parts = harness(over)
   const { pluginsManager, gate, connect } = parts
   pluginsManager.utility('mcp-http-handler')
@@ -105,9 +105,9 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('keeps the own onBehalf of a call with no parent from a window or a plugin and treats neither as an agent\'s', async () => {
-    const { carrier, door, search, gate, beta } = agents()
+    const { router, door, search, gate, beta } = agents()
     gate.grants.beta.push({ type: 'plugin.call', targets: ['search'] })
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     expect((await way.ask('editor', 'luoshu.read', { path: 'inbox/a.md' }, { onBehalf: 'client#1' })).ok).toBe(true)
     beta.call('search.query', {}, { onBehalf: 'client#1' })
     const atSearch = await search.delivered('search.query')
@@ -137,7 +137,7 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle with no label as invalid in every gate state and delivers nothing to mcp', async () => {
-    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, router, log } = agents()
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
@@ -160,7 +160,7 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle for a label the plugins manager says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
-    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, router, log } = agents()
     pluginsManager.revokedLabels.add('client#1')
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
@@ -330,7 +330,7 @@ describe('the door an agent\'s label comes through', () => {
     parts.gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
     parts.luoshu.files.set('inbox/a.md', 'a')
     const mcp = parts.connect(worker('mcp'))
-    const door = hostHalf(parts.carrier, host('mcp-http-handler'))
+    const door = hostHalf(parts.router, host('mcp-http-handler'))
     void door.ask('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: got.callId as string }))).toBe('not-granted')
@@ -497,33 +497,33 @@ describe('the gate over an agent\'s call, in every gate state', () => {
   })
 
   it('answers stopped for the door\'s mcp.handle with the gate off once shutdown began', async () => {
-    const { carrier, door, mcp, pluginsManager } = gated()
+    const { router, door, mcp, pluginsManager } = gated()
     pluginsManager.policyJobs.gate = 'off'
-    carrier.stopping()
+    router.stopping()
     expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('answers stopped for the door\'s mcp.handle with the gate still on once shutdown began, as with the gate off', async () => {
-    const { carrier, door, mcp } = gated()
-    carrier.stopping()
+    const { router, door, mcp } = gated()
+    router.stopping()
     expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('answers stopped for an agent\'s call with the gate still on once shutdown began and judges a plugin\'s own call as before', async () => {
-    const { carrier, door, mcp, search } = gated()
+    const { router, door, mcp, search } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
-    carrier.stopping()
+    router.stopping()
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
     expect((await search.ask('luoshu.read', { path: 'inbox/a.md' })).ok).toBe(true)
   })
 
   it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
-    const { carrier, door, mcp, pluginsManager } = gated()
+    const { router, door, mcp, pluginsManager } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
     pluginsManager.policyJobs.gate = 'off'
-    carrier.stopping()
+    router.stopping()
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
   })
 
@@ -543,20 +543,20 @@ describe('what an agent may read and list through mcp', () => {
     const { door, mcp } = gated()
     const one = await handled(door, mcp, 'client#1')
     const two = await handled(door, mcp, 'client#2')
-    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every })).result).toEqual(['inbox/a.md'])
-    expect((await mcp.ask('core.filterReadable', { call: two.got.callId, paths: every })).result).toEqual([])
+    expect((await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every })).result).toEqual(['inbox/a.md'])
+    expect((await mcp.ask('gate.filterReadable', { call: two.got.callId, paths: every })).result).toEqual([])
     // The same asked under the door's call as its parent
-    expect((await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
+    expect((await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }, one.parent)).result).toEqual(['inbox/a.md'])
   })
 
   it('filters what a search behind mcp found for the agent the chain is for, one agent apart from the other', async () => {
     const { door, mcp, search } = gated()
-    // A search_notes that hands back what core.filterReadable kept of every note it holds
+    // A search_notes that hands back what gate.filterReadable kept of every note it holds
     const searchNotes = async (label: string) => {
       const { parent } = await handled(door, mcp, label)
       const id = mcp.call('search.query', { text: 'a' }, parent)
       const atSearch = await search.waitFor(message => message.kind === 'call' && message.action === 'search.query' && message.onBehalf === label)
-      const kept = await search.ask('core.filterReadable', { call: atSearch.callId, paths: every })
+      const kept = await search.ask('gate.filterReadable', { call: atSearch.callId, paths: every })
       search.answer(atSearch.callId, kept.result)
       return (await mcp.reply(id)).result
     }
@@ -570,10 +570,10 @@ describe('what an agent may read and list through mcp', () => {
     beta.call('search.query', {})
     const plain = await search.delivered('search.query')
     pluginsManager.policyJobs.gate = 'off'
-    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
-    expect((await search.ask('core.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
+    expect(code(await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    expect((await search.ask('gate.filterReadable', { call: plain.callId, paths: every })).result).toEqual(every)
     pluginsManager.policyJobs.gate = 'failed'
-    expect(code(await mcp.ask('core.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
+    expect(code(await mcp.ask('gate.filterReadable', { call: one.got.callId, paths: every }))).toBe('policy-down')
   })
 
   it('keeps nothing for a call another plugin made to mcp with a label, which the door did not make', async () => {
@@ -582,7 +582,7 @@ describe('what an agent may read and list through mcp', () => {
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     // What mcp and beta may both read, of which beta reads nothing
-    expect((await mcp.ask('core.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
+    expect((await mcp.ask('gate.filterReadable', { call: got.callId, paths: every })).result).toEqual([])
   })
 
   it('lists for an agent the names both mcp and the agent may list', async () => {
@@ -621,14 +621,14 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
   })
 
   it('refuses it from mcp with no door call, under another plugin\'s call, from another plugin and from a window', async () => {
-    const { carrier, mcp, beta, search, seen } = asking()
+    const { router, mcp, beta, search, seen } = asking()
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { onBehalf: 'client#1' }))).toBe('not-granted')
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const fromBeta = await mcp.delivered('mcp.handle')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { parent: fromBeta.callId as string }))).toBe('not-granted')
     expect(code(await search.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
-    const way = windowWay(carrier, { editor, trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    const way = windowWay(router, { editor, trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect(code(await way.ask('editor', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(code(await way.ask('trusted', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(seen).toEqual([])
@@ -667,11 +667,11 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
 describe('core.agents, what http asks about its agents', () => {
   it('takes it from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
     const seen: Call[] = []
-    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
     const args = { agents: ['client#1'] }
     expect((await door.ask('core.agents', args)).ok).toBe(true)
     for (const side of [httpWorker, mcp, search]) expect(code(await side.ask('core.agents', args))).toBe('not-granted')
-    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect(code(await way.ask('trusted', 'core.agents', args))).toBe('not-granted')
     expect(code(await door.ask('core.agents', { agents: ['client'] }))).toBe('invalid')
     expect(code(await door.ask('core.agents', { agents: [] }))).toBe('invalid')
@@ -685,8 +685,8 @@ describe('core.agentConnect and core.agentConnected, the connect http asks the c
 
   it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
     const seen: Call[] = []
-    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
-    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
     for (const [action, args] of [['core.agentConnect', connect], ['core.agentConnected', collect]] as const) {
       expect((await door.ask(action, args)).ok).toBe(true)
       for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
@@ -792,7 +792,7 @@ describe('the second ask for an agent\'s call', () => {
 
 describe('the audit record of an agent\'s call', () => {
   it('names the inherited label on a sub-call and the parent\'s label, never its own, on one refused for setting its own', async () => {
-    const { recording, carrier, door, mcp, log } = agents()
+    const { recording, router, door, mcp, log } = agents()
     const { id, got, parent } = await handled(door, mcp)
     expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { ...parent, onBehalf: 'client#2' }))).toBe('invalid')
@@ -935,10 +935,45 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
   })
 
   it('writes the refusal\'s record with the agent\'s label, the door at its root', async () => {
-    const { recording, carrier, door, mcp, log } = tabled()
+    const { recording, router, door, mcp, log } = tabled()
     const { parent } = await handled(door, mcp, 'client#1')
     expect(code(await mcp.ask('luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }, parent))).toBe('not-granted')
     const records = (await written(recording, log)).filter(record => record.action === 'luoshu.move')
     expect(records.map(record => [record.code, record.caller, record.root, record.onBehalf])).toEqual([['not-granted', 'mcp/worker#1', 'mcp-http-handler/host#1', 'client#1']])
+  })
+})
+
+describe('a path with a dot segment down an agent\'s chain', () => {
+  it.each(['on', 'off'] as const)('answers invalid at shape with the gate %s, before the gate or the luoshu hears of it', async state => {
+    const { door, mcp, gate, luoshu, pluginsManager } = agents()
+    const { parent } = await handled(door, mcp)
+    pluginsManager.policyJobs.gate = state
+    const before = gate.asked.length
+    for (const path of ['.git/config', '.obsidian/x', 'inbox/.hidden.md']) {
+      expect(code(await mcp.ask('luoshu.read', { path }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('luoshu.write', { path, text: 'x' }, parent)), path).toBe('invalid')
+      expect(code(await mcp.ask('history.log', { path }, parent)), path).toBe('invalid')
+    }
+    expect(gate.asked.length).toBe(before)
+    expect(luoshu.prepared).toEqual([])
+  })
+})
+
+describe('an agent\'s open call once the human switched the gate off', () => {
+  // The gate off lets everything pass, so a call an agent made while it was on is not judged again and runs to its end
+  it('judges no open call for an agent again on a new grants snapshot, its signal never aborted', async () => {
+    const { door, mcp, luoshu, pluginsManager, router } = agents()
+    router.changed()
+    const { parent } = await handled(door, mcp)
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const id = mcp.call('luoshu.write', { path: 'inbox/a.md', text: 'x' }, parent)
+    await until(() => luoshu.performed.length === 1)
+    pluginsManager.policyJobs.gate = 'off'
+    pluginsManager.current++
+    router.changed()
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(false)
+    open()
+    expect((await mcp.reply(id)).ok).toBe(true)
   })
 })

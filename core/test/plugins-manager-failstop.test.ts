@@ -259,7 +259,7 @@ describe('the restart marker, after the review', () => {
     expect(await exists(path.join(made.dataDir, 'failed-once'))).toBe(false)
   })
 
-  it('ignores a failure told before the start finished, so the carrier can tell it again later', async () => {
+  it('ignores a failure told before the start finished, so the router can tell it again later', async () => {
     const failures: Failure[] = []
     const made = await harness({ pluginsManager: { onFailure: failure => { failures.push(failure) } } })
     expect(made.pluginsManager.controlFailed('log', 'log-failing')).toBe(false)

@@ -41,7 +41,7 @@ export const callOf = (action: string, args: unknown, as: Asking = {}): Call => 
   ...(as.onBehalf !== undefined ? { onBehalf: as.onBehalf } : {}),
 })
 
-// prepare then perform, as the carrier makes a call. A refusal from either comes back as { refused }
+// prepare then perform, as the router makes a call. A refusal from either comes back as { refused }
 export async function ask(history: History, action: string, args: unknown, as: Asking = {}): Promise<unknown> {
   const call = callOf(action, args, as)
   const prepared = await history.provider.prepare(call)

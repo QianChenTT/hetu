@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access, AuditRecord, Call, Prepared, Provider } from '../api/policy-jobs.ts'
 import { auditFields } from '../backend/recording/audit.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
-import { cleanup, code, editor, type FakeLog, harness, sha256, trusted, windowWay, worker } from './carrier-fakes.ts'
+import type { Router } from '../backend/router/router.ts'
+import { cleanup, code, editor, type FakeLog, harness, sha256, trusted, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -48,7 +48,7 @@ async function written(recording: RecordingModule, log: FakeLog): Promise<Record
   return log.events('audit.call').map(record => record.fields)
 }
 
-describe('a history call through the carrier', () => {
+describe('a history call through the router', () => {
   it('asks the gate with the action\'s own access at both stages, on the raw paths and then the canonical ones', async () => {
     const { connect, gate, history, asked } = started()
     gate.grants.git = [{ type: 'history', access: 'commit', paths: ['notes/**'] }]
@@ -86,8 +86,8 @@ describe('a history call through the carrier', () => {
   })
 
   it('lets the editor window read history and never commit, and gives the trusted window neither', async () => {
-    const { carrier, history } = started()
-    const way = windowWay(carrier, { e: editor, t: trusted })
+    const { router, history } = started()
+    const way = windowWay(router, { e: editor, t: trusted })
     expect((await way.ask('e', 'history.log', { path: 'notes/a.md' })).ok).toBe(true)
     expect((await way.ask('e', 'history.read', { path: 'notes/a.md', commit: 'a'.repeat(40) })).ok).toBe(true)
     expect(code(await way.ask('e', 'history.commit', { paths: ['notes/a.md'], message: 'save' }))).toBe('not-granted')
@@ -96,7 +96,7 @@ describe('a history call through the carrier', () => {
   })
 
   it('records a commit once with its paths and access, and reads coalesced', async () => {
-    const { recording, carrier, connect, gate, log } = started()
+    const { recording, router, connect, gate, log } = started()
     gate.grants.git = [{ type: 'history', access: 'commit', paths: ['**'] }, { type: 'history', access: 'read', paths: ['**'] }]
     const git = connect(worker('git'))
     await git.ask('history.commit', { paths: ['notes/a.md'], message: 'a secret message' })
@@ -111,7 +111,7 @@ describe('a history call through the carrier', () => {
   })
 })
 
-describe('an exec call through the carrier', () => {
+describe('an exec call through the router', () => {
   it('asks the gate with the whole argument array at both stages and hands the provider the same one', async () => {
     const { connect, gate, exec, asked } = started()
     gate.grants.git = [{ type: 'exec', commands: [['git', 'status']], env: [] }]
@@ -144,15 +144,15 @@ describe('an exec call through the carrier', () => {
   })
 
   it('gives no window exec: the trusted window by the floor and the editor by its grants', async () => {
-    const { carrier, exec } = started()
-    const way = windowWay(carrier, { e: editor, t: trusted })
+    const { router, exec } = started()
+    const way = windowWay(router, { e: editor, t: trusted })
     expect(code(await way.ask('e', 'exec.run', { command: ['git', 'status'] }))).toBe('not-granted')
     expect(code(await way.ask('t', 'exec.run', { command: ['git', 'status'] }))).toBe('not-granted')
     expect(exec.prepared).toEqual([])
   })
 
   it('hands the call to the provider with the gate off, which keeps its own check, and records it with gate off', async () => {
-    const { recording, carrier, connect, pluginsManager, exec, asked, log } = started()
+    const { recording, router, connect, pluginsManager, exec, asked, log } = started()
     pluginsManager.policyJobs.gate = 'off'
     const reply = await connect(worker('git')).ask('exec.run', { command: ['curl', 'https://example.com'] })
     expect(reply.ok).toBe(true)
@@ -162,7 +162,7 @@ describe('an exec call through the carrier', () => {
   })
 
   it('records every run on its own with the command, a refused one included, and never its output', async () => {
-    const { recording, carrier, connect, gate, exec, log } = started()
+    const { recording, router, connect, gate, exec, log } = started()
     gate.grants.git = [{ type: 'exec', commands: [['git', 'status']], env: [] }]
     exec.perform = async () => ({ code: 0, signal: null, stdout: 'secret output', stderr: '', truncated: false })
     const git = connect(worker('git'))

@@ -18,7 +18,7 @@ export type PortLike = {
   onclose: (() => void) | null
 }
 
-// The plugin's limits as the carrier applies them, sent with its start
+// The plugin's limits as the router applies them, sent with its start
 export type Limits = RelayLimits
 
 export type Report = { kind: 'cutoff', id: string, incarnation: number, reason: 'malformed' | 'flood' }
@@ -70,8 +70,8 @@ function startOf(value: unknown): { id: string, incarnation: number, code: Uint8
 
 // Starts each worker from the bytes main sent, relays its messages to main and ends it when main says. Every message
 // from a worker is checked before main has to read it, since main reads a message whole before any check of its own:
-// only text within the cap passes, at the carrier's rate and within the text budget. A worker that sends anything
-// else, or floods, is cut off: ended at once, then main is told why. Main's port stays open for the carrier to close,
+// only text within the cap passes, at the router's rate and within the text budget. A worker that sends anything
+// else, or floods, is cut off: ended at once, then main is told why. Main's port stays open for the router to close,
 // so the reason can't be lost to a close that arrives first
 export class WorkerHost {
   private readonly running = new Map<string, Running>()
@@ -105,7 +105,7 @@ export class WorkerHost {
     worker.addEventListener('error', event => event.preventDefault())
     own.onmessage = event => this.fromWorker(run, event.data, event.ports.length)
     own.onmessageerror = () => this.cut(run, 'malformed')
-    // The worker's end closes when the worker closed itself or died. Main's port closes in turn, which the carrier reads
+    // The worker's end closes when the worker closed itself or died. Main's port closes in turn, which the router reads
     // as the plugin crashed, as it did before the relay
     own.onclose = () => {
       if (this.running.get(key(run.id, run.incarnation)) !== run) return

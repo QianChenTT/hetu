@@ -41,7 +41,7 @@ export type ParentPort = { on(event: 'message', listener: (event: StartEvent) =>
 
 // The child's side of its parent port, which only main writes to. The first message starts the plugin and every later
 // one counts only as { v: 1, kind: 'limits', limits } with no port, handed to the running transport. Limits that come
-// while the module still loads wait for it, the newest only. The channel to the carrier carries none
+// while the module still loads wait for it, the newest only. The channel to the router carries none
 export function listenToMain(
   parent: ParentPort,
   parts: ChildParts,

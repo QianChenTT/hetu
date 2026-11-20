@@ -36,7 +36,7 @@ function channel() {
 }
 
 describe('the Electron runtime', () => {
-  it('hands the carrier a port whose message listener gets the data, as a Node port gives it', () => {
+  it('hands the router a port whose message listener gets the data, as a Node port gives it', () => {
     const { runtime, core, plugin } = channel()
     const ends = runtime.channel('search')
     expect(ends.plugin).toBe(plugin)
@@ -77,7 +77,7 @@ describe('the Electron runtime', () => {
   })
 
   // bytesPerSecond is 1 here and the bucket starts full at the cap, 100 and the envelope's room
-  it('counts a utility port\'s bytes against bytesPerSecond and reads what is over as unreadable, which the carrier still counts', () => {
+  it('counts a utility port\'s bytes against bytesPerSecond and reads what is over as unreadable, which the router still counts', () => {
     const { runtime, core } = channel()
     const ends = runtime.channel('mcp-http-handler', true)
     const got: unknown[] = []
@@ -93,14 +93,14 @@ describe('the Electron runtime', () => {
     expect(got).toHaveLength(2)
   })
 
-  it('weighs a utility message by what the carrier would measure of it when that is more than its length', () => {
+  it('weighs a utility message by what the router would measure of it when that is more than its length', () => {
     const { runtime, core } = channel()
     const ends = runtime.channel('mcp-http-handler', true)
     const got: unknown[] = []
     const unreadable: unknown[] = []
     ends.core.on('message', value => got.push(value))
     ends.core.on('messageerror', value => unreadable.push(value))
-    // 2500 empty arrays: 7501 characters that the carrier measures at 48898 bytes, so the second one is over
+    // 2500 empty arrays: 7501 characters that the router measures at 48898 bytes, so the second one is over
     const nested = JSON.stringify(Array.from({ length: 2500 }, () => []))
     core.emit('message', { data: nested, ports: [] })
     core.emit('message', { data: nested, ports: [] })

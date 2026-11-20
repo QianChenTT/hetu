@@ -38,7 +38,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   })
   await made.pluginsManager.start()
   let n = 0
-  // core.agentAsk as the carrier hands it over once its floor passed: from mcp, on behalf of the chain's label
+  // core.agentAsk as the router hands it over once its floor passed: from mcp, on behalf of the chain's label
   const ask = (label: string, capabilities: Capability[]) => made.pluginsManager.serve({
     callId: `call-${++n}`, caller: mcpWorker, onBehalf: label, action: 'core.agentAsk', args: { capabilities }, deadline: Date.now() + 30_000,
   } as Call)
@@ -171,7 +171,7 @@ describe('an agent\'s ask', () => {
     expect((await list()).requests[0].notes.slice(0, 2)).toEqual(['It asks for: exec of ["git","status"]', 'It asks for: storage'])
   })
 
-  it('refuses a label out of the agent label\'s form, which the carrier never hands over', async () => {
+  it('refuses a label out of the agent label\'s form, which the router never hands over', async () => {
     const { pluginsManager, ask } = await started()
     expect(await code(ask('client', [inbox]))).toBe('invalid')
     expect(pluginsManager.pending()).toEqual([])
@@ -473,7 +473,7 @@ describe('the revoked marks at their cap and through a Reset or a Remove of mcp'
     expect(await code(ask('client#1', [inbox]))).toBeNull()
   })
 
-  it('answers the carrier whether a label is revoked from the marks wherever they are, a mark dropped as the oldest no longer one', async () => {
+  it('answers the router whether a label is revoked from the marks wherever they are, a mark dropped as the oldest no longer one', async () => {
     const { pluginsManager } = await started({ agents: [{ agent: 'client#1', capability: inbox }], revoked: marks })
     expect(pluginsManager.revoked('gone#1')).toBe(true)
     expect(pluginsManager.revoked('client#1')).toBe(false)

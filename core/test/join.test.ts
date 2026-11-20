@@ -9,13 +9,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
-import type { CarrierLink } from '../backend/plugins-manager/header.ts'
-import { LinkToCarrier, wireCore, type WireOptions } from '../backend/wire.ts'
+import type { RouterDoor } from '../backend/router/header.ts'
+import { wireCore, type WireOptions } from '../backend/wire.ts'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { httpPlugin } from '../../core-plugins/mcp-http-handler/src/keeper.ts'
 import { run } from '../sdk/plugin.ts'
-import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './carrier-fakes.ts'
+import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './router-fakes.ts'
 import { luoshuModule, storageModule } from './modules-fakes.ts'
 import {
   allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
@@ -70,20 +70,20 @@ async function joined(options: {
   options.before?.(booted)
   const runtime = new FakeRuntime()
   runtime.behave = options.behave ?? {}
-  const { recording, pluginsManager, carrier, modules } = wireCore({
+  const { recording, pluginsManager, router, modules } = wireCore({
     booted, installDir, runtime, modules: { gate: allowAll(), ...options.modules }, confirmDelayMs: 0, ...options.wire,
   })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
     // Quit's order: close writes its last counts and starts a drain, which must land before the lock goes. Windows
     // also won't remove a folder a write is still filling
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
     await rm(base, { recursive: true, force: true })
   })
-  return { pluginsManager, carrier, modules, recording, runtime, booted, dataDir, installDir }
+  return { pluginsManager, router, modules, recording, runtime, booted, dataDir, installDir }
 }
 
 // The records the core record lane wrote to the boot's event log, in order, each with its fields
@@ -103,21 +103,21 @@ function gateDeciding(decide: (access: Access, view: number) => unknown) {
 }
 
 describe('wiring the core', () => {
-  it('builds link, plugins manager and carrier so the plugins manager reaches the real carrier', async () => {
-    const { recording, carrier, pluginsManager, dataDir } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+  it('builds the router, then the plugins manager on its door, so the plugins manager reaches the real router', async () => {
+    const { recording, router, pluginsManager, dataDir } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await pluginsManager.start()
     await recording.flush()
     const events = await coreRecordEvents(dataDir)
     expect(events).toContain('install.checked')
     expect(events).toContain('plugin.started')
-    expect(carrier.limit('gate', 'readyMs')).toBe(10000)
-    // The carrier keeps no import of the plugins manager, so the typecheck proves here that it gives the plugins manager all it needs
-    const asLink: CarrierLink = carrier
-    expect(asLink).toBe(carrier)
+    expect(router.limit('gate', 'readyMs')).toBe(10000)
+    // The router keeps no import of the plugins manager, so the typecheck proves here that its door gives the plugins manager all it needs
+    const door: RouterDoor = router
+    expect(door).toBe(router)
   })
 
   it('ends its start with core.ready, which holds every policy job\'s state', async () => {
-    const { recording, carrier, pluginsManager, dataDir } = await joined()
+    const { recording, router, pluginsManager, dataDir } = await joined()
     await pluginsManager.start()
     await recording.flush()
     const records = await coreRecords(dataDir)
@@ -127,7 +127,7 @@ describe('wiring the core', () => {
   })
 
   it('writes no core.ready when shutdown began during the start', async () => {
-    const { recording, carrier, pluginsManager, dataDir } = await joined()
+    const { recording, router, pluginsManager, dataDir } = await joined()
     const started = pluginsManager.start()
     await pluginsManager.shutdown()
     await started
@@ -137,17 +137,12 @@ describe('wiring the core', () => {
 
   it('hands the runtime a limit the human set once it is written, so each running half gets it', async () => {
     const heard: [string, number][] = []
-    const parts: { carrier: { limit(plugin: string, name: 'messagesPerSecond'): number } | null } = { carrier: null }
-    const { pluginsManager, carrier } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.carrier!.limit(plugin, 'messagesPerSecond')]) } })
-    parts.carrier = carrier
+    const parts: { router: { limit(plugin: string, name: 'messagesPerSecond'): number } | null } = { router: null }
+    const { pluginsManager, router } = await joined({ wire: { limited: plugin => void heard.push([plugin, parts.router!.limit(plugin, 'messagesPerSecond')]) } })
+    parts.router = router
     await pluginsManager.start()
     await pluginsManager.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'gate' })
     expect(heard).toEqual([['gate', 20]])
-  })
-
-  it('refuses a link call made before the carrier exists', () => {
-    const link = new LinkToCarrier()
-    expect(() => link.send(worker('search'), { v: 1, kind: 'ping' })).toThrow('carrier')
   })
 })
 
@@ -172,7 +167,7 @@ describe('a plugin\'s life through the joined core', () => {
   const events = (messages: Message[], topic: string) =>
     messages.filter(message => message.kind === 'event' && message.topic === topic)
 
-  it('starts a verified plugin through the real carrier: init, deps, then ready', async () => {
+  it('starts a verified plugin through the real router: init, deps, then ready', async () => {
     const { pluginsManager, runtime } = await lives()
     const alpha = runtime.half('alpha')
     expect(alpha.got('init')).toHaveLength(1)
@@ -184,7 +179,7 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('takes its call through the eleven steps and records it', async () => {
-    const { recording, carrier, dataDir, runtime } = await lives()
+    const { recording, router, dataDir, runtime } = await lives()
     const alpha = runtime.half('alpha')
     const asked = runtime.half('beta').ask('alpha.hello', { name: 'beta' })
     await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
@@ -230,7 +225,7 @@ describe('a plugin\'s life through the joined core', () => {
   })
 
   it('drops them when it crashes, moves its dependents to waiting and refuses its old incarnation', async () => {
-    const { carrier, pluginsManager, runtime } = await lives()
+    const { router, pluginsManager, runtime } = await lives()
     const alpha = runtime.half('alpha')
     await alpha.ask('events.subscribe', { topics: ['gamma.changed'] })
     alpha.crash()
@@ -243,7 +238,7 @@ describe('a plugin\'s life through the joined core', () => {
     await until(() => pluginsManager.plugin('alpha')?.state === 'ready')
     const second = runtime.half('alpha', 2)
     // A message for the dead incarnation reaches nothing, the new one included
-    carrier.send(worker('alpha', 1), { v: 1, kind: 'stop', graceMs: 3000 })
+    router.send(worker('alpha', 1), { v: 1, kind: 'stop', graceMs: 3000 })
     await tick(30)
     expect(second.got('stop')).toEqual([])
     expect(alpha.closed).toBe(true)
@@ -272,7 +267,7 @@ describe('a plugin\'s life through the joined core', () => {
   // The reconcile copies a bundled first-party plugin only once its record is on disk, through the real core record lane
   it('holds a first-party copy back until its record landed', async () => {
     let failing = true
-    const { recording, carrier, pluginsManager, dataDir } = await joined({
+    const { recording, router, pluginsManager, dataDir } = await joined({
       install: { ...coreInstall(), git: { files: filesFor(workerManifest('git')), firstParty: true } },
       before: booted => {
         const append = booted.log.append.bind(booted.log)
@@ -326,7 +321,7 @@ describe('shutdown through the joined core', () => {
 
   // The gate answers until the end, so its state changes with no stop
   it('records no policy job state when shutdown runs', async () => {
-    const { recording, carrier, dataDir, pluginsManager } = await quitting()
+    const { recording, router, dataDir, pluginsManager } = await quitting()
     await pluginsManager.shutdown()
     await recording.flush()
     const records = await coreRecords(dataDir)
@@ -336,7 +331,7 @@ describe('shutdown through the joined core', () => {
   })
 
   it('records the gate failing during shutdown as failed', async () => {
-    const { recording, carrier, dataDir, pluginsManager, runtime, gate } = await quitting({ alphaHolds: true })
+    const { recording, router, dataDir, pluginsManager, runtime, gate } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     const shutdown = pluginsManager.shutdown()
     await until(() => alpha.got('stop').length === 1)
@@ -353,8 +348,23 @@ describe('shutdown through the joined core', () => {
     expect(policyJobs.map(record => [record.policyJob, record.state])).toEqual([['gate', 'failed']])
   })
 
+  // The gate module hears that shutdown began as the router does, so a gate that is down answers stopped there too
+  it('answers gate.reach stopped once the gate failed during shutdown', async () => {
+    const { router, pluginsManager, runtime, gate } = await quitting({ alphaHolds: true })
+    const way = windowWay(router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const alpha = runtime.half('alpha')
+    const shutdown = pluginsManager.shutdown()
+    await until(() => alpha.got('stop').length === 1)
+    gate.throws = true
+    await pluginsManager.apply({ kind: 'confirmOff', on: true })
+    await until(() => pluginsManager.policyJob('gate') === 'failed')
+    expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('stopped')
+    alpha.send({ v: 1, kind: 'stopped' })
+    await shutdown
+  })
+
   it('keeps the audit queue through shutdown and writes it on the flush after close', async () => {
-    const { recording, carrier, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
+    const { recording, router, dataDir, pluginsManager, runtime } = await quitting({ alphaHolds: true })
     const alpha = runtime.half('alpha')
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'one' }))?.ok).toBe(true)
     const shutdown = pluginsManager.shutdown()
@@ -362,7 +372,7 @@ describe('shutdown through the joined core', () => {
     expect((await alpha.ask('storage.set', { key: 'draft', value: 'two' }))?.ok).toBe(true)
     alpha.send({ v: 1, kind: 'stopped' })
     await shutdown
-    carrier.close()
+    router.close()
     await recording.flush()
     const records = await coreRecords(dataDir)
     expect(records.filter(record => record.event === 'audit.call' && record.action === 'storage.set')).toHaveLength(2)
@@ -388,8 +398,8 @@ describe('shutdown through the joined core', () => {
   })
 })
 
-// The carrier must ask the same guards the plugins manager expects and report where the plugins manager's options say
-describe('what wireCore hands the carrier', () => {
+// The router must ask the same guards the plugins manager expects and report where the plugins manager's options say
+describe('what wireCore hands the router', () => {
   async function writing(wire: Pick<WireOptions, 'guardsFor' | 'debug' | 'asks'>, gate = allowAll()) {
     const luoshu = new FakeLuoshu()
     const parts = await joined({
@@ -402,14 +412,14 @@ describe('what wireCore hands the carrier', () => {
     return { ...parts, luoshu }
   }
 
-  it('makes the carrier ask the guards the plugins manager expects, so a missing one refuses the write', async () => {
+  it('makes the router ask the guards the plugins manager expects, so a missing one refuses the write', async () => {
     const { runtime, luoshu } = await writing({ guardsFor: () => ['leases'] })
     const reply = await runtime.half('alpha').ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
     expect(code(reply!)).toBe('guard-down')
     expect(luoshu.performed).toEqual([])
   })
 
-  it('hands the carrier the debug sink for a gate that throws', async () => {
+  it('hands the router the debug sink for a gate that throws', async () => {
     const debug: { plugin: string | null }[] = []
     const gate = gateDeciding(() => { throw new Error('broken') })
     const { runtime } = await writing({ debug: entry => { debug.push(entry) } }, gate)
@@ -417,7 +427,7 @@ describe('what wireCore hands the carrier', () => {
     expect(debug.map(entry => entry.plugin)).toContain('gate')
   })
 
-  it('hands the carrier the asks that raise a gate\'s prompt', async () => {
+  it('hands the router the asks that raise a gate\'s prompt', async () => {
     const raised: string[] = []
     const gate = gateDeciding((access, view) => access.stage === 'raw' ? { allow: true, view } : { ask: 'luoshu.read notes/a.md', view })
     const { runtime } = await writing({ asks: { raise: ask => { raised.push(ask); return 'req-1' } } }, gate)
@@ -431,9 +441,9 @@ describe('core.status, for a window\'s banner', () => {
   const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
 
   it('answers a window with the policy jobs, the plugins crashed and not restarted, the switches that weaken and the luoshu folder', async () => {
-    const { carrier, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    const { router, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     const reply = await way.ask('editor', 'core.status')
     expect(reply).toMatchObject({ ok: true })
     expect(reply.result).toEqual({
@@ -456,7 +466,7 @@ describe('core.status, for a window\'s banner', () => {
   })
 
   it('names the switches when they are gone from a data folder hetu ran in before', async () => {
-    const { carrier, pluginsManager } = await joined({
+    const { router, pluginsManager } = await joined({
       // A first start leaves its records, then the switches go
       prepare: async dataDir => {
         const first = await boot({ packaged: false, installDir: dataDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
@@ -465,29 +475,29 @@ describe('core.status, for a window\'s banner', () => {
       },
     })
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ suspect: ['switches'] })
   })
 
   it('names the requests waiting for the human, a plugin found in the folder among them', async () => {
-    const { carrier, pluginsManager, dataDir } = await joined()
+    const { router, pluginsManager, dataDir } = await joined()
     await writeFolder(path.join(dataDir, 'plugins', 'beta'), filesFor(workerManifest('beta')))
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ pending: [{ kind: 'plugin.approve', plugin: 'beta' }] })
   })
 
   it('says the log can\'t write while boot\'s event log is failing', async () => {
-    const { carrier, pluginsManager } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
+    const { router, pluginsManager } = await joined({ before: booted => Object.defineProperty(booted.log, 'healthy', { get: () => false }) })
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     expect((await way.ask('editor', 'core.status')).result).toMatchObject({ logWrites: false })
   })
 
   it('answers the trusted window too and refuses a plugin, since the banner is the windows\' own', async () => {
-    const { carrier, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
+    const { router, pluginsManager, runtime } = await joined({ folder: { alpha: filesFor(workerManifest('alpha')) } })
     await pluginsManager.start()
-    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect((await way.ask('trusted', 'core.status')).ok).toBe(true)
     expect(code((await runtime.half('alpha').ask('core.status', {}))!)).toBe('not-granted')
   })
@@ -512,7 +522,7 @@ describe('the core\'s log through the joined core', () => {
     await parts.recording.flush()
     const written = (await coreRecords(parts.dataDir)).filter(record => record.event === 'audit.call')
     expect(written.map(record => [record.action, record.caller, record.code])).toEqual([['alpha.hello', 'beta/worker#1', null]])
-    const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const way = windowWay(parts.router, { editor: { kind: 'window', role: 'editor', n: 1 } })
     const history = await way.ask('editor', 'log.segments')
     expect(history).toMatchObject({ ok: true })
     expect((history.result as { segment: number, breaks: number[] }[]).at(-1)).toMatchObject({ breaks: [] })
@@ -521,7 +531,7 @@ describe('the core\'s log through the joined core', () => {
 })
 
 // The guard's policy job states end to end wait for #77, since core/api expects no guard on any action yet. Through the
-// shipping wiring here, with the guards the plugins manager and the carrier both expect
+// shipping wiring here, with the guards the plugins manager and the router both expect
 describe('a guard down through the joined core', () => {
   const leases: Listing = { files: filesFor(hostManifest('leases')) }
 
@@ -649,20 +659,20 @@ describe('dot folders through the joined core', () => {
   // What a reply tells its caller, without the ids that differ between calls
   const told = (reply: Message | null) => (reply === null ? null : reply.ok ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal })
 
-  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s and answers a link into one as a missing name', async gate => {
+  it.each(['on', 'off'] as const)('refuses reads, writes and listings of a dot folder with the gate %s, invalid as spelled, with a link into one a missing name', async gate => {
     const { alpha, folder } = await dotted(gate)
     expect((await alpha.ask('luoshu.read', { path: 'notes/a.md' }))?.ok).toBe(true)
     for (const where of ['.obsidian/plugins/x/main.js', '.OBSIDIAN/plugins/x/main.js']) {
-      expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('not-granted')
-      expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('not-granted')
+      expect(code((await alpha.ask('luoshu.read', { path: where }))!), where).toBe('invalid')
+      expect(code((await alpha.ask('luoshu.write', { path: where, text: 'planted' }))!), where).toBe('invalid')
     }
     expect(code((await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))!)).toBe('not-found')
     expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
-    expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.write', { path: '.github/workflows/x.yml', text: 'on: push' }))!)).toBe('invalid')
     expect(code((await alpha.ask('luoshu.write', { path: 'cfg/plugins/y/main.js', text: 'planted' }))!)).toBe('not-granted')
     // A vault in a subfolder has its own .obsidian
-    expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('not-granted')
-    expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    expect(code((await alpha.ask('luoshu.write', { path: 'notes/.obsidian/plugins/x/main.js', text: 'planted' }))!)).toBe('invalid')
+    expect(code((await alpha.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('invalid')
     expect(told(await alpha.ask('luoshu.list', { folder: 'cfg' }))).toEqual({ ok: true, result: { paths: [], next: null } })
     expect(await readFile(path.join(folder, '.obsidian', 'plugins', 'x', 'main.js'), 'utf8')).toBe('plugin code')
     expect(await exists(path.join(folder, '.github'))).toBe(false)
@@ -672,13 +682,13 @@ describe('dot folders through the joined core', () => {
 
   // luoshu.list needs no grant, so a refusal for a name spelled with no dot would tell which dot names exist
   it.each(['on', 'off'] as const)('answers a plugin with no grant a listing of a link into a dot folder or a short name of a dot name as one of a missing folder, gate %s', async gate => {
-    const { recording, zero, alpha, carrier, dataDir, folder } = await dotted(gate)
+    const { recording, zero, alpha, router, dataDir, folder } = await dotted(gate)
     const missing = told(await zero.ask('luoshu.list', { folder: 'nothing-here' }))
     expect(missing).toMatchObject({ ok: true, result: { paths: [] } })
     const aliases = ['cfg', 'cfg/plugins', ...await shortNames(folder, ['.obsidian', '.env'])]
     if (process.platform === 'win32') expect(aliases).toHaveLength(4)
     for (const alias of aliases) expect(told(await zero.ask('luoshu.list', { folder: alias })), alias).toEqual(missing)
-    expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('not-granted')
+    expect(code((await zero.ask('luoshu.list', { folder: '.obsidian' }))!)).toBe('invalid')
     // A granted read answers as for a missing note. The event log keeps the same record of both
     expect(told(await alpha.ask('luoshu.read', { path: 'cfg/plugins/x/main.js' }))).toEqual(told(await alpha.ask('luoshu.read', { path: 'notes/x/main.js' })))
     await recording.flush()
@@ -690,7 +700,7 @@ describe('dot folders through the joined core', () => {
       return { calls: found.reduce((sum, record) => sum + (record.count as number), 0), shapes: new Set(found.map(shape)).size }
     }
     expect(shapes('luoshu.list', null)).toEqual({ calls: aliases.length + 1, shapes: 1 })
-    expect(shapes('luoshu.list', 'not-granted')).toEqual({ calls: 1, shapes: 1 })
+    expect(shapes('luoshu.list', 'invalid')).toEqual({ calls: 1, shapes: 1 })
     expect(shapes('luoshu.read', 'not-found')).toEqual({ calls: 2, shapes: 1 })
     expect(kept.filter(record => record.action === 'luoshu.read' && record.code !== 'not-found')).toEqual([])
   })
@@ -709,25 +719,25 @@ describe('the windows\' own actions', () => {
 
   it('go to the runtime for opening the trusted window, Quit and Restart hetu, and the rest to the plugins manager', async () => {
     const served: string[] = []
-    const { carrier, pluginsManager } = await joined({
+    const { router, pluginsManager } = await joined({
       wire: { windows: { serve: async call => { served.push(call.action); return null }, armed: () => true } },
     })
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor, trusted })
-    for (const action of ['security.open', 'core.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
-    expect((await way.ask('trusted', 'core.relaunch')).ok).toBe(true)
+    const way = windowWay(router, { editor, trusted })
+    for (const action of ['app.openSecurity', 'app.quit']) expect((await way.ask('editor', action)).ok).toBe(true)
+    expect((await way.ask('trusted', 'app.relaunch')).ok).toBe(true)
     expect((await way.ask('editor', 'editor.frame', { plugin: 'alpha', frame: 'board' })).ok).toBe(true)
     const url = 'hetu://views/0123456789abcdef0123456789abcdef/board.html'
     expect((await way.ask('editor', 'editor.frameGone', { url, navigated: true })).ok).toBe(true)
-    expect(served).toEqual(['security.open', 'core.quit', 'core.relaunch', 'editor.frame', 'editor.frameGone'])
+    expect(served).toEqual(['app.openSecurity', 'app.quit', 'app.relaunch', 'editor.frame', 'editor.frameGone'])
     expect((await way.ask('trusted', 'security.list')).ok).toBe(true)
   })
 
   it('count a Confirm only once the runtime says the trusted window armed', async () => {
     let armed = false
-    const { carrier, pluginsManager } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
+    const { router, pluginsManager } = await joined({ wire: { windows: { serve: async () => null, armed: () => armed } } })
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor, trusted })
+    const way = windowWay(router, { editor, trusted })
     const reply = await way.ask('editor', 'security.request', { change: { kind: 'skipVerification', on: true } })
     const id = (reply.result as { held: string }).held
     expect((await way.ask('trusted', 'security.confirm', { requestId: id })).refusal).toMatchObject({ code: 'throttled' })
@@ -736,10 +746,10 @@ describe('the windows\' own actions', () => {
   })
 
   it('leave opening windows, Quit and Restart hetu unavailable with no runtime to serve them', async () => {
-    const { carrier, pluginsManager } = await joined()
+    const { router, pluginsManager } = await joined()
     await pluginsManager.start()
-    const way = windowWay(carrier, { editor })
-    expect((await way.ask('editor', 'core.quit')).refusal).toMatchObject({ code: 'unavailable' })
+    const way = windowWay(router, { editor })
+    expect((await way.ask('editor', 'app.quit')).refusal).toMatchObject({ code: 'unavailable' })
   })
 })
 

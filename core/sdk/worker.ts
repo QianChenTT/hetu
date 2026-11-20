@@ -14,7 +14,7 @@ export type WorkerPort = {
 // The worker's global as runInWorker uses it
 export type WorkerScope = { onmessage: ((event: { data: unknown, ports: readonly unknown[] }) => void) | null }
 
-// What the pacing keeps back from the relay's limits, as the Sender does from the carrier's rate
+// What the pacing keeps back from the relay's limits, as the Sender does from the router's rate
 const SHARE = 0.9
 
 type Held = { text: string, weight: number }

@@ -6,7 +6,6 @@ import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
-import { carrierOptions } from '../backend/wire.ts'
 import { allowAll, cleanup, entryFor, filesFor, harness, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
 
 afterEach(cleanup)
@@ -443,11 +442,11 @@ describe('requests the core raises itself', () => {
 })
 
 describe('the wiring', () => {
-  it('hands the carrier the plugins manager\'s asks unless a test names others', async () => {
+  it('hands the router its asks, the core actions it serves and its listeners through the router\'s door as it is built', async () => {
     const made = await harness()
-    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null }).asks).toBe(made.pluginsManager.asks)
-    const other = { raise: () => 'req-1' }
-    expect(carrierOptions(made.pluginsManager, made.modules, { recording: null, asks: other }).asks).toBe(other)
+    expect(made.link.handed.asks).toBe(made.pluginsManager.asks)
+    expect(Object.fromEntries(made.link.handed.served)).toEqual({ 'plugins-manager': made.pluginsManager.serve })
+    expect([made.link.handed.wayClosed.length, made.link.handed.heard.length]).toEqual([1, 1])
   })
 })
 
@@ -557,7 +556,7 @@ describe('the core actions the plugins manager serves', () => {
   it('leaves opening windows, Quit and Restart hetu to the runtime', async () => {
     const made = await harness()
     await made.pluginsManager.start()
-    for (const action of ['security.open', 'core.quit', 'core.relaunch']) {
+    for (const action of ['app.openSecurity', 'app.quit', 'app.relaunch']) {
       expect(await code(made.pluginsManager.serve(call(editor, action)))).toBe('unavailable')
     }
   })

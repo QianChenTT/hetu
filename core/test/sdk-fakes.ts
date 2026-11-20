@@ -1,21 +1,21 @@
 import type { Caller } from '../api/envelope.ts'
 import { defaultLimits } from '../api/limits.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
+import type { Router } from '../backend/router/router.ts'
 import { Calls } from '../sdk/calls.ts'
 import { makeClient } from '../sdk/client.ts'
 import { Sender, type Transport } from '../sdk/transport.ts'
 
-// How the way behaves. drop loses a message the half posted, as the carrier does one over the rate. clone copies each
+// How the way behaves. drop loses a message the half posted, as the router does one over the rate. clone copies each
 // message the way a port does, which throws on what can't cross
 export type TransportOptions = { drop?: (message: Record<string, unknown>) => boolean, clone?: boolean }
 
-// An SDK half's way on an in-process handle, as the plugins manager gives a host half its link. What the carrier sends before
+// An SDK half's way on an in-process handle, as the plugins manager gives a host half its link. What the router sends before
 // listen waits for it. sent keeps every message the half posted, oldest first, the lost ones too
-export function sdkTransport(carrier: Carrier, caller: Caller, options: TransportOptions = {}): Transport & { sent: unknown[] } {
+export function sdkTransport(router: Router, caller: Caller, options: TransportOptions = {}): Transport & { sent: unknown[] } {
   const held: unknown[] = []
   const sent: unknown[] = []
   let listener: ((message: unknown) => void) | null = null
-  const handle = carrier.handle(caller, message => {
+  const handle = router.handle(caller, message => {
     if (listener === null) held.push(message)
     else listener(message)
   })
@@ -35,8 +35,8 @@ export function sdkTransport(carrier: Carrier, caller: Caller, options: Transpor
 }
 
 // A client with no plugin around it, for the calls alone
-export function clientOn(carrier: Carrier, caller: Caller) {
-  const transport = sdkTransport(carrier, caller)
+export function clientOn(router: Router, caller: Caller) {
+  const transport = sdkTransport(router, caller)
   const sender = new Sender(message => transport.post(message), defaultLimits.messagesPerSecond)
   const calls = new Calls(sender, { callsInFlight: defaultLimits.callsInFlight, callDeadlineMs: defaultLimits.callDeadlineMs })
   transport.listen(message => calls.reply(message))

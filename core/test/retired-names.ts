@@ -43,6 +43,20 @@ const slotPattern = new RegExp([
 // out, so a policy word near it in these files is not taken for the retired name
 const layoutSlot = 'the layout\'s slot node kind, where a view is drawn, a different meaning from the policy job'
 
+// The luoshu's hold on a path from prepare to perform is the latch, so lock means the lock module's note lock alone.
+// Lock stays the word for the data folder's lock, git's index.lock and a disk locked for a moment, so the pattern
+// catches the latch's sense only, in the shapes the luoshu, the contract and canonical wrote it
+const latchPattern = new RegExp([
+  String.raw`\bper-path locks?\b`,
+  String.raw`\b(?:un)?lock\((?:key|target\.key|call\.callId)`,
+  String.raw`\blocks? (?:on|of) (?:its|the path's|both)\b`,
+  String.raw`\bunder (?:the|both|one) locks?\b`,
+  String.raw`\b(?:takes?|holds?) the locks\b|\bboth locks\b`,
+  String.raw`\blets? go of (?:the |its |no )?lock\b`,
+  String.raw`\b(?:key's|provider's) lock\b|\bone lock for\b|\block the other waits on\b|\block from prepare\b|\bwaits on its lock\b`,
+  String.raw`\bfor locks and leases\b`,
+].join('|'), 'gi')
+
 export const retiredNames: readonly RetiredName[] = [
   {
     name: 'slot',
@@ -68,7 +82,7 @@ export const retiredNames: readonly RetiredName[] = [
   {
     name: 'log.history',
     now: 'log.segments',
-    // The action's name only. The event log's own history() method is called log.history() in the carrier, which the
+    // The action's name only. The event log's own history() method is called log.history() in the router, which the
     // pattern leaves out
     pattern: /\blog\.history\b(?!\s*\()/g,
     allowed: [],
@@ -81,7 +95,7 @@ export const retiredNames: readonly RetiredName[] = [
   {
     name: 'floor constants and floor records',
     now: 'limits and core records',
-    // The two phrases only: floor alone still names the carrier's fixed rules
+    // The two phrases only: floor alone still names the router's fixed rules
     pattern: /\bfloor[ -]?(?:constants?|records?)\b/gi,
     allowed: [],
   },
@@ -99,4 +113,13 @@ export const retiredNames: readonly RetiredName[] = [
     pattern: /\brecordNothing\b/g,
     allowed: [{ place: 'core/backend/boot/state.ts', why: 'a switches file from before recording was a core module still holds it, read once as recording in off' }],
   },
+  // The core actions renamed into the namespace of the part that serves them
+  { name: 'core.filterReadable', now: 'gate.filterReadable', pattern: /\bcore\.filterReadable\b/g, allowed: [] },
+  { name: 'editor.reach', now: 'gate.reach', pattern: /\beditor\.reach\b/g, allowed: [] },
+  { name: 'core.quit', now: 'app.quit', pattern: /\bcore\.quit\b/g, allowed: [] },
+  { name: 'core.relaunch', now: 'app.relaunch', pattern: /\bcore\.relaunch\b/g, allowed: [] },
+  { name: 'core.pickFolder', now: 'app.pickFolder', pattern: /\bcore\.pickFolder\b/g, allowed: [] },
+  { name: 'security.open', now: 'app.openSecurity', pattern: /\bsecurity\.open\b/g, allowed: [] },
+  { name: 'the luoshu\'s lock', now: 'latch', pattern: latchPattern, allowed: [] },
+  { name: 'carrier', now: 'router', pattern: /carriers?/gi, allowed: [] },
 ]

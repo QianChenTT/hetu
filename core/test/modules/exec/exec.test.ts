@@ -52,12 +52,12 @@ async function started(view: ExecView | null, options: ExecOptions = {}): Promis
   return exec
 }
 
-const callOf = (command: unknown, caller: Caller = git, deadline = Date.now() + 30000): Call =>
-  ({ callId: `c${++n}`, caller, action: 'exec.run', args: { command }, deadline })
+const callOf = (command: unknown, caller: Caller = git, deadline = Date.now() + 30000, signal?: AbortSignal): Call =>
+  ({ callId: `c${++n}`, caller, action: 'exec.run', args: { command }, deadline, ...(signal !== undefined ? { signal } : {}) })
 
-// prepare then perform, as the carrier makes a call, the command it judged laid over the prepared scope
-async function run(exec: Exec, command: unknown, caller: Caller = git, deadline?: number): Promise<ExecResult | { refused: unknown }> {
-  const call = callOf(command, caller, deadline)
+// prepare then perform, as the router makes a call, the command it judged laid over the prepared scope
+async function run(exec: Exec, command: unknown, caller: Caller = git, deadline?: number, signal?: AbortSignal): Promise<ExecResult | { refused: unknown }> {
+  const call = callOf(command, caller, deadline, signal)
   const prepared = await exec.provider.prepare(call)
   if (!('scope' in prepared)) return { refused: prepared }
   try {
@@ -368,6 +368,20 @@ describe('the limits on a run', () => {
     expect(codes.slice(0, 3).sort()).toEqual([0, 0, 'throttled'])
     expect(codes[3]).toBe(0)
     expect(await run(exec, slow)).toMatchObject({ code: 0 })
+  })
+
+  it("kills the command when its call's signal aborts and answers stale, the module serving on", async () => {
+    const command = js('setInterval(() => {}, 1000)')
+    const quick = js('process.exit(0)')
+    const exec = await started(viewOf({ git: [{ commands: [command, quick], env: [] }] }))
+    const ended = new AbortController()
+    const began = Date.now()
+    const running = run(exec, command, git, undefined, ended.signal)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    ended.abort('stale')
+    expect(await running).toEqual({ refused: { code: 'stale' } })
+    expect(Date.now() - began).toBeLessThan(5000)
+    expect(await run(exec, quick)).toMatchObject({ code: 0 })
   })
 
   it('ends what is running when it closes and serves nothing more', async () => {

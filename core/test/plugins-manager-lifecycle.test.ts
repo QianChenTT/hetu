@@ -12,7 +12,7 @@ const signed = (extra = {}) => (root: string) => entryFor(root, extra)
 const worker = (id: string, extra: object = {}): Files => filesFor(workerManifest(id, extra))
 const wkr = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 
-// The human's Stop or Restart on the core seam, as the carrier hands one from the trusted window
+// The human's Stop or Restart on the core seam, as the router hands one from the trusted window
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const human = (made: Harness, action: 'core.stop' | 'core.restart', plugin: string) =>
   made.pluginsManager.serve({ callId: 'w', caller: trusted, action, args: { plugin }, deadline: Date.now() + 1000 })
@@ -60,7 +60,7 @@ describe('dependencies and turning down', () => {
 })
 
 describe('a crash', () => {
-  it('moves every dependent to waiting before the carrier answers the calls the plugin held', async () => {
+  it('moves every dependent to waiting before the router answers the calls the plugin held', async () => {
     const made = await harness({
       folder: {
         mapper: worker('mapper', { provides: { actions: { query: {} } } }),
@@ -83,7 +83,7 @@ describe('a crash', () => {
     made.runtime.half('mapper').crash()
     const reply = await asking
     expect((reply?.refusal as { code: string }).code).toBe('crashed')
-    // Both were waiting the moment crashed returned, before the carrier answered the held call
+    // Both were waiting the moment crashed returned, before the router answered the held call
     expect(states).toEqual(['waiting', 'waiting'])
     expect(reasonOf(made.pluginsManager, 'tagger')).toBe('dependency:mapper:crashed')
     expect(reasonOf(made.pluginsManager, 'summary')).toBe('dependency:tagger:waiting')
@@ -329,7 +329,7 @@ describe('the heartbeat', () => {
     await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready')
   })
 
-  it('has the carrier answer calls to an unresponsive plugin timeout at once', async () => {
+  it('has the router answer calls to an unresponsive plugin timeout at once', async () => {
     const made = await harness({
       folder: { mapper: worker('mapper', { provides: { actions: { query: {} } } }), outline: worker('outline') },
       entries: { mapper: signed(), outline: signed() },
@@ -403,7 +403,7 @@ describe('the heartbeat', () => {
 })
 
 describe('shutdown', () => {
-  it('tells the carrier first, then stops plugins in reverse graph order and ends the core modules last in the reverse of their start, the gate answering to the end', async () => {
+  it('tells the router first, then stops plugins in reverse graph order and ends the core modules last in the reverse of their start, the gate answering to the end', async () => {
     const modules = { luoshu: fakeLuoshu(), history: fakeHistory(), exec: fakeExec() }
     const made = await harness({
       folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },

@@ -89,12 +89,12 @@ async function world(granted: Record<string, string[]>) {
     },
   }
   const modules = { gate: createGate(), luoshu: luoshuModule(provider, luoshu.role) }
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   const junctions: string[] = []
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
@@ -124,7 +124,7 @@ const names = async (dir: string) => (await readdir(dir)).sort()
 const notGranted = { ok: false, refusal: { code: 'not-granted' } }
 
 describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a folder made under another case while a call waits', () => {
-  it('refuses a read by a plugin granted one case of the folder a write is making under the other case while the read waits on its lock', async () => {
+  it('refuses a read by a plugin granted one case of the folder a write is making under the other case while the read waits on its latch', async () => {
     const { ask, before } = await world({ alpha: ['**'], beta: ['box*/**'] })
     const write = { path: 'Box7/n.md', text: 'ALPHA NOTE' }
     let read: Promise<Reply | null> = Promise.resolve(null)

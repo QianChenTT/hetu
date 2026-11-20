@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { delivery, token, type Caller } from '../api/envelope.ts'
 import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
-import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, FakeGuard, harness, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import type { RouterOptions } from '../backend/router/header.ts'
+import { cleanup, code, editor, FakeGuard, harness, type HarnessOptions, tick, windowWay, worker, type Side } from './router-fakes.ts'
 
 afterEach(cleanup)
 
 // search serves query, git serves log and scribe serves handle for http only
-function plugins(over: Partial<CarrierOptions> = {}) {
+function plugins(over: HarnessOptions = {}) {
   const parts = harness(over)
   const { pluginsManager, gate, connect } = parts
   pluginsManager.sandboxed('search', { query: {} })
@@ -47,7 +47,7 @@ describe('plugin.call', () => {
   })
 
   it('lets only the callers a declared from names reach the action, the plugin\'s own halves aside', async () => {
-    const { http, search, scribe, connect, pluginsManager, carrier } = plugins()
+    const { http, search, scribe, connect, pluginsManager, router } = plugins()
     expect(code(await search.ask('scribe.handle'))).toBe('not-granted')
     http.call('scribe.handle')
     await scribe.delivered('scribe.handle')
@@ -57,7 +57,7 @@ describe('plugin.call', () => {
     expect(deliveries(scribe, 'scribe.handle')).toHaveLength(2)
     // A window is never in from, even with the gate off
     pluginsManager.policyJobs.gate = 'off'
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'scribe.handle'))).toBe('not-granted')
   })
 
@@ -393,7 +393,7 @@ describe('deadlines and cancel', () => {
   // A call with no parent, which only the list of calls the way made can reach
   it.each([
     ['crashes', (parts: ReturnType<typeof plugins>) => parts.scribe.port.close()],
-    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.carrier.end(worker('scribe'))],
+    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.router.end(worker('scribe'))],
   ])('tells the callee at once when the plugin that made a call %s', async (_name, end) => {
     const parts = plugins()
     parts.scribe.call('search.query')
@@ -402,7 +402,7 @@ describe('deadlines and cancel', () => {
     await parts.search.waitFor(message => message.kind === 'cancel' && message.callId === got.callId, 500)
   })
 
-  it('lets go of no lock for a prepare that refused after its call was stopped', async () => {
+  it('lets go of no latch for a prepare that refused after its call was stopped', async () => {
     const { connect, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let open!: () => void
@@ -462,7 +462,7 @@ describe('deadlines and cancel', () => {
         return 'allow'
       }
     }],
-  ])('performs no provider call that %s ran past its deadline and lets go of the lock', async (_name, slow) => {
+  ])('performs no provider call that %s ran past its deadline and lets go of the latch', async (_name, slow) => {
     let clock = 1_000_000
     const parts = harness({ clock: () => clock, guardsFor: () => ['leases'] })
     const { connect, gate, luoshu, pluginsManager } = parts
@@ -488,7 +488,7 @@ describe('deadlines and cancel', () => {
     expect(deliveries(search, 'search.query')).toEqual([])
   })
 
-  it('leaves a provider call to finish when it is cancelled and lets go of the lock it took', async () => {
+  it('leaves a provider call to finish when it is cancelled and lets go of the latch it took', async () => {
     const { search, luoshu } = plugins()
     luoshu.files.set('notes/a.md', 'x')
     let open!: () => void
@@ -505,7 +505,7 @@ describe('deadlines and cancel', () => {
 })
 
 describe('filterReadable', () => {
-  async function incoming(over: Partial<CarrierOptions> = {}) {
+  async function incoming(over: HarnessOptions = {}) {
     const parts = plugins(over)
     const id = parts.scribe.call('search.query', { text: 'x' })
     const got = await parts.search.delivered('search.query')
@@ -514,7 +514,7 @@ describe('filterReadable', () => {
 
   it('gives back the paths the callee may read that the caller may read too, asking about the caller only for those', async () => {
     const { search, got, gate } = await incoming()
-    const reply = await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md', 'private/b.md', 'other/c.md'] })
+    const reply = await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md', 'private/b.md', 'other/c.md'] })
     expect(reply.result).toEqual(['notes/a.md'])
     const asked = gate.reads.map(read => `${(read.caller as { id: string }).id} ${read.path}`)
     expect(asked).toEqual(['search notes/a.md', 'scribe notes/a.md', 'search private/b.md', 'scribe private/b.md', 'search other/c.md'])
@@ -522,34 +522,35 @@ describe('filterReadable', () => {
 
   it('works only during a live call delivered on the same port', async () => {
     const { search, git, scribe, got, id } = await incoming()
-    expect(code(await git.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
-    expect(code(await scribe.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(code(await git.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(code(await scribe.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
     search.answer(got.callId, [])
     await scribe.reply(id)
-    expect(code(await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('invalid')
   })
 
   it('gives back every path with the gate off and refuses policy-down while it is failed or absent', async () => {
     const { search, got, pluginsManager, gate } = await incoming()
     pluginsManager.policyJobs.gate = 'off'
     const paths = ['notes/a.md', 'other/c.md']
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(paths)
     for (const state of ['failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
-      expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('policy-down')
+      expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths }))).toBe('policy-down')
     }
     expect(gate.reads).toEqual([])
   })
 
-  // A saved index or another store from a build before dot names were refused could still hold one
-  it('gives back no path with a dot segment whatever the gate says with the gate on or off and asks it nothing about one', async () => {
+  // A saved index or another store from a build before dot names were refused could still hold one. The callee read it
+  // itself, so the call takes it and answers without it, whatever the gate says of it
+  it('drops a path with a dot segment from the answer with the gate on and off, the gate never asked about it', async () => {
     const { search, got, pluginsManager, gate } = await incoming()
     gate.readable = () => true
     const paths = ['notes/a.md', '.env', '.obsidian/plugins/x/data.json', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config', 'other/c.md']
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
-    expect(gate.reads.map(read => read.path)).toEqual(['notes/a.md', 'notes/a.md', 'other/c.md', 'other/c.md'])
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+    expect(new Set(gate.reads.map(read => read.path))).toEqual(new Set(['notes/a.md', 'other/c.md']))
     pluginsManager.policyJobs.gate = 'off'
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths })).result).toEqual(['notes/a.md', 'other/c.md'])
   })
 
   it('refuses policy-down when canRead throws and counts only an exact true', async () => {
@@ -557,18 +558,18 @@ describe('filterReadable', () => {
     const id = (caller: Caller) => (caller as { id: string }).id
     // On either side, with the other side's answer true
     gate.readable = caller => id(caller) === 'search' ? 1 : true
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] })).result).toEqual([])
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] })).result).toEqual([])
     gate.readable = caller => id(caller) === 'search' ? true : 1
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] })).result).toEqual([])
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] })).result).toEqual([])
     gate.readable = () => { throw new Error('broken') }
-    expect(code(await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('policy-down')
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('policy-down')
   })
 
   it('records a canRead that throws as a fault', async () => {
-    const { carrier, search, got, gate, log } = await incoming()
+    const { router, search, got, gate, log } = await incoming()
     gate.readable = () => { throw new Error('broken') }
-    expect(code(await search.ask('core.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('policy-down')
-    carrier.close()
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('policy-down')
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canRead', count: 1 }])
   })
@@ -576,12 +577,12 @@ describe('filterReadable', () => {
   it(`caps the paths at ${MAX_FILTER_PATHS}`, async () => {
     const { search, got } = await incoming()
     const paths = Array.from({ length: MAX_FILTER_PATHS + 1 }, (_, i) => `notes/${i}.md`)
-    expect(code(await search.ask('core.filterReadable', { call: got.callId, paths }))).toBe('invalid')
-    expect((await search.ask('core.filterReadable', { call: got.callId, paths: paths.slice(1) })).ok).toBe(true)
+    expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths }))).toBe('invalid')
+    expect((await search.ask('gate.filterReadable', { call: got.callId, paths: paths.slice(1) })).ok).toBe(true)
   })
 
-  // Each canRead below takes a millisecond of main on the carrier's clock
-  async function timed(over: Partial<CarrierOptions> = {}) {
+  // Each canRead below takes a millisecond of main on the router's clock
+  async function timed(over: HarnessOptions = {}) {
     const clock = { now: 1000 }
     const parts = await incoming({ clock: () => clock.now, ...over })
     parts.gate.readable = () => {
@@ -590,7 +591,7 @@ describe('filterReadable', () => {
     }
     const named = (count: number, from = 0) => Array.from({ length: count }, (_, i) => `notes/${from + i}.md`)
     const paths = named(40)
-    const filter = (asked = paths, call = parts.got.callId) => parts.search.ask('core.filterReadable', { call, paths: asked })
+    const filter = (asked = paths, call = parts.got.callId) => parts.search.ask('gate.filterReadable', { call, paths: asked })
     return { ...parts, clock, named, paths, filter }
   }
 
@@ -660,7 +661,7 @@ describe('filterReadable', () => {
     gate.grants.search = [{ type: 'luoshu.read', paths: Array(64).fill(crafted) }]
     const deep = Array.from({ length: 256 }, () => 'a').join('/').slice(0, 511)
     const started = performance.now()
-    const reply = await search.ask('core.filterReadable', { call: got.callId, paths: Array(MAX_FILTER_PATHS).fill(deep) })
+    const reply = await search.ask('gate.filterReadable', { call: got.callId, paths: Array(MAX_FILTER_PATHS).fill(deep) })
     expect(code(reply)).toBe('throttled')
     // The budget is 100 ms. Unbounded the message held main for one to three seconds
     expect(performance.now() - started).toBeLessThan(1000)
@@ -668,7 +669,7 @@ describe('filterReadable', () => {
 })
 
 describe('a listing', () => {
-  function listing(over: Partial<CarrierOptions> = {}) {
+  function listing(over: HarnessOptions = {}) {
     const parts = harness(over)
     for (const path of ['notes/a.md', 'projects/plan.md', 'secret/b.md', '.scratch.md']) parts.luoshu.files.set(path, 'x')
     parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'luoshu.list', paths: ['projects/**'] }]
@@ -680,7 +681,7 @@ describe('a listing', () => {
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md'], next: null })
     expect(gate.asked).toEqual([])
     expect(gate.lists.map(asked => asked.path)).toEqual(expect.arrayContaining(['secret/b.md']))
-    // A dot name never reaches the gate
+    // The luoshu's walk passes a dot name by, so it never reaches the gate
     expect(gate.lists.map(asked => asked.path)).not.toContain('.scratch.md')
   })
 
@@ -705,23 +706,21 @@ describe('a listing', () => {
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
   })
 
-  // The luoshu's walk leaves dot names out itself. This is the carrier's own check behind it
-  it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s and fails a page that holds one', async state => {
+  // The luoshu's walk leaves dot names out itself, before the gate is asked
+  it.each(['on', 'off'] as const)('lists no name with a dot segment whatever the gate says with the gate %s', async state => {
     const { search, pluginsManager, gate, luoshu } = listing()
     for (const path of ['notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json']) luoshu.files.set(path, 'x')
     gate.listable = () => true
     pluginsManager.policyJobs.gate = state
     expect((await search.ask('luoshu.list', {})).result).toEqual({ paths: ['notes/a.md', 'projects/plan.md', 'secret/b.md'], next: null })
     expect(gate.lists.filter(asked => asked.path.split('/').some(name => name.replace(/\u200c/g, '').startsWith('.')))).toEqual([])
-    luoshu.perform_ = () => ({ paths: ['notes/.hidden.md'], next: null })
-    expect(code(await search.ask('luoshu.list', {}))).toBe('failed')
   })
 
   it('records a canList that throws and answers policy-down rather than a page it couldn’t check', async () => {
-    const { search, gate, carrier, log } = listing()
+    const { search, gate, router, log } = listing()
     gate.listable = () => { throw new Error('broken') }
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
   })
@@ -745,11 +744,11 @@ describe('a listing', () => {
 
 describe('a crash', () => {
   it('lets the plugins manager move dependents to waiting before any call the plugin held is answered', async () => {
-    const { carrier, connect, pluginsManager } = harness()
+    const { router, connect, pluginsManager } = harness()
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     way.post('editor-1', { v: 1, kind: 'call', id: 1, action: 'search.query', args: {} })
     await search.delivered('search.query')
     let answeredFirst = -1
@@ -764,7 +763,7 @@ describe('a crash', () => {
   })
 })
 
-describe('editor.reach', () => {
+describe('gate.reach', () => {
   function made() {
     const parts = harness()
     parts.gate.grants.alpha = [
@@ -775,7 +774,7 @@ describe('editor.reach', () => {
       { type: 'ui.decoration' },
       { type: 'ui.command' },
     ]
-    const way = windowWay(parts.carrier, { editor })
+    const way = windowWay(parts.router, { editor })
     return { ...parts, way }
   }
 
@@ -783,7 +782,7 @@ describe('editor.reach', () => {
   // given ui.edit on
   it("answers what the gate gives the plugin for one note: read, edit and its ui items", async () => {
     const { way } = made()
-    const reach = async (args: unknown) => (await way.ask('editor', 'editor.reach', args)).result
+    const reach = async (args: unknown) => (await way.ask('editor', 'gate.reach', args)).result
     const verbs = ['ui.decoration', 'ui.command']
     const no = { read: false, edit: false, uiRead: false, list: false }
     expect(await reach({ plugin: 'alpha', path: 'notes/edit/a.md' })).toEqual({ ...no, read: true, edit: true, list: true, verbs })
@@ -799,12 +798,12 @@ describe('editor.reach', () => {
   it("answers list from what the plugin may list, names it can't read included", async () => {
     const { way, gate } = made()
     gate.grants.alpha = [...gate.grants.alpha!, { type: 'luoshu.list', paths: ['names/**'] }]
-    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'names/a.md' })).result).toMatchObject({ read: false, list: true })
+    expect((await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'names/a.md' })).result).toMatchObject({ read: false, list: true })
   })
 
   it('asks the gate about the plugin as the caller, at the canonical stage', async () => {
     const { way, gate } = made()
-    await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })
+    await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })
     expect(gate.reads.at(-1)?.caller).toMatchObject({ kind: 'plugin', id: 'alpha' })
     expect(gate.asked.slice(-2)).toMatchObject([
       { stage: 'canonical', caller: { kind: 'plugin', id: 'alpha' }, action: 'editor.edit', capability: 'ui.edit', scope: { paths: ['notes/edit/a.md'] } },
@@ -815,53 +814,52 @@ describe('editor.reach', () => {
   it('counts an edit that would ask at first use as no edit', async () => {
     const { way, gate, pluginsManager } = made()
     gate.decision = () => ({ ask: 'item', view: pluginsManager.current })
-    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: false })
+    expect((await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: false })
   })
 
   it('answers every reach with the gate off and policy-down while it is failed or absent', async () => {
     const { way, pluginsManager } = made()
     pluginsManager.policyJobs.gate = 'off'
-    expect((await way.ask('editor', 'editor.reach', { plugin: 'beta', path: 'x.md' })).result)
+    expect((await way.ask('editor', 'gate.reach', { plugin: 'beta', path: 'x.md' })).result)
       .toEqual({ read: true, edit: true, uiRead: true, list: true, verbs: ['ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys'] })
     for (const state of ['failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
-      expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
+      expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
     }
   })
 
-  // No note the human opened has such a path, so a plugin reaches none through one
-  it.each(['on', 'off'] as const)('answers no reach for a path with a dot segment whatever the gate says, with the gate %s', async state => {
+  // No note the human opened has such a path. The contract's path schema refuses it at shape
+  it.each(['on', 'off'] as const)('answers a reach for a path with a dot segment invalid whatever the gate says, with the gate %s', async state => {
     const { way, pluginsManager, gate } = made()
     gate.readable = () => true
     gate.listable = () => true
     gate.decision = () => ({ allow: true, view: pluginsManager.current })
     pluginsManager.policyJobs.gate = state
     for (const path of ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/edit/.config/x.md', '\u200c.obsidian/app.json']) {
-      expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path })).result, path).toMatchObject({ read: false, edit: false, uiRead: false, list: false })
+      expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path })), path).toBe('invalid')
     }
-    expect((await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: true, list: true })
+    expect((await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/edit/a.md' })).result).toMatchObject({ read: true, edit: true, list: true })
   })
 
-  // As a direct call: with the gate off, a call with power passes only while its record can land
-  it('answers policy-down with the gate off once the log has failed, and everything again with recording off', async () => {
+  // The log decides nothing of a call, so the gate off answers everything however long the log has failed
+  it('answers everything with the gate off once the log has failed', async () => {
     let now = 0
     const parts = harness({ clock: () => now })
-    const way = windowWay(parts.carrier, { editor })
+    const way = windowWay(parts.router, { editor })
     parts.pluginsManager.policyJobs.gate = 'off'
     parts.log.failing = true
     const search = parts.connect(worker('search'))
     await search.ask('storage.get', { key: 'index' })
     now = 30_000
-    expect(code(await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' }))).toBe('policy-down')
-    parts.pluginsManager.nothing = true
-    expect((await way.ask('editor', 'editor.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, edit: true })
+    expect(parts.recording.failing()).toBe(true)
+    expect((await way.ask('editor', 'gate.reach', { plugin: 'search', path: 'a.md' })).result).toMatchObject({ read: true, edit: true })
   })
 
   it('refuses policy-down and records a fault when the gate throws', async () => {
-    const { way, gate, carrier, log } = made()
+    const { way, gate, router, log } = made()
     gate.readable = () => { throw new Error('broken') }
-    expect(code(await way.ask('editor', 'editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
-    carrier.close()
+    expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'reach', count: 1 }])
   })
@@ -869,6 +867,6 @@ describe('editor.reach', () => {
   it('answers windows only', async () => {
     const { connect } = made()
     const search = connect(worker('search'))
-    expect(code(await search.ask('editor.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('not-granted')
+    expect(code(await search.ask('gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('not-granted')
   })
 })

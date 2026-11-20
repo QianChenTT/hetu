@@ -28,7 +28,7 @@ function opened(options: Parameters<typeof createStorage>[0] = {}): Storage {
   return store
 }
 
-// One call through prepare and perform, as the carrier makes it. A refusal comes back as the value thrown
+// One call through prepare and perform, as the router makes it. A refusal comes back as the value thrown
 async function ask(store: Storage, caller: Caller, action: string, args: object): Promise<unknown> {
   const call: Call = { callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 }
   const prepared = await store.prepare(call)

@@ -59,7 +59,7 @@ function opened(options: LuoshuOptions = {}, trash?: Bin): Opened {
 
 const callOf = (action: string, args: unknown): Call => ({ callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 })
 
-// prepare then perform, as the carrier makes a call. A refusal from either comes back as the value thrown or given
+// prepare then perform, as the router makes a call. A refusal from either comes back as the value thrown or given
 async function ask(made: Luoshu, action: string, args: unknown): Promise<unknown> {
   const call = callOf(action, args)
   const prepared = await made.provider.prepare(call)
@@ -195,7 +195,7 @@ describe('moving', () => {
     expect(await readFile(path.join(folder, 'journal', 'b.md'), 'utf8')).toBe('note b')
   })
 
-  it('renames a.md to A.md in place, with one lock for both ends', async () => {
+  it('renames a.md to A.md in place, with one latch for both ends', async () => {
     const made = opened()
     const call = callOf('luoshu.move', { from: 'a.md', to: 'A.md' })
     const prepared = await Promise.race([made.provider.prepare(call), tick(2000).then(() => 'held')])
@@ -374,17 +374,16 @@ describe('the dot rule on both ends of a move and on a remove', () => {
     await untouched(made)
   })
 
-  it('refuses a to end through a junction into a dot folder, and a junction named with a dot', async () => {
+  // A junction named with a dot never gets here: the contract's path schema refuses that spelling at shape
+  it('refuses a to end through a junction into a dot folder', async () => {
     await symlink(path.join(folder, '.obsidian'), path.join(folder, 'cfg'), 'junction')
-    await symlink(path.join(folder, 'journal'), path.join(folder, '.shown'), 'junction')
     before = await tree()
     const made = opened()
-    for (const to of ['cfg/a.md', 'cfg/plugins/x/a.js', 'cfg/plugins/y/main.js', '.shown/a.md']) {
+    for (const to of ['cfg/a.md', 'cfg/plugins/x/a.js', 'cfg/plugins/y/main.js']) {
       expect(await ask(made, 'luoshu.move', { from: 'a.md', to }), to).toEqual(notGranted)
     }
-    // The from end through either junction too
+    // The from end through the junction too
     expect(await ask(made, 'luoshu.move', { from: 'cfg/plugins/x/main.js', to: 'stolen.js' })).toEqual(notGranted)
-    expect(await ask(made, 'luoshu.move', { from: '.shown/b.md', to: 'b.md' })).toEqual(notGranted)
     await untouched(made)
   })
 
@@ -459,7 +458,7 @@ describe('the dot rule on both ends of a move and on a remove', () => {
   })
 })
 
-describe('the locks of a move', () => {
+describe('the latches of a move', () => {
   it('holds a write to either end until the move performs', async () => {
     const made = opened()
     const move = callOf('luoshu.move', { from: 'a.md', to: 'c.md' })
@@ -474,7 +473,7 @@ describe('the locks of a move', () => {
     expect(held).toEqual({ from: true, to: true })
   })
 
-  it('lets go of both when the carrier stops the move after prepare', async () => {
+  it('lets go of both when the router stops the move after prepare', async () => {
     const made = opened()
     const move = callOf('luoshu.move', { from: 'a.md', to: 'c.md' })
     const prepared = await made.provider.prepare(move) as Prepared
@@ -487,7 +486,7 @@ describe('the locks of a move', () => {
   })
 
   // Taken in call order, a.md to c.md would wait on c.md held by c.md to a.md, which waits on a.md
-  it('takes both locks in key order, so two moves the opposite way round never wait on each other', async () => {
+  it('takes both latches in key order, so two moves the opposite way round never wait on each other', async () => {
     await writeFile(path.join(folder, 'c.md'), 'note c')
     const made = opened()
     // A write holds a.md, so both moves queue behind it before either has run

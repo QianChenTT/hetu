@@ -25,7 +25,7 @@ describe('grants snapshot versions', () => {
     expect(made.pluginsManager.view()).toBe(3)
     expect(gate.views).toEqual([1, 2, 3])
     expect(made.link.changes).toBeGreaterThan(changes)
-    // The carrier refuses an answer made on an older one, so what the gate holds is what the carrier compares
+    // The router refuses an answer made on an older one, so what the gate holds is what the router compares
     expect(made.pluginsManager.limits().all.readyMs).toBe(20000)
   })
 

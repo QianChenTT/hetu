@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, Menu, MessageChannelMain, type MessagePortM
 import { boot, type Booted } from './boot/boot.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import { RELAY_LIMITS } from '../api/rate.ts'
-import type { Carrier } from './carrier/carrier.ts'
+import type { Router } from './router/router.ts'
 import { pacedLimit } from './flood-control/flood-control.ts'
 import type { CoreModules } from './modules/header.ts'
 import type { Recording } from './recording/header.ts'
@@ -61,7 +61,7 @@ async function start(): Promise<void> {
   // lock to give back. Electron closes no window itself, since the renderer must outlive the core's shutdown
   let parts: QuitParts | null = null
   let pluginsManagerOf: PluginsManager | null = null
-  let carrierOf: Carrier | null = null
+  let routerOf: Router | null = null
   let workers: WorkerRenderers | null = null
   let quitting: Promise<void> | null = null
   let code = 0
@@ -74,8 +74,8 @@ async function start(): Promise<void> {
     event.preventDefault()
     quitting ??= (async () => {
       // A quit the human asked for: windows hear core.quitting and get a moment to keep their drafts, as after a failure
-      if (!failed && carrierOf !== null && [...seen].some(window => !window.isDestroyed())) {
-        carrierOf.quitting()
+      if (!failed && routerOf !== null && [...seen].some(window => !window.isDestroyed())) {
+        routerOf.quitting()
         await new Promise(resolve => setTimeout(resolve, DRAFT_GRACE_MS))
       }
       for (const window of seen) if (!window.isDestroyed()) window.close()
@@ -113,14 +113,14 @@ async function start(): Promise<void> {
       lockDown(sessions[role], role, pages, views)
     }
 
-    // The carrier and the plugins manager exist once the core is wired, before any worker starts
-    let carrier: Carrier | null = null
+    // The router and the plugins manager exist once the core is wired, before any worker starts
+    let router: Router | null = null
     let pluginsManager: PluginsManager | null = null
     let modules: CoreModules | null = null
     let recording: Recording | null = null
     // What paces a plugin's messages before main reads them follows flood control: with it off nothing paces them
     const limit = pacedLimit(
-      (plugin: string, name: LimitName) => carrier?.limit(plugin, name) ?? defaultLimits[name],
+      (plugin: string, name: LimitName) => router?.limit(plugin, name) ?? defaultLimits[name],
       () => modules?.state('flood-control') === 'off',
     )
     // A renderer per community plugin and one for the first-party plugins, each opened when its first worker starts.
@@ -153,12 +153,12 @@ async function start(): Promise<void> {
     })
     const runtime = electronRuntime(() => new MessageChannelMain(), withDrawers(renderer, drawers, views), limit, utility)
 
-    // The one trusted window with its way into the carrier, made before its page loads. Its input delay lives here in
+    // The one trusted window with its way into the router, made before its page loads. Its input delay lives here in
     // main, so a Confirm counts only once it armed
     const trusted = new TrustedWindow({
       open: () => {
         const window = show(openTrusted(BrowserWindow, sessions.trusted, LOCKED, placement(), editorPreload))
-        if (carrier !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', carrier)
+        if (router !== null) new WindowWay(window.webContents as unknown as WindowContents, 'trusted', router)
         return window
       },
     })
@@ -173,7 +173,7 @@ async function start(): Promise<void> {
       quitting: () => quitting !== null,
       announce: () => {
         failed = true
-        carrier?.quitting()
+        router?.quitting()
       },
       quit: (exitCode, restart) => {
         code = exitCode
@@ -204,7 +204,7 @@ async function start(): Promise<void> {
       windows: {
         // Opening the trusted window, Quit and Restart hetu, the windows' own actions, which only main can do
         serve: async call => {
-          if (call.action === 'core.pickFolder') {
+          if (call.action === 'app.pickFolder') {
             return pickFolder(trusted, (parent, options) => dialog.showOpenDialog(parent as unknown as BrowserWindow, options))
           }
           if (call.action === 'editor.frame') {
@@ -219,31 +219,31 @@ async function start(): Promise<void> {
             if (gone !== null && navigated) recording?.coalesced('frame.navigated', { plugin: gone.plugin })
             return null
           }
-          if (call.action === 'security.open') trusted.show()
-          else if (call.action === 'core.relaunch') {
+          if (call.action === 'app.openSecurity') trusted.show()
+          else if (call.action === 'app.relaunch') {
             again = relaunches({ packaged: LOCKED, env: process.env })
             app.quit()
-          } else if (call.action === 'core.quit') app.quit()
+          } else if (call.action === 'app.quit') app.quit()
           else throw { code: 'unavailable' }
           return null
         },
         armed: caller => trusted.armed(caller),
       },
     })
-    carrier = wired.carrier
+    router = wired.router
     pluginsManager = wired.pluginsManager
     modules = wired.modules
     recording = wired.recording
     pluginsManagerOf = wired.pluginsManager
-    carrierOf = wired.carrier
-    parts = { pluginsManager: wired.pluginsManager, carrier: wired.carrier, recording: wired.recording, release: booted.release }
+    routerOf = wired.router
+    parts = { pluginsManager: wired.pluginsManager, router: wired.router, recording: wired.recording, release: booted.release }
 
-    // Each editor window comes with its way into the carrier, made before its page loads, and its drawer ports once each
+    // Each editor window comes with its way into the router, made before its page loads, and its drawer ports once each
     // load's preload listens
     const editorWindow = () => {
       const window = openEditor(BrowserWindow, sessions.editor, LOCKED, placement(), editorPreload)
       const contents = window.webContents
-      new WindowWay(contents as unknown as WindowContents, 'editor', wired.carrier)
+      new WindowWay(contents as unknown as WindowContents, 'editor', wired.router)
       // A frame's token ends with the page that framed it
       const unloaded = () => {
         drawers.unloaded(contents)

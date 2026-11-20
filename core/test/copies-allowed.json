@@ -1,5 +1,5 @@
 {
-  "about": "The clones jscpd finds in shipped code, checked by scripts/check-copies.ts. A person judges each: the same meaning becomes one definition, a different meaning stays here with judged saying why. \"not yet\" is the baseline of 2026-11-19, not judged. The key is files and hash, at only says where it sat at the last --update",
+  "about": "The clones jscpd finds in shipped code, checked by scripts/check-copies.ts. A person judges each: the same meaning becomes one definition, a different meaning stays here with judged saying why. \"not yet\" is the baseline of 2026-11-19, not judged. A clone found after it is \"to judge\" and fails the check until judged. The key is files and hash, at only says where it sat at the last --update",
   "clones": [
     {
       "files": [
@@ -16,24 +16,12 @@
     {
       "files": [
         "core/api/actions.ts",
-        "core/api/actions.ts"
-      ],
-      "hash": "2d669aaca08081fa",
-      "at": [
-        "core/api/actions.ts:23-28",
-        "core/api/actions.ts:217-221"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/api/actions.ts",
         "core/api/install.ts"
       ],
-      "hash": "4c1b178707f8a9dc",
+      "hash": "099639d525ccaab7",
       "at": [
-        "core/api/actions.ts:22-28",
-        "core/api/install.ts:35-43"
+        "core/api/actions.ts:33-37",
+        "core/api/install.ts:37-43"
       ],
       "judged": "not yet"
     },
@@ -42,22 +30,22 @@
         "core/api/actions.ts",
         "core/api/ui.ts"
       ],
-      "hash": "520ef06e7ef258b5",
+      "hash": "261dd5eea687e427",
       "at": [
-        "core/api/actions.ts:22-28",
-        "core/api/ui.ts:233-237"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/api/actions.ts",
-        "core/api/ui.ts"
-      ],
-      "hash": "a880eea111d22e16",
-      "at": [
-        "core/api/actions.ts:23-28",
+        "core/api/actions.ts:32-37",
         "core/api/ui.ts:230-233"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/api/actions.ts",
+        "core/api/ui.ts"
+      ],
+      "hash": "444a667a335aafbb",
+      "at": [
+        "core/api/actions.ts:33-37",
+        "core/api/ui.ts:235-237"
       ],
       "judged": "not yet"
     },
@@ -93,7 +81,7 @@
       "hash": "bbcb827062805cf9",
       "at": [
         "core/api/install.ts:51-56",
-        "core/backend/plugins-manager/plugins-manager.ts:197-198"
+        "core/backend/plugins-manager/plugins-manager.ts:196-197"
       ],
       "judged": "not yet"
     },
@@ -129,7 +117,7 @@
       "hash": "45618560e67450f5",
       "at": [
         "core/backend/boot/boot.ts:61-65",
-        "core/backend/boot/state.ts:184-187"
+        "core/backend/boot/state.ts:187-190"
       ],
       "judged": "not yet"
     },
@@ -176,8 +164,8 @@
       ],
       "hash": "5d309f3c66d9cbdb",
       "at": [
-        "core/backend/boot/state.ts:271-276",
-        "core/backend/plugins-manager/plugins-manager.ts:1991-1996"
+        "core/backend/boot/state.ts:274-279",
+        "core/backend/plugins-manager/plugins-manager.ts:1979-1984"
       ],
       "judged": "not yet"
     },
@@ -189,7 +177,7 @@
       "hash": "70d4e08a14265d00",
       "at": [
         "core/backend/boot/state.ts:43-48",
-        "core/backend/plugins-manager/plugins-manager.ts:253-257"
+        "core/backend/plugins-manager/plugins-manager.ts:251-255"
       ],
       "judged": "not yet"
     },
@@ -200,7 +188,7 @@
       ],
       "hash": "153d478ed3c86d72",
       "at": [
-        "core/backend/boot/state.ts:184-189",
+        "core/backend/boot/state.ts:187-192",
         "core/backend/providers/luoshu/luoshu.ts:236-241"
       ],
       "judged": "not yet"
@@ -212,7 +200,7 @@
       ],
       "hash": "43513a3215c8eb80",
       "at": [
-        "core/backend/boot/state.ts:185-192",
+        "core/backend/boot/state.ts:188-195",
         "core/backend/providers/luoshu/luoshu.ts:237-244"
       ],
       "judged": "not yet"
@@ -224,7 +212,7 @@
       ],
       "hash": "2b6df8a1e9515d7f",
       "at": [
-        "core/backend/boot/state.ts:271-279",
+        "core/backend/boot/state.ts:274-282",
         "core/lib/event-log.ts:250-258"
       ],
       "judged": "not yet"
@@ -236,20 +224,8 @@
       ],
       "hash": "985d3fdd0da0c26f",
       "at": [
-        "core/backend/boot/state.ts:275-282",
+        "core/backend/boot/state.ts:278-285",
         "core/lib/event-log.ts:254-262"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/backend/carrier/carrier.ts",
-        "core/backend/carrier/carrier.ts"
-      ],
-      "hash": "4a3d0ae395a16b5e",
-      "at": [
-        "core/backend/carrier/carrier.ts:764-768",
-        "core/backend/carrier/carrier.ts:1010-1013"
       ],
       "judged": "not yet"
     },
@@ -260,8 +236,8 @@
       ],
       "hash": "494dec7a20534f86",
       "at": [
-        "core/backend/main.ts:45-50",
-        "core/backend/main.ts:52-61"
+        "core/backend/main.ts:46-51",
+        "core/backend/main.ts:53-62"
       ],
       "judged": "not yet"
     },
@@ -270,10 +246,10 @@
         "core/backend/main.ts",
         "core/backend/runtime/quit.ts"
       ],
-      "hash": "cac75da12c846e2b",
+      "hash": "5f7a884fa170e4bd",
       "at": [
-        "core/backend/main.ts:31-36",
-        "core/backend/runtime/quit.ts:12-22"
+        "core/backend/main.ts:32-37",
+        "core/backend/runtime/quit.ts:15-25"
       ],
       "judged": "not yet"
     },
@@ -308,8 +284,8 @@
       ],
       "hash": "17dbea35030c637d",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1281-1288",
-        "core/backend/plugins-manager/plugins-manager.ts:2398-2405"
+        "core/backend/plugins-manager/plugins-manager.ts:1269-1276",
+        "core/backend/plugins-manager/plugins-manager.ts:2386-2393"
       ],
       "judged": "not yet"
     },
@@ -320,8 +296,8 @@
       ],
       "hash": "250543b0714139e9",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1413-1420",
-        "core/backend/plugins-manager/plugins-manager.ts:1448-1452"
+        "core/backend/plugins-manager/plugins-manager.ts:1401-1408",
+        "core/backend/plugins-manager/plugins-manager.ts:1436-1440"
       ],
       "judged": "not yet"
     },
@@ -332,8 +308,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2195-2199",
-        "core/backend/plugins-manager/plugins-manager.ts:2554-2558"
+        "core/backend/plugins-manager/plugins-manager.ts:2183-2187",
+        "core/backend/plugins-manager/plugins-manager.ts:2542-2546"
       ],
       "judged": "not yet"
     },
@@ -344,8 +320,8 @@
       ],
       "hash": "7d4841ea4bba5f2a",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2232-2236",
-        "core/backend/plugins-manager/plugins-manager.ts:2420-2424"
+        "core/backend/plugins-manager/plugins-manager.ts:2220-2224",
+        "core/backend/plugins-manager/plugins-manager.ts:2408-2412"
       ],
       "judged": "not yet"
     },
@@ -356,8 +332,8 @@
       ],
       "hash": "91353fb6522643e5",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:2195-2199",
-        "core/backend/plugins-manager/plugins-manager.ts:2462-2466"
+        "core/backend/plugins-manager/plugins-manager.ts:2183-2187",
+        "core/backend/plugins-manager/plugins-manager.ts:2450-2454"
       ],
       "judged": "not yet"
     },
@@ -366,10 +342,10 @@
         "core/backend/plugins-manager/plugins-manager.ts",
         "core/backend/plugins-manager/requests.ts"
       ],
-      "hash": "28ae0b74f371fed7",
+      "hash": "2d6bec0f2ae7db04",
       "at": [
-        "core/backend/plugins-manager/plugins-manager.ts:1916-1921",
-        "core/backend/plugins-manager/requests.ts:193-200"
+        "core/backend/plugins-manager/plugins-manager.ts:1904-1909",
+        "core/backend/plugins-manager/requests.ts:197-204"
       ],
       "judged": "not yet"
     },
@@ -380,8 +356,8 @@
       ],
       "hash": "0945904caf56f734",
       "at": [
-        "core/backend/plugins-manager/requests.ts:199-203",
-        "core/backend/plugins-manager/requests.ts:269-273"
+        "core/backend/plugins-manager/requests.ts:203-207",
+        "core/backend/plugins-manager/requests.ts:277-281"
       ],
       "judged": "not yet"
     },
@@ -392,8 +368,8 @@
       ],
       "hash": "53ae8bfbeb5ba176",
       "at": [
-        "core/backend/plugins-manager/requests.ts:187-191",
-        "core/backend/plugins-manager/requests.ts:263-269"
+        "core/backend/plugins-manager/requests.ts:191-195",
+        "core/backend/plugins-manager/requests.ts:271-277"
       ],
       "judged": "not yet"
     },
@@ -404,7 +380,7 @@
       ],
       "hash": "53ef9d2c8148efc5",
       "at": [
-        "core/backend/providers/exec/exec.ts:215-223",
+        "core/backend/providers/exec/exec.ts:218-226",
         "core/backend/providers/history/history.ts:416-424"
       ],
       "judged": "not yet"
@@ -428,7 +404,7 @@
       ],
       "hash": "b8ffacd3a37a55e5",
       "at": [
-        "core/backend/providers/exec/exec.ts:229-234",
+        "core/backend/providers/exec/exec.ts:232-237",
         "core/backend/providers/history/history.ts:428-433"
       ],
       "judged": "not yet"
@@ -543,6 +519,18 @@
     },
     {
       "files": [
+        "core/backend/router/route.ts",
+        "core/backend/router/route.ts"
+      ],
+      "hash": "a631a37f30466ced",
+      "at": [
+        "core/backend/router/route.ts:46-50",
+        "core/backend/router/route.ts:81-84"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
         "core/backend/runtime/sessions.ts",
         "core/backend/runtime/views.ts"
       ],
@@ -621,7 +609,7 @@
       "hash": "edbf48ffce081b66",
       "at": [
         "core/backend/runtime/workers.ts:149-154",
-        "core/frontend/trusted/view.ts:318-323"
+        "core/frontend/trusted/view.ts:328-333"
       ],
       "judged": "not yet"
     },
@@ -681,7 +669,7 @@
       "hash": "accb4916cb40abcd",
       "at": [
         "core/frontend/editor/link.ts:5-10",
-        "core/frontend/trusted/view.ts:10-15"
+        "core/frontend/trusted/view.ts:11-16"
       ],
       "judged": "not yet"
     },
@@ -764,7 +752,7 @@
       ],
       "hash": "2981d94d33dbe4d6",
       "at": [
-        "core/frontend/trusted/view.ts:318-323",
+        "core/frontend/trusted/view.ts:328-333",
         "core/sdk/editor.ts:146-151"
       ],
       "judged": "not yet"

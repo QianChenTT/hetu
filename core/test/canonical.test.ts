@@ -492,9 +492,10 @@ describe('dot names', () => {
   })
 
   // The caller's spelling counts as well as where it leads
-  it('refuses a dot named link that leads to a plain folder', async () => {
+  // The contract's path schema refuses such a spelling before any call gets here, so canonical judges the real path alone
+  it('takes a dot named link to a plain folder as the folder it leads to', async () => {
     await linkFolder(path.join(luoshu, 'notes'), '.alias')
-    expect(await canonical(luoshu, '.alias/a.md')).toEqual(notGranted('dot'))
+    expect(await canonical(luoshu, '.alias/a.md')).toMatchObject({ ok: true, relative: 'notes/a.md' })
   })
 
   it('serves the notes of a luoshu that itself sits in a dot folder', async () => {

@@ -2,7 +2,7 @@ import { definePlugin, type PluginContext, Refused } from '@hetu/sdk'
 import { Index } from './index.ts'
 
 const CACHE_KEY = 'index'
-// What core.filterReadable takes in one call
+// What gate.filterReadable takes in one call
 const MAX_HITS = 1024
 // A read that fails for a while goes again after a second, doubling to half a minute while it keeps failing, for at
 // most this many notes at once

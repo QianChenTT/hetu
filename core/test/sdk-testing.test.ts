@@ -11,7 +11,7 @@ import { quotas } from '../api/storage.ts'
 import type { Call, Provider } from '../api/policy-jobs.ts'
 import { MemoryLuoshu, MemoryStorage } from '../sdk/testing/providers.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { tick } from './carrier-fakes.ts'
+import { tick } from './router-fakes.ts'
 import { Drawer, type Instance, type PortLike } from '../frontend/editor/bridge.ts'
 import { CoreLink } from '../frontend/editor/link.ts'
 import { Versions } from '../frontend/editor/versions.ts'
@@ -117,7 +117,7 @@ describe('the fake core', () => {
     cores.push(fakeCore({ manifest: manifest({ api: '^2' }) }))
   })
 
-  // The fake luoshu serves both actions and the carrier judges them as hetu's does: write on both ends of a move and
+  // The fake luoshu serves both actions and the router judges them as hetu's does: write on both ends of a move and
   // read on the end it leaves
   it('serves luoshu.remove and luoshu.move, a move judged on both ends and on read where it leaves', async () => {
     const fake = core(undefined, {
@@ -221,7 +221,7 @@ describe('the fake core\'s luoshu listing', () => {
     expect(await ctx.luoshu.list({ after: 'notes/deep/er/2499.md' })).toEqual({ paths: ['notes/\u{1f600}.md', 'notes/ﬁ.md', 'notesx/n.md', 'secret/s.md'], next: null })
     expect((await ctx.luoshu.list({ folder: 'notes/deep' })).paths).toEqual(listable.filter(name => name.startsWith('notes/deep/')).sort(byCodeUnit))
     for (const folder of ['notes/dee', 'missing', 'notes/a.md']) expect(await ctx.luoshu.list({ folder })).toEqual({ paths: [], next: null })
-    for (const folder of ['notes/.obsidian', 'notes/deep/.cache']) await expect(ctx.luoshu.list({ folder })).rejects.toMatchObject({ code: 'not-granted' })
+    for (const folder of ['notes/.obsidian', 'notes/deep/.cache']) await expect(ctx.luoshu.list({ folder })).rejects.toMatchObject({ code: 'invalid' })
   })
 
   it('lists nothing for a plugin that may list nothing', async () => {
@@ -342,7 +342,7 @@ describe('a core that takes time and holds the limits lower', () => {
     const fake = core(undefined, {}, { latencyMs: 30, limits: { callsInFlight: 2 } })
     const { plugin, box } = reader()
     await fake.start(plugin)
-    // Past two in flight the carrier answers throttled, which the SDK tries again within the deadline
+    // Past two in flight the router answers throttled, which the SDK tries again within the deadline
     const reads = () => Promise.all(Array.from({ length: 4 }, () => box.ctx!.luoshu.read({ path: 'notes/a.md' })))
     expect(await reads()).toHaveLength(4)
     expect(fake.luoshu.busiest()).toBe(2)
@@ -668,7 +668,7 @@ describe("the fake drawer's ranges and commands", () => {
     const selections = new Map<string, { anchor: number, head: number }[]>()
     const core = editorCore({
       'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
-      'editor.reach': args => {
+      'gate.reach': args => {
         const { path: asked } = args as { path?: string }
         return { ok: true, result: { read: asked !== undefined && asked.startsWith('notes/'), edit: false, uiRead: false, list: false, verbs: ['ui.command'] } }
       },
@@ -750,7 +750,7 @@ describe('the fake core playing another plugin', () => {
     expect(mcp!.delivered).toEqual([{ action: 'mcp.handle', args: { body: '{"x":1}' }, caller, onBehalf: 'agent-1' }])
   })
 
-  it('passes on a refusal the stand-in throws and refuses a caller its from leaves out, as the real carrier does', async () => {
+  it('passes on a refusal the stand-in throws and refuses a caller its from leaves out, as the real router does', async () => {
     let mcp: StandIn | null = null
     const { ctx } = await started(callerManifest, made => {
       mcp = made.standIn('mcp', {

@@ -7,10 +7,10 @@ import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
 
-// What the core modules provide: the holder of the six the plugins manager and the carrier read, the states it reads
+// What the core modules provide: the holder of the six the plugins manager and the router read, the states it reads
 // them in and what each requires. Definitions only, the holder itself is modules.ts, which the join builds
 
-// The holder of the six as the plugins manager and the carrier read it, each lookup null while its module isn't on.
+// The holder of the six as the plugins manager and the router read it, each lookup null while its module isn't on.
 // modules.ts implements it
 export type CoreModules = {
   state(id: CoreModuleId): ModuleState

@@ -58,10 +58,10 @@ export class Shell {
 
   // Opens the trusted window at a notice's request, or at the plugin list from the shell's own button
   open(requestId?: string): void {
-    if (requestId === undefined) return void this.link.call('security.open')
+    if (requestId === undefined) return void this.link.call('app.openSecurity')
     const shown = this.shownAt.get(requestId)
     if (shown === undefined || this.clock() - shown < INPUT_DELAY_MS) return
-    void this.link.call('security.open', { requestId })
+    void this.link.call('app.openSecurity', { requestId })
   }
 
   // The status as last read, for the parts of the page that follow it

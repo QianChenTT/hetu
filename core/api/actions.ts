@@ -16,11 +16,20 @@ import type { ThemeSpec } from './ui.ts'
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
 // action here yet. Each provider's own step settles its list: net has none yet
 
-// A path as the caller wrote it. The matcher judges this text at precheck and the provider's prepare canonicalises it.
-// A spelling no canonical path holds is refused here, so it answers invalid before precheck could answer not-granted
-// and a caller can tell its own bad spelling from a missing grant. Shape reads only the caller's own text
-const path = z.string().superRefine((value, ctx) => {
-  const problem = pathProblem(value)
+// Why a path no action takes, or null: a spelling no canonical path holds, or a dot segment, which names no note. The
+// one definition of both, read by the path schema and by the core's own publish, which no schema checks.
+// gate.filterReadable drops a path it names from its answer
+export function actionPathProblem(value: string): string | null {
+  return pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
+}
+
+// A path as the caller wrote it, for every action. The matcher judges this text at precheck and the provider's prepare
+// canonicalises it. A spelling no canonical path holds or a dot segment is refused here, so it answers invalid before
+// precheck could answer not-granted whatever the gate's state. A caller can so tell its own bad spelling from a
+// missing grant. Shape reads only the caller's own text. Its length is spelled as checks the JSON Schema an agent reads
+// keeps, since a refinement leaves it
+const path = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
+  const problem = actionPathProblem(value)
   if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
 })
 // A path a callee read, which a link in the luoshu can give a name outside the grammar. filterReadable drops such a path
@@ -29,7 +38,7 @@ const readPath = z.string().min(1).max(MAX_SCOPE_LENGTH)
 const nothing = z.strictObject({}).optional()
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
 
-// Paths core.filterReadable takes in one call
+// Paths gate.filterReadable takes in one call
 export const MAX_FILTER_PATHS = 1024
 // Paths one lease takes
 export const MAX_LEASE_PATHS = 64
@@ -39,7 +48,8 @@ export const MAX_CALL_TOPICS = 64
 // The topics the core sends, to windows only and never with a path: core.status says to read core.status again,
 // core.security that a security change was applied and core.quitting that hetu ends after a short grace, so a window can
 // keep a draft
-export const coreTopics = frozen(['core.status', 'core.security', 'core.quitting'] as const)
+export const coreTopic = frozen({ status: 'core.status', security: 'core.security', quitting: 'core.quitting' } as const)
+export const coreTopics = frozen(Object.values(coreTopic))
 export type CoreTopic = typeof coreTopics[number]
 
 // A topic a subscriber names: one the core sends or a plugin's <id>.<name>. The core's other namespaces carry no
@@ -65,12 +75,15 @@ export type AgentRefusal = typeof agentRefusals[number]
 export const MAX_REFUSAL_COUNT = 1_000_000
 // The most labels one core.agents call names in each list
 export const MAX_AGENTS_ASKED = 64
-export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType }
+// reads: the trusted window may send it inside its input delay, since it only reads. Anything else the trusted window
+// sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on. live: args.call names a
+// live call delivered to the caller on the same way in, which the part serving the action gets a view of
+export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true, readonly live?: true }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
-// leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
+// leases, which the provider keys by the caller the router names, and a listing. scope names the argument the raw
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
-// which the carrier puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
+// which the router puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
 // filter list keeps only the result's paths the gate's canList allows. agent makes the action a tool an agent may call
 // through mcp and an action with none stays closed to agents
@@ -114,19 +127,21 @@ const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-
 
 const coreTable = {
   // The caller as its way in names it
-  'core.self': { from: 'any', args: nothing },
+  'core.self': { from: 'any', args: nothing, reads: true },
   // Only for a live call delivered to the caller on the same way in. Gives back the paths both the caller and the
-  // call's own caller may read
-  'core.filterReadable': {
+  // call's own caller may read, never one actionPathProblem refuses, a dot segment among them, gate on or off
+  'gate.filterReadable': {
     from: 'any',
     args: z.strictObject({ call: token, paths: z.array(readPath).max(MAX_FILTER_PATHS) }),
+    reads: true,
+    live: true,
   },
   // What a window's banner shows, read again whenever core.status is sent
-  'core.status': { from: 'windows', args: nothing },
+  'core.status': { from: 'windows', args: nothing, reads: true },
   // The event log the core writes: each file's chain as history reads it and whether the open file checks out. A
   // window only, until the first-party shipper, which log.read is kept for
-  'log.segments': { from: 'windows', args: nothing },
-  'log.verify': { from: 'windows', args: nothing },
+  'log.segments': { from: 'windows', args: nothing, reads: true },
+  'log.verify': { from: 'windows', args: nothing, reads: true },
   'security.request': { from: 'windows', args: z.strictObject({ change }) },
   // requestId is the request a needs-confirm refusal or a request named. typed is what the human typed to prove
   // attention, which the core checks where the change asks for it
@@ -134,20 +149,20 @@ const coreTable = {
   'security.cancel': { from: 'trusted', args: z.strictObject({ requestId: token }) },
   // Opens the trusted window, at the named request or else at the plugin list, and focuses one already open. Only a
   // human's click on a core control sends it, a notice's included
-  'security.open': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
+  'app.openSecurity': { from: 'windows', args: z.strictObject({ requestId: token.optional() }).optional() },
   // What the trusted window draws: the plugin list, the switches, the requests waiting and the stopped mode
-  'security.list': { from: 'trusted', args: nothing },
+  'security.list': { from: 'trusted', args: nothing, reads: true },
   // The human's stop of a sandboxed plugin, from the plugin list only. A restart widens nothing, so any window may
   'core.stop': { from: 'trusted', args: target },
   'core.restart': { from: 'windows', args: target },
-  'core.quit': { from: 'windows', args: nothing },
-  'core.relaunch': { from: 'trusted', args: nothing },
+  'app.quit': { from: 'windows', args: nothing },
+  'app.relaunch': { from: 'trusted', args: nothing },
   // The OS folder dialog over the trusted window, answering the folder picked or null. The page then asks for luoshu.pick,
   // which waits for the Confirm
-  'core.pickFolder': { from: 'trusted', args: nothing },
+  'app.pickFolder': { from: 'trusted', args: nothing },
   // What a plugin may do with one note through the editor bridge, from the gate: read it, write it and which ui items
   // it holds. The drawer asks before it serves a plugin anything about an open note. With no path, the ui items alone
-  'editor.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }) },
+  'gate.reach': { from: 'windows', args: z.strictObject({ plugin: pluginId, path: path.optional() }), reads: true },
   // Each plugin's declared views and theme with whether it runs, which the drawer reads again on core.status and
   // core.security
   'core.views': { from: 'windows', args: nothing },
@@ -190,17 +205,26 @@ const coreTable = {
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
-// The bus's actions, which the carrier serves itself. The floor decides who may name which topic and the gate judges a
+// The bus's actions, which the router serves itself. The floor decides who may name which topic and the gate judges a
 // subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
-// caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call
-export type EventAction = { readonly args: z.ZodType }
+// caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call.
+// does is what the bus does with it. A subscribe names the capability the gate judges it under
+export type EventAction = { readonly args: z.ZodType } & (
+  | { readonly does: 'subscribe', readonly capability: CapabilityType }
+  | { readonly does: 'unsubscribe' }
+  | { readonly does: 'publish' }
+)
 
 const eventTable = {
-  'events.subscribe': { args: topics },
-  'events.unsubscribe': { args: topics },
-  'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }) },
+  'events.subscribe': { args: topics, does: 'subscribe', capability: 'events.subscribe' },
+  'events.unsubscribe': { args: topics, does: 'unsubscribe' },
+  'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }), does: 'publish' },
 } satisfies Record<string, EventAction>
 export const eventActions = lookup<EventAction>(eventTable)
+// The subscribe with the capability it is judged under, which the router asks the gate about again for every
+// subscription the bus holds
+const subscribeName = 'events.subscribe' satisfies keyof typeof eventTable
+export const subscribeAction = frozen({ action: subscribeName, capability: eventTable[subscribeName].capability })
 
 const key = z.strictObject({ key: localName })
 const keyed = z.strictObject({ key: localName, value: z.unknown() })
@@ -210,13 +234,8 @@ const commitMessage = z.string().min(1).max(MAX_COMMIT_MESSAGE, { abort: true })
 // A commit by its full id, never a name git would resolve
 const commitId = z.string().regex(/^[0-9a-f]{40}$/)
 
-// A path as an agent sends it: what path takes less a dot segment, which names no note. Its length is spelled as checks
-// the JSON Schema an agent reads keeps, since a refinement leaves it. Its grammar is given in words
+// A path's grammar in words, for the agent tools
 const PATH_WORDS = 'A note path inside the notes folder, its segments split by /, at most 512 characters. No segment is empty, . or .. or starts with a dot and none holds a backslash, a colon or a control character'
-const notePath = z.string().min(1).max(MAX_SCOPE_LENGTH).superRefine((value, ctx) => {
-  const problem = pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
-  if (problem !== null) ctx.addIssue({ code: 'custom', message: problem })
-})
 
 const providerTable = {
   'luoshu.read': {
@@ -227,7 +246,7 @@ const providerTable = {
     agent: tool(
       'read_note',
       'Read one note from the notes folder. Answers its text, its path and its version, the SHA-256 of its bytes in hex. Only a note this agent holds a grant to read is answered',
-      z.strictObject({ path: notePath.describe(PATH_WORDS) }),
+      z.strictObject({ path: path.describe(PATH_WORDS) }),
     ),
   },
   // The file paths under folder, the whole luoshu when it is left out, in name order after the one named, a page at a
@@ -242,8 +261,8 @@ const providerTable = {
       'list_notes',
       `List the paths of the notes under a folder, or in the whole notes folder when none is named, in name order and at most ${LIST_PAGE} at a time. Answers paths and next, the after of the next page or null on the last. Only paths this agent holds a grant to list or read are listed`,
       z.strictObject({
-        folder: notePath.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
-        after: notePath.describe('The next of the page before. Left out for the first page').optional(),
+        folder: path.describe('A folder inside the notes folder, in the form of a note path. Left out for the whole notes folder').optional(),
+        after: path.describe('The next of the page before. Left out for the first page').optional(),
       }),
     ),
   },
@@ -257,7 +276,7 @@ const providerTable = {
       'write_note',
       'Write the whole text of one note. Answers its new version. baseVersion is the version the note has now, left out only when no note is at that path, or the write answers stale and changes nothing. Only a path this agent holds a grant to write is written',
       z.strictObject({
-        path: notePath.describe(PATH_WORDS),
+        path: path.describe(PATH_WORDS),
         text: z.string().describe('The whole new text of the note'),
         baseVersion: sha256.describe('The version the note has now, 64 lowercase hex digits. Left out for a new note').optional(),
       }),
@@ -312,7 +331,7 @@ const providerTable = {
       'note_history',
       'List the commits in hetu\'s history that changed one note, newest first, each with its id, author, committer, date and message. Only a note this agent holds a grant to read the history of is answered',
       z.strictObject({
-        path: notePath.describe(PATH_WORDS),
+        path: path.describe(PATH_WORDS),
         limit: z.int().min(1).max(MAX_LOG_PAGE).describe(`The most commits to answer, ${LOG_PAGE} when left out`).optional(),
       }),
     ),
@@ -420,14 +439,14 @@ export type CoreStatus = {
 
 export type StateKind = 'switches' | 'luoshu' | 'plugins'
 
-// What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
+// What an action answers with where that is settled: the router's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
 export type ActionResults = {
   'core.self': Caller
   'core.status': CoreStatus
   'security.list': SecurityList
   'security.request': { applied: true } | { held: string }
-  'core.filterReadable': string[]
+  'gate.filterReadable': string[]
   'core.agentRefused': null
   'core.bindFailed': null
   'core.agentAsk': { asked: 'waiting' | 'granted' }
@@ -445,8 +464,8 @@ export type ActionResults = {
   'luoshu.remove': null
   'luoshu.move': null
   'luoshu.list': { paths: string[], next: string | null }
-  'core.pickFolder': string | null
-  'editor.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
+  'app.pickFolder': string | null
+  'gate.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }
   'editor.frame': { url: string }
   'editor.frameGone': null

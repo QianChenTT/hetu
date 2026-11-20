@@ -3,7 +3,7 @@ import { Calls } from '../sdk/calls.ts'
 import { definePlugin, type PluginContext, run, type RunOptions } from '../sdk/plugin.ts'
 import { attempt, Refused } from '../sdk/refused.ts'
 import { Sender } from '../sdk/transport.ts'
-import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
+import { cleanup, harness, tick, worker } from './router-fakes.ts'
 import { clientOn, sdkTransport, type TransportOptions } from './sdk-fakes.ts'
 
 afterEach(cleanup)
@@ -15,7 +15,7 @@ function setup() {
   parts.pluginsManager.sandboxed('mcp', { handle: {} })
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'plugin.call', targets: ['mcp'] }]
   parts.luoshu.files.set('notes/a.md', 'hello')
-  return { ...parts, ...clientOn(parts.carrier, worker('search')), mcp: parts.connect(worker('mcp')) }
+  return { ...parts, ...clientOn(parts.router, worker('search')), mcp: parts.connect(worker('mcp')) }
 }
 
 describe('a call through the SDK', () => {
@@ -94,9 +94,9 @@ async function plugin(limits: RunOptions['limits'] = {}, way: TransportOptions =
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'plugin.call', targets: ['mcp'] }]
   parts.luoshu.files.set('notes/a.md', 'hello')
   let ctx: PluginContext | null = null
-  const transport = sdkTransport(parts.carrier, worker('search'), way)
+  const transport = sdkTransport(parts.router, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport, { limits })
-  parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
+  parts.router.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
   return { ...parts, ctx: ctx!, transport, mcp: parts.connect(worker('mcp')) }
 }
@@ -144,7 +144,7 @@ describe('what a call hides', () => {
 
   it('paces its messages under messagesPerSecond', { timeout: 10_000 }, async () => {
     const parts = await plugin({ messagesPerSecond: 20 })
-    // The carrier counts messages as they arrive, and a busy runner hands over messages sent apart in a bunch. 24
+    // The router counts messages as they arrive, and a busy runner hands over messages sent apart in a bunch. 24
     // leaves room for that and still drops a burst of 40 sent at once
     parts.pluginsManager.human.plugins.search = { messagesPerSecond: 24 }
     const selves = Array.from({ length: 40 }, () => parts.ctx.call('core', 'self', {}, { timeoutMs: 6000 }))

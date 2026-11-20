@@ -4,8 +4,8 @@ import { type Client, makeClient, type Request } from './client.ts'
 import { isPlain } from './plain.ts'
 import { Refused } from './refused.ts'
 
-// A call another plugin or a window made to one of the plugin's own actions, as the carrier delivered it. caller is
-// who the carrier says made it. signal aborts once the carrier gives the call up. ctx makes sub-calls with this call
+// A call another plugin or a window made to one of the plugin's own actions, as the router delivered it. caller is
+// who the router says made it. signal aborts once the router gives the call up. ctx makes sub-calls with this call
 // as their parent, held to its deadline
 export type IncomingCall = {
   readonly callId: string
@@ -43,7 +43,7 @@ export class Serving {
   }
 
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]> {
-    return this.request('core.filterReadable', { call: call.callId, paths: [...paths] }) as Promise<string[]>
+    return this.request('gate.filterReadable', { call: call.callId, paths: [...paths] }) as Promise<string[]>
   }
 
   async deliver(message: Record<string, unknown>): Promise<void> {
@@ -69,7 +69,7 @@ export class Serving {
     })
   }
 
-  // The carrier gave a call up. Its handler hears it through the signal and its answer is no longer read
+  // The router gave a call up. Its handler hears it through the signal and its answer is no longer read
   cancel(message: Record<string, unknown>): void {
     const { callId } = message
     if (typeof callId === 'string') this.live.get(callId)?.abort()

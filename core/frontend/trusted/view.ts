@@ -256,7 +256,7 @@ export class TrustedPage {
     const stopped = this.last?.stopped ?? null
     this.call('security.confirm', typed === undefined ? { requestId } : { requestId, typed }, reply => {
       // A choice in the stopped mode applied, so hetu starts again with it
-      if (reply.ok === true && stopped !== null) this.call('core.relaunch')
+      if (reply.ok === true && stopped !== null) this.call('app.relaunch')
       this.settle(reply)
     })
   }
@@ -270,7 +270,7 @@ export class TrustedPage {
     const stopped = this.last?.stopped ?? null
     this.call('security.request', { change }, reply => {
       const applied = reply.ok === true && (reply.result as { applied?: unknown } | null)?.applied === true
-      if (applied && stopped !== null) this.call('core.relaunch')
+      if (applied && stopped !== null) this.call('app.relaunch')
       this.settle(reply, 'request')
     })
   }
@@ -284,13 +284,13 @@ export class TrustedPage {
   }
 
   relaunch(): void {
-    this.call('core.relaunch')
+    this.call('app.relaunch')
   }
 
   // The OS folder dialog in main, then the folder picked asked for as luoshu.pick, which waits for the Confirm. A
   // cancelled dialog asks for nothing
   pickFolder(): void {
-    this.call('core.pickFolder', undefined, reply => {
+    this.call('app.pickFolder', undefined, reply => {
       if (reply.ok === true && typeof reply.result === 'string') this.ask({ kind: 'luoshu.pick', folder: reply.result })
       else if (reply.ok !== true) this.settle(reply)
     })
@@ -303,7 +303,7 @@ export class TrustedPage {
   }
 
   quit(): void {
-    this.call('core.quit')
+    this.call('app.quit')
   }
 
   private settle(reply: Reply, sent: 'request' | 'other' = 'other'): void {

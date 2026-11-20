@@ -188,7 +188,7 @@ describe('deciding', () => {
   })
 })
 
-// The carrier hands a move's write as both ends in one scope and its read as the from end alone
+// The router hands a move's write as both ends in one scope and its read as the from end alone
 describe('a move, judged on both its ends', () => {
   const sorter = { alpha: [item({ type: 'luoshu.write', paths: ['public/**'] }), item({ type: 'luoshu.read', paths: ['**'] })] }
   const move = (paths: string[], stage: Access['stage']): Access => ({ ...access(alpha, 'luoshu.write', { paths }, stage), action: 'luoshu.move' })
@@ -326,10 +326,10 @@ describe('coverage', () => {
     expect(Object.keys(scopeRules).sort()).toEqual([...capabilityTypes].sort())
   })
 
-  // Every action core/api serves with a capability, the scope the carrier hands the gate and how the gate judges it.
-  // A new action fails here until this table says how the gate judges it. The carrier asks the gate at precheck and at
+  // Every action core/api serves with a capability, the scope the router hands the gate and how the gate judges it.
+  // A new action fails here until this table says how the gate judges it. The router asks the gate at precheck and at
   // decide for each, events.subscribe on the topics it names and a plugin call on its target
-  it('judges every action in core/api on the scope the carrier hands it', () => {
+  it('judges every action in core/api on the scope the router hands it', () => {
     const rows = Object.entries(providerActions)
       .filter(([, action]) => action.capability !== null)
       .map(([name, action]) => [name, action.capability, action.scope, scopeRules[action.capability!]])
@@ -354,7 +354,7 @@ describe('coverage', () => {
     for (const [, action] of Object.entries(providerActions)) {
       if (action.also !== undefined) expect(scopeRules[action.also.capability]).toBe('paths')
     }
-    // A history action names its access in core/api, which the carrier puts in the scope
+    // A history action names its access in core/api, which the router puts in the scope
     for (const [name, capability] of rows) expect('access' in providerActions[name as string]).toBe(capability === 'history')
     expect(scopeRules['events.subscribe']).toBe('topics')
     expect(scopeRules['plugin.call']).toBe('target')
