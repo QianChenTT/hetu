@@ -57,7 +57,7 @@ describe("the core's words for a change", () => {
     expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
       text: 'Give "client#1" under mcp-http-handler what it asks for through mcp',
       notes: [
-        'It asks for: luoshu.read on "save note"', 'Each call made for it reaches only what the calling plugin holds as well', 'It holds the items until hetu quits',
+        'It asks for: luoshu.read on "save note"', 'Each call made for it reaches only what the calling plugin holds as well', 'mcp-http-handler may pass on to it what a plugin it called found that it may read, without holding that itself', 'It holds the items until hetu quits',
         'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
       ],
     })

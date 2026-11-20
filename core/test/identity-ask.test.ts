@@ -87,7 +87,7 @@ describe('an ask for a pair\'s items', () => {
     expect(shown[0].text).toBe('Give "client#1" under mcp-http-handler what it asks for through mcp')
     expect(shown[0].notes).toEqual([
       'It asks for: luoshu.read on "inbox/**"', 'It asks for: luoshu.write on "inbox/**"',
-      'Each call made for it reaches only what the calling plugin holds as well', 'It holds the items until hetu quits',
+      'Each call made for it reaches only what the calling plugin holds as well', 'mcp-http-handler may pass on to it what a plugin it called found that it may read, without holding that itself', 'It holds the items until hetu quits',
       'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
     ])
     expect(shown[0].type).toBeNull()

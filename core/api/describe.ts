@@ -91,7 +91,7 @@ export function describeChange(change: Change): Described {
         text: `Give ${quoted(change.field)} under ${change.root} what it asks for through ${change.plugin}`,
         notes: [
           ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
-          'Each call made for it reaches only what the calling plugin holds as well', 'It holds the items until hetu quits',
+          'Each call made for it reaches only what the calling plugin holds as well', `${change.root} may pass on to it what a plugin it called found that it may read, without holding that itself`, 'It holds the items until hetu quits',
           'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
         ],
       }

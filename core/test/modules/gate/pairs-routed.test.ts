@@ -5,7 +5,7 @@ import { cleanup, code, harness, type HarnessOptions, host, worker, type Side } 
 
 // The gate's rules for a pair as a call through the router meets them: both the caller's items and the pair's, a
 // pair's refusal telling nothing of the caller's own items, the pair standing in for the root plugin in a filter and a
-// listing, and the second ask judged as the first
+// listing, the second ask judged as the first
 
 afterEach(cleanup)
 
@@ -44,14 +44,14 @@ async function handled(door: Side, mcp: Side, label: string | null = 'client#1')
   return { id, got, parent: { parent: got.callId as string } }
 }
 
-// What the gate was asked about one action, the label it carried and whether it was an agent's
+// What the gate was asked about one action, the label it carried and whether it carried a pair
 const asked = (gate: ReturnType<typeof harness>['gate'], action: string) =>
   gate.asked.filter(access => access.action === action).map(access => ({ stage: access.stage, onBehalf: access.onBehalf, agent: access.pair?.field }))
 
 
 
 
-// The real gate on one grants snapshot: mcp holds inbox and private and asks at first use for asks, agent #1 inbox, secret
+// The real gate on one grants snapshot: mcp holds inbox and private and asks at first use for asks, pair #1 inbox, secret
 // and asks, search everything. decided holds every Access the gate was asked to decide
 function gated() {
   const real = createGate()
@@ -80,7 +80,7 @@ function gated() {
     pairs: table({
       'mcp-http-handler': table({
         'client#1': [...items('inbox/**', 'secret/**', 'asks/**'), { capability: { type: 'storage' }, off: false, firstUse: false }],
-        // Two agents that reach search through mcp, one reading inbox and one private
+        // Two pairs that reach search through mcp, one reading inbox and one private
         'client#4': [...items('inbox/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
         'client#5': [...items('private/**'), { capability: { type: 'plugin.call', targets: ['search'] }, off: false, firstUse: false }],
       }),
@@ -114,7 +114,7 @@ describe('the gate over a call for a pair, in every gate state', () => {
       await search.ask('luoshu.read', { path: 'inbox/a.md' }),
     ]
     expect(Object.fromEntries(answers.map((answer, i) => [cases[i], code(answer)]))).toEqual(Object.fromEntries(cases.map((name, i) => [name, expected[state][i]])))
-    // Nothing of an agent's reached the luoshu's perform but what the gate on let through
+    // Nothing of a pair's reached the luoshu's perform but what the gate on let through
     const performed = luoshu.performed.filter(done => done.call.onBehalf !== undefined).map(done => done.prepared.scope.paths)
     expect(performed).toEqual(state === 'on' ? [['inbox/a.md']] : state === 'off' ? [['inbox/a.md'], ['private/b.md'], ['inbox/a.md'], ['secret/c.md']] : [])
   })
@@ -133,7 +133,7 @@ describe('the gate over a call for a pair, in every gate state', () => {
   it('refuses mcp\'s call to another plugin for a pair holding no plugin.call item, mcp holding one', async () => {
     const { door, mcp, search } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
-    // mcp holds plugin.call on search and the agent doesn't
+    // mcp holds plugin.call on search and the pair doesn't
     expect(code(await mcp.ask('search.query', {}, parent))).toBe('not-granted')
     expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
@@ -206,7 +206,7 @@ describe('the second ask for a call for a pair', () => {
   it('judges the second ask for a pair against mcp\'s items and the pair\'s both, carrying the pair', async () => {
     const parts = gated()
     const { parent } = await handled(parts.door, parts.mcp, 'client#1')
-    // inbox both hold, private mcp alone, secret the agent alone
+    // inbox both hold, private mcp alone, secret the pair alone
     const answers = again(parts, [['inbox/b.md'], ['private/b.md'], ['secret/c.md']])
     expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
     expect(answers).toEqual([null, { code: 'not-granted' }, { code: 'not-granted' }])
@@ -218,11 +218,11 @@ describe('the second ask for a call for a pair', () => {
 
   it('refuses the second ask for a pair outside the pair\'s items or on mcp\'s item that asks at first use not-granted with no prompt', async () => {
     const parts = gated()
-    // The item asks at first use: a first ask about it for agent #1 raises the prompt
+    // The item asks at first use: a first ask about it for pair #1 raises the prompt
     const first = await handled(parts.door, parts.mcp, 'client#1')
     expect(code(await parts.mcp.ask('luoshu.read', { path: 'asks/a.md' }, first.parent))).toBe('needs-confirm')
     expect(parts.asks).toHaveLength(1)
-    // Agent #4 holds no asks, agent #1 does and mcp's own item there asks
+    // Pair #4 holds no asks, pair #1 does and mcp's own item there asks
     const four = await handled(parts.door, parts.mcp, 'client#4')
     const answers = again(parts, [['asks/a.md']])
     expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, four.parent)).ok).toBe(true)

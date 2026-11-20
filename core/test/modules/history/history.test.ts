@@ -207,14 +207,14 @@ describe('a commit', () => {
     expect((await logOf(history, 'a.md')).map(entry => [entry.author, entry.committer])).toEqual([['claude-code#1', 'mcp-http-handler']])
   })
 
-  it('names the window at the root as the committer and its onBehalf as the author, whichever plugin made the call', async () => {
+  it('names the plugin that made the call as the committer under a window root, with the onBehalf the window set as the author', async () => {
     const history = await started(where)
     const marker: Caller = { kind: 'plugin', id: 'marker', half: 'worker', incarnation: 1 }
-    await commitOf(history, ['a.md'], 'bolded', { caller: marker, root: editor, onBehalf: 'marker' })
+    await commitOf(history, ['a.md'], 'bolded', { caller: marker, root: editor, onBehalf: 'the human' })
     await note(where, 'a.md', 'edited again')
     await commitOf(history, ['a.md'], 'saved', { caller: marker, root: editor })
     expect((await logOf(history, 'a.md')).map(entry => [entry.author, entry.committer])).toEqual([
-      ['window.editor', 'window.editor'], ['marker', 'window.editor'],
+      ['marker', 'marker'], ['the human', 'marker'],
     ])
   })
 

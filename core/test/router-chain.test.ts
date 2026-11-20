@@ -252,7 +252,6 @@ describe('who may call a core action from a utility process', () => {
   })
 })
 
-// The chain under mcp-http-handler's call, as the door makes it: the host half on its utility port
 // mcp-http-handler's host half on its utility port is the door. mcp serves handle for it only, search serves query and calls on.
 // Every plugin holds what the tests reach, so a refusal comes from the rule a test is about
 function agents(over: HarnessOptions = {}) {
