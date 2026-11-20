@@ -125,9 +125,6 @@ const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, co
 // The core actions the trusted window may send inside its input delay, since they only read
 const trustedReads: ReadonlySet<string> = new Set(['core.self', 'core.status', 'security.list', 'log.segments', 'log.verify'])
 
-// What a step of flood control that threw gives back, which no answer of its can be
-const threw = Symbol('threw')
-
 // Random, in core/api's token grammar
 const newId = () => randomBytes(16).toString('base64url')
 
@@ -477,13 +474,13 @@ export class Carrier {
     return verdict === 'pass' || verdict === 'flood' ? verdict : 'drop'
   }
 
-  // A step of flood control, threw with a fault recorded when it throws
+  // A step of flood control, undefined with a fault recorded when it throws, which no answer of its is
   private flooded(step: string, run: () => unknown): unknown {
     try {
       return run()
     } catch {
       this.fault('flood-control', step)
-      return threw
+      return undefined
     }
   }
 
@@ -524,6 +521,8 @@ export class Carrier {
   // Nothing escapes: a call no step could take is dropped and one in flight fails
   private async call(way: Way, message: unknown, answer: Send): Promise<void> {
     let pending: Pending | null = null
+    // The room flood control charged, given back here when the call throws before it is in flight
+    let release: (() => void) | null = null
     try {
       const started = this.now()
       const callId = newId()
@@ -533,10 +532,11 @@ export class Carrier {
       if ('code' in kind) return this.early(way, answer, callId, shaped, kind, started)
       const charged = this.charge(way, shaped.parent, shaped.bytes)
       if (!('release' in charged)) return this.early(way, answer, callId, shaped, charged, started)
-      pending = this.admitted(way, answer, callId, shaped, kind, started, charged.release)
+      release = charged.release
+      pending = this.admitted(way, answer, callId, shaped, kind, started, release)
       await this.run(pending, shaped.target, shaped.args, kind)
     } catch (err) {
-      if (pending === null) return
+      if (pending === null) return release?.()
       this.debugOf(pending, null, err)
       this.finish(pending, no('failed'))
     }

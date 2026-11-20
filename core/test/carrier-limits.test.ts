@@ -397,3 +397,18 @@ describe('flood control in the path', () => {
     expect(search.repliesTo(second)).toEqual([])
   })
 })
+
+// The room a call took goes back however the call ends, one that threw while it was built included
+describe('a call that throws while it is built', () => {
+  it('gives back the room flood control charged it, so the caller is not throttled after', async () => {
+    const flood = createFloodControl({ limit: (_plugin, name) => (name === 'callsInFlight' ? 1 : defaultLimits[name]), clock: () => 0 })
+    let reads = 0
+    // The call reads the clock when it starts and again while it is built, which throws for the first call alone
+    const { connect } = harness({ floodControl: () => flood, now: () => { reads++; if (reads === 2) throw new Error('broken'); return Date.now() } })
+    const search = connect(worker('search'))
+    const first = search.call('core.self')
+    await tick(20)
+    expect(search.repliesTo(first)).toEqual([])
+    expect((await search.ask('core.self')).ok).toBe(true)
+  })
+})
