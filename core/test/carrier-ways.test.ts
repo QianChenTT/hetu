@@ -390,7 +390,7 @@ describe('the carrier\'s imports', () => {
   it('imports nothing from boot, so the state store and the log arrive only through its header, flood control and recording only through their doors', () => {
     const folder = path.join(import.meta.dirname, '..', 'backend', 'carrier')
     const files = readdirSync(folder).filter(name => name.endsWith('.ts'))
-    expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'header.ts', 'limits.ts'])
+    expect(files.sort()).toEqual(['bus.ts', 'carrier.ts', 'context.ts', 'door.ts', 'header.ts', 'limits.ts', 'open-calls.ts', 'provide.ts', 'route.ts', 'shape.ts'])
     for (const name of files) {
       const source = readFileSync(path.join(folder, name), 'utf8')
       const specifiers = [...source.matchAll(/\bfrom\s*'([^']*)'/g)].map(match => match[1])

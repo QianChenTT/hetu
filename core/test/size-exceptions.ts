@@ -4,6 +4,5 @@
 // so a file split takes its entry out in the same change
 export const sizeExceptions: Readonly<Record<string, { cap: number, why: string }>> = {
   'core/backend/plugins-manager/plugins-manager.ts': { cap: 2627, why: 'split in the redesign\'s build, after the carrier' },
-  'core/backend/carrier/carrier.ts': { cap: 1536, why: 'split in the redesign\'s build, the carrier first' },
   'core/backend/providers/luoshu/luoshu.ts': { cap: 808, why: 'split in the redesign\'s build, after the carrier' },
 }
