@@ -6,7 +6,6 @@ import { bindFailures, type DepState, type Init, type StopReason } from '../../a
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen } from '../../api/plain.ts'
 import type { PluginState } from '../../api/policy-jobs.ts'
-import { agentDoor } from '../../api/policy-jobs.ts'
 import { moduleRequires } from '../modules/header.ts'
 import { clear, clearFailedOnce, writeFailedOnce } from './folders.ts'
 import { plan, type Node, type Verdict } from './graph.ts'
@@ -512,7 +511,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
   // plugin's to use goes with it, so no Confirm applies one for a plugin that stopped
   protected release(k: Known, live: Live, code: 'stopped' | 'crashed'): void {
     this.requests.withdraw(change => withdrawnWith(change).includes(k.id))
-    if (k.id === agentDoor.plugin) this.connects.ended()
+    this.connects.ended(k.id)
     for (const run of live.halves.values()) {
       try {
         this.link.end(run.caller, code)

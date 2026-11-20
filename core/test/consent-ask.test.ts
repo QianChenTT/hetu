@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreActions, type SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
-import {
-  agentConnect, change, changeEffect, changeKinds, connectLabel, lapseOf, MAX_CLIENT_NAME_LENGTH, withdrawnWith, type AgentConnect,
-} from '../api/changes.ts'
+import { change, changeEffect, changeKinds, consentAsk, lapseOf, MAX_CLIENT_NAME_LENGTH, withdrawnWith, type ConsentAsk } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
 import type { Caller } from '../api/envelope.ts'
 import { createSecurityView } from '../backend/security-view/security-view.ts'
@@ -12,57 +10,61 @@ import { StateStore } from '../backend/boot/state.ts'
 import { connectChange, Connects, type ConnectAsked } from '../backend/plugins-manager/connects.ts'
 import { allowAll, cleanup, coreInstall, filesFor, firstPartyEntry, harness, hashOf, hostManifest, workerManifest } from './plugins-manager-fakes.ts'
 
+// A client's connect a utility half asks for: the consent.ask kind, its words, the request the plugins manager holds
+// for it and the answer the same plugin collects
+
 afterEach(cleanup)
 
 const CLAUDE = 'https://claude.ai/oauth/claude-code-client-metadata'
 const ch = (code: number) => String.fromCharCode(code)
 // Shalom in Hebrew letters, written right to left
 const HEBREW = [0x5e9, 0x5dc, 0x5d5, 0x5dd].map(ch).join('')
-const asked = { client: CLAUDE, name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 }
-const built = (over: Partial<typeof asked> | { name: string | null } = {}) => connectChange({ ...asked, ...over })
+const asked = { client: CLAUDE, name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: `${CLAUDE}#3` }
+const built = (over: Partial<typeof asked> | { name: string | null } = {}) => connectChange({ ...asked, ...over }, 'mcp-http-handler')
 const words = (over: Partial<typeof asked> | { name: string | null } = {}) => describeChange(built(over)!)
 
 describe('the consent.ask kind', () => {
-  const connect: AgentConnect = {
+  const connect: ConsentAsk = {
     kind: 'consent.ask', plugin: 'mcp-http-handler', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
-    redirectHost: 'localhost:33418', number: 3,
+    redirectHost: 'localhost:33418', field: `${CLAUDE}#3`,
   }
 
   it('is no change a window may send nor one security.request carries', () => {
-    expect(agentConnect.parse(connect)).toEqual(connect)
+    expect(consentAsk.parse(connect)).toEqual(connect)
     expect(change.safeParse(connect).success).toBe(false)
     expect(changeKinds).not.toContain('consent.ask')
     expect(coreActions['security.request'].args.safeParse({ change: connect }).success).toBe(false)
   })
 
-  it('widens with nothing to type, lapses a minute after it was raised and goes when http stops', () => {
+  it('widens with nothing to type, lapses a minute after it was raised and goes when the plugin that asked stops', () => {
     expect(changeEffect(connect)).toBe('widens')
     expect(createSecurityView().mustType(connect)).toBeNull()
     expect(lapseOf(connect)).toBe(60_000)
     expect(withdrawnWith(connect)).toEqual(['mcp-http-handler'])
+    expect(withdrawnWith({ ...connect, plugin: 'beta' })).toEqual(['beta'])
   })
 
-  it('makes the label from the client id and the number in the agent label\'s form', () => {
-    expect(connectLabel(connect)).toBe(`${CLAUDE}#3`)
-    expect(connectLabel({ client: 'client', number: 120 })).toBe('client#120')
-    expect(agentConnect.safeParse({ ...connect, client: 'client', number: 999_999_999_999_999 }).success).toBe(true)
+  it('takes the field as the plugin sends it, screen text of 512 characters at most, with a client id of 255 at most', () => {
+    for (const over of [{ field: 'x'.repeat(512) }, { field: 'client#120' }, { field: 'note bot' }, { client: 'x'.repeat(255) }, { plugin: 'beta' }]) {
+      expect(consentAsk.safeParse({ ...connect, ...over }).success, JSON.stringify(over)).toBe(true)
+    }
     for (const over of [
-      { client: '' }, { client: 'a#b' }, { client: 'a b' }, { client: 'x'.repeat(256) }, { client: `kl${ch(0x131)}ent` }, { number: 0 }, { number: -1 },
-      { number: 1.5 }, { number: 1_000_000_000_000_000 },
-    ]) expect(agentConnect.safeParse({ ...connect, ...over }).success, JSON.stringify(over)).toBe(false)
+      { field: '' }, { field: 'x'.repeat(513) }, { field: `a${ch(0x202e)}b` }, { field: `a${ch(0x7)}b` }, { client: '' }, { client: 'x'.repeat(256) },
+      { client: `a${ch(0x202e)}b` },
+    ]) expect(consentAsk.safeParse({ ...connect, ...over }).success, JSON.stringify(over)).toBe(false)
   })
 
-  it('refuses a field it does not name', () => {
-    expect(agentConnect.safeParse({ ...connect, handle: 'h' }).success).toBe(false)
-    expect(agentConnect.safeParse({ ...connect, plugin: 'mcp' }).success).toBe(false)
+  it('refuses a field of the message it does not name, the number of the old form among them', () => {
+    expect(consentAsk.safeParse({ ...connect, handle: 'h' }).success).toBe(false)
+    expect(consentAsk.safeParse({ ...connect, number: 3 }).success).toBe(false)
   })
 })
 
-describe('the connect as the core builds it from what http sends', () => {
+describe('the connect as the core builds it from what a utility half sends', () => {
   it('takes the host of a client id that is a URL and of the redirect, with the port where one is named', () => {
     expect(built()).toEqual({
       kind: 'consent.ask', plugin: 'mcp-http-handler', client: CLAUDE, clientHost: 'claude.ai', name: 'Claude Code', redirect: 'http://localhost:33418/callback',
-      redirectHost: 'localhost:33418', number: 3,
+      redirectHost: 'localhost:33418', field: `${CLAUDE}#3`,
     })
     expect(built({ client: 'https://Claude.AI:443/doc?x=1', redirect: 'http://[::1]:5000/cb' })).toMatchObject({ clientHost: 'claude.ai', redirectHost: '[::1]:5000' })
   })
@@ -79,10 +81,10 @@ describe('the connect as the core builds it from what http sends', () => {
     expect(built({ redirect: 'localhost/callback' })).toBeNull()
   })
 
-  it('refuses a client id and a number that make no label', () => {
-    expect(built({ client: 'a#b' })).toBeNull()
-    expect(built({ number: 0 })).toBeNull()
+  it('refuses an empty client id or field and one with a character that could hide', () => {
+    expect(built({ field: '' })).toBeNull()
     expect(built({ client: '' })).toBeNull()
+    expect(built({ field: `a${ch(0x202e)}b` })).toBeNull()
   })
 
   it('takes a name with a quote and right-to-left letters and one at the length cap', () => {
@@ -106,27 +108,27 @@ describe('the words of a connect', () => {
     'It reaches no note yet. It asks for items later and each ask waits for your Confirm',
   ]
 
-  it('names the client id\'s host first, then the name, the redirect\'s host and the label in quotes, then the two fixed lines', () => {
+  it('names the client id\'s host first, then the name, the redirect\'s host, the plugin and the field in quotes, then the two fixed lines', () => {
     expect(words()).toEqual({
-      text: `Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${CLAUDE}#3"`,
+      text: `Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "${CLAUDE}#3"`,
       notes: FIXED,
     })
   })
 
   it('names a client id that is not a URL whole in quotes, then the rest in the same order', () => {
-    expect(words({ client: 'my-client', number: 12 })).toEqual({
-      text: 'Connect the client "my-client" named "Claude Code", which returns to "localhost:33418", as the agent "my-client#12"',
+    expect(words({ client: 'my-client', field: 'my-client#12' })).toEqual({
+      text: 'Connect the client "my-client" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "my-client#12"',
       notes: FIXED,
     })
   })
 
   it('says a client gives no name', () => {
-    expect(words({ name: null }).text).toBe(`Connect the client from "claude.ai" with no name, which returns to "localhost:33418", as the agent "${CLAUDE}#3"`)
+    expect(words({ name: null }).text).toBe(`Connect the client from "claude.ai" with no name, which returns to "localhost:33418", through mcp-http-handler as "${CLAUDE}#3"`)
   })
 
   it('escapes a quote in the name, so it can\'t close its quotes and read as the core\'s words', () => {
     const { text } = words({ name: 'x", which returns to "claude.ai' })
-    expect(text).toBe(`Connect the client from "claude.ai" named "x\\", which returns to \\"claude.ai", which returns to "localhost:33418", as the agent "${CLAUDE}#3"`)
+    expect(text).toBe(`Connect the client from "claude.ai" named "x\\", which returns to \\"claude.ai", which returns to "localhost:33418", through mcp-http-handler as "${CLAUDE}#3"`)
   })
 
   it('shows right-to-left letters inside their quotes', () => {
@@ -135,21 +137,21 @@ describe('the words of a connect', () => {
 
   it('shows the redirect\'s host and never its user info or path', () => {
     const { text } = words({ redirect: 'http://127.0.0.1:8080/claude.ai/callback?to=evil.example' })
-    expect(text).toContain('which returns to "127.0.0.1:8080", as')
+    expect(text).toContain('which returns to "127.0.0.1:8080", through')
     expect(text).not.toContain('evil')
     expect(text).not.toContain('/callback')
   })
 
-  it('quotes every value from outside the core: the host, the name, the redirect\'s host and the label', () => {
+  it('quotes every value from outside the core: the host, the name, the redirect\'s host and the field', () => {
     const { text } = words()
     for (const value of ['claude.ai', 'Claude Code', 'localhost:33418', `${CLAUDE}#3`]) expect(text).toContain(JSON.stringify(value))
-    expect(text.replaceAll(/"(?:[^"\\]|\\.)*"/g, '')).toBe('Connect the client from  named , which returns to , as the agent ')
+    expect(text.replaceAll(/"(?:[^"\\]|\\.)*"/g, '')).toBe('Connect the client from  named , which returns to , through mcp-http-handler as ')
   })
 
-  it('has the label in quotes as the last thing in its heading, the one place the trusted window draws it apart', () => {
+  it('has the field in quotes as the last thing in its heading, the one place the trusted window draws it apart', () => {
     const label = JSON.stringify(`${CLAUDE}#3`)
     const { text } = words({ name: `${CLAUDE}#3` })
-    expect(text.endsWith(` as the agent ${label}`)).toBe(true)
+    expect(text.endsWith(` as ${label}`)).toBe(true)
     expect(text.lastIndexOf(label)).toBe(text.length - label.length)
   })
 })
@@ -158,13 +160,14 @@ const read: Capability = { type: 'luoshu.read', paths: ['**'] }
 const inbox: Capability = { type: 'luoshu.read', paths: ['inbox/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const door: Caller = { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 }
+const otherDoor: Caller = { kind: 'plugin', id: 'beta', half: 'host', incarnation: 1 }
 const mcpWorker: Caller = { kind: 'plugin', id: 'mcp', half: 'worker', incarnation: 1 }
 const code = (work: Promise<unknown>) => work.then(() => null, (err: { code?: string }) => err.code ?? String(err))
 const LABEL = `${CLAUDE}#3`
 
-// mcp as the install's own copy in the plugin folder with the agents' items and marks its entry is seeded with, http
-// as the install's plugin, a clock the test moves and the input delay a test names
-async function started(over: { agents?: { agent: string, capability: Capability }[], revoked?: string[] } = {}, delayMs = 0) {
+// mcp as the install's own copy in the plugin folder, mcp-http-handler as the install's plugin, a clock the test moves
+// and the input delay a test names
+async function started(delayMs = 0) {
   const clock = { now: 1000 }
   const gate = allowAll()
   const mcp = filesFor(workerManifest('mcp', { capabilities: [read] }))
@@ -174,7 +177,7 @@ async function started(over: { agents?: { agent: string, capability: Capability 
       'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     },
     folder: { mcp },
-    entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1, ...over }) },
+    entries: { mcp: async root => firstPartyEntry(await hashOf(root), { granted: [read], class: 1 }) },
     modules: { gate },
     pluginsManager: { clock: () => clock.now, confirmDelayMs: delayMs },
   })
@@ -183,18 +186,28 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const serve = (caller: Caller, action: string, args: unknown, onBehalf?: string) => made.pluginsManager.serve({
     callId: `call-${++n}`, caller, action, args, deadline: Date.now() + 30_000, ...(onBehalf !== undefined ? { onBehalf, root: door } : { root: caller }),
   } as Call)
-  // core.consentAsk and core.consentAnswer as the router hands them over once its floor let http's door through
-  const connect = async (over: Partial<ConnectAsked> = {}) => (await serve(door, 'core.consentAsk', { ...asked, ...over }) as { handle: string }).handle
-  const collect = async (handle: string) => (await serve(door, 'core.consentAnswer', { handle }) as { answer: string }).answer
-  // core.identityAsk as the router hands it over under a live door call for label
-  const agentAsk = (label: string, capabilities: Capability[]) => serve(mcpWorker, 'core.identityAsk', { capabilities }, label)
+  // core.consentAsk and core.consentAnswer as the router hands them over once its floor let a utility half through
+  const connect = async (over: Partial<ConnectAsked> = {}, from = door) => (await serve(from, 'core.consentAsk', { ...asked, ...over }) as { handle: string }).handle
+  const collect = async (handle: string, from = door) => (await serve(from, 'core.consentAnswer', { handle }) as { answer: string }).answer
+  // core.identityAsk as the router hands it over from mcp under mcp-http-handler's call for the field
+  const identityAsk = (field: string, capabilities: Capability[]) => serve(mcpWorker, 'core.identityAsk', { capabilities }, field)
+  // The pair holding an item, its ask confirmed
+  const holding = async (field: string) => {
+    await identityAsk(field, [inbox])
+    await made.pluginsManager.confirm(made.pluginsManager.pending().at(-1)!.id, {})
+  }
+  // The pair revoked once it asked
+  const revoked = async (field: string) => {
+    await identityAsk(field, [inbox])
+    await made.pluginsManager.request({ kind: 'identity.revoke', root: 'mcp-http-handler', field }, trusted)
+  }
   const list = async () => await serve(trusted, 'security.list', undefined) as SecurityList
   const state = async () => (await new StateStore(made.dataDir).load()).state
   const first = () => made.pluginsManager.pending()[0]!.id
-  return { ...made, gate, clock, connect, collect, agentAsk, list, state, first }
+  return { ...made, gate, clock, connect, collect, identityAsk, holding, revoked, list, state, first }
 }
 
-describe('a connect http asks for', () => {
+describe('a connect a utility half asks for', () => {
   it('raises a request only the core raises and answers at once with a handle the core made', async () => {
     const { pluginsManager, connect, list, link, first } = await started()
     const handle = await connect()
@@ -202,17 +215,17 @@ describe('a connect http asks for', () => {
     expect(pluginsManager.pending()).toEqual([{ id: first(), kind: 'consent.ask', plugin: 'mcp-http-handler' }])
     expect(handle).not.toBe(first())
     const shown = (await list()).requests[0]!
-    expect(shown.text).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent "${LABEL}"`)
-    expect(shown.agent).toBe(LABEL)
+    expect(shown.text).toBe(`Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as "${LABEL}"`)
+    expect([shown.root, shown.field]).toEqual(['mcp-http-handler', LABEL])
     expect(shown.type).toBeNull()
-    expect(link.events('security.request')).toMatchObject([{ kind: 'consent.ask', target: 'mcp-http-handler', window: 'core' }])
+    expect(link.events('security.request')).toMatchObject([{ kind: 'consent.ask', target: 'mcp-http-handler', field: LABEL, window: 'core' }])
   })
 
-  it('makes each handle afresh and never from what http sent', async () => {
+  it('makes each handle afresh and never from what the plugin sent', async () => {
     const { pluginsManager, connect, first } = await started()
     const one = await connect()
     await pluginsManager.cancel(first())
-    const two = await connect({ client: 'other-client', number: 1 })
+    const two = await connect({ client: 'other-client', field: 'other-client#1' })
     expect(two).not.toBe(one)
     for (const handle of [one, two]) for (const sent of [CLAUDE, 'other-client', 'Claude Code', asked.redirect]) expect(handle).not.toContain(sent)
   })
@@ -221,24 +234,28 @@ describe('a connect http asks for', () => {
     const { pluginsManager, connect } = await started()
     const both = await Promise.all([code(connect()), code(connect())])
     expect(both.sort()).toEqual([null, 'throttled'].sort())
-    expect(await code(connect({ client: 'other-client', number: 1 }))).toBe('throttled')
+    expect(await code(connect({ client: 'other-client', field: 'other-client#1' }))).toBe('throttled')
     expect(pluginsManager.pending()).toHaveLength(1)
   })
 
-  it('refuses a label the core holds items for, holds as revoked or has an ask waiting for and raises nothing', async () => {
-    const { pluginsManager, connect, agentAsk } = await started({ agents: [{ agent: 'held#1', capability: inbox }], revoked: ['gone#1'] })
-    expect(await code(connect({ client: 'held', number: 1 }))).toBe('not-granted')
-    expect(await code(connect({ client: 'gone', number: 1 }))).toBe('not-granted')
-    await agentAsk('asking#2', [inbox])
-    expect(await code(connect({ client: 'asking', number: 2 }))).toBe('not-granted')
+  it('refuses a field the core holds items for under the plugin, holds as revoked or has an ask waiting for and raises nothing', async () => {
+    const { pluginsManager, connect, identityAsk, holding, revoked } = await started()
+    await holding('held#1')
+    await revoked('gone#1')
+    expect(await code(connect({ field: 'held#1' }))).toBe('not-granted')
+    expect(await code(connect({ field: 'gone#1' }))).toBe('not-granted')
+    await identityAsk('asking#2', [inbox])
+    expect(await code(connect({ field: 'asking#2' }))).toBe('not-granted')
     expect(pluginsManager.pending().map(one => one.kind)).toEqual(['identity.ask'])
-    // Another number under the same client id is another agent
-    expect(await code(connect({ client: 'held', number: 2 }))).toBeNull()
+    // Another field is another pair as is the same field under another plugin
+    expect(await code(connect({ field: 'held#2' }))).toBeNull()
+    await pluginsManager.cancel(pluginsManager.pending()[1].id)
+    expect(await code(connect({ client: 'beta-client', field: 'held#1' }, otherDoor))).toBeNull()
   })
 
-  it('refuses with invalid what makes no label or what the core won\'t show, before any request', async () => {
+  it('refuses with invalid what the core won\'t show, before any request', async () => {
     const { pluginsManager, connect, link } = await started()
-    for (const over of [{ client: 'a#b' }, { number: 0 }, { redirect: 'http://claude.ai@localhost/cb' }, { redirect: 'com.example:/cb' }, { name: `Cla${ch(0x200b)}ude` }]) {
+    for (const over of [{ field: '' }, { field: 'x'.repeat(513) }, { redirect: 'http://claude.ai@localhost/cb' }, { redirect: 'com.example:/cb' }, { name: `Cla${ch(0x200b)}ude` }]) {
       expect(await code(connect(over)), JSON.stringify(over)).toBe('invalid')
     }
     expect(pluginsManager.pending()).toEqual([])
@@ -264,15 +281,27 @@ describe('the answer to a connect', () => {
     await pluginsManager.cancel(first())
     expect(await collect(handle)).toBe('no')
     expect(await collect(handle)).toBe('gone')
-    expect(await code(connect({ number: 4 }))).toBe('throttled')
+    expect(await code(connect({ field: `${CLAUDE}#4` }))).toBe('throttled')
     clock.now += 59_999
-    expect(await code(connect({ number: 4 }))).toBe('throttled')
-    // Another client id is not held back
-    const other = await connect({ client: 'other-client', number: 1 })
+    expect(await code(connect({ field: `${CLAUDE}#4` }))).toBe('throttled')
+    // Another client id is not held back, nor the same one from another plugin
+    const other = await connect({ client: 'other-client', field: 'other-client#1' })
     await pluginsManager.cancel(first())
     expect(await collect(other)).toBe('no')
+    const beta = await connect({}, otherDoor)
+    await pluginsManager.cancel(first())
+    expect(await collect(beta, otherDoor)).toBe('no')
     clock.now += 1
-    expect(await code(connect({ number: 4 }))).toBeNull()
+    expect(await code(connect({ field: `${CLAUDE}#4` }))).toBeNull()
+  })
+
+  it('answers only the plugin that asked, gone to another plugin\'s half for the same handle', async () => {
+    const { pluginsManager, connect, collect, first } = await started()
+    const handle = await connect()
+    expect(await collect(handle, otherDoor)).toBe('gone')
+    await pluginsManager.confirm(first(), {})
+    expect(await collect(handle, otherDoor)).toBe('gone')
+    expect(await collect(handle)).toBe('yes')
   })
 
   it('answers gone for a handle the core never made', async () => {
@@ -298,7 +327,7 @@ describe('the answer to a connect', () => {
   })
 
   it('refuses a Confirm inside the input delay, which leaves the connect waiting', async () => {
-    const { pluginsManager, connect, collect, clock, first } = await started({}, 1000)
+    const { pluginsManager, connect, collect, clock, first } = await started(1000)
     const handle = await connect()
     clock.now += 999
     expect(await code(pluginsManager.confirm(first(), {}))).toBe('throttled')
@@ -308,7 +337,7 @@ describe('the answer to a connect', () => {
     expect(await collect(handle)).toBe('yes')
   })
 
-  it('withdraws a waiting connect when http stops, so its handle answers gone and its Confirm is refused', async () => {
+  it('withdraws a waiting connect when the plugin that asked stops, so its handle answers gone and its Confirm is refused', async () => {
     const { pluginsManager, connect, collect, first, link } = await started()
     const handle = await connect()
     const id = first()
@@ -319,7 +348,7 @@ describe('the answer to a connect', () => {
     expect(await collect(handle)).toBe('gone')
   })
 
-  it('drops a yes http never collected when http stops', async () => {
+  it('drops a yes the plugin never collected when it stops', async () => {
     const { pluginsManager, connect, collect, first } = await started()
     const handle = await connect()
     await pluginsManager.confirm(first(), {})
@@ -327,12 +356,12 @@ describe('the answer to a connect', () => {
     expect(await collect(handle)).toBe('gone')
   })
 
-  it('keeps the minute after a Cancel across a stop of http', async () => {
+  it('keeps the minute after a Cancel across a stop of the plugin', async () => {
     const { pluginsManager, connect, first } = await started()
     await connect()
     await pluginsManager.cancel(first())
     pluginsManager.crashed(door, 'closed')
-    expect(await code(connect({ number: 4 }))).toBe('throttled')
+    expect(await code(connect({ field: `${CLAUDE}#4` }))).toBe('throttled')
   })
 
   it('withdraws nothing of a connect when mcp stops', async () => {
@@ -342,7 +371,7 @@ describe('the answer to a connect', () => {
     expect(await collect(handle)).toBe('waiting')
   })
 
-  it('applies nothing for a Confirm whose connect a stop of http withdrew while its record landed', async () => {
+  it('applies nothing for a Confirm whose connect a stop of the plugin withdrew while its record landed', async () => {
     const { pluginsManager, connect, collect, first, link } = await started()
     const handle = await connect()
     let land = () => {}
@@ -360,11 +389,11 @@ describe('the answer to a connect', () => {
     expect(await collect(handle)).toBe('gone')
   })
 
-  it('keeps the newest sixteen answers http never collected', async () => {
+  it('keeps the newest sixteen answers never collected', async () => {
     const { pluginsManager, connect, collect, first } = await started()
     const handles: string[] = []
     for (let i = 1; i <= 17; i++) {
-      handles.push(await connect({ number: i }))
+      handles.push(await connect({ field: `${CLAUDE}#${i}` }))
       await pluginsManager.confirm(first(), {})
     }
     expect(await collect(handles[0]!)).toBe('gone')
@@ -375,30 +404,41 @@ describe('the answer to a connect', () => {
 describe('the connect\'s state alone', () => {
   // A host whose requests are the changes raised and not yet answered, ended or dropped by the test
   function alone() {
-    const held = new Set<AgentConnect>()
+    const held = new Set<ConsentAsk>()
     const connects = new Connects({ clock: () => 0, held: one => held.has(one), raise: one => (held.add(one), true), inUse: () => false })
     return { held, connects }
   }
 
   it('hands a yes only for the very change that waits, never for an older one that reads the same', () => {
     const { held, connects } = alone()
-    connects.ask(asked)
+    connects.ask(asked, 'mcp-http-handler')
     const older = [...held][0]!
-    connects.ended()
+    connects.ended('mcp-http-handler')
     held.clear()
-    const handle = connects.ask(asked)
+    const handle = connects.ask(asked, 'mcp-http-handler')
     const newer = [...held][0]!
     expect(newer).toEqual(older)
     expect(() => connects.confirmed(older)).toThrow()
-    expect(connects.answer(handle)).toBe('waiting')
+    expect(connects.answer(handle, 'mcp-http-handler')).toBe('waiting')
     connects.confirmed(newer)
-    expect(connects.answer(handle)).toBe('yes')
+    expect(connects.answer(handle, 'mcp-http-handler')).toBe('yes')
+  })
+
+  it('keeps a plugin\'s connect and answers when another plugin\'s way ends', () => {
+    const { held, connects } = alone()
+    const waiting = connects.ask(asked, 'mcp-http-handler')
+    connects.ended('beta')
+    expect(connects.answer(waiting, 'mcp-http-handler')).toBe('waiting')
+    connects.confirmed([...held][0]!)
+    connects.ended('beta')
+    expect(connects.answer(waiting, 'mcp-http-handler')).toBe('yes')
   })
 })
 
 describe('the Confirm of a connect', () => {
-  it('changes no state: nothing on mcp\'s entry, in the switches or in what the gate sees', async () => {
-    const { pluginsManager, connect, state, first, gate } = await started({ agents: [{ agent: 'client#1', capability: inbox }] })
+  it('changes no state: nothing in a state file or in what the gate sees', async () => {
+    const { pluginsManager, connect, state, first, gate, holding } = await started()
+    await holding('client#1')
     const before = await state()
     const views = gate.seen.length
     await connect()
@@ -407,26 +447,26 @@ describe('the Confirm of a connect', () => {
     expect(gate.seen.length).toBe(views)
   })
 
-  it('goes stale against no write, so another agent\'s Confirm or a write of the switches meanwhile leaves it to be confirmed', async () => {
-    const { pluginsManager, connect, collect, agentAsk, state, dataDir } = await started()
-    await agentAsk('client#1', [inbox])
+  it('goes stale against no write, so another pair\'s Confirm or a write of the switches meanwhile leaves it to be confirmed', async () => {
+    const { pluginsManager, connect, collect, identityAsk, state, dataDir, list } = await started()
+    await identityAsk('client#1', [inbox])
     const handle = await connect()
     const [ask, connecting] = pluginsManager.pending()
     await pluginsManager.confirm(ask!.id, {})
-    expect((await state()).plugins.mcp!.agents).toEqual([{ agent: 'client#1', capability: inbox }])
+    expect((await list()).identities).toEqual([{ root: 'mcp-http-handler', field: 'client#1', items: [inbox], revoked: false }])
     const switches = (await state()).switches
     await new StateStore(dataDir).writeSwitches({ ...switches, devMode: ['search'] })
     await pluginsManager.confirm(connecting!.id, {})
     expect(await collect(handle)).toBe('yes')
   })
 
-  it('fails when the label was revoked while it waited and hands no yes', async () => {
-    const { pluginsManager, connect, collect, agentAsk, first } = await started()
+  it('fails when the pair was revoked while it waited and hands no yes', async () => {
+    const { pluginsManager, connect, collect, identityAsk, first } = await started()
     const handle = await connect()
     const id = first()
-    // The label asks under a door call before its connect is answered, then the human turns it away
-    await agentAsk(LABEL, [inbox])
-    await pluginsManager.request({ kind: 'identity.revoke', agent: LABEL }, trusted)
+    // The pair asks under the plugin's call before its connect is answered, then the human turns it away
+    await identityAsk(LABEL, [inbox])
+    await pluginsManager.request({ kind: 'identity.revoke', root: 'mcp-http-handler', field: LABEL }, trusted)
     expect(pluginsManager.pending().map(one => one.id)).toEqual([id])
     expect(await code(pluginsManager.confirm(id, {}))).toBe('failed')
     expect(await collect(handle)).toBe('waiting')
@@ -435,18 +475,18 @@ describe('the Confirm of a connect', () => {
 
 describe('a connect in the line of requests', () => {
   it('waits in the order it was raised, behind the asks before it and before the asks after it', async () => {
-    const { pluginsManager, connect, agentAsk, list } = await started()
-    await agentAsk('client#1', [inbox])
+    const { pluginsManager, connect, identityAsk, list } = await started()
+    await identityAsk('client#1', [inbox])
     await connect()
-    await agentAsk('client#2', [inbox])
+    await identityAsk('client#2', [inbox])
     expect(pluginsManager.pending().map(one => one.kind)).toEqual(['identity.ask', 'consent.ask', 'identity.ask'])
-    expect((await list()).requests[1]!.agent).toBe(LABEL)
+    expect((await list()).requests[1]!.field).toBe(LABEL)
   })
 
   it('is taken behind sixteen asks, in a place of its own, lapsing there if they are not answered within its minute', async () => {
-    const { pluginsManager, connect, collect, agentAsk, clock } = await started()
-    for (let i = 1; i <= 16; i++) await agentAsk(`client#${i}`, [inbox])
-    expect(await code(agentAsk('client#17', [inbox]))).toBe('throttled')
+    const { pluginsManager, connect, collect, identityAsk, clock } = await started()
+    for (let i = 1; i <= 16; i++) await identityAsk(`client#${i}`, [inbox])
+    expect(await code(identityAsk('client#17', [inbox]))).toBe('throttled')
     const handle = await connect()
     expect(pluginsManager.pending().map(one => one.kind).indexOf('consent.ask')).toBe(16)
     clock.now += 60_000

@@ -4,10 +4,9 @@ import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import { checkedAnswer, highestClass, type ClassAnswer, type ClassCause, type ClassTable, type ClassVerdict } from '../../api/classes.ts'
 import type { Plugin } from '../boot/header.ts'
-import { revoked } from './marks.ts'
 import { MAX_PENDING } from './requests.ts'
 import { type Read } from './verify.ts'
-import { PluginsAgents } from './agents.ts'
+import { PluginsIdentities } from './identities.ts'
 import { type Known } from './base.ts'
 
 // The grant risk classifier as classing reads it: on with its module serving, off once the human switched it off, down
@@ -46,7 +45,7 @@ function carriedOff(old: Plugin | null, granted: readonly Capability[]): Capabil
 
 // The classes: the table handed to the grant risk classifier, its answer stored by the one function every class change
 // goes through, the writes ordered from the class numbers stored and the notices owed raised and withdrawn
-export abstract class PluginsClasses extends PluginsAgents {
+export abstract class PluginsClasses extends PluginsIdentities {
   // ---- classes
 
   // The grant risk classifier as classing reads it: on while its module serves, off only once the human switched it off

@@ -22,9 +22,10 @@ afterEach(async () => {
 
 const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 
-// The joined core over a real boot with the real gate and luoshu. http is the core plugin whose utility half the test
-// drives as the door, naming two agents. mcp is the install's own copy, a worker the test answers for, holding read on
-// everything, with its entry seeded with agent #1's labelled item for inbox. Agent #2 has no item
+// The joined core over a real boot with the real gate and luoshu. mcp-http-handler is the core plugin whose utility
+// half the test drives as the root of each chain, naming a field on its calls. mcp is the install's own copy, a worker
+// the test answers for, holding read on everything. With the gate on, the pair of the handler and client#1 is given
+// read on inbox through mcp's ask and the human's Confirm, as is client#3 on inbox. client#2 holds nothing
 async function joined(gate: 'on' | 'off') {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -50,13 +51,7 @@ async function joined(gate: 'on' | 'off') {
   await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
-  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), {
-    granted: mcpGrant, class: 1, agents: [
-      { agent: 'client#1', capability: { type: 'luoshu.read', paths: ['inbox/**'] } },
-      { agent: 'client#1', capability: { type: 'plugin.call', targets: ['search'] } },
-      { agent: 'client#3', capability: { type: 'luoshu.read', paths: ['inbox/**', 'INBOX/**'] } },
-    ],
-  }))
+  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: mcpGrant, class: 1 }))
   const searchRoot = path.join(dataDir, 'plugins', 'search')
   await writeFolder(searchRoot, search)
   await store.writePlugin('search', firstPartyEntry(await hashOf(searchRoot), { granted: [everything], class: 1 }))
@@ -88,7 +83,17 @@ async function joined(gate: 'on' | 'off') {
   })
   await pluginsManager.start()
   await pluginsManager.settled()
-  return { pluginsManager, runtime, folder, hooks, door: runtime.half('mcp-http-handler', 1, 'utility'), mcp: runtime.half('mcp'), search: runtime.half('search') }
+  const door = runtime.half('mcp-http-handler', 1, 'utility')
+  const mcpHalf = runtime.half('mcp')
+  if (gate === 'on') {
+    // Each pair's items asked for by mcp under the handler's call and confirmed, as the human would
+    for (const [field, paths] of [['client#1', ['inbox/**']], ['client#3', ['inbox/**', 'INBOX/**']]] as const) {
+      const { parent } = await request(door, mcpHalf, field)
+      await ask(mcpHalf, 'core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths }] }, { parent })
+      await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
+    }
+  }
+  return { pluginsManager, runtime, folder, hooks, door, mcp: mcpHalf, search: runtime.half('search') }
 }
 
 // A folder renamed under the luoshu's watch, which can hold it open for a moment on Windows
@@ -135,20 +140,20 @@ async function request(door: Half, mcp: Half, label: string) {
 
 const outcome = (reply: Message) => (reply.ok === true ? (reply.result as { text: string }).text : (reply.refusal as { code: string }).code)
 
-describe('agents through the joined core', () => {
-  it('lets agent #1 read inside its labelled item and refuses it the private note and a link into it, with the gate on', async () => {
+describe('pairs through the joined core', () => {
+  it('lets client#1 read inside its pair\'s item and refuses it the private note and a link into it, with the gate on', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     expect(pluginsManager.plugin('mcp')).toMatchObject({ state: 'ready' })
     const { parent } = await request(door, mcp, 'client#1')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('inbox text')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, { parent }))).toBe('not-granted')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/link/b.md' }, { parent }))).toBe('not-granted')
-    // The listing of inbox for agent #1 names its own note alone
+    // The listing for client#1 names the note inbox holds alone
     const listed = await ask(mcp, 'luoshu.list', {}, { parent })
     expect((listed.result as { paths: string[] }).paths).toEqual(['inbox/a.md'])
   })
 
-  it('lets agent #2 with no item read nothing and mcp with no parent read on its own grant, with the gate on', async () => {
+  it('lets client#2 with no item read nothing and mcp with no parent read on its own grant, with the gate on', async () => {
     const { door, mcp } = await joined('on')
     const { parent } = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')
@@ -157,14 +162,14 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
-  it('refuses search under agent #1\'s call, its plugin.call item a type no pair\'s item may hold, and search hears nothing', async () => {
+  it('refuses search under client#1\'s call since no pair holds plugin.call, search hearing nothing', async () => {
     const { door, mcp, search } = await joined('on')
     const { parent } = await request(door, mcp, 'client#1')
     expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }, { parent }))).toBe('not-granted')
     expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
-  it('lets agent #2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {
+  it('lets client#2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const before = await request(door, mcp, 'client#2')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('not-granted')
@@ -179,39 +184,39 @@ describe('agents through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, before))).toBe('inbox text')
   })
 
-  it('refuses agent #1\'s next judgement once revoked while its call waits, then tells http it is revoked until http heard', async () => {
+  it('refuses client#1\'s next judgement once revoked while its call waits and tells the handler it stays revoked for the run', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const { parent } = await request(door, mcp, 'client#1')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('inbox text')
     const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
-    expect(await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)).toEqual({ applied: true })
+    expect(await pluginsManager.request({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' }, trusted)).toEqual({ applied: true })
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, { parent }))).toBe('not-granted')
-    expect((await ask(door, 'core.identities', { agents: ['client#1', 'client#3'] })).result).toEqual([
-      { agent: 'client#1', holds: 'revoked' }, { agent: 'client#3', holds: 'items' },
+    expect((await ask(door, 'core.identities', { fields: ['client#1', 'client#3'] })).result).toEqual([
+      { field: 'client#1', holds: 'revoked' }, { field: 'client#3', holds: 'items' },
     ])
-    // A revoked label asks again only under a number never used again
+    // A revoked pair asks for nothing again in the run
     expect(outcome(await ask(mcp, 'core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, { parent }))).toBe('not-granted')
-    expect((await ask(door, 'core.identities', { agents: ['client#1'], heard: ['client#1'] })).result).toEqual([{ agent: 'client#1', holds: 'none' }])
+    expect(outcome(await ask(mcp, 'core.identityAsk', { capabilities: [{ type: 'luoshu.read', paths: ['inbox/**'] }] }, await request(door, mcp, 'client#1')))).toBe('not-granted')
   })
 
-  it('lets agent #1 reach nothing under the door\'s next call once revoked, with no word from http, and still serves agent #3', async () => {
+  it('lets client#1 reach nothing under the handler\'s next call once revoked and still serves client#3', async () => {
     const { pluginsManager, door, mcp } = await joined('on')
     const trusted = { kind: 'window', role: 'trusted', n: 1 } as const
-    await pluginsManager.request({ kind: 'identity.revoke', agent: 'client#1' }, trusted)
+    await pluginsManager.request({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' }, trusted)
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, await request(door, mcp, 'client#1')))).toBe('not-granted')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }, await request(door, mcp, 'client#3')))).toBe('inbox text')
   })
 
-  it('lets every call under the door\'s call for agent #1 through with the gate off, as any call', async () => {
+  it('lets every call under the handler\'s call for client#1 through with the gate off, as any call', async () => {
     const { door, mcp } = await joined('off')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'private/b.md' }, await request(door, mcp, 'client#1')))).toBe('SECRET')
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
   // The luoshu resolves inbox/a.md again once inbox is renamed INBOX after prepare and asks the judge about INBOX/a.md,
-  // which the grants snapshot keeps apart from inbox. mcp holds every path, so the agent's grant decides
+  // which the grants snapshot keeps apart from inbox. mcp holds every path, so the pair's items decide
   const caseOnly = process.platform === 'win32' || process.platform === 'darwin'
-  it.runIf(caseOnly)('judges an agent\'s read again against the agent\'s grant when its folder is renamed in case between prepare and perform', async () => {
+  it.runIf(caseOnly)('judges a pair\'s read again against the pair\'s items when its folder is renamed in case between prepare and perform', async () => {
     const { door, mcp, folder, hooks } = await joined('on')
     const recase = async () => {
       await renamed(path.join(folder, 'inbox'), path.join(folder, 'inbox-was'))

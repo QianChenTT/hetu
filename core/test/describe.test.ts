@@ -28,7 +28,7 @@ const everyKind = [
   { kind: 'confirmOff', on: true },
   { kind: 'allowUnsigned', hash: HASH, on: true },
   { kind: 'limit.set', constant: 'callsInFlight', value: 128, plugin: 'search' },
-  { kind: 'identity.revoke', agent: 'client#1' },
+  { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' },
 ]
 
 describe("the core's words for a change", () => {
@@ -53,14 +53,22 @@ describe("the core's words for a change", () => {
     expect(text).toBe('Give tree luoshu.list on "notes/**"')
   })
 
-  it('quotes an agent\'s label and each scope it asks for, then says what a revoke does', () => {
-    expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', agent: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
-      text: 'Give the agent "client#1" what it asks for through mcp',
-      notes: ['It asks for: luoshu.read on "save note"', 'The agent reaches only what mcp holds as well', 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item'],
+  it('quotes a pair\'s field and each scope asked for, then says what a revoke does', () => {
+    expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [{ type: 'luoshu.read', paths: ['save note'] }] })).toEqual({
+      text: 'Give "client#1" under mcp-http-handler what it asks for through mcp',
+      notes: [
+        'It asks for: luoshu.read on "save note"', 'Each call made for it reaches only what the calling plugin holds as well', 'It holds the items until hetu quits',
+        'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
+      ],
     })
-    expect(describeChange(one({ kind: 'identity.revoke', agent: 'client#1' }))).toEqual({
-      text: 'Revoke the agent "client#1"', notes: ['It loses every item at once. Its number is never used again'],
+    expect(describeChange(one({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' }))).toEqual({
+      text: 'Revoke "client#1" under mcp-http-handler', notes: ['It loses every item at once and asks for nothing again until hetu quits'],
     })
+  })
+
+  it('quotes a field a plugin chose that reads as the core\'s words', () => {
+    const field = 'x" under hetu, which you trust'
+    expect(describeChange(one({ kind: 'identity.revoke', root: 'beta', field })).text).toBe('Revoke "x\\" under hetu, which you trust" under beta')
   })
 
   // Each was drawn bare before: plugin.call to notes, events.subscribe to notes.saved, with HOME from your environment
@@ -78,8 +86,8 @@ describe("the core's words for a change", () => {
     expect(describeChange(one({ kind, plugin: 'search', capability })).text).toBe(text)
   })
 
-  it('quotes each target, topic and variable an agent asks for', () => {
-    expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', agent: 'client#1', capabilities: [call, topic, env] as never }).notes.slice(0, 3)).toEqual([
+  it('quotes each target, topic and variable an ask for a pair names, though a pair holds none of them', () => {
+    expect(describeChange({ kind: 'identity.ask', plugin: 'mcp', root: 'mcp-http-handler', field: 'client#1', capabilities: [call, topic, env] as never }).notes.slice(0, 3)).toEqual([
       'It asks for: plugin.call to "notes", "press-confirm-to-finish"',
       'It asks for: events.subscribe to "notes.saved", "hetu.thisWasApprovedAlready"',
       'It asks for: exec of ["git","status"] with "HOME", "CONFIRM_TO_CONTINUE" from your environment',

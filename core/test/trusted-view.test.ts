@@ -18,7 +18,7 @@ const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
   limits: { all: {}, plugins: {} },
   luoshu: null,
   requests: [],
-  agents: [],
+  identities: [],
   stopped: null,
   ...over,
 })
@@ -32,8 +32,8 @@ describe('what the trusted window draws', () => {
   it('shows the oldest request first and counts the ones behind it', () => {
     const drawn = screen(calm({
       requests: [
-        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate', agent: null },
-        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null, agent: null },
+        { id: 'r1', kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: ['n'], type: 'gate', root: null, field: null },
+        { id: 'r2', kind: 'confirmOff', plugin: null, text: 'Apply changes made in this window without a Confirm', notes: [], type: null, root: null, field: null },
       ],
     }))
     expect(drawn.request).toMatchObject({ id: 'r1', text: 'Switch gate off', type: 'gate' })
@@ -200,35 +200,35 @@ describe('what the trusted window draws', () => {
   })
 
   it('draws an agent\'s label in an ask\'s heading as a part of its own and every other heading whole', () => {
-    const asked: Omit<HeldRequest, 'text' | 'agent'> = { id: 'r1', kind: 'identity.ask', plugin: 'mcp', notes: [], type: null }
+    const asked: Omit<HeldRequest, 'text' | 'root' | 'field'> = { id: 'r1', kind: 'identity.ask', plugin: 'mcp', notes: [], type: null }
     const label = `https://claude.ai/${'a'.repeat(200)}#12`
-    expect(screen(calm({ requests: [{ ...asked, text: `Give the agent "${label}" what it asks for through mcp`, agent: label }] })).request!.heading).toEqual([
+    expect(screen(calm({ requests: [{ ...asked, text: `Give the agent "${label}" what it asks for through mcp`, root: 'mcp-http-handler', field: label }] })).request!.heading).toEqual([
       { text: 'Give the agent ', label: false }, { text: `"${label}"`, label: true }, { text: ' what it asks for through mcp', label: false },
     ])
-    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.heading)
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', root: null, field: null }] })).request!.heading)
       .toEqual([{ text: 'Switch gate off', label: false }])
     // A label the text doesn't hold leaves the text whole, so nothing is drawn twice or out of order
-    expect(screen(calm({ requests: [{ ...asked, text: 'Give the agent "a#1" what it asks for through mcp', agent: 'b#1' }] })).request!.heading)
+    expect(screen(calm({ requests: [{ ...asked, text: 'Give the agent "a#1" what it asks for through mcp', root: 'mcp-http-handler', field: 'b#1' }] })).request!.heading)
       .toEqual([{ text: 'Give the agent "a#1" what it asks for through mcp', label: false }])
   })
 
   it('gives an agent\'s ask a third button that revokes the label its heading shows and gives any other request none', () => {
     const asked: HeldRequest = {
-      id: 'r1', kind: 'identity.ask', plugin: 'mcp', notes: [], type: null, text: 'Give the agent "client#2" what it asks for through mcp', agent: 'client#2',
+      id: 'r1', kind: 'identity.ask', plugin: 'mcp', notes: [], type: null, text: 'Give the agent "client#2" what it asks for through mcp', root: 'mcp-http-handler', field: 'client#2',
     }
-    const drawn = screen(calm({ requests: [asked], agents: [{ agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['**'] }], revoked: false }] }))
+    const drawn = screen(calm({ requests: [asked], identities: [{ root: 'mcp-http-handler', field: 'client#1', items: [{ type: 'luoshu.read', paths: ['**'] }], revoked: false }] }))
     expect(drawn.request!.heading.find(part => part.label)!.text).toBe('"client#2"')
-    expect(drawn.request!.revoke).toEqual({ kind: 'identity.revoke', agent: 'client#2' })
-    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', agent: null }] })).request!.revoke).toBeNull()
+    expect(drawn.request!.revoke).toEqual({ kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#2' })
+    expect(screen(calm({ requests: [{ ...asked, kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', root: null, field: null }] })).request!.revoke).toBeNull()
   })
 
   it('draws a connect from the core\'s words, the label it gets apart at the heading\'s end, with Confirm and Cancel alone', () => {
     const label = 'https://claude.ai/oauth/claude-code-client-metadata#3'
-    const connect = describeChange(connectChange({ client: label.slice(0, -2), name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 })!)
-    const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: connect.notes, type: null, text: connect.text, agent: label }
+    const connect = describeChange(connectChange({ client: label.slice(0, -2), name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: label }, 'mcp-http-handler')!)
+    const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: connect.notes, type: null, text: connect.text, root: 'mcp-http-handler', field: label }
     const drawn = screen(calm({ requests: [held] })).request!
     expect(drawn.heading).toEqual([
-      { text: 'Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", as the agent ', label: false },
+      { text: 'Connect the client from "claude.ai" named "Claude Code", which returns to "localhost:33418", through mcp-http-handler as ', label: false },
       { text: JSON.stringify(label), label: true },
     ])
     expect(drawn.notes).toEqual(connect.notes)
@@ -236,10 +236,10 @@ describe('what the trusted window draws', () => {
   })
 
   it('draws apart the label at a connect\'s end and not a name that reads as the label', () => {
-    const connect = describeChange(connectChange({ client: 'client', name: 'client#3', redirect: 'http://127.0.0.1:5000/cb', number: 3 })!)
-    const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: [], type: null, text: connect.text, agent: 'client#3' }
+    const connect = describeChange(connectChange({ client: 'client', name: 'client#3', redirect: 'http://127.0.0.1:5000/cb', field: 'client#3' }, 'mcp-http-handler')!)
+    const held: HeldRequest = { id: 'r1', kind: 'consent.ask', plugin: 'mcp-http-handler', notes: [], type: null, text: connect.text, root: 'mcp-http-handler', field: 'client#3' }
     expect(screen(calm({ requests: [held] })).request!.heading).toEqual([
-      { text: 'Connect the client "client" named "client#3", which returns to "127.0.0.1:5000", as the agent ', label: false },
+      { text: 'Connect the client "client" named "client#3", which returns to "127.0.0.1:5000", through mcp-http-handler as ', label: false },
       { text: '"client#3"', label: true },
     ])
   })
@@ -268,7 +268,7 @@ describe('what the trusted window draws', () => {
     ]
     const drawn = screen(calm({
       plugins: [plugin({ items: items.map(capability => ({ capability, off: false, firstUse: false })) })],
-      agents: [{ agent: 'client#1', items: [items[0]], revoked: false }],
+      identities: [{ root: 'mcp-http-handler', field: 'client#1', items: [items[0]], revoked: false }],
     }))
     expect(drawn.plugins[0].items.map(item => item.line)).toEqual([
       'plugin.call to "notes" · on', 'events.subscribe to "notes.saved" · on', 'exec of ["git","status"] with "HOME" from your environment · on',
@@ -278,14 +278,14 @@ describe('what the trusted window draws', () => {
 
   it('lists each agent by its label in quotes with its items and a Revoke, a revoked one with no button, then what it can\'t know', () => {
     const drawn = screen(calm({
-      agents: [
-        { agent: 'client#1', items: [{ type: 'luoshu.read', paths: ['inbox/**'] }, { type: 'luoshu.write', paths: ['say "hi"/**'] }], revoked: false },
-        { agent: 'https://claude.ai/oauth/claude-code-client-metadata#3', items: [], revoked: true },
+      identities: [
+        { root: 'mcp-http-handler', field: 'client#1', items: [{ type: 'luoshu.read', paths: ['inbox/**'] }, { type: 'luoshu.write', paths: ['say "hi"/**'] }], revoked: false },
+        { root: 'mcp-http-handler', field: 'https://claude.ai/oauth/claude-code-client-metadata#3', items: [], revoked: true },
       ],
     }))
     expect(drawn.agents).toEqual({
       rows: [
-        { label: '"client#1"', line: ' · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'identity.revoke', agent: 'client#1' } },
+        { label: '"client#1"', line: ' · luoshu.read on "inbox/**" · luoshu.write on "say \\"hi\\"/**"', change: { kind: 'identity.revoke', root: 'mcp-http-handler', field: 'client#1' } },
         { label: '"https://claude.ai/oauth/claude-code-client-metadata#3"', line: ' · revoked, its tokens end once mcp-http-handler hears', change: null },
       ],
       about: 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s',

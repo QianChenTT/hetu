@@ -365,7 +365,7 @@ describe('core.identities from a plugin\'s utility half', () => {
   it('takes it from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
     const seen: Call[] = []
     const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
-    const args = { agents: ['client#1'] }
+    const args = { fields: ['client#1'] }
     expect((await door.ask('core.identities', args)).ok).toBe(true)
     for (const side of [httpWorker, mcp, search]) expect(code(await side.ask('core.identities', args))).toBe('not-granted')
     const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
@@ -377,7 +377,7 @@ describe('core.identities from a plugin\'s utility half', () => {
 })
 
 describe('core.consentAsk and core.consentAnswer from a plugin\'s utility half', () => {
-  const connect = { client: 'https://claude.ai/oauth/claude-code-client-metadata', name: 'Claude Code', redirect: 'http://localhost:33418/callback', number: 3 }
+  const connect = { client: 'https://claude.ai/oauth/claude-code-client-metadata', name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: 'https://claude.ai/oauth/claude-code-client-metadata#3' }
   const collect = { handle: 'A'.repeat(32) }
 
   it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {

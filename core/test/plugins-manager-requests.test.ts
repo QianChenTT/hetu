@@ -488,7 +488,7 @@ describe('the core actions the plugins manager serves', () => {
       items: [{ capability: notes, off: false, firstUse: false }, { capability: panel, off: true, firstUse: false }],
     })
     expect(list.requests).toEqual([{
-      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', agent: null,
+      id: expect.any(String), kind: 'plugin.off', plugin: 'gate', text: 'Switch gate off', notes: expect.any(Array), type: 'gate', root: null, field: null,
     }])
     expect(list.switches).toEqual({
       devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false,

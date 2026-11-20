@@ -1,12 +1,12 @@
 import type { CoreStatus, HeldRequest, ListedPlugin, SecurityList } from '../../api/actions.ts'
-import { connectLabel, type Change } from '../../api/changes.ts'
+import type { Change } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
 import { capabilityText } from '../../api/trusted.ts'
 import { VERSION } from '../../api/envelope.ts'
 import { coreModuleIds, firstPartyIds, guardableActions, isSecurityControl, judgingModuleIds } from '../../api/ids.ts'
 import { type BindFailure } from '../../api/lifecycle.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
-import { agentDoor, agentHost, type PluginTable } from '../../api/policy-jobs.ts'
+import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Plugin } from '../boot/header.ts'
 import type { Served } from '../router/header.ts'
 import { readFailedOnce } from './folders.ts'
@@ -50,22 +50,22 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
         return null
       case 'security.list':
         return this.securityList()
-      // The router's floor let only the plugin the root of a chain called through, so onBehalf is that chain's field. The
-      // asks file under the agent host's entry for the labels the door sets, so one is taken only from the agent host under
-      // a chain rooted at the door's plugin
+      // The router's floor let only the plugin the root of a chain called through, under that call, so the pair is that
+      // chain's: the root plugin and the field it set
       case 'core.identityAsk':
-        if (call.caller.kind !== 'plugin' || call.caller.id !== agentHost || call.root.kind !== 'plugin' || call.root.id !== agentDoor.plugin) {
-          throw { code: 'not-granted' }
-        }
-        return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
-      // The floor let only mcp-http-handler's half on its utility port through
+        return this.identityAsk(call, args.capabilities as Capability[])
+      // The floor let only a plugin's host half on its utility port through, which asks about the pairs its plugin roots
       case 'core.identities':
-        return this.agentsFor(args.agents as string[], (args.heard as string[] | undefined) ?? [])
-      // The floor let only mcp-http-handler's half on its utility port through. The handle is the core's own, never an argument
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return this.identitiesOf(call.caller.id, args.fields as string[])
+      // From a utility half too. The handle is the core's own and never an argument. Only the plugin that asked collects
+      // the answer
       case 'core.consentAsk':
-        return { handle: this.connects.ask(args as ConnectAsked) }
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return { handle: this.connects.ask(args as ConnectAsked, call.caller.id) }
       case 'core.consentAnswer':
-        return { answer: this.connects.answer(args.handle as string) }
+        if (call.caller.kind !== 'plugin') throw { code: 'not-granted' }
+        return { answer: this.connects.answer(args.handle as string, call.caller.id) }
       // Under the calling plugin's id, coalesced by reason with the counts added up. A throw in recording is that record
       // lost
       case 'core.refused':
@@ -133,7 +133,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: this.requests.typed(change), agent: change.kind === 'identity.ask' ? change.agent : change.kind === 'consent.ask' ? connectLabel(change) : null,
+        type: this.requests.typed(change),
+        root: change.kind === 'identity.ask' ? change.root : change.kind === 'consent.ask' ? change.plugin : null,
+        field: change.kind === 'identity.ask' || change.kind === 'consent.ask' ? change.field : null,
       }
     })
     return {
@@ -148,7 +150,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       },
       luoshu: this.state.luoshu?.folder ?? null,
       requests,
-      agents: this.listedAgents(),
+      identities: this.listedIdentities(),
       stopped: this.stoppedMode,
     }
   }

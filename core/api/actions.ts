@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { MAX_SCOPES_PER_TYPE, screenText, text, type Capability, type CapabilityType } from './capabilities.ts'
-import { askedCapability, change, clientName, MAX_AGENT_NUMBER, MAX_ASK_ITEMS, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
-import { agentLabel, MAX_CLIENT_ID_LENGTH, token, type Caller } from './envelope.ts'
+import { askedCapability, change, clientName, MAX_ASK_ITEMS, MAX_CLIENT_ID_LENGTH, MAX_REDIRECT_LENGTH, type ChangeKind } from './changes.ts'
+import { label, token, type Caller } from './envelope.ts'
 import { MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from './exec.ts'
 import type { LimitName } from './limits.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
@@ -73,8 +73,8 @@ export const agentRefusals = frozen(['host', 'origin', 'method', 'size', 'rate',
 export type AgentRefusal = typeof agentRefusals[number]
 // The most refusals one report counts, far above what the door can refuse in the second a report covers
 export const MAX_REFUSAL_COUNT = 1_000_000
-// The most labels one core.identities call names in each list
-export const MAX_AGENTS_ASKED = 64
+// The most fields one core.identities call names
+export const MAX_FIELDS_ASKED = 64
 // reads: the trusted window may send it inside its input delay, since it only reads. Anything else the trusted window
 // sends then counts for nothing, a Confirm or a request that applies at once with confirmOff on. live: args.call names a
 // live call delivered to the caller on the same way in, which the part serving the action gets a view of
@@ -173,22 +173,19 @@ const coreTable = {
   // The plugin the root of a chain called asks the human for items for the chain's pair, read from the chain and never
   // from an argument. Answers at once: waiting for the human, or granted when the pair holds them all
   'core.identityAsk': { from: 'pair', args: z.strictObject({ capabilities: z.array(askedCapability).min(1).max(MAX_ASK_ITEMS) }) },
-  // What mcp-http-handler asks the core about the agents it holds tokens for: whether each holds items, holds none or was revoked.
-  // heard names the revoked labels whose tokens mcp-http-handler ended, whose marks then go
-  'core.identities': {
-    from: 'utility',
-    args: z.strictObject({ agents: z.array(agentLabel).min(1).max(MAX_AGENTS_ASKED), heard: z.array(agentLabel).max(MAX_AGENTS_ASKED).optional() }),
-  },
-  // mcp-http-handler's door asks the human to connect a client as the agent the client id and the number make. The core raises the
-  // request and answers at once with a handle it made, which mcp-http-handler collects the answer with. Never a label or a handle
-  // from mcp-http-handler
+  // What a utility half asks the core about the pairs its plugin roots: for each field whether the pair holds items,
+  // holds none or was revoked in this run
+  'core.identities': { from: 'utility', args: z.strictObject({ fields: z.array(label).min(1).max(MAX_FIELDS_ASKED) }) },
+  // A utility half asks the human to connect a client, which its calls then carry as field. The core raises the request
+  // and answers at once with a handle it made, which the same plugin collects the answer with. Never a handle from the
+  // plugin
   'core.consentAsk': {
     from: 'utility',
     args: z.strictObject({
-      client: z.string().max(MAX_CLIENT_ID_LENGTH, { abort: true }),
+      client: screenText(MAX_CLIENT_ID_LENGTH),
       name: clientName.nullable(),
       redirect: screenText(MAX_REDIRECT_LENGTH),
-      number: z.int().min(1).max(MAX_AGENT_NUMBER),
+      field: label,
     }),
   },
   // The human's answer to the connect a handle names: waiting, yes or no, each of yes and no once, then gone
@@ -345,16 +342,17 @@ export type ListedPlugin = {
   class: number | null
 }
 
-// A request waiting for the human in the core's own words, with the word to type where the change asks for one. agent is
-// the label of an agent's ask or the one a connect gives, which its text holds in quotes, null for every other request
-export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, agent: string | null }
+// A request waiting for the human in the core's own words, with the word to type where the change asks for one. root
+// and field are the pair of an ask for a pair's items or the one a connect gives, the field in quotes in the text,
+// both null for every other request
+export type HeldRequest = PendingRequest & { text: string, notes: string[], type: string | null, root: string | null, field: string | null }
 
-// One agent as the trusted window's agent list shows it, from the agent host's entry alone: its label, its items and
-// whether the human revoked it and mcp-http-handler has yet to say it ended its tokens
-export type ListedAgent = { agent: string, items: Capability[], revoked: boolean }
+// One pair as the trusted window's identities list shows it, from what the plugins manager holds for the run: the root
+// plugin's id, the field, the items and whether the human revoked it
+export type ListedIdentity = { root: string, field: string, items: Capability[], revoked: boolean }
 
 // What the trusted window draws: the plugin list, the switches that weaken a check, the requests waiting, oldest
-// first, the agents and the stopped mode
+// first, the identities and the stopped mode
 export type SecurityList = {
   plugins: ListedPlugin[]
   switches: {
@@ -369,7 +367,7 @@ export type SecurityList = {
   // The notes folder, null for none picked
   luoshu: string | null
   requests: HeldRequest[]
-  agents: ListedAgent[]
+  identities: ListedIdentity[]
   stopped: StoppedMode | null
 }
 
@@ -410,7 +408,7 @@ export type ActionResults = {
   'core.refused': null
   'core.bindFailed': null
   'core.identityAsk': { asked: 'waiting' | 'granted' }
-  'core.identities': { agent: string, holds: 'items' | 'none' | 'revoked' }[]
+  'core.identities': { field: string, holds: 'items' | 'none' | 'revoked' }[]
   'core.consentAsk': { handle: string }
   'core.consentAnswer': { answer: 'waiting' | 'yes' | 'no' | 'gone' }
   'log.segments': LogSegment[]

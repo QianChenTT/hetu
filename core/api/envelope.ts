@@ -28,8 +28,9 @@ export function kindOf(message: unknown): MessageKind | null {
 export const token = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 
 // The caller's own label for one of the caller's clients, such as an OAuth client id, which can be a URL. The label
-// reaches the callee, guards and the audit and grants nothing
-const label = screenText(MAX_LABEL_LENGTH)
+// reaches the callee, guards and the audit. Under a plugin root it is the field of the chain's pair, which the gate
+// judges on the pair's own items
+export const label = screenText(MAX_LABEL_LENGTH)
 
 // An agent's label as the agent door names it and as the agent host's entry holds it: the OAuth client id, # and the
 // number of the authorization, which has no leading zero. The client id is held to the characters a URL holds as

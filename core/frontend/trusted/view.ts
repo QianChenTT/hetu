@@ -1,7 +1,7 @@
 // The trusted window's logic, kept apart from the DOM so it runs in tests. The page hands it the preload's bridge and a
 // function that draws a screen as text. Every word on it is the core's or this file's, a plugin's only as an id or a
 // quoted scope
-import { stoppedCause, type HeldRequest, type ListedAgent, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
+import { stoppedCause, type HeldRequest, type ListedIdentity, type ListedPlugin, type SecurityList, type StoppedMode } from '../../api/actions.ts'
 import type { Capability } from '../../api/capabilities.ts'
 import type { Change } from '../../api/changes.ts'
 import { limitNames, defaultLimits, type LimitName } from '../../api/limits.ts'
@@ -52,17 +52,17 @@ const INSTALL_LINE = 'On macOS, programs running as you can change hetu’s inst
 const AGENTS_LINE = 'Each agent is the client id and the number of one authorization. Its name and whether its token is live are mcp-http-handler’s to know, not this list’s'
 
 // An agent's label in quotes as data, then its items, or that it is revoked
-function agentRow(agent: ListedAgent): AgentRow {
-  const label = JSON.stringify(agent.agent)
+function agentRow(agent: ListedIdentity): AgentRow {
+  const label = JSON.stringify(agent.field)
   if (agent.revoked) return { label, line: ' · revoked, its tokens end once mcp-http-handler hears', change: null }
-  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'identity.revoke', agent: agent.agent } }
+  return { label, line: agent.items.map(item => ` · ${capabilityText(item)}`).join(''), change: { kind: 'identity.revoke', root: agent.root, field: agent.field } }
 }
 
 // A request's heading with the agent's label in quotes as a part of its own, the whole text as one part for any other
 // request or one whose text doesn't hold the label. The last place it is found, where a connect's words put the label,
 // so a client's name that reads as the label is never the part drawn apart
 export function headingOf(request: HeldRequest): Part[] {
-  const label = request.agent === null ? '' : JSON.stringify(request.agent)
+  const label = request.field === null ? '' : JSON.stringify(request.field)
   const at = label === '' ? -1 : request.text.lastIndexOf(label)
   if (at < 0) return [{ text: request.text, label: false }]
   const parts = [
@@ -74,7 +74,8 @@ export function headingOf(request: HeldRequest): Part[] {
 // The request drawn first. An agent's ask gets Cancel and revoke beside Confirm and Cancel, the revoke naming the label
 // the request holds, which is the one its heading draws
 function requestOf(request: HeldRequest): NonNullable<Screen['request']> {
-  const revoke: Change | null = request.kind === 'identity.ask' && request.agent !== null ? { kind: 'identity.revoke', agent: request.agent } : null
+  const revoke: Change | null = request.kind === 'identity.ask' && request.root !== null && request.field !== null
+    ? { kind: 'identity.revoke', root: request.root, field: request.field } : null
   return { ...request, heading: headingOf(request), revoke }
 }
 
@@ -223,7 +224,7 @@ export function screen(list: SecurityList): Screen {
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
     install: INSTALL_LINE,
-    agents: { rows: list.agents.map(agentRow), about: AGENTS_LINE },
+    agents: { rows: list.identities.map(agentRow), about: AGENTS_LINE },
   }
 }
 

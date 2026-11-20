@@ -1,7 +1,6 @@
-import { capabilityKey, type Capability, type CapabilityType } from '../../../api/capabilities.ts'
+import { capabilityKey, pairTypes, type Capability, type CapabilityType } from '../../../api/capabilities.ts'
 import type { Caller } from '../../../api/envelope.ts'
 import { commandKey } from '../../../api/exec.ts'
-import { frozen } from '../../../api/plain.ts'
 import { compileScopes } from '../../../api/scope.ts'
 import type { Access, Decision, Gate, GrantedItem, Pair, Scope, GrantsSnapshot } from '../../../api/policy-jobs.ts'
 import { windowGrants } from '../../../api/windows.ts'
@@ -32,10 +31,6 @@ export const scopeRules: Readonly<Record<CapabilityType, Rule>> = Object.freeze(
   history: 'access',
   exec: 'command',
 })
-
-// The types a pair's item may hold: reading, listing and writing notes and their history. An item of any other type a
-// pair holds covers nothing, so a call for a pair reaches no plugin, runs nothing and subscribes to nothing
-export const pairTypes = frozen(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history'] as const satisfies readonly CapabilityType[])
 
 // One item as the gate matches it, compiled once per grants snapshot. access is a history item's own
 type Compiled = { type: string, off: boolean, firstUse: boolean, key: string, access?: string, covers: (part: string) => boolean }

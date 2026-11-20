@@ -1,12 +1,12 @@
-import { connectLabel, type Change, type ClassRaised } from './changes.ts'
+import type { Change, ClassRaised } from './changes.ts'
 import { isSecurityControl } from './ids.ts'
 import { classNames } from './policy-jobs.ts'
 import { capabilityText } from './trusted.ts'
 
 // The core's own words for a change, which the trusted window draws above Confirm and nothing else writes. The id of
 // the plugin a change is for is shown as it is inside a fixed sentence. An id with hyphens can still read as words, such
-// as hetu-needs-this-click-confirm, which the notices quote. Anything else a plugin or an agent chose, a scope, a
-// plugin.call target, a topic, a variable name or a folder, goes in quotes as data
+// as hetu-needs-this-click-confirm, which the notices quote. Anything else a plugin or its client chose, a field, a
+// scope, a plugin.call target, a topic, a variable name or a folder, goes in quotes as data
 export type Described = { text: string, notes: string[] }
 
 const quoted = (value: string) => JSON.stringify(value)
@@ -83,24 +83,25 @@ export function describeChange(change: Change): Described {
         text: `${quoted(change.plugin)} moved from ${className(change.from)} to ${className(change.to)} with no Confirm on screen`,
         notes: [`Why: ${why(change)}`, 'Its new class and the items that ask at first use are in place already. Confirm only says you saw it'],
       }
+    // The field is what the root plugin set on its calls, in quotes as data
     case 'identity.revoke':
-      return { text: `Revoke the agent ${quoted(change.agent)}`, notes: ['It loses every item at once. Its number is never used again'] }
-    // The label is the agent's client id and the number of its authorization, in quotes as data
+      return { text: `Revoke ${quoted(change.field)} under ${change.root}`, notes: ['It loses every item at once and asks for nothing again until hetu quits'] }
     case 'identity.ask':
       return {
-        text: `Give the agent ${quoted(change.agent)} what it asks for through ${change.plugin}`,
+        text: `Give ${quoted(change.field)} under ${change.root} what it asks for through ${change.plugin}`,
         notes: [
           ...change.capabilities.map(capability => `It asks for: ${capabilityText(capability)}`),
-          `The agent reaches only what ${change.plugin} holds as well`, 'Cancel and revoke turns it away for good, as Revoke in the agent list does once it holds an item',
+          'Each call made for it reaches only what the calling plugin holds as well', 'It holds the items until hetu quits',
+          'Cancel and revoke turns it away until hetu quits, as Revoke in the identities list does once it holds an item',
         ],
       }
-    // Where the client comes from first, then what it calls itself, where it gets its answer and the label it gets last,
-    // each in quotes as data. The label's place last is where the trusted window finds it to draw apart
+    // Where the client comes from first, then what it calls itself, where it gets its answer and the field it gets last,
+    // each in quotes as data. The field's place last is where the trusted window finds it to draw apart
     case 'consent.ask': {
       const from = change.clientHost === null ? `the client ${quoted(change.client)}` : `the client from ${quoted(change.clientHost)}`
       const named = change.name === null ? 'with no name' : `named ${quoted(change.name)}`
       return {
-        text: `Connect ${from} ${named}, which returns to ${quoted(change.redirectHost)}, as the agent ${quoted(connectLabel(change))}`,
+        text: `Connect ${from} ${named}, which returns to ${quoted(change.redirectHost)}, through ${change.plugin} as ${quoted(change.field)}`,
         notes: [
           'Any program on this computer can connect under that client id and that name, so confirm only a connect you started just now',
           'It reaches no note yet. It asks for items later and each ask waits for your Confirm',

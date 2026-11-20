@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { capabilityTypes, type Capability } from '../../../api/capabilities.ts'
+import { capabilityTypes, pairTypes, type Capability } from '../../../api/capabilities.ts'
 import type { Caller } from '../../../api/envelope.ts'
 import type { Access, Call, GrantedItem, GrantsSnapshot, LiveCall, Pair, PluginTable, Scope } from '../../../api/policy-jobs.ts'
 import { createGateActions } from '../../../backend/policy/gate/actions.ts'
-import { createGate, pairTypes } from '../../../backend/policy/gate/gate.ts'
+import { createGate } from '../../../backend/policy/gate/gate.ts'
 
 const plugin = (id: string, half = 'worker'): Caller => ({ kind: 'plugin', id, half, incarnation: 1 })
 const handler = plugin('mcp-http-handler', 'host')

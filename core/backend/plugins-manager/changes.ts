@@ -1,17 +1,15 @@
 import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
-import { change as changeSchema, type Change } from '../../api/changes.ts'
+import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
 import { type Caller } from '../../api/envelope.ts'
 import { firstPartyIds } from '../../api/ids.ts'
 import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { ExecGrant, ExecView, GrantedItem, GrantsSnapshot } from '../../api/policy-jobs.ts'
-import { agentDoor, agentHost } from '../../api/policy-jobs.ts'
 import type { Plugin, StateStore } from '../boot/header.ts'
 import { clear, clearFailedOnce, folders, stage, swapIn } from './folders.ts'
 import { plan, type Node } from './graph.ts'
-import { cleared, marksOf } from './marks.ts'
 import { MAX_PENDING, Requests, type RequestAnswer } from './requests.ts'
 import { readPlugin, type Read } from './verify.ts'
 import { PluginsInstall } from './install.ts'
@@ -44,10 +42,10 @@ export abstract class PluginsChanges extends PluginsInstall {
 
   // Applies a change exactly as stored through the one StateStore. A write that fails applies nothing. Each applied
   // change raises the grants snapshot by one. Requests reach it through the Confirm, tests and the plugins manager's own reconcile
-  // directly
+  // directly. An ask for a pair's items, which only the core raises, applies as its Confirm would
   apply(input: Change): Promise<void> {
     return this.serial(async () => {
-      await this.applyNow(changeSchema.parse(input), true)
+      await this.applyNow(input.kind === 'identity.ask' ? identityAsk.parse(input) : changeSchema.parse(input), true)
     })
   }
 
@@ -111,10 +109,10 @@ export abstract class PluginsChanges extends PluginsInstall {
       case 'class.raised':
         return this.answered(change.plugin)
       case 'identity.ask':
-        return this.agentGrant(change)
+        return this.identityGrant(change)
       case 'identity.revoke':
-        return this.agentRevoke(change.agent)
-      // Hands mcp-http-handler its yes and changes no state
+        return this.identityRevoke(change)
+      // Hands the plugin that asked its yes and changes no state
       case 'consent.ask':
         return this.connects.confirmed(change)
     }
@@ -173,6 +171,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     if (k === undefined) throw new Error(`no plugin ${id}`)
     await this.stoppedWhile(k, async () => {
       for (const kind of ['storage', 'cache'] as const) await this.clearSpace(kind, id)
+      this.pairsGone(id)
       // A limit the human set for the plugin goes too, since one too low makes it fail again at every start
       const { limits } = this.state.switches
       if (Object.hasOwn(limits.plugins, id)) {
@@ -244,20 +243,9 @@ export abstract class PluginsChanges extends PluginsInstall {
       const granted = k.from === 'install' && !isOne(this.state.switches.off, k.id) ? k.read.manifest?.capabilities ?? [] : []
       if (granted.length > 0) plugins[k.id] = items(granted, [])
     }
-    // Each agent's items by its label, from the agent host's entry while the human has the host on, as the pairs of the
-    // door's plugin, which sets the label at the root of an agent's chain. None of them is the host's own, so none
-    // switches off or asks at first use
-    const agents: Record<string, GrantedItem[]> = Object.create(null)
-    const host = this.state.plugins[agentHost]
-    if (host?.enabled === true && this.known.get(agentHost)?.from !== 'install') {
-      for (const { agent, capability } of host.agents ?? []) {
-        if (!Object.hasOwn(agents, agent)) agents[agent] = []
-        agents[agent].push({ capability: structuredClone(capability), off: false, firstUse: false })
-      }
-    }
-    // The labels the human revoked whose tokens mcp-http-handler has not yet said it ended, which the gate refuses
-    const revoked = { [agentDoor.plugin]: marksOf(host ?? null, this.state.switches) }
-    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], pairs: { [agentDoor.plugin]: agents }, revoked })
+    // Each pair's items and the pairs revoked in the run, from memory
+    const { pairs, revoked } = this.pairsSnapshot()
+    return frozen({ n: this.n, foldCase: false, plugins, execAny: [...this.state.switches.execAnyCommand], pairs, revoked })
   }
 
   // What exec checks a command against on its own, read from the grants snapshot: each plugin's exec items that are on. Exec
@@ -346,6 +334,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     await this.setMarksAside(id)
     await this.store.removePlugin(id)
     delete this.state.plugins[id]
+    this.pairsGone(id)
     await this.settle(change.others, false)
     this.raiseOwed(this.touched(change))
     // What the human let this plugin do goes with it, so a plugin added later under the id asks again
