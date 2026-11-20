@@ -117,7 +117,7 @@ describe('the listing at start', () => {
 // The shape of core/test/luoshu-joined.test.ts's vault, there read by 16 readers through the router with the log on.
 // Here search's own loop reads it through the fake core
 describe('the listing at start in a vault of 469 notes search never saw', () => {
-  it('reads every note, at most 16 at a time, and finds a word in a note no event named', async () => {
+  it('reads every note, at most 16 at a time and finds a word in a note no event named', async () => {
     const line = 'A line of a note about something worth keeping, with a [[link]] and some **bold** words in it.\n'
     const notes: Record<string, string> = {}
     for (let i = 0; i < 469; i++) notes[`folder ${i % 23}/note ${i}.md`] = line.repeat(93) + (i === 233 ? 'quokka\n' : '')
