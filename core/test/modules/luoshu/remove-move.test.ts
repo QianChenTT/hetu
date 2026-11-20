@@ -195,7 +195,7 @@ describe('moving', () => {
     expect(await readFile(path.join(folder, 'journal', 'b.md'), 'utf8')).toBe('note b')
   })
 
-  it('renames a.md to A.md in place, with one lock for both ends', async () => {
+  it('renames a.md to A.md in place, with one latch for both ends', async () => {
     const made = opened()
     const call = callOf('luoshu.move', { from: 'a.md', to: 'A.md' })
     const prepared = await Promise.race([made.provider.prepare(call), tick(2000).then(() => 'held')])
@@ -458,7 +458,7 @@ describe('the dot rule on both ends of a move and on a remove', () => {
   })
 })
 
-describe('the locks of a move', () => {
+describe('the latches of a move', () => {
   it('holds a write to either end until the move performs', async () => {
     const made = opened()
     const move = callOf('luoshu.move', { from: 'a.md', to: 'c.md' })
@@ -486,7 +486,7 @@ describe('the locks of a move', () => {
   })
 
   // Taken in call order, a.md to c.md would wait on c.md held by c.md to a.md, which waits on a.md
-  it('takes both locks in key order, so two moves the opposite way round never wait on each other', async () => {
+  it('takes both latches in key order, so two moves the opposite way round never wait on each other', async () => {
     await writeFile(path.join(folder, 'c.md'), 'note c')
     const made = opened()
     // A write holds a.md, so both moves queue behind it before either has run

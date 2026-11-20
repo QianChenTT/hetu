@@ -140,7 +140,7 @@ async function guarded(folder: string, check: (call: GuardCall) => 'allow' | 'de
 }
 
 describe('the guard step', () => {
-  it('refuses a write a guard denies, leaving the note as it was and the lock free', async () => {
+  it('refuses a write a guard denies, leaving the note as it was and the latch free', async () => {
     const folder = await notes()
     await writeFile(path.join(folder, 'a.md'), 'as it was')
     const { ask } = await guarded(folder, () => 'deny')

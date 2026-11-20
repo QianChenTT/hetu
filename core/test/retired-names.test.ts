@@ -132,6 +132,12 @@ describe('the retired names check itself', () => {
     ['// an install plugin is trusted', 'install plugin and host-level plugin: install plugin'],
     ['// a host-level plugin', 'install plugin and host-level plugin: host-level plugin'],
     ['// the capabilities plugin classes each grant', 'capabilities plugin: capabilities plugin'],
+    ['// holds the per-path lock on key', "the luoshu's lock: per-path lock"],
+    ['await lock(key, call.callId)', "the luoshu's lock: lock(key"],
+    ['unlock(call.callId)', "the luoshu's lock: unlock(call.callId"],
+    ['// the version is checked under the lock', "the luoshu's lock: under the lock"],
+    ['// a move takes the locks of both ends', "the luoshu's lock: takes the locks"],
+    ['// the provider lets go of its lock here', "the luoshu's lock: lets go of its lock"],
   ])('finds %j', (source, ...found) => {
     expect(names(source)).toEqual(found)
   })
@@ -154,6 +160,11 @@ describe('the retired names check itself', () => {
     ["registry.call('luoshu.settings')"],
     ['// a core plugin from the install'],
     ["const job = policyJob('grant-risk-classifier')"],
+    ['// Who holds the lock, or null when it was left by a run that is gone'],
+    ['const release = await lock(dataDir)'],
+    ['// a lock here was left by a git ended mid-write'],
+    ["// lock means the lock module's note lock"],
+    ['// a disk locked for a moment costs nothing'],
   ])('leaves %j alone', source => {
     expect(names(source)).toEqual([])
   })

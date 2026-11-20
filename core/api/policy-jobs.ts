@@ -214,13 +214,13 @@ export type Prepared = { readonly scope: Scope, readonly baseVersion?: string }
 // A provider refuses with a fixed code and a fixed reason, never with text
 export type ProviderRefusal = Pick<Refusal, 'code' | 'reason'>
 
-// A provider serves a namespace. prepare may hold its per-path lock until perform. perform and release get the frozen
+// A provider serves a namespace. prepare may hold its latch on a path until perform. perform and release get the frozen
 // copy the gate and the guards judged, not the object prepare gave, so anything else a provider keeps across a call it
 // keys by callId. perform refuses by throwing a ProviderRefusal and anything else it throws answers failed
 export type Provider = {
   prepare(call: Call): Promise<Prepared | ProviderRefusal>
   perform(call: Call, prepared: Prepared): Promise<unknown>
-  // A call refused after prepare never reaches perform, so the provider lets go of its lock here
+  // A call refused after prepare never reaches perform, so the provider lets go of its latch here
   release?(call: Call, prepared: Prepared): void
 }
 

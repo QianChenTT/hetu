@@ -172,7 +172,7 @@ export function recheck(c: Context, caller: Caller, topic: string): 'allow' | 'r
 }
 
 // 6 route to a provider, then 7 prepare, 8 decide, 9 guard and 10 perform. The provider is the core module serving
-// the namespace, null while that module is off or failed, which answers unavailable. The provider's lock, held from
+// the namespace, null while that module is off or failed, which answers unavailable. The provider's latch, held from
 // prepare, goes back through release when the call stops before perform
 export async function provide(c: Context, pending: Pending, id: string, args: unknown, kind: Kind): Promise<void> {
   const listing = providerActions[pending.action]?.filter === 'list'

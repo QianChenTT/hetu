@@ -21,7 +21,7 @@ export type NotCanonical =
   | { ok: false, code: Extract<RefusalCode, 'not-granted'>, rule: DiskRule, absent?: Canonical }
 
 // absolute is for the disk. relative joins the names with / on every platform and is what the gate, the guards and
-// the records see. key is only for the luoshu's per-path lock and the lease table's conflict check
+// the records see. key is only for the luoshu's latch on a path and the lease table's conflict check
 export type Canonical = { ok: true, absolute: string, relative: string, key: string }
 
 // hetu's own folders, which a luoshu picked at the home folder holds
@@ -38,7 +38,7 @@ const devices = new Set([
   ...[...'0123456789\u00b9\u00b2\u00b3'].flatMap(digit => [`com${digit}`, `lpt${digit}`]),
 ])
 
-// For locks and leases only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one new
+// For latches and leases only. A name that doesn't exist yet keeps the caller's spelling, so two spellings of one new
 // note meet only here. Drops what HFS+ skips, takes NFC since APFS reads both forms as one name and folds case
 // further than lowercase does, since lowercase keeps the sharp s, the long s and the micro sign apart from the ss, s
 // and mu APFS reads them as. Folding more than a volume does only makes two notes share a lock or block each other's
@@ -214,7 +214,7 @@ async function stateOf(folder: string): Promise<FolderState> {
 // For a provider's prepare step. The string rules run first. Then the OS resolves each part that exists, with links,
 // junctions and 8.3 short names. The names that don't exist yet are kept for a write. The promise form of
 // realpath is realpath.native. Resolves once and keeps nothing open: the caller acts on exactly the path returned and
-// the provider holds the per-path lock on key from prepare to perform. The spellings of one name give one key, so no
+// the provider holds its latch on key from prepare to perform. The spellings of one name give one key, so no
 // other hetu write to that name runs in between. On Windows a name not there yet that reads like an 8.3 short name,
 // such as NEWFOL~1, is the exception: a write under another key that creates New folder name can give that folder
 // the same short name, as another program can a note. The luoshu lands a new note by a link, which fails on such a name

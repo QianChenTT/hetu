@@ -138,7 +138,7 @@ describe('writing', () => {
   })
 })
 
-describe('the lock from prepare to perform', () => {
+describe('the latch from prepare to perform', () => {
   it('holds a second call on the same note until the first one performs, and none on another note', async () => {
     const made = opened()
     const first = callOf('luoshu.write', { path: 'a.md', text: 'one', baseVersion: sha('note a') })
@@ -166,7 +166,7 @@ describe('the lock from prepare to perform', () => {
     expect(second).toBe(true)
   })
 
-  it('is one lock for every spelling of one name', async ({ skip }) => {
+  it('is one latch for every spelling of one name', async ({ skip }) => {
     if (!onWindows && process.platform !== 'darwin') return skip('names differ by case only where the disk folds case')
     const made = opened()
     const first = callOf('luoshu.write', { path: 'a.md', text: 'one' })

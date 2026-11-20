@@ -402,7 +402,7 @@ describe('deadlines and cancel', () => {
     await parts.search.waitFor(message => message.kind === 'cancel' && message.callId === got.callId, 500)
   })
 
-  it('lets go of no lock for a prepare that refused after its call was stopped', async () => {
+  it('lets go of no latch for a prepare that refused after its call was stopped', async () => {
     const { connect, gate, luoshu } = harness()
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let open!: () => void
@@ -462,7 +462,7 @@ describe('deadlines and cancel', () => {
         return 'allow'
       }
     }],
-  ])('performs no provider call that %s ran past its deadline and lets go of the lock', async (_name, slow) => {
+  ])('performs no provider call that %s ran past its deadline and lets go of the latch', async (_name, slow) => {
     let clock = 1_000_000
     const parts = harness({ clock: () => clock, guardsFor: () => ['leases'] })
     const { connect, gate, luoshu, pluginsManager } = parts
@@ -488,7 +488,7 @@ describe('deadlines and cancel', () => {
     expect(deliveries(search, 'search.query')).toEqual([])
   })
 
-  it('leaves a provider call to finish when it is cancelled and lets go of the lock it took', async () => {
+  it('leaves a provider call to finish when it is cancelled and lets go of the latch it took', async () => {
     const { search, luoshu } = plugins()
     luoshu.files.set('notes/a.md', 'x')
     let open!: () => void

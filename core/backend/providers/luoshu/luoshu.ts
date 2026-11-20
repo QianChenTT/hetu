@@ -79,9 +79,9 @@ function respelled(from: Canonical, input: string): Canonical {
 }
 
 // luoshu.read, luoshu.write, luoshu.remove, luoshu.move and luoshu.list. prepare turns each path the caller wrote into
-// the canonical one with the canonicaliser and holds the lock on its key until perform or release, so no other hetu
-// write to that name runs in between. A move holds the locks of both ends, taken in key order so two moves can't each
-// hold the lock the other waits on. perform acts on the paths prepare resolved, kept by callId
+// the canonical one with the canonicaliser and holds the latch on its key until perform or release, so no other hetu
+// write to that name runs in between. A move holds the latches of both ends, taken in key order so two moves can't each
+// hold the latch the other waits on. perform acts on the paths prepare resolved, kept by callId
 export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   const pageSize = options.pageSize ?? LIST_PAGE
   const publish = options.publish ?? (() => {})
@@ -90,7 +90,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   let watcher: FSWatcher | null = null
   const settling = new Map<string, ReturnType<typeof setTimeout>>()
   let opening: (LuoshuOpening & { folder: string }) | null = null
-  // The tail of each key's queue and the releases of each call holding one or two
+  // The tail of each key's latch queue and the releases of each call holding one latch or two
   const tails = new Map<string, Promise<void>>()
   const holding = new Map<string, (() => void)[]>()
   const resolved = new Map<string, Canonical>()
@@ -108,7 +108,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // matches, or for a path missing then and now, is no news: macOS hands a new watch changes from just before it began
   let stamps: Promise<Map<string, string>> = Promise.resolve(new Map())
 
-  async function lock(key: string, callId: string): Promise<void> {
+  async function latch(key: string, callId: string): Promise<void> {
     const before = tails.get(key) ?? Promise.resolve()
     let let_go!: () => void
     const mine = new Promise<void>(resolve => {
@@ -125,7 +125,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     holding.set(callId, held)
   }
 
-  function unlock(callId: string): void {
+  function unlatch(callId: string): void {
     resolved.delete(callId)
     moving.delete(callId)
     preparedUnder.delete(callId)
@@ -217,7 +217,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     }
   }
 
-  // The version of the note a write or a remove acts on, checked under the lock: the note opened as a read opens it,
+  // The version of the note a write or a remove acts on, checked under the latch: the note opened as a read opens it,
   // null for none, with the path to act on and the file opened, which the name has to hold still right before the act.
   // A folder at the name throws as reading one does
   async function versionAt(prepared: Canonical, target: Canonical, judged: Judged): Promise<{ version: string | null, target: Canonical, file: Opened | null }> {
@@ -258,7 +258,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     else known.set(fold(relative), stamp)
   }
 
-  // The version is checked under the lock. The bytes go to a temp file beside the note, synced, then a rename over it,
+  // The version is checked under the latch. The bytes go to a temp file beside the note, synced, then a rename over it,
   // so a crash leaves the old note or the new one. A new note lands by a link in place of the rename (landNew)
   async function write(prepared: Canonical, text: string, baseVersion: string | undefined, judged: Judged): Promise<unknown> {
     // The version check reads the note, so the folder is looked at before it as before a read, then again once the
@@ -463,7 +463,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   }
 
   // Never onto a name that exists: a hard link at to fails if anything is there, then from is unlinked. One file under a
-  // new spelling of its name is a rename in place. A volume with no hard links checks to under both locks and renames,
+  // new spelling of its name is a rename in place. A volume with no hard links checks to under both latches and renames,
   // which only a program outside hetu could race
   async function move(source: Canonical, destination: Canonical, same: boolean, ask: Ask): Promise<null> {
     const ends = [source.relative, destination.relative]
@@ -647,7 +647,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         const to = same ? respelled(from, toText) : found
         spelling.set(from, fromText)
         spelling.set(to, toText)
-        for (const key of [...new Set([from.key, to.key])].sort()) await lock(key, call.callId)
+        for (const key of [...new Set([from.key, to.key])].sort()) await latch(key, call.callId)
         resolved.set(call.callId, from)
         moving.set(call.callId, { to, same })
         return { scope: { paths: [from.relative, to.relative] } }
@@ -656,7 +656,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
       const target = usable(await canonical(folder, args.path, { dataDir, installDir }))
       if (!('ok' in target)) return target
       spelling.set(target, args.path)
-      await lock(target.key, call.callId)
+      await latch(target.key, call.callId)
       resolved.set(call.callId, target)
       const scope = { paths: [target.relative] }
       return typeof args.baseVersion === 'string' ? { scope, baseVersion: args.baseVersion } : { scope }
@@ -704,12 +704,12 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
           throw passedOn(err, denied)
         }
       } finally {
-        unlock(call.callId)
+        unlatch(call.callId)
       }
     },
 
     release(call: Call): void {
-      unlock(call.callId)
+      unlatch(call.callId)
     },
   }
 

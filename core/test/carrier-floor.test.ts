@@ -360,7 +360,7 @@ describe('the floor', () => {
     expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([['raw', 'luoshu.write'], ['canonical', 'luoshu.write']])
   })
 
-  // Acquire takes the luoshu's per-path lock, so a path the grant doesn't cover must not reach prepare
+  // Acquire takes the luoshu's latch on a path, so a path the grant doesn't cover must not reach prepare
   it('prechecks every path a lease names before prepare', async () => {
     const { connect, pluginsManager, gate, providers } = harness()
     pluginsManager.installed('leases')
