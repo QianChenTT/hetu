@@ -10,6 +10,7 @@ import { createFloodControl } from './flood-control/flood-control.ts'
 import { createHeartbeat } from './heartbeat/heartbeat.ts'
 import type { Recording } from './recording/header.ts'
 import { createRecording } from './recording/recording.ts'
+import { createSecurityView } from './security-view/security-view.ts'
 import type { CoreModules as Holder, CoreModulesOptions } from './modules/header.ts'
 import { CoreModules, luoshuPublish } from './modules/modules.ts'
 import { createGate } from './policy/gate/gate.ts'
@@ -44,7 +45,7 @@ export type WireOptions = {
   // The OS's bin, for the luoshu's remove
   trash?: (absolute: string) => Promise<void>
   // Core modules in place of the ones the core makes, for tests
-  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat'>>
+  modules?: Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'floodControl' | 'heartbeat' | 'securityView'>>
 }
 
 // The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
@@ -67,6 +68,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
       clock: () => performance.now(),
     }),
     heartbeat: given.heartbeat ?? createHeartbeat(),
+    securityView: given.securityView ?? createSecurityView(),
   })
 }
 

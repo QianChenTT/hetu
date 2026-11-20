@@ -4,7 +4,7 @@ import type {
   ActionResults, CoreStatus, CoreViewsPlugin, HeldRequest, ListedAgent, ListedPlugin, PendingRequest, SecurityList, StateKind, StoppedMode,
 } from '../../api/actions.ts'
 import {
-  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, mustType, withdrawnWith, type AgentAsk, type Change,
+  AGENT_ASK_PAUSE_MS, agentAsk as agentAskChange, change as changeSchema, changeEffect, connectLabel, withdrawnWith, type AgentAsk, type Change,
   type ClassRaised,
 } from '../../api/changes.ts'
 import { describeChange } from '../../api/describe.ts'
@@ -375,9 +375,10 @@ export class PluginsManager implements Seam {
         return Promise.resolve()
       },
       record: (event, fields, signal) => this.record(event, fields, signal),
+      view: () => this.modules.securityView(),
+      fault: step => this.note('fault', { plugin: 'security-view', step }),
       confirmOff: () => this.state.switches.confirmOff,
-      drain: ms => this.recording.drain(ms),
-      resume: () => this.recording.resume(),
+      recording: this.recording,
       changed: () => this.refresh(),
       clock: () => this.clock(),
       delayMs: options.confirmDelayMs ?? INPUT_DELAY_MS,
@@ -576,7 +577,7 @@ ${capabilityKey(change.capability)}`)
       const { text, notes } = describeChange(change)
       return {
         id, kind: change.kind, plugin: 'plugin' in change ? change.plugin : null, text, notes: [...notes, ...this.what(change)],
-        type: mustType(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
+        type: this.requests.typed(change), agent: change.kind === 'agent.ask' ? change.agent : change.kind === 'agent.connect' ? connectLabel(change) : null,
       }
     })
     return {
@@ -1908,8 +1909,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the state
 
-  // A security request from a window: a narrowing change applies at once, a widening or destroying one waits for the
-  // trusted window's Confirm. The carrier has checked the caller is a window
+  // A security request from a window, which the security view decides. The carrier has checked the caller is a window
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })

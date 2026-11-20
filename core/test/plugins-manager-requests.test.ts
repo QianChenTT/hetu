@@ -5,6 +5,7 @@ import { capabilityKey, type Capability } from '../api/capabilities.ts'
 import type { SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import { StateStore } from '../backend/boot/state.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
 import { carrierOptions } from '../backend/wire.ts'
 import { allowAll, cleanup, entryFor, filesFor, harness, reasonOf, stateOf, workerManifest, type Files } from './plugins-manager-fakes.ts'
 
@@ -700,5 +701,77 @@ describe('a record recording throws on', () => {
     made.link.landing = () => { throw new Error('broken') }
     expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
     expect((await made.pluginsManager.serve(call(trusted, 'security.list')) as SecurityList).switches.skipVerification).toBe(false)
+  })
+})
+
+// The security view is a core module in the path of every held change. Off, every change applies unasked and the
+// editor window may only switch it on again. A throw applies nothing
+describe('the security view', () => {
+  const list = async (made: Awaited<ReturnType<typeof harness>>) =>
+    (await made.pluginsManager.serve({ callId: 'c1', caller: trusted, action: 'security.list', args: undefined, deadline: Date.now() + 30_000 })) as SecurityList
+
+  it('is a row of its own, a security control switched off only in a Confirm with its id typed', async () => {
+    const made = await harness()
+    await made.pluginsManager.start()
+    expect((await list(made)).plugins.find(row => row.id === 'security-view')).toMatchObject({ from: 'core', state: 'ready', security: true, on: true })
+    const id = held(await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'security-view' }, trusted))
+    expect((await list(made)).requests.find(request => request.id === id)?.type).toBe('security-view')
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('invalid')
+    await made.pluginsManager.confirm(id, { typed: 'security-view' })
+    expect(made.modules.state('security-view')).toBe('off')
+  })
+
+  it('applies a widening change from the trusted window unasked once off, its record landing first', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, trusted)).toEqual({ applied: true })
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(true)
+    const at = made.link.timeline.indexOf('record security.confirm')
+    expect(at).toBeGreaterThan(-1)
+    expect(made.link.events('security.confirm')).toMatchObject([{ kind: 'skipVerification', by: 'view-off' }])
+    expect(made.pluginsManager.pending()).toEqual([])
+  })
+
+  it('takes from the editor window only the change that switches it on again once off, which applies at once', async () => {
+    const made = await harness({ switches: { off: ['security-view'] } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))).toBe('not-granted')
+    expect(await code(made.pluginsManager.request({ kind: 'plugin.off', plugin: 'search' }, editor))).toBe('not-granted')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(await made.pluginsManager.request({ kind: 'plugin.on', plugin: 'security-view' }, editor)).toEqual({ applied: true })
+    expect(made.modules.state('security-view')).toBe('on')
+  })
+
+  it('counts a Confirm of a notice the core raised with no delay and no word once off', async () => {
+    const made = await harness({ folder: { alpha: worker('alpha') }, switches: { off: ['security-view'] }, pluginsManager: { confirmDelayMs: 60_000 } })
+    await made.pluginsManager.start()
+    const [notice] = made.pluginsManager.pending()
+    expect(notice).toMatchObject({ kind: 'plugin.approve', plugin: 'alpha' })
+    await made.pluginsManager.confirm(notice.id, {})
+    expect((await stateIn(made.dataDir)).plugins.alpha).toBeDefined()
+    expect(made.pluginsManager.pending()).toEqual([])
+  })
+
+  it('applies nothing and answers failed for a change it throws on, with the fault recorded', async () => {
+    const securityView = createSecurityView()
+    securityView.asked = () => { throw new Error('broken') }
+    const made = await harness({ modules: { securityView } })
+    await made.pluginsManager.start()
+    expect(await code(made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))).toBe('failed')
+    expect(await code(made.pluginsManager.request({ kind: 'confirmOff', on: false }, editor))).toBe('failed')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(made.pluginsManager.pending()).toEqual([])
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'security-view', step: 'asked' })
+  })
+
+  it('applies nothing and answers failed for a Confirm it throws on', async () => {
+    const securityView = createSecurityView()
+    securityView.confirms = () => { throw new Error('broken') }
+    const made = await harness({ modules: { securityView } })
+    await made.pluginsManager.start()
+    const id = held(await made.pluginsManager.request({ kind: 'skipVerification', on: true }, editor))
+    expect(await code(made.pluginsManager.confirm(id, {}))).toBe('failed')
+    expect((await stateIn(made.dataDir)).switches.skipVerification).toBe(false)
+    expect(made.link.events('fault')).toContainEqual({ plugin: 'security-view', step: 'confirms' })
   })
 })

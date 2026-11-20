@@ -107,16 +107,30 @@ describe('what the trusted window draws', () => {
   it('gives each switch for all of hetu its state and the change its button asks for', () => {
     expect(screen(calm()).switches).toEqual([
       { line: 'Confirm off for this window: off', change: { kind: 'confirmOff', on: true } },
-      { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
     ])
     const drawn = screen(calm({
       switches: { devMode: ['search'], execAnyCommand: ['git'], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: true },
     }))
     expect(drawn.switches).toEqual([
       { line: 'Confirm off for this window: on', change: { kind: 'confirmOff', on: false } },
-      { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
-      { line: 'dev mode: search', change: null },
       { line: 'any command: git', change: null },
+    ])
+  })
+
+  // Dev mode is a group of settings, not a part of its own: which plugins load unhashed, the hash checks skipped and the
+  // unsigned builds trusted
+  it('draws a Dev group with each folder plugin\'s dev mode, the hash checks skipped and the unsigned builds trusted', () => {
+    expect(screen(calm({ plugins: [plugin({ id: 'search' }), plugin({ id: 'gate', from: 'core', place: 'core', security: true, class: null })] })).dev).toEqual([
+      { line: 'Verification skipped: off', change: { kind: 'skipVerification', on: true } },
+      { line: 'dev mode for search: off', change: { kind: 'devMode', plugin: 'search', on: true } },
+    ])
+    const drawn = screen(calm({
+      plugins: [plugin({ id: 'search' })],
+      switches: { devMode: ['search'], execAnyCommand: [], skipVerification: true, allowUnsigned: ['a'.repeat(64)], confirmOff: false },
+    }))
+    expect(drawn.dev).toEqual([
+      { line: 'Verification skipped: on', change: { kind: 'skipVerification', on: false } },
+      { line: 'dev mode for search: on', change: { kind: 'devMode', plugin: 'search', on: false } },
       { line: 'unsigned builds trusted: 1', change: null },
     ])
   })
@@ -130,7 +144,7 @@ describe('what the trusted window draws', () => {
     expect(screen(calm({ luoshu: '/Users/someone/notes' })).luoshu).toBe('Notes folder: /Users/someone/notes')
   })
 
-  it('gives a folder plugin its dev mode switch and a plugin holding exec its any command switch', () => {
+  it('gives a plugin holding exec its any command switch, its dev mode drawn in the Dev group', () => {
     const exec = { type: 'exec', commands: [['git', 'status']], env: [] } as unknown as ListedPlugin['items'][number]['capability']
     const drawn = screen(calm({
       plugins: [
@@ -141,11 +155,8 @@ describe('what the trusted window draws', () => {
       switches: { devMode: ['search'], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
     }))
     expect(drawn.plugins.map(row => row.switches)).toEqual([
-      [{ line: 'dev mode: on', change: { kind: 'devMode', plugin: 'search', on: false } }],
-      [
-        { line: 'dev mode: off', change: { kind: 'devMode', plugin: 'git', on: true } },
-        { line: 'any command: off', change: { kind: 'exec.anyCommand', plugin: 'git', on: true } },
-      ],
+      [],
+      [{ line: 'any command: off', change: { kind: 'exec.anyCommand', plugin: 'git', on: true } }],
       [],
     ])
   })

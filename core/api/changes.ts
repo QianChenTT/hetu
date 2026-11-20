@@ -189,11 +189,3 @@ export function withdrawnWith(change: Change): readonly string[] {
   if (change.kind === 'agent.connect') return [agentDoor.plugin]
   return change.kind === 'agent.ask' ? [change.plugin, 'mcp-http-handler'] : []
 }
-
-// What the human types to prove attention before Confirm arms: a security control's id to switch it off, recording's
-// included, the moments protection goes away. Every other Confirm has the input delay alone, so typing doesn't become a
-// habit
-export function mustType(change: Change): string | null {
-  if (change.kind === 'plugin.off' && isSecurityControl(change.plugin)) return change.plugin
-  return null
-}

@@ -3,6 +3,7 @@ import { defaultLimits, MAX_TIMER_MS } from '../../api/limits.ts'
 import type { Gate, GrantRiskClassifier, Opening, Provider, StorageRole } from '../../api/policy-jobs.ts'
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Beating, Heartbeat, HeartbeatModule } from '../heartbeat/header.ts'
+import type { SecurityView } from '../security-view/header.ts'
 import type { Exec } from '../providers/exec/header.ts'
 import type { History } from '../providers/history/header.ts'
 import type { Luoshu } from '../providers/luoshu/header.ts'
@@ -16,8 +17,9 @@ import {
 const closing = [...coreModuleIds].reverse()
 
 // The modules that run on through shutdown and the stopped mode until hetu ends, since they hold nothing open and the
-// human's way back in needs them: flood control and recording, which writes the last records
-const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording'])
+// human's way back in needs them: flood control, recording, which writes the last records, and the security view, which
+// holds the stopped mode's choices for the Confirm
+const lasting: ReadonlySet<CoreModuleId> = new Set(['flood-control', 'recording', 'security-view'])
 
 const isModule = (id: string): id is CoreModuleId => (coreModuleIds as readonly string[]).includes(id)
 
@@ -36,6 +38,7 @@ export class CoreModules implements Holder {
   private readonly execOf: Exec
   private readonly floodControlOf: FloodControl
   private readonly heartbeatOf: HeartbeatModule
+  private readonly securityViewOf: SecurityView
   private off = new Set<string>()
   // The modules whose last start threw or ran out of time and those whose last push threw
   private readonly startFailed = new Set<CoreModuleId>()
@@ -66,6 +69,7 @@ export class CoreModules implements Holder {
     this.execOf = options.exec
     this.floodControlOf = options.floodControl
     this.heartbeatOf = options.heartbeat
+    this.securityViewOf = options.securityView
   }
 
   state(id: CoreModuleId): ModuleState {
@@ -103,8 +107,14 @@ export class CoreModules implements Holder {
     return this.serving('storage') ? this.storageOf : null
   }
 
+  // Flood control and the security view have no start of their own, so each serves from the first call on unless the
+  // human has it off, the stopped mode at start included
   floodControl(): FloodControl | null {
-    return this.serving('flood-control') ? this.floodControlOf : null
+    return this.off.has('flood-control') ? null : this.floodControlOf
+  }
+
+  securityView(): SecurityView | null {
+    return this.off.has('security-view') ? null : this.securityViewOf
   }
 
   // The heartbeat while on, each thing it is told kept from throwing: a throw skips that beat with a fault

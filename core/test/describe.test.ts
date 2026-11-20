@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { change, changeKinds, classRaised, mustType, type ClassRaised } from '../api/changes.ts'
+import { change, changeKinds, classRaised, type ClassRaised } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
+
+const { mustType } = createSecurityView()
 
 const HASH = 'a'.repeat(64)
 const one = (input: unknown) => change.parse(input)

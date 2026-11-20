@@ -36,6 +36,8 @@ export type Screen = {
     id: string, line: string, actions: PluginAction[], items: { line: string, on: boolean, capability: Capability }[], switches: Switch[]
   }[]
   switches: Switch[]
+  // Dev mode's settings: the hash checks skipped, which plugins load unhashed and the unsigned builds trusted
+  dev: Switch[]
   limits: Limit[]
   luoshu: string
   install: string
@@ -134,27 +136,34 @@ function itemsOf(plugin: ListedPlugin): Screen['plugins'][number]['items'] {
 
 const state = (on: boolean) => (on ? 'on' : 'off')
 
-// The switches for all of hetu, each with the change its button asks for, then the per-plugin ones that are on. Unsigned
-// builds get a button with plugin provenance, which names them
+// The switches for all of hetu, each with the change its button asks for, then the plugins any command is on for
 function switchesOf(list: SecurityList): Switch[] {
   const { switches } = list
   const rows: Switch[] = [
     { line: `Confirm off for this window: ${state(switches.confirmOff)}`, change: { kind: 'confirmOff', on: !switches.confirmOff } },
+  ]
+  if (switches.execAnyCommand.length > 0) rows.push({ line: `any command: ${switches.execAnyCommand.join(', ')}`, change: null })
+  return rows
+}
+
+// The Dev group: the hash checks skipped, dev mode for each plugin-folder plugin, which then loads unhashed, and the
+// unsigned builds trusted, which a button with plugin provenance names
+function devOf(list: SecurityList): Switch[] {
+  const { switches } = list
+  const rows: Switch[] = [
     { line: `Verification skipped: ${state(switches.skipVerification)}`, change: { kind: 'skipVerification', on: !switches.skipVerification } },
   ]
-  if (switches.devMode.length > 0) rows.push({ line: `dev mode: ${switches.devMode.join(', ')}`, change: null })
-  if (switches.execAnyCommand.length > 0) rows.push({ line: `any command: ${switches.execAnyCommand.join(', ')}`, change: null })
+  for (const plugin of list.plugins.filter(one => one.from === 'folder')) {
+    const on = switches.devMode.includes(plugin.id)
+    rows.push({ line: `dev mode for ${plugin.id}: ${state(on)}`, change: { kind: 'devMode', plugin: plugin.id, on: !on } })
+  }
   if (switches.allowUnsigned.length > 0) rows.push({ line: `unsigned builds trusted: ${switches.allowUnsigned.length}`, change: null })
   return rows
 }
 
-// Dev mode for a plugin-folder plugin, which it loads unhashed, and any command for one holding exec
+// Any command for a plugin holding exec
 function pluginSwitches(plugin: ListedPlugin, list: SecurityList): Switch[] {
   const rows: Switch[] = []
-  if (plugin.from === 'folder') {
-    const on = list.switches.devMode.includes(plugin.id)
-    rows.push({ line: `dev mode: ${state(on)}`, change: { kind: 'devMode', plugin: plugin.id, on: !on } })
-  }
   if (plugin.items.some(item => item.capability.type === 'exec')) {
     const on = list.switches.execAnyCommand.includes(plugin.id)
     rows.push({ line: `any command: ${state(on)}`, change: { kind: 'exec.anyCommand', plugin: plugin.id, on: !on } })
@@ -192,6 +201,7 @@ export function screen(list: SecurityList): Screen {
       id: plugin.id, line: pluginLine(plugin), actions: actionsOf(plugin), items: itemsOf(plugin), switches: pluginSwitches(plugin, list),
     })),
     switches: switchesOf(list),
+    dev: devOf(list),
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
     install: INSTALL_LINE,

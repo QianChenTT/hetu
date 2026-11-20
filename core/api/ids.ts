@@ -61,8 +61,9 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
 })
 
 // The core modules whose switch is a security control's though they judge no call: flood control, which bounds what
-// plugins and windows may cost main, and recording, which keeps what happened
-export const guardingModuleIds = frozen(['flood-control', 'recording'] as const)
+// plugins and windows may cost main, recording, which keeps what happened, and the security view, which holds each
+// change that widens for the human's Confirm
+export const guardingModuleIds = frozen(['flood-control', 'recording', 'security-view'] as const)
 
 // The security controls: the policy job holders, every guard core/api expects and the guarding modules. Switching one
 // off widens what plugins may do and is typed. The log is the core's own and the providers serve powers without
@@ -75,7 +76,7 @@ export function isSecurityControl(id: string): boolean {
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
 // their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
 // start in this order, the ones after them have no start of their own
-export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording'] as const)
+export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
 // Core plugins, which load only from the install: mcp-http-handler in a utility process and hidden-marks in the

@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { PendingRequest } from '../../api/actions.ts'
-import { lapseOf, mustType, type Change, type ChangeEffect } from '../../api/changes.ts'
+import { lapseOf, type Change, type ChangeEffect } from '../../api/changes.ts'
 import type { Caller } from '../../api/envelope.ts'
 import type { Field } from '../../lib/event-log.ts'
-import type { Landing } from './header.ts'
+import type { Asked, Confirmed, InLine, SecurityView } from '../security-view/header.ts'
+import type { Landing, PluginsRecording } from './header.ts'
 
 // Requests that wait for the human at once from one sender: each window role and the core. A plugin's own asks wait
 // within its firstUseAsks. A fixed cap and not a limit, so one window can't fill the places the trusted window
@@ -25,6 +26,10 @@ export type RequestHost = {
   // change found nothing to change, which a narrowing records nothing for
   applyNow(change: Change, confirmed: boolean): Promise<void | 'unchanged'>
   record(event: string, fields: Record<string, Field>, signal?: AbortSignal): Promise<Landing>
+  // The security view while the human has it on, which decides whether a change waits and whether a Confirm counts,
+  // and where a throw of it is recorded
+  view(): SecurityView | null
+  fault(step: string): void
   confirmOff(): boolean
   // The human cancelled a request a plugin's call raised
   declined(plugin: string, change: Change): void
@@ -37,10 +42,9 @@ export type RequestHost = {
   delayMs: number
   // How long a Confirm waits for its record to land, CONFIRM_RECORD_MS unless a test names another
   recordMs?: number
-  // Writes what waits to be recorded, within ms, and gives back how many records still wait. The audit writer then
+  // Recording, which drains what waits to be recorded within ms and gives back how many records still wait, and then
   // writes nothing until recording is off or resume is called
-  drain(ms: number): Promise<number>
-  resume(): void
+  recording: Pick<PluginsRecording, 'drain' | 'resume'>
 }
 
 export type RequestAnswer = { applied: true } | { held: string }
@@ -76,9 +80,10 @@ function fieldsOf(change: Change, key: string): Record<string, Field> {
 
 const windowOf = (from: Caller) => (from.kind === 'window' ? from.role : from.kind)
 
-// Security requests: a narrowing change applies at once with its record. A widening or destroying one waits under a
-// core id with the fingerprint of the state it read, until the trusted window's Confirm or Cancel. The Confirm record
-// lands first, so a widening never applies without it
+// Security requests: the security view decides whether a change applies at once with its record, lands its record and
+// applies or waits under a core id with the fingerprint of the state it read, until the trusted window's Confirm or
+// Cancel. The Confirm record lands first, so a widening never applies without it. With the view off every change a
+// window asks for applies unasked, its record first, and the editor window may only switch the view on again
 export class Requests {
   private readonly held = new Map<string, Held>()
   private readonly host: RequestHost
@@ -87,6 +92,16 @@ export class Requests {
 
   constructor(host: RequestHost) {
     this.host = host
+  }
+
+  // The word the security view asks for before a request's Confirm counts, none while it is off or when it throws
+  typed(change: Change): string | null {
+    try {
+      return this.host.view()?.mustType(change) ?? null
+    } catch {
+      this.host.fault('mustType')
+      return null
+    }
   }
 
   // Each request with its change, oldest first
@@ -104,17 +119,15 @@ export class Requests {
   async request(change: Change, from: Caller): Promise<RequestAnswer> {
     const key = canonical(change)
     const fields = { ...fieldsOf(change, key), window: windowOf(from) }
-    const effect = this.host.effect(change)
-    if (effect === 'narrows') {
+    const asked = this.asked(change, from)
+    if (asked === 'apply') {
       const applied = await this.host.exclusive(() => this.host.applyNow(change, false))
       if (applied !== 'unchanged') void this.host.record('security.applied', { ...fields, by: 'narrows' })
       return { applied: true }
     }
-    // The human's second deliberate step: changes the trusted window itself asks for skip the Confirm.
-    // The record still lands before anything widens. A change that asks for typing still waits for it, since the
-    // switch skips the click and not the proof of attention that switching protection off asks for
-    if (from.kind === 'window' && from.role === 'trusted' && this.host.confirmOff() && mustType(change) === null) {
-      await this.host.exclusive(() => this.landThenApply(change, { ...fields, by: 'confirm-off' }))
+    // The record still lands before anything widens
+    if (asked !== 'hold') {
+      await this.host.exclusive(() => this.landThenApply(change, { ...fields, by: asked === 'land' ? 'confirm-off' : 'view-off' }))
       return { applied: true }
     }
     const held = this.hold(change, key, fields, null, MAX_PENDING, fields.window as string)
@@ -180,19 +193,18 @@ export class Requests {
     this.moved()
   }
 
-  // Only the trusted window's Confirm reaches here, which the carrier checks first. Only the request first in line counts,
-  // once it has been first for the delay, so a click aimed at the request before can't land on the next one drawn in its
-  // place. A change that asks for typing needs the word typed exactly. One whose state moved since the request is
-  // dropped as stale
+  // Only the trusted window's Confirm reaches here, which the carrier checks first. The security view says whether the
+  // click counts, from how long the request has been first in line and what was typed. One whose state moved since the
+  // request is dropped as stale
   confirm(id: string, options: { typed?: string }): Promise<void> {
     return this.host.exclusive(async () => {
       this.lapse()
       const one = this.held.get(id)
       if (one === undefined) throw { code: 'not-found' }
       const head = this.head
-      if (head === null || head.id !== id || this.host.clock() - head.at < this.host.delayMs) throw { code: 'throttled' }
-      const word = mustType(one.change)
-      if (word !== null && options.typed !== word) throw { code: 'invalid' }
+      const inLine: InLine = head === null || head.id !== id ? null : { waited: this.host.clock() - head.at, delayMs: this.host.delayMs }
+      const confirmed = this.confirmed(one.change, inLine, options.typed)
+      if (confirmed !== 'ok') throw { code: confirmed }
       const fields = { ...fieldsOf(one.change, one.key), window: 'trusted' }
       if (await this.host.fingerprint(one.change) !== await one.fingerprint) {
         this.drop(id)
@@ -207,6 +219,39 @@ export class Requests {
       await this.landThenApply(one.change, { ...fields, by: 'confirm' }, still)
       this.drop(id)
     })
+  }
+
+  // The security view's word on a change a window asked for. Off, a narrowing one applies at once and every other one
+  // unasked, and the editor window may send only the change that switches it on again. A throw, or a word outside the
+  // list, applies nothing
+  private asked(change: Change, from: Caller): Asked | 'unasked' {
+    const effect = this.host.effect(change)
+    const view = this.host.view()
+    if (view === null) {
+      const editor = from.kind === 'window' && from.role === 'editor'
+      if (editor && !(change.kind === 'plugin.on' && change.plugin === 'security-view')) throw { code: 'not-granted' }
+      return effect === 'narrows' ? 'apply' : 'unasked'
+    }
+    let asked: unknown
+    try {
+      asked = view.asked(change, effect, from, this.host.confirmOff())
+    } catch {}
+    if (asked === 'apply' || asked === 'land' || asked === 'hold') return asked
+    this.host.fault('asked')
+    throw { code: 'failed' }
+  }
+
+  // Whether a Confirm counts, at once while the view is off. A throw, or a word outside the list, counts nothing
+  private confirmed(change: Change, inLine: InLine, typed: string | undefined): Confirmed | 'failed' {
+    const view = this.host.view()
+    if (view === null) return 'ok'
+    let confirmed: unknown
+    try {
+      confirmed = view.confirms(change, inLine, typed)
+    } catch {}
+    if (confirmed === 'ok' || confirmed === 'throttled' || confirmed === 'invalid') return confirmed
+    this.host.fault('confirms')
+    return 'failed'
   }
 
   // Drops the requests a change made pointless, such as an update a newer one replaced, so none can be confirmed for
@@ -242,7 +287,7 @@ export class Requests {
     const stopping = change.kind === 'plugin.off' && change.plugin === 'recording'
     const whole = this.host.recordMs ?? CONFIRM_RECORD_MS
     const wait = stopping ? whole / 2 : whole
-    if (stopping) fields = { ...fields, unwritten: await this.host.drain(wait) }
+    if (stopping) fields = { ...fields, unwritten: await this.host.recording.drain(wait) }
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), wait)
     let landing: Landing
@@ -253,13 +298,13 @@ export class Requests {
     }
     if (landing === 'lost' && !stopping) throw { code: 'failed' }
     if (!still()) {
-      if (stopping) this.host.resume()
+      if (stopping) this.host.recording.resume()
       throw { code: 'not-found' }
     }
     try {
       await this.host.applyNow(change, fields.by === 'confirm')
     } catch {
-      if (stopping) this.host.resume()
+      if (stopping) this.host.recording.resume()
       void this.host.record('security.failed', fields)
       throw { code: 'failed' }
     }

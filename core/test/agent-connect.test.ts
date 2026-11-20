@@ -2,10 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { coreActions, type SecurityList } from '../api/actions.ts'
 import type { Capability } from '../api/capabilities.ts'
 import {
-  agentConnect, change, changeEffect, changeKinds, connectLabel, lapseOf, MAX_CLIENT_NAME_LENGTH, mustType, withdrawnWith, type AgentConnect,
+  agentConnect, change, changeEffect, changeKinds, connectLabel, lapseOf, MAX_CLIENT_NAME_LENGTH, withdrawnWith, type AgentConnect,
 } from '../api/changes.ts'
 import { describeChange } from '../api/describe.ts'
 import type { Caller } from '../api/envelope.ts'
+import { createSecurityView } from '../backend/security-view/security-view.ts'
 import type { Call } from '../api/policy-jobs.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { connectChange, Connects, type ConnectAsked } from '../backend/plugins-manager/connects.ts'
@@ -36,7 +37,7 @@ describe('the agent.connect kind', () => {
 
   it('widens with nothing to type, lapses a minute after it was raised and goes when http stops', () => {
     expect(changeEffect(connect)).toBe('widens')
-    expect(mustType(connect)).toBeNull()
+    expect(createSecurityView().mustType(connect)).toBeNull()
     expect(lapseOf(connect)).toBe(60_000)
     expect(withdrawnWith(connect)).toEqual(['mcp-http-handler'])
   })

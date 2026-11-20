@@ -371,6 +371,7 @@ describe('each core module\'s Node built-ins', () => {
       'flood-control': [],
       heartbeat: [],
       recording: [],
+      'security-view': [],
     })
     expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
   })
