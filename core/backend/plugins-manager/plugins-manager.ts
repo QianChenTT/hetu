@@ -669,15 +669,15 @@ ${capabilityKey(change.capability)}`)
     if (answer === null && classing === 'on') classing = 'down'
     const verdicts = new Map(answer?.plugins.map(verdict => [verdict.id, verdict]))
     const notice = { cause, by: id }
-    const decide = (other: string, before: Plugin | null, next: Plugin) =>
+    const entryOf = (other: string, before: Plugin | null, next: Plugin) =>
       this.decided({ id: other, before, after: next, verdict: verdicts.get(other) ?? null, classing, confirm, notice,
         fresh: other === id && cause === 'update' && !confirm })
     const before = id === null ? null : this.state.plugins[id] ?? null
-    const own = id === null ? null : after === null ? { id, entry: null, changed: before !== null, rises: false } : decide(id, before, after)
+    const own = id === null ? null : after === null ? { id, entry: null, changed: before !== null, rises: false } : entryOf(id, before, after)
     const others: Decided[] = []
     for (const [other, entry] of Object.entries(this.state.plugins)) {
       if (other === id || this.known.get(other)?.from === 'install' || (answer !== null && !verdicts.has(other))) continue
-      const decided = decide(other, entry, entry)
+      const decided = entryOf(other, entry, entry)
       if (decided.changed) others.push(decided)
     }
     const down = `The grant risk classifier is down, so the class is unknown and counted as ${highestClass}: every item asks at its first use`
