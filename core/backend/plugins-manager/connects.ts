@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { consentAsk, type ConsentAsk } from '../../api/changes.ts'
+import { grantKeyOf } from '../../api/envelope.ts'
 
 // A client's connect a utility half asks for: the change the core raises for it and the connect's state until the
 // same plugin collects the human's answer. The hosts are taken here with the URL parser the utility process uses, so
@@ -66,14 +67,14 @@ export class Connects {
 
   // Raises a connect for the plugin and gives back its handle, random so no other caller can guess it. One waits in
   // all, a client id the human cancelled a connect of waits CONSENT_PAUSE_MS for that plugin and a pair the core holds
-  // already is refused
+  // already is refused, the pair of the field's grant key, so another session of a client the core holds is too
   ask(asked: ConnectAsked, plugin: string): string {
     const change = connectChange(asked, plugin)
     if (change === null) throw { code: 'invalid' }
     const until = this.paused.get(pausedKey(change))
     if (until !== undefined && this.host.clock() < until) throw { code: 'throttled' }
     if (this.waits()) throw { code: 'throttled' }
-    if (this.host.inUse({ root: plugin, field: change.field })) throw { code: 'not-granted' }
+    if (this.host.inUse({ root: plugin, field: grantKeyOf(change.field) })) throw { code: 'not-granted' }
     if (!this.host.raise(change)) throw { code: 'throttled' }
     const handle = randomBytes(24).toString('base64url')
     this.waiting = { handle, change }
@@ -95,7 +96,7 @@ export class Connects {
   // the connect waited fails it
   confirmed(change: ConsentAsk): void {
     if (this.waiting?.change !== change) throw new Error('no connect waits for this Confirm')
-    if (this.host.inUse({ root: change.plugin, field: change.field })) throw new Error('the pair is held already')
+    if (this.host.inUse({ root: change.plugin, field: grantKeyOf(change.field) })) throw new Error('the pair is held already')
     this.answered('yes')
   }
 
