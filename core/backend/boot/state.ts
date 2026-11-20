@@ -128,9 +128,9 @@ const switchesFields = {
 const switchesFile = z.strictObject({ format, ...switchesFields })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
 
-// Format 2 held the items and the revoked labels of agents on one plugin's entry and the revoked labels in the switches
-// while that entry was gone. A pair's items now last for one run, so the reader drops them and reads the rest as this
-// format. Read only at boot and written back in this format once
+// Format 2 held items and revoked labels by label on one plugin's entry (agents, revoked) and revoked labels in the
+// switches while that entry was gone (revokedAgents). A pair's items now last for one run, so the reader drops them
+// and reads the rest as this format. Read only at boot and written back in this format once
 const dropped = z.array(z.unknown()).max(MAX_LISTED, { abort: true }).optional()
 const switchesOlder = z.strictObject({ format: z.literal(OLDER), ...switchesFields, revokedAgents: dropped })
   .transform(({ revokedAgents, ...rest }) => ({ ...rest, format: FORMAT }))

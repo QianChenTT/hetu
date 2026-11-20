@@ -55,7 +55,7 @@ export type PluginsManagerOptions = {
   // The human set a limit for this plugin, or for all and so for each, once the value is written, for the runtime to pass
   // the plugin's limits as they are now to its running halves
   limited?: (plugin: string) => void
-  // A clock no change of the wall clock moves, for how long a request is first in line and how long an agent's ask
+  // A clock no change of the wall clock moves, for how long a request is first in line and how long an ask for a pair
   // waits. performance.now unless a test names another
   clock?: () => number
 }
