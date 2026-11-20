@@ -1,4 +1,4 @@
-import { LIST_PAGE, providerActions } from '../../api/actions.ts'
+import { LIST_PAGE, providerActions, subscribeAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { token, type Caller, type RefusalCode } from '../../api/envelope.ts'
 import { guardableActions } from '../../api/ids.ts'
@@ -158,10 +158,10 @@ export function listable(c: Context, caller: Caller, path: string): boolean {
 // An ask is the item's first use: the prompt holds a request for the human, or can't for now, and the subscription
 // waits for the Confirm. A declined ask refuses
 export function recheck(c: Context, caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask' {
-  const asker: Asker = { caller, onBehalf: undefined, action: 'events.subscribe' }
+  const asker: Asker = { caller, onBehalf: undefined, action: subscribeAction.action }
   const scope: Scope = frozen({ topics: [topic] })
   for (const stage of ['raw', 'canonical'] as const) {
-    const refused = decideFor(c, asker, stage, 'events.subscribe', scope)
+    const refused = decideFor(c, asker, stage, subscribeAction.capability, scope)
     if (refused === null) continue
     if (refused.code === 'needs-confirm' || refused.code === 'throttled') return 'ask'
     const none = refused.code === 'starting' || refused.code === 'policy-down' || refused.code === 'stale'

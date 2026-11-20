@@ -208,15 +208,23 @@ export const coreActions = lookup<CoreAction>(coreTable)
 // The bus's actions, which the router serves itself. The floor decides who may name which topic and the gate judges a
 // subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
 // caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call.
-// does is what the bus does with it
-export type EventAction = { readonly args: z.ZodType, readonly does: 'subscribe' | 'unsubscribe' | 'publish' }
+// does is what the bus does with it. A subscribe names the capability the gate judges it under
+export type EventAction = { readonly args: z.ZodType } & (
+  | { readonly does: 'subscribe', readonly capability: CapabilityType }
+  | { readonly does: 'unsubscribe' }
+  | { readonly does: 'publish' }
+)
 
 const eventTable = {
-  'events.subscribe': { args: topics, does: 'subscribe' },
+  'events.subscribe': { args: topics, does: 'subscribe', capability: 'events.subscribe' },
   'events.unsubscribe': { args: topics, does: 'unsubscribe' },
   'events.publish': { args: z.strictObject({ topic: qualifiedName, path: path.optional() }), does: 'publish' },
 } satisfies Record<string, EventAction>
 export const eventActions = lookup<EventAction>(eventTable)
+// The subscribe with the capability it is judged under, which the router asks the gate about again for every
+// subscription the bus holds
+const subscribeName = 'events.subscribe' satisfies keyof typeof eventTable
+export const subscribeAction = frozen({ action: subscribeName, capability: eventTable[subscribeName].capability })
 
 const key = z.strictObject({ key: localName })
 const keyed = z.strictObject({ key: localName, value: z.unknown() })

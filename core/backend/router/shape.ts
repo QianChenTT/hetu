@@ -168,7 +168,7 @@ function eventsFloor(c: Context, caller: Caller, spec: EventAction, args: unknow
   const own = (topic: string) => caller.kind === 'plugin' && namespaceOf(topic) === caller.id
   const gated = topics.filter(topic => !isOne(coreTopics, topic) && !own(topic))
   if (gated.length === 0) return { kind: 'free' }
-  return { kind: 'power', capability: 'events.subscribe', scope: frozen({ topics: gated }) }
+  return { kind: 'power', capability: spec.capability, scope: frozen({ topics: gated }) }
 }
 
 // Whether the plugin's manifest declared the topic, published as <id>.<name>

@@ -30,9 +30,11 @@ function stringsOf(source: string): string[] {
   return found
 }
 
-// Words the router still writes that a namespace, a part or an action spells the same: the capability types it asks the
-// gate about, plugin among what a caller is and the policy jobs, whose states it reads by id until their doors say them
-const kept = new Set<string>([...capabilityTypes, 'plugin', ...policyJobIds])
+// Words the router still writes that a namespace or a part spells the same: the capability types it asks the gate
+// about, plugin among what a caller is and the policy jobs, whose states it reads by id until their doors say them. A
+// capability type an action spells too comes through the contract, as the action does
+const actionNames = new Set<string>([...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions)])
+const kept = new Set<string>([...capabilityTypes, 'plugin', ...policyJobIds].filter(word => !actionNames.has(word)))
 
 describe('the namespace table', () => {
   it('gives every action of the contract a server, by the route its table takes', () => {
@@ -43,10 +45,7 @@ describe('the namespace table', () => {
   })
 
   it('leaves no action name, namespace or part as a string in the router', () => {
-    const names = new Set<string>([
-      ...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions),
-      ...Object.keys(namespaces), ...Object.values(namespaces).map(server => server.part),
-    ])
+    const names = new Set<string>([...actionNames, ...Object.keys(namespaces), ...Object.values(namespaces).map(server => server.part)])
     const found: string[] = []
     for (const file of readdirSync(folder).filter(name => name.endsWith('.ts')).sort()) {
       for (const text of stringsOf(readFileSync(path.join(folder, file), 'utf8'))) {
