@@ -442,7 +442,7 @@ describe('requests the core raises itself', () => {
 })
 
 describe('the wiring', () => {
-  it('hands the carrier its asks, the core actions it serves and its listeners through the carrier\'s door as it is built', async () => {
+  it('hands the router its asks, the core actions it serves and its listeners through the router\'s door as it is built', async () => {
     const made = await harness()
     expect(made.link.handed.asks).toBe(made.pluginsManager.asks)
     expect(Object.fromEntries(made.link.handed.served)).toEqual({ 'plugins-manager': made.pluginsManager.serve })

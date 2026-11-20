@@ -179,7 +179,7 @@ export function createExec(options: ExecOptions = {}): Exec {
       ready.delete(call.callId)
       const dir = home
       if (dir === null || view === null) throw refused('unavailable')
-      // The command the carrier had judged, which is the one prepare settled or the call fails
+      // The command the router had judged, which is the one prepare settled or the call fails
       const command = prepared.scope.command ?? (call.args as { command?: unknown }).command
       if (kept === undefined || !strings(command) || commandKey(command) !== kept.key || call.caller.kind !== 'plugin') throw refused('failed')
       const id = call.caller.id

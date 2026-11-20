@@ -50,7 +50,7 @@ function handing(folder: string | null = null, readyMs = 10000) {
 
 let n = 0
 
-// prepare then perform, as the carrier makes a call
+// prepare then perform, as the router makes a call
 async function ask(served: Provider, action: string, args: unknown): Promise<unknown> {
   const call: Call = { callId: `c${++n}`, caller: editor, action, args, deadline: Date.now() + 30000 }
   const prepared = await served.prepare(call)

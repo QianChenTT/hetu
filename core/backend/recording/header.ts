@@ -3,7 +3,7 @@ import type { Field } from '../../lib/event-log.ts'
 
 // What recording provides: the core record lane, the coalesced core records, the audit queue and its writer, the reads
 // of the log and the log's failing state. Definitions only, recording.ts implements them and the join makes the one the
-// carrier and the plugins manager call
+// router and the plugins manager call
 
 // What the core record lane writes through: the one EventLog boot opened, or something with its append. healthy still
 // true after a failed append means the log refused that record, not that the log is down
@@ -31,7 +31,7 @@ export type Join = (held: Record<string, Field> | null, next: Record<string, Fie
 // A coalesced record keyed on part of its fields, joining what the later hits carried
 export type Keyed = { by: Record<string, Field>, join: Join }
 
-// One call's audit record as the carrier hands it, before the queue numbers it
+// One call's audit record as the router hands it, before the queue numbers it
 export type CallRecord = Omit<AuditRecord, 'seq' | 'count'>
 
 // Nothing is taken in while the human has recording off, when every write answers muted. Reads of the log answer

@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_CALL_TOPICS } from '../api/actions.ts'
 import { event as eventShape, signal as signalShape } from '../api/envelope.ts'
-import type { CarrierOptions } from '../backend/carrier/header.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
+import type { RouterOptions } from '../backend/router/header.ts'
+import type { Router } from '../backend/router/router.ts'
 import {
   cleanup, code, editor, harness, type HarnessOptions, host, hostHalf, tick, trusted, windowWay, worker, type FakeGate, type FakeLog, type Message, type Side,
-} from './carrier-fakes.ts'
+} from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -21,7 +21,7 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
   }
 }
 
-// A call on the half's own port, answered only once the carrier has read everything the half sent before it, acks
+// A call on the half's own port, answered only once the router has read everything the half sent before it, acks
 // included. Another port's messages can overtake them
 const roundTrip = (side: Side) => side.ask('core.self')
 
@@ -30,12 +30,12 @@ const heard = (messages: Message[], topic: string) => messages.filter(message =>
 // The topics each signal of one kind named, in the order they came
 const signals = (messages: Message[], topic: 'events.dropped' | 'events.ended') => heard(messages, topic).map(message => message.topics)
 
-// The luoshu module publishes luoshu.changed and luoshu.outside with a path through the carrier, search publishes search.indexed with none. search reads
+// The luoshu module publishes luoshu.changed and luoshu.outside with a path through the router, search publishes search.indexed with none. search reads
 // notes/**, scribe reads every path and git hears search.indexed. way is the editor window and trustedWay the trusted one,
 // each holding its window grants and each with its own inbox
 function setup(over: HarnessOptions = {}) {
   const parts = harness(over)
-  const { carrier, pluginsManager, gate, connect } = parts
+  const { router, pluginsManager, gate, connect } = parts
   pluginsManager.sandboxed('search')
   pluginsManager.plugins.search.topics = ['indexed']
   pluginsManager.sandboxed('scribe')
@@ -46,21 +46,21 @@ function setup(over: HarnessOptions = {}) {
   ]
   gate.grants.scribe = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
   gate.grants.git = [{ type: 'events.subscribe', topics: ['search.indexed'] }]
-  const way = windowWay(carrier, { 'editor-1': editor })
-  const trustedWay = windowWay(carrier, { trusted })
+  const way = windowWay(router, { 'editor-1': editor })
+  const trustedWay = windowWay(router, { trusted })
   const search = connect(worker('search'))
   const scribe = connect(worker('scribe'))
   const git = connect(worker('git'))
   // The luoshu telling its subscribers a note changed or changed outside hetu
-  const edited = async (path: string) => carrier.publishCore('luoshu', 'changed', path)
-  const outside = async (path: string) => carrier.publishCore('luoshu', 'outside', path)
+  const edited = async (path: string) => router.publishCore('luoshu', 'changed', path)
+  const outside = async (path: string) => router.publishCore('luoshu', 'outside', path)
   const indexed = () => search.ask('events.publish', { topic: 'search.indexed' })
   return { ...parts, way, trustedWay, search, scribe, git, edited, outside, indexed }
 }
 
 describe('a gate outage end to end, the bus\'s proof', () => {
   it('holds every path back while the gate is down, keeps path-less events flowing and resyncs each path subscriber exactly once', async () => {
-    const { carrier, connect, pluginsManager, search, scribe, git, way, trustedWay, edited, indexed } = setup()
+    const { router, connect, pluginsManager, search, scribe, git, way, trustedWay, edited, indexed } = setup()
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     expect((await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed', 'core.status'] })).result).toEqual({ standing: [] })
@@ -70,7 +70,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(paths(way.events())).toEqual(['notes/a.md'])
 
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     // Subscribes made while the gate is down stand. scribe holds the grant and ghost doesn't, which nobody can tell yet
     const ghost = connect(worker('ghost'))
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
@@ -79,7 +79,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     await indexed()
     // The gate's next push throwing too is the same outage
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await edited('notes/c.md')
     await indexed()
     await until(() => heard(git.events(), 'search.indexed').length === 2)
@@ -97,7 +97,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(heard(trustedWay.events(), 'core.status')).toHaveLength(2)
 
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await edited('notes/d.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 2)
     await settle()
@@ -125,19 +125,19 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
   // Sent whether or not a path was held back, so the signal can't tell a subscriber that a note it can't read changed
   it('gives each outage its own events.dropped, one with nothing published included, and none to a later subscriber', async () => {
-    const { carrier, pluginsManager, search, scribe, edited } = setup()
+    const { router, pluginsManager, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     for (let round = 1; round <= 2; round++) {
       pluginsManager.policyJobs.gate = 'failed'
-      carrier.changed()
+      router.changed()
       if (round === 1) await edited('secret/x.md')
       pluginsManager.policyJobs.gate = 'on'
-      carrier.changed()
+      router.changed()
       await until(() => signals(search.events(), 'events.dropped').length === round)
     }
     // scribe subscribes only now and gets nothing to resync
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    carrier.changed()
+    router.changed()
     await edited('notes/y.md')
     await until(() => paths(scribe.events()).length === 1)
     expect(signals(scribe.events(), 'events.dropped')).toEqual([])
@@ -145,14 +145,14 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   })
 
   it.each(['absent'] as const)('keeps a subscribe made while the gate is %s standing', async state => {
-    const { carrier, pluginsManager, scribe, edited } = setup()
+    const { router, pluginsManager, scribe, edited } = setup()
     pluginsManager.policyJobs.gate = state
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     await edited('notes/a.md')
     await settle()
     expect(scribe.events()).toEqual([])
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await edited('notes/b.md')
     await until(() => paths(scribe.events()).length === 1)
     expect(signals(scribe.events(), 'events.dropped')).toEqual([['luoshu.changed']])
@@ -174,14 +174,14 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   it('treats a gate on with no holder to ask as down, then resyncs', async () => {
     let holder = true
     let held: FakeGate | null = null
-    const { carrier, search, edited, gate } = setup({ gate: () => holder ? held : null })
+    const { router, search, edited, gate } = setup({ gate: () => holder ? held : null })
     held = gate
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     holder = false
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     holder = true
-    carrier.changed()
+    router.changed()
     await edited('notes/b.md')
     await until(() => paths(search.events()).length === 1)
     expect(search.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
@@ -191,19 +191,19 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   it('stands a subscribe while the gate is on with no holder, as the bus holds paths back then', async () => {
     let holder = true
     let held: FakeGate | null = null
-    const { carrier, scribe, edited, gate } = setup({ gate: () => holder ? held : null })
+    const { router, scribe, edited, gate } = setup({ gate: () => holder ? held : null })
     held = gate
     holder = false
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     holder = true
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await until(() => paths(scribe.events()).length === 1)
     expect(scribe.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/a.md'])
   })
 
   it('holds paths back and stands a subscribe while the grants snapshot can\'t be read, since every call is refused then', async () => {
-    const { carrier, pluginsManager, search, scribe, edited } = setup()
+    const { router, pluginsManager, search, scribe, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     pluginsManager.view = () => { throw new Error('unreadable') }
     expect((await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
@@ -212,7 +212,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(search.events()).toEqual([])
     expect(scribe.events()).toEqual([])
     pluginsManager.view = () => pluginsManager.current
-    carrier.changed()
+    router.changed()
     await edited('notes/b.md')
     await until(() => paths(search.events()).length === 1 && paths(scribe.events()).length === 1)
     for (const subscriber of [search, scribe]) {
@@ -223,14 +223,14 @@ describe('a gate outage end to end, the bus\'s proof', () => {
   // A gate that throws when asked again gave no answer, so nothing it holds hears anything until it answers. The bus
   // asks again at every sync rather than waiting for the key to move
   it('holds back every subscription the gate throws on when asked again and starts them at the next sync it answers', async () => {
-    const { carrier, pluginsManager, gate, search, scribe, edited, log } = setup()
+    const { router, pluginsManager, gate, search, scribe, edited, log } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.decision = () => { throw new Error('broken') }
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     // Neither started nor ended. The live one waits too, since the gate gave no answer
@@ -238,19 +238,19 @@ describe('a gate outage end to end, the bus\'s proof', () => {
     expect(scribe.events()).toEqual([])
     gate.decision = null
     // No state and no grants snapshot moved
-    carrier.changed()
+    router.changed()
     await edited('notes/b.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
     for (const subscriber of [search, scribe]) {
       expect(subscriber.events().map(message => message.path ?? message.topic)).toEqual(['events.dropped', 'notes/b.md'])
     }
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toContainEqual({ plugin: 'gate', step: 'precheck', count: 1 })
   })
 
   it('ends a live subscription a new grants snapshot took away though the gate threw when first asked again', async () => {
-    const { carrier, pluginsManager, gate, scribe, git, edited, indexed } = setup()
+    const { router, pluginsManager, gate, scribe, git, edited, indexed } = setup()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     gate.grants.scribe = [{ type: 'luoshu.read', paths: ['**'] }]
@@ -261,7 +261,7 @@ describe('a gate outage end to end, the bus\'s proof', () => {
       return gate.granted(access)
     }
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await indexed()
     await settle()
@@ -280,12 +280,12 @@ describe('a gate outage end to end, the bus\'s proof', () => {
 
 describe('asking again', () => {
   it('ends a subscription a new grants snapshot no longer grants with events.ended and sends it nothing more', async () => {
-    const { carrier, pluginsManager, gate, search, scribe, edited, outside } = setup()
+    const { router, pluginsManager, gate, search, scribe, edited, outside } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.outside'] }, { type: 'luoshu.read', paths: ['**'] }]
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await outside('notes/b.md')
     await until(() => paths(scribe.events()).length === 1 && paths(search.events()).length === 1)
@@ -297,23 +297,23 @@ describe('asking again', () => {
   })
 
   it('asks the gate nothing again while neither its state nor the grants snapshot moved', async () => {
-    const { carrier, gate, search } = setup()
+    const { router, gate, search } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    carrier.changed()
+    router.changed()
     const asked = gate.asked.length
-    carrier.changed()
-    carrier.changed()
+    router.changed()
+    router.changed()
     expect(gate.asked).toHaveLength(asked)
   })
 
   it('asks again at both stages and never about a topic no gate holds', async () => {
-    const { carrier, pluginsManager, gate, connect, search } = setup()
+    const { router, pluginsManager, gate, connect, search } = setup()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await panel.ask('events.subscribe', { topics: ['search.indexed'] })
     gate.asked.length = 0
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     expect(gate.asked.map(access => [access.stage, access.caller, access.capability, access.scope])).toEqual([
       ['raw', worker('search'), 'events.subscribe', { topics: ['luoshu.changed'] }],
       ['canonical', worker('search'), 'events.subscribe', { topics: ['luoshu.changed'] }],
@@ -322,11 +322,11 @@ describe('asking again', () => {
 
   // An answer on an older grants snapshot means the gate hasn't caught up yet, which refuses nothing
   it('holds back a subscription the gate answers on an older grants snapshot and starts it once the gate answers on this one', async () => {
-    const { carrier, pluginsManager, gate, search, edited } = setup()
+    const { router, pluginsManager, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     gate.decision = () => ({ allow: true, view: 1 })
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     expect(search.events()).toEqual([])
@@ -338,15 +338,15 @@ describe('asking again', () => {
   })
 
   it('narrows when the gate is switched back on: what was taken with the gate off and isn\'t granted ends', async () => {
-    const { carrier, pluginsManager, connect, edited } = setup()
+    const { router, pluginsManager, connect, edited } = setup()
     pluginsManager.policyJobs.gate = 'off'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('secret/a.md')
     await until(() => paths(ghost.events()).length === 1)
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await edited('secret/b.md')
     await until(() => signals(ghost.events(), 'events.ended').length === 1)
     await settle()
@@ -356,22 +356,22 @@ describe('asking again', () => {
   // No gate ever allowed what was taken with the gate off, so a gate switched back on that fails at start holds it
   // back, path-less events included
   it('holds back what was taken with the gate off when the gate switched back on fails, until the gate judges it', async () => {
-    const { carrier, pluginsManager, connect, indexed } = setup()
+    const { router, pluginsManager, connect, indexed } = setup()
     pluginsManager.policyJobs.gate = 'off'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     await ghost.ask('events.subscribe', { topics: ['search.indexed'] })
     await indexed()
     await until(() => heard(ghost.events(), 'search.indexed').length === 1)
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await indexed()
     await settle()
     expect(heard(ghost.events(), 'search.indexed')).toHaveLength(1)
     // A repeat now stands, so the plugin and the topic get one answer
     expect((await ghost.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await until(() => signals(ghost.events(), 'events.ended').length === 1)
     await indexed()
     await settle()
@@ -381,22 +381,22 @@ describe('asking again', () => {
   // A narrowing never asks the gate, so a grants snapshot that moves while the gate is down holds back
   // everything the gate allowed on the old one. What it didn't touch starts again once the gate answers
   it('holds back what the gate allowed on an older grants snapshot when the grants snapshot moves while the gate is down', async () => {
-    const { carrier, pluginsManager, gate, git, search, indexed, edited } = setup()
+    const { router, pluginsManager, gate, git, search, indexed, edited } = setup()
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await indexed()
     await until(() => heard(git.events(), 'search.indexed').length === 1)
     gate.grants.git = []
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await indexed()
     await settle()
     expect(heard(git.events(), 'search.indexed')).toHaveLength(1)
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: ['search.indexed'] })
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await indexed()
     await until(() => signals(git.events(), 'events.ended').length === 1 && paths(search.events()).length === 1)
@@ -415,11 +415,11 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   }
 
   it('waits, delivering nothing and ending nothing, and raises the Confirm for its item', async () => {
-    const { carrier, pluginsManager, gate, search, asks, edited } = setup()
+    const { router, pluginsManager, gate, search, asks, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await edited('notes/b.md')
     await settle()
@@ -432,17 +432,17 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 
   it('goes on after the Confirm with one events.dropped for what it missed while it waited', async () => {
-    const { carrier, pluginsManager, gate, search, edited } = setup()
+    const { router, pluginsManager, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     // The Confirm applies the item, which moves the grants snapshot
     gate.decision = null
     pluginsManager.current = 3
-    carrier.changed()
+    router.changed()
     await edited('notes/b.md')
     await until(() => paths(search.events()).length === 1)
     await settle()
@@ -451,21 +451,21 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 
   it('ends a waiting subscription the gate refuses and tells the plugin', async () => {
-    const { carrier, pluginsManager, gate, search, edited } = setup()
+    const { router, pluginsManager, gate, search, edited } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     gate.decision = null
     gate.grants.search = [{ type: 'luoshu.read', paths: ['notes/**'] }]
     pluginsManager.current = 3
-    carrier.changed()
+    router.changed()
     await until(() => signals(search.events(), 'events.ended').length === 1)
     expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
     // Gone for good: granted again, it hears nothing until it subscribes again
     gate.grants.search = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
     pluginsManager.current = 4
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     expect(search.events().map(message => message.topic)).toEqual(['events.ended'])
@@ -473,13 +473,13 @@ describe('a subscription whose first use the gate comes to ask about', () => {
 
   it('ends a waiting subscription once the human declined its Confirm, with no grants snapshot moved', async () => {
     let declined = false
-    const { carrier, pluginsManager, gate, search, edited } = setup({
+    const { router, pluginsManager, gate, search, edited } = setup({
       asks: { raise: () => (declined ? { code: 'not-granted', reason: 'declined' } : 'req-1') },
     })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     expect(search.events()).toEqual([])
@@ -493,7 +493,7 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   it('keeps waiting while its Confirm can\'t be raised and raises it at a later sync', async () => {
     let throttled = true
     const raised: string[] = []
-    const { carrier, pluginsManager, gate, search, edited } = setup({
+    const { router, pluginsManager, gate, search, edited } = setup({
       asks: { raise: ask => {
         if (throttled) return { code: 'throttled' }
         raised.push(ask)
@@ -503,7 +503,7 @@ describe('a subscription whose first use the gate comes to ask about', () => {
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await edited('notes/a.md')
     await settle()
     expect(search.events()).toEqual([])
@@ -516,15 +516,15 @@ describe('a subscription whose first use the gate comes to ask about', () => {
   })
 
   it('records the subscription as waiting, then as started after the Confirm', async () => {
-    const { carrier, pluginsManager, gate, search, log } = setup()
+    const { router, pluginsManager, gate, search, log } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     asking(gate, 2)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     gate.decision = null
     pluginsManager.current = 3
-    carrier.changed()
-    carrier.close()
+    router.changed()
+    router.close()
     await tick()
     const fields = (event: string) => log.events(event).map(record => record.fields)
     expect(fields('events.waiting')).toEqual([{ plugin: 'search', half: 'worker', topics: 'luoshu.changed', count: 1 }])
@@ -539,10 +539,10 @@ describe('a path with a dot segment', () => {
   const dotted = ['.obsidian/plugins/x/main.js', '.env', 'notes/.hidden.md', 'notes/deep/.config/x.md', '\u200c.obsidian/app.json', '.git/config']
 
   it.each(['on', 'off'] as const)('reaches no subscriber with the gate %s whatever the gate says, a plugin\'s publish answering invalid', async state => {
-    const { carrier, pluginsManager, gate, search, scribe, git, edited } = setup()
+    const { router, pluginsManager, gate, search, scribe, git, edited } = setup()
     gate.listable = () => true
     pluginsManager.policyJobs.gate = state
-    carrier.changed()
+    router.changed()
     for (const side of [search, scribe]) expect((await side.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     expect((await git.ask('events.subscribe', { topics: ['search.indexed'] })).ok).toBe(true)
     for (const path of dotted) {
@@ -570,10 +570,10 @@ describe('the gate off by the human', () => {
   }
 
   it.each([['on', false], ['off', true]] as const)('lets any subscribe through and every path out with recording %s', async (_name, nothing) => {
-    const { carrier, pluginsManager, connect, gate, edited } = setup()
+    const { router, pluginsManager, connect, gate, edited } = setup()
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.nothing = nothing
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
     await edited('secret/a.md')
@@ -594,10 +594,10 @@ describe('the gate off by the human', () => {
   // canList is true with the gate off by the human and deliveries are never logged, so the log's tie to calls with
   // power doesn't reach them, as filterReadable passes every path then too
   it('delivers every path once the log has failed, since only calls with power need the log', async () => {
-    const { at, carrier, gate, search, edited } = await failing()
+    const { at, router, gate, search, edited } = await failing()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     at(30_000)
-    carrier.changed()
+    router.changed()
     await edited('secret/a.md')
     await edited('secret/b.md')
     await until(() => paths(search.events()).length === 2)
@@ -607,10 +607,10 @@ describe('the gate off by the human', () => {
   })
 
   it('passes everything once the log has failed if the human turned recording off too', async () => {
-    const { at, carrier, pluginsManager, connect, edited } = await failing()
+    const { at, router, pluginsManager, connect, edited } = await failing()
     at(30_000)
     pluginsManager.nothing = true
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).ok).toBe(true)
     await edited('secret/a.md')
@@ -618,13 +618,13 @@ describe('the gate off by the human', () => {
   })
 
   it('starts the subscriptions that stood once the human switches a failed gate off', async () => {
-    const { carrier, pluginsManager, connect, edited } = setup()
+    const { router, pluginsManager, connect, edited } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     expect((await ghost.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'off'
-    carrier.changed()
+    router.changed()
     await edited('secret/a.md')
     await until(() => paths(ghost.events()).length === 1)
     expect(signals(ghost.events(), 'events.dropped')).toEqual([['luoshu.changed']])
@@ -632,9 +632,9 @@ describe('the gate off by the human', () => {
 
   // The floor keeps identity, not limits, so its rules stay with the gate off
   it('still keeps core.* to windows and a plugin to its own declared topics', async () => {
-    const { carrier, pluginsManager, search, scribe } = setup()
+    const { router, pluginsManager, search, scribe } = setup()
     pluginsManager.policyJobs.gate = 'off'
-    carrier.changed()
+    router.changed()
     expect(code(await scribe.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
     expect(code(await scribe.ask('events.publish', { topic: 'luoshu.changed', path: 'notes/a.md' }))).toBe('not-granted')
     expect(code(await search.ask('events.publish', { topic: 'search.other' }))).toBe('not-granted')
@@ -681,14 +681,14 @@ describe('owned topics', () => {
   })
 
   it('resyncs a plugin\'s own subscription made while the gate was down, though a window\'s core.* needs none', async () => {
-    const { carrier, connect, pluginsManager, way } = setup()
+    const { router, connect, pluginsManager, way } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     expect((await panel.ask('events.subscribe', { topics: ['search.indexed'] })).result).toEqual({ standing: [] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status'] })
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await until(() => signals(panel.events(), 'events.dropped').length === 1)
     expect(signals(panel.events(), 'events.dropped')).toEqual([['search.indexed']])
     expect(signals(way.events(), 'events.dropped')).toEqual([])
@@ -707,7 +707,7 @@ describe('owned topics', () => {
 
 describe('core.*', () => {
   it('refuses a plugin, a host half included, a core topic whatever its grants and the gate', async () => {
-    const { carrier, connect, pluginsManager, gate, search } = setup()
+    const { router, connect, pluginsManager, gate, search } = setup()
     pluginsManager.utility('mcp-http-handler')
     const http = connect(host('mcp-http-handler'))
     gate.grants.search.push({ type: 'events.subscribe', topics: ['core.status'] })
@@ -718,7 +718,7 @@ describe('core.*', () => {
       expect(code(await http.ask('events.subscribe', { topics: ['core.status'] }))).toBe('not-granted')
     }
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await settle()
     expect(search.events()).toEqual([])
     expect(http.events()).toEqual([])
@@ -726,34 +726,34 @@ describe('core.*', () => {
 
   // core.* reaches the trusted window by subscription, so the floor lets it subscribe to the core topics only
   it('lets the trusted window hear the core topics and nothing else, with the gate failed', async () => {
-    const { carrier, pluginsManager, trustedWay, gate } = setup()
+    const { router, pluginsManager, trustedWay, gate } = setup()
     pluginsManager.policyJobs.gate = 'failed'
     expect((await trustedWay.ask('trusted', 'events.subscribe', { topics: ['core.status', 'core.security'] })).result).toEqual({ standing: [] })
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['luoshu.changed'] }))).toBe('not-granted')
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['core.status', 'luoshu.changed'] }))).toBe('not-granted')
     expect(code(await trustedWay.ask('trusted', 'events.subscribe', { topics: ['search.indexed'] }))).toBe('not-granted')
-    carrier.changed()
+    router.changed()
     expect(trustedWay.events().map(message => message.topic)).toEqual(['core.status'])
     expect(gate.asked).toEqual([])
     expect((await trustedWay.ask('trusted', 'events.unsubscribe', { topics: ['core.security'] })).ok).toBe(true)
     // It holds the fixed credits like any window and its ack frees them
     const credits = defaultLimits.eventCredits
-    for (let i = 0; i < credits; i++) carrier.changed()
+    for (let i = 0; i < credits; i++) router.changed()
     trustedWay.post('trusted', { v: 1, kind: 'ack', seq: credits })
-    carrier.changed()
+    router.changed()
     const seqs = trustedWay.events().map(message => message.seq ?? message.topic)
     expect(seqs.slice(-3)).toEqual([credits, 'events.dropped', credits + 1])
   })
 
-  // The first grants snapshot the carrier reads is where it starts, so the first changed() sends no core.security
+  // The first grants snapshot the router reads is where it starts, so the first changed() sends no core.security
   it('sends core.status to the windows on every change and core.security once per new grants snapshot, never a path', async () => {
-    const { carrier, pluginsManager, way } = setup()
+    const { router, pluginsManager, way } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'core.security'] })
-    carrier.changed()
-    carrier.changed()
+    router.changed()
+    router.changed()
     pluginsManager.current = 2
-    carrier.changed()
-    carrier.changed()
+    router.changed()
+    router.changed()
     const events = way.events()
     expect(events.map(message => message.topic)).toEqual(['core.status', 'core.status', 'core.status', 'core.security', 'core.status'])
     expect(events.every(message => !('path' in message) && eventShape.safeParse(message).success)).toBe(true)
@@ -761,9 +761,9 @@ describe('core.*', () => {
 
   // So the editor can keep a draft before hetu ends
   it('sends core.quitting to the windows that hear it when hetu is about to quit', async () => {
-    const { carrier, way } = setup()
+    const { router, way } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['core.quitting'] })
-    carrier.quitting()
+    router.quitting()
     expect(way.events().map(message => message.topic)).toEqual(['core.quitting'])
   })
 
@@ -773,10 +773,10 @@ describe('core.*', () => {
   })
 
   it('lets the editor hear core.status with the gate down while its luoshu topics stand', async () => {
-    const { carrier, pluginsManager, way } = setup()
+    const { router, pluginsManager, way } = setup()
     pluginsManager.policyJobs.gate = 'failed'
     expect((await way.ask('editor-1', 'events.subscribe', { topics: ['core.status', 'luoshu.changed'] })).result).toEqual({ standing: ['luoshu.changed'] })
-    carrier.changed()
+    router.changed()
     expect(way.events().map(message => message.topic)).toEqual(['core.status'])
   })
 })
@@ -803,9 +803,9 @@ describe('subscribing', () => {
   })
 
   it('starts a standing subscription with events.dropped when a repeat finds the gate up', async () => {
-    const { carrier, pluginsManager, scribe, edited } = setup()
+    const { router, pluginsManager, scribe, edited } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'on'
     // The bus sees the gate again before it judges the repeat, so the subscription starts once
@@ -817,9 +817,9 @@ describe('subscribing', () => {
 
   // Nothing moved for the bus to ask again, so only the repeat's own judgement can start it
   it('starts a standing subscription with events.dropped when a repeat is allowed after the gate could not answer about it', async () => {
-    const { carrier, pluginsManager, gate, scribe, edited } = setup()
+    const { router, pluginsManager, gate, scribe, edited } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     let throws = true
     gate.decision = access => {
@@ -827,7 +827,7 @@ describe('subscribing', () => {
       return gate.granted(access)
     }
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await settle()
     expect(scribe.events()).toEqual([])
     throws = false
@@ -888,7 +888,7 @@ describe('subscribing', () => {
   })
 
   it('caps the topics a half holds, counting a topic it holds once and a standing one too', async () => {
-    const { carrier, pluginsManager, connect, gate, search } = setup()
+    const { router, pluginsManager, connect, gate, search } = setup()
     gate.grants.search.push({ type: 'events.subscribe', topics: ['git.a', 'git.b'] })
     pluginsManager.human.plugins.search = { topicsPerHalf: 2 }
     expect((await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })).ok).toBe(true)
@@ -902,7 +902,7 @@ describe('subscribing', () => {
     expect((await search.ask('events.subscribe', { topics: ['git.a'] })).ok).toBe(true)
     // Standing ones count
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await panel.ask('events.unsubscribe', { topics: ['git.a', 'git.b'] })
     expect((await panel.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })).result).toEqual({ standing: ['luoshu.changed', 'luoshu.outside'] })
     expect(code(await panel.ask('events.subscribe', { topics: ['git.b'] }))).toBe('invalid')
@@ -949,9 +949,9 @@ describe('subscribing', () => {
   })
 
   it('does not widen a subscription when a host half changes its array after posting', async () => {
-    const { carrier, gate, edited, outside } = setup()
+    const { router, gate, edited, outside } = setup()
     gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }, { type: 'luoshu.read', paths: ['**'] }]
-    const history = hostHalf(carrier, host('history'))
+    const history = hostHalf(router, host('history'))
     const topics = ['luoshu.changed']
     history.handle.post({ v: 1, kind: 'call', id: 1, action: 'events.subscribe', args: { topics } })
     topics.push('luoshu.outside')
@@ -1001,13 +1001,13 @@ describe('unsubscribing', () => {
   })
 
   it('never starts a standing subscription it took back', async () => {
-    const { carrier, pluginsManager, scribe } = setup()
+    const { router, pluginsManager, scribe } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await scribe.ask('events.unsubscribe', { topics: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await settle()
     expect(scribe.events()).toEqual([])
   })
@@ -1089,7 +1089,7 @@ describe('read scope', () => {
   })
 
   it('treats a canList that throws as a no, records the fault and still serves the others', async () => {
-    const { carrier, search, scribe, edited, gate, log } = setup()
+    const { router, search, scribe, edited, gate, log } = setup()
     gate.listable = caller => {
       if ((caller as { id: string }).id === 'search') throw new Error('matcher bug at /Users/han/luoshu')
       return true
@@ -1100,16 +1100,16 @@ describe('read scope', () => {
     await until(() => paths(scribe.events()).length === 1)
     await settle()
     expect(search.events()).toEqual([])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
   })
 
   it('gives a standing subscription nothing, path-less events included', async () => {
-    const { carrier, pluginsManager, gate, connect, indexed } = setup()
+    const { router, pluginsManager, gate, connect, indexed } = setup()
     gate.grants.ghost = [{ type: 'events.subscribe', topics: ['search.indexed'] }]
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     await ghost.ask('events.subscribe', { topics: ['search.indexed'] })
     await indexed()
@@ -1138,12 +1138,12 @@ describe('what a subscriber receives', () => {
   })
 
   it('shapes its signals with no seq and the subscriber\'s own topics', async () => {
-    const { carrier, pluginsManager, search } = setup()
+    const { router, pluginsManager, search } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await until(() => search.events().length === 1)
     expect(search.events()).toStrictEqual([{ v: 1, kind: 'event', topic: 'events.dropped', topics: ['luoshu.changed'] }])
     expect(signalShape.safeParse(search.events()[0]).success).toBe(true)
@@ -1177,12 +1177,12 @@ describe('what a subscriber receives', () => {
     ['a path with a control character', `notes/a${String.fromCharCode(10)}.md`],
     ['a path past the longest scope', `${'a/'.repeat(300)}b.md`],
   ])('delivers no luoshu publish with %s', async (_name, path) => {
-    const { carrier, gate, search, scribe, edited } = setup()
+    const { router, gate, search, scribe, edited } = setup()
     gate.listable = () => true
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited(path)
-    carrier.publishCore('luoshu', 'outside', path)
+    router.publishCore('luoshu', 'outside', path)
     await edited('notes/a.md')
     await until(() => [search, scribe].every(side => paths(side.events()).includes('notes/a.md')))
     await settle()
@@ -1316,7 +1316,7 @@ describe('credits', () => {
   })
 
   it('reaches a subscriber past its credits with events.ended, since a signal takes no credit', async () => {
-    const { carrier, pluginsManager, gate, search, edited } = setup()
+    const { router, pluginsManager, gate, search, edited } = setup()
     pluginsManager.human.plugins.search = { eventCredits: 1 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await edited('notes/a.md')
@@ -1324,22 +1324,22 @@ describe('credits', () => {
     await until(() => search.events().length === 1)
     gate.grants.search = []
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await until(() => search.events().length === 2)
     expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
   })
 
   it('folds a gate outage into the one events.dropped a subscriber past its credits gets once it catches up', async () => {
-    const { carrier, pluginsManager, search, edited } = setup()
+    const { router, pluginsManager, search, edited } = setup()
     pluginsManager.human.plugins.search = { eventCredits: 1 }
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await edited('notes/a.md')
     await edited('notes/b.md')
     await until(() => search.events().length === 1)
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
+    router.changed()
     await settle()
     expect(search.events()).toHaveLength(1)
     search.ack(1)
@@ -1438,8 +1438,8 @@ describe('the end of a way', () => {
   })
 
   it.each([
-    ['a planned stop', (parts: ReturnType<typeof setup>) => parts.carrier.end(worker('search'))],
-    ['a revoked incarnation', (parts: ReturnType<typeof setup>) => parts.carrier.end(worker('search'), 'crashed')],
+    ['a planned stop', (parts: ReturnType<typeof setup>) => parts.router.end(worker('search'))],
+    ['a revoked incarnation', (parts: ReturnType<typeof setup>) => parts.router.end(worker('search'), 'crashed')],
   ])('drops a half\'s subscriptions on %s', async (_name, end) => {
     const parts = setup()
     const { search, scribe, edited } = parts
@@ -1454,15 +1454,15 @@ describe('the end of a way', () => {
 
   // A shut way gets no event either way, so only the gate shows what the bus still holds
   it('asks the gate nothing about the subscriptions of a way that ended by a stop or a crash', async () => {
-    const { carrier, pluginsManager, gate, search, scribe } = setup()
+    const { router, pluginsManager, gate, search, scribe } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    carrier.end(worker('search'))
+    router.end(worker('search'))
     scribe.port.close()
     await until(() => pluginsManager.crashes.length === 1)
     gate.asked.length = 0
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     expect(gate.asked).toEqual([])
   })
 
@@ -1481,21 +1481,21 @@ describe('the end of a way', () => {
   })
 
   it('drops a host half\'s subscriptions once its incarnation is ended', async () => {
-    const { carrier, gate, edited } = setup()
+    const { router, gate, edited } = setup()
     gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
-    const history = hostHalf(carrier, host('history'))
+    const history = hostHalf(router, host('history'))
     await history.ask('events.subscribe', { topics: ['luoshu.changed'] })
-    carrier.end(host('history'))
+    router.end(host('history'))
     await edited('notes/a.md')
     await settle()
     expect(history.inbox.filter(message => message.kind === 'event')).toEqual([])
   })
 
   it('drops a window\'s subscriptions when its way ends, so its next page starts with none', async () => {
-    const { carrier, way, edited } = setup()
+    const { router, way, edited } = setup()
     await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed', 'core.status'] })
-    carrier.end(editor)
-    carrier.changed()
+    router.end(editor)
+    router.changed()
     await edited('notes/a.md')
     await settle()
     expect(way.events()).toEqual([])
@@ -1511,10 +1511,10 @@ describe('failing subscribers', () => {
     const record = (err: unknown) => { escaped.push(err) }
     process.on('uncaughtException', record)
     try {
-      const { carrier, gate, scribe, edited } = setup()
+      const { router, gate, scribe, edited } = setup()
       gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
       let calls = 0
-      const handle = carrier.handle(host('history'), message => {
+      const handle = router.handle(host('history'), message => {
         if ((message as Message).kind !== 'event') return
         calls++
         throw new Error('plugin bug')
@@ -1537,9 +1537,9 @@ describe('failing subscribers', () => {
     const record = (reason: unknown) => { unhandled.push(reason) }
     process.on('unhandledRejection', record)
     try {
-      const { carrier, gate, scribe, edited } = setup()
+      const { router, gate, scribe, edited } = setup()
       gate.grants.history = [{ type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
-      const handle = carrier.handle(host('history'), async () => { throw new Error('plugin failed later') })
+      const handle = router.handle(host('history'), async () => { throw new Error('plugin failed later') })
       handle.post({ v: 1, kind: 'call', id: 1, action: 'events.subscribe', args: { topics: ['luoshu.changed'] } })
       await settle()
       await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
@@ -1563,7 +1563,7 @@ const idOf = (fields: Record<string, unknown>) => String(fields.caller).split('/
 describe('records', () => {
   it('keeps a subscribe one audit record with its topics as scope and the gate\'s state', async () => {
     const clock = 1_000_000
-    const { recording, carrier, log, search } = setup({ now: () => clock })
+    const { recording, router, log, search } = setup({ now: () => clock })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
     const records = await written(recording, log)
@@ -1577,11 +1577,11 @@ describe('records', () => {
   // decides about it is recorded with the topics
   it('records what stands apart from the call, then what asking again started, held back or ended, with the topics', async () => {
     const clock = 1_000_000
-    const { recording, carrier, pluginsManager, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
+    const { recording, router, pluginsManager, gate, log, search, scribe, connect, git } = setup({ now: () => clock })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     const before = (await written(recording, log)).length
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     const ghost = connect(worker('ghost'))
     await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
@@ -1598,10 +1598,10 @@ describe('records', () => {
     // git's grant goes while the gate is down, so its subscription waits
     gate.grants.git = []
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     pluginsManager.policyJobs.gate = 'on'
-    carrier.changed()
-    carrier.close()
+    router.changed()
+    router.close()
     await tick()
     const fields = (event: string) => log.events(event).map(record => record.fields)
     expect(fields('events.waiting')).toEqual([
@@ -1623,14 +1623,14 @@ describe('records', () => {
   })
 
   it('coalesces a half\'s events.waiting per second whatever topics each subscribe names', async () => {
-    const { carrier, pluginsManager, log, connect } = setup()
+    const { router, pluginsManager, log, connect } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     // Each subscribe names another set, which made each its own record with its own fsync
     const sets = [['luoshu.changed'], ['luoshu.outside'], ['search.indexed', 'luoshu.changed'], ['luoshu.outside', 'search.indexed']]
     for (let i = 0; i < 40; i++) await ghost.ask('events.subscribe', { topics: sets[i % sets.length] })
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('events.waiting').map(record => record.fields)).toEqual([
       { plugin: 'ghost', half: 'worker', topics: 'luoshu.changed', count: 1 },
@@ -1640,14 +1640,14 @@ describe('records', () => {
   })
 
   it('keeps the joined record of a half\'s events.waiting within the topics text cap', async () => {
-    const { carrier, pluginsManager, log, connect } = setup()
+    const { router, pluginsManager, log, connect } = setup()
     pluginsManager.policyJobs.gate = 'failed'
-    carrier.changed()
+    router.changed()
     const ghost = connect(worker('ghost'))
     const long = (i: number) => `p${String(i).padStart(2, '0')}${'x'.repeat(60)}.${'y'.repeat(60)}`
     await ghost.ask('events.subscribe', { topics: [long(0)] })
     for (let i = 1; i < 64; i++) await ghost.ask('events.subscribe', { topics: [long(i)] })
-    carrier.close()
+    router.close()
     await tick()
     const joined = log.events('events.waiting')[1].fields
     expect(joined.count).toBe(63)
@@ -1657,7 +1657,7 @@ describe('records', () => {
 
   it('coalesces publishes, free subscribes and unsubscribes per caller per second and records no delivery or ack', async () => {
     const clock = 1_000_000
-    const { recording, carrier, connect, git, indexed, log } = setup({ now: () => clock })
+    const { recording, router, connect, git, indexed, log } = setup({ now: () => clock })
     const panel = connect({ kind: 'plugin', id: 'search', half: 'panel', incarnation: 1 })
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     const before = (await written(recording, log)).length
@@ -1675,7 +1675,7 @@ describe('records', () => {
   })
 
   it('counts drops in a coalesced core record per subscriber and why', async () => {
-    const { carrier, pluginsManager, log, git, search, indexed, edited } = setup()
+    const { router, pluginsManager, log, git, search, indexed, edited } = setup()
     pluginsManager.human.plugins.git = { eventCredits: 1 }
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
@@ -1683,7 +1683,7 @@ describe('records', () => {
     pluginsManager.policyJobs.gate = 'failed'
     await edited('notes/a.md')
     await edited('notes/b.md')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('events.dropped').map(record => record.fields)).toEqual([
       { plugin: 'git', half: 'worker', why: 'credits', count: 1 },
@@ -1694,13 +1694,13 @@ describe('records', () => {
   })
 
   it('writes one events.ended record per subscriber with the count each change ended', async () => {
-    const { recording, carrier, pluginsManager, gate, log, search, way } = setup()
+    const { recording, router, pluginsManager, gate, log, search, way } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed', 'luoshu.outside'] })
     await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
     gate.grants.search = []
     gate.decision = access => access.caller.kind === 'window' ? { allow: false, code: 'not-granted', view: 2 } : gate.granted(access)
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await recording.flush()
     expect(log.events('events.ended').map(record => record.fields)).toEqual([
       { plugin: 'search', half: 'worker', topics: 'luoshu.changed luoshu.outside', count: 2 },
@@ -1709,7 +1709,7 @@ describe('records', () => {
   })
 
   it('records nothing of the bus while the human turned recording off, and no count from the gap lands later', async () => {
-    const { recording, carrier, pluginsManager, gate, log, git, search, indexed } = setup()
+    const { recording, router, pluginsManager, gate, log, git, search, indexed } = setup()
     pluginsManager.nothing = true
     pluginsManager.human.plugins.git = { eventCredits: 1 }
     await git.ask('events.subscribe', { topics: ['search.indexed'] })
@@ -1717,10 +1717,10 @@ describe('records', () => {
     for (let i = 0; i < 3; i++) await indexed()
     gate.grants.search = []
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await until(() => signals(search.events(), 'events.ended').length === 1)
     pluginsManager.nothing = false
-    carrier.close()
+    router.close()
     await recording.flush()
     expect(log.records).toEqual([])
   })

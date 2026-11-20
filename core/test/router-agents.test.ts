@@ -2,9 +2,9 @@ import type { Recording } from '../backend/recording/header.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGate } from '../backend/policy/gate/gate.ts'
 import type { Access, Call, Gate } from '../api/policy-jobs.ts'
-import type { Carrier } from '../backend/carrier/carrier.ts'
-import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, type FakeLog, harness, type HarnessOptions, host, hostHalf, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import type { Router } from '../backend/router/router.ts'
+import type { RouterOptions } from '../backend/router/header.ts'
+import { cleanup, code, editor, type FakeLog, harness, type HarnessOptions, host, hostHalf, tick, windowWay, worker, type Side } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -105,9 +105,9 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('keeps the own onBehalf of a call with no parent from a window or a plugin and treats neither as an agent\'s', async () => {
-    const { carrier, door, search, gate, beta } = agents()
+    const { router, door, search, gate, beta } = agents()
     gate.grants.beta.push({ type: 'plugin.call', targets: ['search'] })
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     expect((await way.ask('editor', 'luoshu.read', { path: 'inbox/a.md' }, { onBehalf: 'client#1' })).ok).toBe(true)
     beta.call('search.query', {}, { onBehalf: 'client#1' })
     const atSearch = await search.delivered('search.query')
@@ -137,7 +137,7 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle with no label as invalid in every gate state and delivers nothing to mcp', async () => {
-    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, router, log } = agents()
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
       expect(code(await door.ask('mcp.handle', { body: '{}' }))).toBe('invalid')
@@ -160,7 +160,7 @@ describe('an agent\'s label down a chain of calls', () => {
   })
 
   it('refuses the door\'s mcp.handle for a label the plugins manager says is revoked as not-granted in every gate state and delivers nothing to mcp', async () => {
-    const { recording, door, mcp, pluginsManager, gate, carrier, log } = agents()
+    const { recording, door, mcp, pluginsManager, gate, router, log } = agents()
     pluginsManager.revokedLabels.add('client#1')
     for (const state of ['on', 'off', 'failed'] as const) {
       pluginsManager.policyJobs.gate = state
@@ -330,7 +330,7 @@ describe('the door an agent\'s label comes through', () => {
     parts.gate.grants.mcp = [{ type: 'luoshu.read', paths: ['**'] }]
     parts.luoshu.files.set('inbox/a.md', 'a')
     const mcp = parts.connect(worker('mcp'))
-    const door = hostHalf(parts.carrier, host('mcp-http-handler'))
+    const door = hostHalf(parts.router, host('mcp-http-handler'))
     void door.ask('mcp.handle', {}, { onBehalf: 'client#1' })
     const got = await mcp.delivered('mcp.handle')
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { parent: got.callId as string }))).toBe('not-granted')
@@ -497,33 +497,33 @@ describe('the gate over an agent\'s call, in every gate state', () => {
   })
 
   it('answers stopped for the door\'s mcp.handle with the gate off once shutdown began', async () => {
-    const { carrier, door, mcp, pluginsManager } = gated()
+    const { router, door, mcp, pluginsManager } = gated()
     pluginsManager.policyJobs.gate = 'off'
-    carrier.stopping()
+    router.stopping()
     expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('answers stopped for the door\'s mcp.handle with the gate still on once shutdown began, as with the gate off', async () => {
-    const { carrier, door, mcp } = gated()
-    carrier.stopping()
+    const { router, door, mcp } = gated()
+    router.stopping()
     expect(code(await door.ask('mcp.handle', {}, { onBehalf: 'client#1' }))).toBe('stopped')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('answers stopped for an agent\'s call with the gate still on once shutdown began and judges a plugin\'s own call as before', async () => {
-    const { carrier, door, mcp, search } = gated()
+    const { router, door, mcp, search } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
-    carrier.stopping()
+    router.stopping()
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
     expect((await search.ask('luoshu.read', { path: 'inbox/a.md' })).ok).toBe(true)
   })
 
   it('answers stopped for an agent\'s call with the gate off once shutdown began', async () => {
-    const { carrier, door, mcp, pluginsManager } = gated()
+    const { router, door, mcp, pluginsManager } = gated()
     const { parent } = await handled(door, mcp, 'client#1')
     pluginsManager.policyJobs.gate = 'off'
-    carrier.stopping()
+    router.stopping()
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent))).toBe('stopped')
   })
 
@@ -621,14 +621,14 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
   })
 
   it('refuses it from mcp with no door call, under another plugin\'s call, from another plugin and from a window', async () => {
-    const { carrier, mcp, beta, search, seen } = asking()
+    const { router, mcp, beta, search, seen } = asking()
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { onBehalf: 'client#1' }))).toBe('not-granted')
     beta.call('mcp.handle', {}, { onBehalf: 'client#1' })
     const fromBeta = await mcp.delivered('mcp.handle')
     expect(code(await mcp.ask('core.agentAsk', { capabilities: [inbox] }, { parent: fromBeta.callId as string }))).toBe('not-granted')
     expect(code(await search.ask('core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
-    const way = windowWay(carrier, { editor, trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    const way = windowWay(router, { editor, trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect(code(await way.ask('editor', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(code(await way.ask('trusted', 'core.agentAsk', { capabilities: [inbox] }))).toBe('not-granted')
     expect(seen).toEqual([])
@@ -667,11 +667,11 @@ describe('core.agentAsk, an agent\'s ask for items through mcp', () => {
 describe('core.agents, what http asks about its agents', () => {
   it('takes it from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
     const seen: Call[] = []
-    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return [] } })
     const args = { agents: ['client#1'] }
     expect((await door.ask('core.agents', args)).ok).toBe(true)
     for (const side of [httpWorker, mcp, search]) expect(code(await side.ask('core.agents', args))).toBe('not-granted')
-    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 } })
     expect(code(await way.ask('trusted', 'core.agents', args))).toBe('not-granted')
     expect(code(await door.ask('core.agents', { agents: ['client'] }))).toBe('invalid')
     expect(code(await door.ask('core.agents', { agents: [] }))).toBe('invalid')
@@ -685,8 +685,8 @@ describe('core.agentConnect and core.agentConnected, the connect http asks the c
 
   it('takes both from the door\'s half alone, never from mcp, http\'s worker, another plugin or a window', async () => {
     const seen: Call[] = []
-    const { carrier, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
-    const way = windowWay(carrier, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
+    const { router, door, httpWorker, mcp, search } = agents({ core: async call => { seen.push(call); return null } })
+    const way = windowWay(router, { trusted: { kind: 'window', role: 'trusted', n: 1 }, editor: { kind: 'window', role: 'editor', n: 2 } })
     for (const [action, args] of [['core.agentConnect', connect], ['core.agentConnected', collect]] as const) {
       expect((await door.ask(action, args)).ok).toBe(true)
       for (const side of [httpWorker, mcp, search]) expect(code(await side.ask(action, args))).toBe('not-granted')
@@ -792,7 +792,7 @@ describe('the second ask for an agent\'s call', () => {
 
 describe('the audit record of an agent\'s call', () => {
   it('names the inherited label on a sub-call and the parent\'s label, never its own, on one refused for setting its own', async () => {
-    const { recording, carrier, door, mcp, log } = agents()
+    const { recording, router, door, mcp, log } = agents()
     const { id, got, parent } = await handled(door, mcp)
     expect((await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, parent)).ok).toBe(true)
     expect(code(await mcp.ask('luoshu.read', { path: 'inbox/a.md' }, { ...parent, onBehalf: 'client#2' }))).toBe('invalid')
@@ -935,7 +935,7 @@ describe('the tool table at the floor, for a call under an agent\'s chain', () =
   })
 
   it('writes the refusal\'s record with the agent\'s label, the door at its root', async () => {
-    const { recording, carrier, door, mcp, log } = tabled()
+    const { recording, router, door, mcp, log } = tabled()
     const { parent } = await handled(door, mcp, 'client#1')
     expect(code(await mcp.ask('luoshu.move', { from: 'inbox/a.md', to: 'inbox/b.md' }, parent))).toBe('not-granted')
     const records = (await written(recording, log)).filter(record => record.action === 'luoshu.move')

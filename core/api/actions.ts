@@ -80,9 +80,9 @@ export const MAX_AGENTS_ASKED = 64
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true, readonly live?: true }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
-// leases, which the provider keys by the caller the carrier names, and a listing. scope names the argument the raw
+// leases, which the provider keys by the caller the router names, and a listing. scope names the argument the raw
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
-// which the carrier puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
+// which the router puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
 // filter list keeps only the result's paths the gate's canList allows. agent makes the action a tool an agent may call
 // through mcp and an action with none stays closed to agents
@@ -204,7 +204,7 @@ const coreTable = {
 } satisfies Record<string, CoreAction>
 export const coreActions = lookup<CoreAction>(coreTable)
 
-// The bus's actions, which the carrier serves itself. The floor decides who may name which topic and the gate judges a
+// The bus's actions, which the router serves itself. The floor decides who may name which topic and the gate judges a
 // subscribe to another plugin's topics under events.subscribe, scoped by topics. A publish names one topic the
 // caller's own manifest declared, with a path at most and never content. Acknowledging is the ack message, not a call.
 // does is what the bus does with it
@@ -430,7 +430,7 @@ export type CoreStatus = {
 
 export type StateKind = 'switches' | 'luoshu' | 'plugins'
 
-// What an action answers with where that is settled: the carrier's own actions and the luoshu's, which keep the daemon's
+// What an action answers with where that is settled: the router's own actions and the luoshu's, which keep the daemon's
 // shape with version the SHA-256 hex of the note's bytes. Every other action answers unknown until its provider's step
 export type ActionResults = {
   'core.self': Caller

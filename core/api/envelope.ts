@@ -56,7 +56,7 @@ const requestFields = {
 export const request = z.strictObject({ ...requestFields, args: plainData(defaultLimits.argumentBytes) })
 export type Request = z.infer<typeof request>
 
-// The same envelope with args left unread. The carrier measures args against the caller's own cap, which the human may
+// The same envelope with args left unread. The router measures args against the caller's own cap, which the human may
 // set
 export const callEnvelope = z.strictObject({ ...requestFields, args: z.unknown() })
 
@@ -70,7 +70,7 @@ export const refusalCodes = frozen([
 export type RefusalCode = typeof refusalCodes[number]
 
 // The refusals a plugin may answer a call with. The others describe the core's own state for the caller's call, which
-// only the carrier gives, so a plugin's refusal with one of them reaches its caller as failed
+// only the router gives, so a plugin's refusal with one of them reaches its caller as failed
 export const calleeRefusalCodes = frozen([
   'invalid', 'not-granted', 'not-found', 'unavailable', 'throttled', 'timeout', 'stale', 'failed',
 ] as const satisfies readonly RefusalCode[])
@@ -79,7 +79,7 @@ export const calleeRefusalCodes = frozen([
 export const reasonCodes = frozen(['declined', 'too-large', 'cycle', 'dependency', 'reserved-id', 'quota', 'not-text'] as const)
 export type ReasonCode = typeof reasonCodes[number]
 
-// action is the caller's own action, as far as the carrier could read one. request names the held security request
+// action is the caller's own action, as far as the router could read one. request names the held security request
 // behind needs-confirm
 export const refusal = z.strictObject({
   code: z.enum(refusalCodes),
@@ -123,7 +123,7 @@ export const delivery = z.strictObject({
 })
 export type Delivery = z.infer<typeof delivery>
 
-// The callee's answer to a delivered call. The carrier measures the result against the callee's own cap and builds the
+// The callee's answer to a delivered call. The router measures the result against the callee's own cap and builds the
 // refusal the caller gets from the code and reason only, so a callee can't hand on a request id the core never made
 const answerHead = { v: z.literal(VERSION), kind: z.literal('reply'), callId: token }
 export const answer = z.discriminatedUnion('ok', [
@@ -132,7 +132,7 @@ export const answer = z.discriminatedUnion('ok', [
 ])
 export type Answer = z.infer<typeof answer>
 
-// The carrier telling a callee that a call delivered to it was given up, so its answer is no longer read
+// The router telling a callee that a call delivered to it was given up, so its answer is no longer read
 export const cancelled = z.strictObject({ v: z.literal(VERSION), kind: z.literal('cancel'), callId: token })
 
 // The bus's own signals, which reach a subscriber unasked and outside its credits. events.dropped names topics the

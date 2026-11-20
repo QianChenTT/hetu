@@ -21,7 +21,7 @@ export type WindowContents = {
   on(event: 'did-navigate' | 'destroyed' | 'render-process-gone', listener: () => void): unknown
 }
 
-type Carrier = {
+type Router = {
   window<S>(check: (sender: S) => Caller | null): (sender: S, message: unknown, answer: (reply: unknown) => void) => void
   end(caller: Caller): void
 }
@@ -40,7 +40,7 @@ export function checkSender(frame: SenderFrame | null, top: unknown, host: strin
   return url.protocol === `${SCHEME}:` && url.hostname === host && url.username === '' && url.password === '' && url.port === ''
 }
 
-// A window's way into the carrier. Its messages come only on its own webContents' IPC, so a webContents the core
+// A window's way into the router. Its messages come only on its own webContents' IPC, so a webContents the core
 // didn't make can't reach it, and the sender check refuses anything but its top frame on its own host. Each load of the
 // window is its own caller, { kind: 'window', role, n }: a new document ends the old one's way, so the old load's
 // subscriptions and pending answers never reach the new one, and an answer goes only to the load that asked. A window
@@ -52,8 +52,8 @@ export class WindowWay {
   // The renderer died and no new document has committed since
   private gone = false
 
-  constructor(contents: WindowContents, role: WindowRole, carrier: Carrier) {
-    const receive = carrier.window<{ frame: SenderFrame | null, n: number }>(sender => {
+  constructor(contents: WindowContents, role: WindowRole, router: Router) {
+    const receive = router.window<{ frame: SenderFrame | null, n: number }>(sender => {
       if (this.over || this.gone || sender.n === 0 || sender.n !== this.n) return null
       return checkSender(sender.frame, contents.mainFrame, role) ? { kind: 'window', role, n: sender.n } : null
     })
@@ -66,7 +66,7 @@ export class WindowWay {
       })
     })
     const endLoad = () => {
-      if (this.n > 0) carrier.end({ kind: 'window', role, n: this.n })
+      if (this.n > 0) router.end({ kind: 'window', role, n: this.n })
     }
     // A new document committed, a reload among them. Messages from the old one can't arrive after this
     contents.on('did-navigate', () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { definePlugin, type PluginContext, run } from '../sdk/plugin.ts'
 import type { Refused } from '../sdk/refused.ts'
-import { cleanup, harness, tick, worker } from './carrier-fakes.ts'
+import { cleanup, harness, tick, worker } from './router-fakes.ts'
 import { sdkTransport, type TransportOptions } from './sdk-fakes.ts'
 
 afterEach(() => {
@@ -27,12 +27,12 @@ async function listening(way: TransportOptions = {}) {
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }]
   parts.gate.grants.git = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['search.indexed'] }]
   let ctx: PluginContext | null = null
-  const transport = sdkTransport(parts.carrier, worker('search'), way)
+  const transport = sdkTransport(parts.router, worker('search'), way)
   run(definePlugin({ start: given => { ctx = given } }), transport)
-  parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
+  parts.router.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => ctx !== null && parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
-  // The luoshu module publishing through the carrier as the core wires it
-  const publish = async (path: string) => parts.carrier.publishCore('luoshu', 'changed', path)
+  // The luoshu module publishing through the router as the core wires it
+  const publish = async (path: string) => parts.router.publishCore('luoshu', 'changed', path)
   const sent = () => transport.sent as Sent[]
   const subscribes = () => sent().filter(message => message.action === 'events.subscribe').map(message => message.args!.topics)
   return { ...parts, ctx: ctx!, transport, publish, sent, subscribes }
@@ -113,12 +113,12 @@ describe('events through the SDK', () => {
   })
 
   it('subscribes again once when the bus ends a subscription and reports the refusal', async () => {
-    const { carrier, ctx, gate, pluginsManager, subscribes } = await listening()
+    const { router, ctx, gate, pluginsManager, subscribes } = await listening()
     const ended: { refused: Refused, topics: string[] }[] = []
     await ctx.events.on('luoshu.changed', () => {}, { onEnded: (refused, topics) => { ended.push({ refused, topics }) } })
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     pluginsManager.current = 2
-    carrier.changed()
+    router.changed()
     await until(() => ended.length === 1)
     expect(ended[0].refused.code).toBe('not-granted')
     expect(ended[0].topics).toEqual(['luoshu.changed'])
@@ -148,8 +148,8 @@ describe('events through the SDK', () => {
   })
 })
 
-describe('an ack the carrier lost', () => {
-  // The carrier drops a message over the rate unread. Losing the ack that frees the last credits would hold the bus
+describe('an ack the router lost', () => {
+  // The router drops a message over the rate unread. Losing the ack that frees the last credits would hold the bus
   // back for the rest of the run
   it('goes again, so the bus catches up and sends a resync', async () => {
     let lost = false

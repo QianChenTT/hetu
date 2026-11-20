@@ -13,7 +13,7 @@ import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 // the bus and a listing ask of the gate
 
 // The canonical scope prepare gave, copied, so what the gate and the guards judge can't change under them. A provider
-// canonicalises paths and nothing else: the access and the command come from the raw scope the carrier built, so a
+// canonicalises paths and nothing else: the access and the command come from the raw scope the router built, so a
 // prepare can't turn a commit into a read or one command into another
 function preparedIn(value: unknown, raw: Scope = {}): Prepared | null {
   const scope = field(value, 'scope')
@@ -273,7 +273,7 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
 // 8 decide again, for every open call with power the gate let on, on the frozen copy it judged, once a new grants
 // snapshot applied. No prompt is raised. A refused call is revoked as stale, or as policy-down when the gate can't
 // judge it, so a gate that throws stops what it can't judge. A call not yet judged is judged on the newest grants
-// snapshot when it gets there, and a widened grant stops nothing
+// snapshot when it gets there. A widened grant stops nothing
 export function rejudge(c: Context): void {
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {

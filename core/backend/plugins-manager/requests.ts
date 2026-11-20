@@ -197,7 +197,7 @@ export class Requests {
     this.moved()
   }
 
-  // Only the trusted window's Confirm reaches here, which the carrier checks first. The security view says whether the
+  // Only the trusted window's Confirm reaches here, which the router checks first. The security view says whether the
   // click counts, from how long the request has been first in line and what was typed. One whose state moved since the
   // request is dropped as stale
   confirm(id: string, options: { typed?: string }): Promise<void> {

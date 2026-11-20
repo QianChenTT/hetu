@@ -47,7 +47,7 @@ export const parts: readonly { part: string, under: string }[] = [
   { part: 'backend-lib', under: 'core/backend/lib/' },
   { part: 'runtime', under: 'core/backend/runtime/' },
   { part: 'plugins-manager', under: 'core/backend/plugins-manager/' },
-  { part: 'carrier', under: 'core/backend/carrier/' },
+  { part: 'router', under: 'core/backend/router/' },
   { part: 'boot', under: 'core/backend/boot/' },
   { part: 'modules', under: 'core/backend/modules/' },
   { part: 'gate', under: 'core/backend/policy/gate/' },
@@ -67,11 +67,11 @@ export const parts: readonly { part: string, under: string }[] = [
 const pluginSource = /^core-plugins\/[^/]+\/src\//
 
 // What each part may import besides itself. The contract imports nothing but zod. lib, the SDK and the pages
-// only the contract, the backend's lib the contract and lib. The carrier the contract, the libs and the doors of flood
+// only the contract, the backend's lib the contract and lib. The router the contract, the libs and the doors of flood
 // control and recording, boot only the contract and the libs.
-// The plugins manager the carrier, boot, the runtime, the core modules, the heartbeat, recording and the security view,
+// The plugins manager the router, boot, the runtime, the core modules, the heartbeat, recording and the security view,
 // each through its door. The runtime the
-// carrier and boot through their doors (the runtime's types sit in its own door, so the plugins manager imports the runtime and not the other way). The
+// router and boot through their doors (the runtime's types sit in its own door, so the plugins manager imports the runtime and not the other way). The
 // core modules: the holder reads the modules through their doors and each module the contract alone or with lib
 // (the build bounds their Node built-ins). The joins and tooling may import anything. Plugins import the
 // contract and the SDK, by their package names
@@ -83,10 +83,10 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   'page:trusted': ['contract'],
   'page:workers': ['contract'],
   'backend-lib': ['contract', 'lib'],
-  carrier: ['contract', 'lib', 'backend-lib', 'flood-control', 'recording'],
+  router: ['contract', 'lib', 'backend-lib', 'flood-control', 'recording'],
   boot: ['contract', 'lib', 'backend-lib'],
-  'plugins-manager': ['contract', 'lib', 'backend-lib', 'carrier', 'boot', 'runtime', 'modules', 'heartbeat', 'recording', 'security-view'],
-  runtime: ['contract', 'lib', 'backend-lib', 'carrier', 'boot'],
+  'plugins-manager': ['contract', 'lib', 'backend-lib', 'router', 'boot', 'runtime', 'modules', 'heartbeat', 'recording', 'security-view'],
+  runtime: ['contract', 'lib', 'backend-lib', 'router', 'boot'],
   modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'security-view'],
   gate: ['contract'],
   'grant-risk-classifier': ['contract'],
@@ -105,7 +105,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
 
 // The parts reached from outside only through their header.ts. The gate, the classifier and storage are in no part's
 // row but the joins', which build them, so nothing else may import them and they need no door
-export const doors = new Set(['carrier', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'])
+export const doors = new Set(['router', 'plugins-manager', 'boot', 'runtime', 'modules', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'])
 
 // Files outside the arrows, each with its reason. The utility process's own bootstrap runs in its own process and not
 // in main: it is bundled apart into utility.js and runs a utility half through the SDK's runner, so it and the check
@@ -322,14 +322,14 @@ describe('one door per part, header.ts', () => {
 
 describe('the check itself', () => {
   it.each([
-    ['core/backend/carrier/bus.ts', "import { boot } from '../boot/boot.ts'", 'core/backend/carrier/bus.ts (carrier) imports core/backend/boot/boot.ts (boot)'],
+    ['core/backend/router/bus.ts', "import { boot } from '../boot/boot.ts'", 'core/backend/router/bus.ts (router) imports core/backend/boot/boot.ts (boot)'],
     ['core/backend/plugins-manager/graph.ts', "import type { Booted } from '../boot/boot.ts'", 'core/backend/plugins-manager/graph.ts imports core/backend/boot/boot.ts (types), past boot\'s header.ts'],
     ['core/backend/runtime/windows.ts', "import { coreKeyOf } from '../../frontend/editor/keys.ts'", 'core/backend/runtime/windows.ts (runtime) imports core/frontend/editor/keys.ts (page:editor)'],
-    ['core/frontend/trusted/view.ts', "import type { Port } from '../../backend/carrier/header.ts'", 'core/frontend/trusted/view.ts (page:trusted) imports core/backend/carrier/header.ts (carrier)'],
+    ['core/frontend/trusted/view.ts', "import type { Port } from '../../backend/router/header.ts'", 'core/frontend/trusted/view.ts (page:trusted) imports core/backend/router/header.ts (router)'],
     ['core/api/ids.ts', "export * from '../lib/disk.ts'", 'core/api/ids.ts (contract) imports core/lib/disk.ts (lib)'],
     ['core/backend/policy/gate/gate.ts', "import { clean } from '../../../lib/clean-env.ts'", 'core/backend/policy/gate/gate.ts (gate) imports core/lib/clean-env.ts (lib)'],
     ['core/backend/providers/luoshu/luoshu.ts', "import type { Exec } from '../exec/header.ts'", 'core/backend/providers/luoshu/luoshu.ts (luoshu) imports core/backend/providers/exec/header.ts (exec)'],
-    ['core/backend/carrier/carrier.ts', "import { x } from '../../test/hold.ts'", 'core/backend/carrier/carrier.ts imports tooling core/test/hold.ts'],
+    ['core/backend/router/router.ts', "import { x } from '../../test/hold.ts'", 'core/backend/router/router.ts imports tooling core/test/hold.ts'],
     ['core/lib/disk.ts', "const fs = await import('node:fs')", 'core/lib/disk.ts: <dynamic import>'],
     ['core-plugins/search/src/index.ts', "import { x } from 'hetu-core/lib/disk.ts'", 'core-plugins/search/src/index.ts (plugin) imports core/lib/disk.ts (lib)'],
   ])('refuses %s importing past the arrows: %j', (file, source, problem) => {
@@ -338,8 +338,8 @@ describe('the check itself', () => {
 
   it.each([
     ['core/backend/plugins-manager/graph.ts', "import type { Booted } from '../boot/header.ts'"],
-    ['core/backend/wire.ts', "import { Carrier } from './carrier/carrier.ts'"],
-    ['core/backend/carrier/bus.ts', "import { pathProblem } from '../../api/scope.ts'"],
+    ['core/backend/wire.ts', "import { Router } from './router/router.ts'"],
+    ['core/backend/router/bus.ts', "import { pathProblem } from '../../api/scope.ts'"],
     ['core/backend/runtime/utility-child.ts', "import { runInUtility } from '../../sdk/utility.ts'"],
   ])('lets %s import %j', (file, source) => {
     expect(problemsOf(file, source)).toEqual([])
@@ -371,7 +371,7 @@ describe('the check itself', () => {
   })
 
   it('reads an import whose list spans lines with comments holding quotes and semicolons', () => {
-    const source = "import {\n  a, // the carrier's; own\n  type b,\n} from '../boot/boot.ts'\n"
+    const source = "import {\n  a, // the router's; own\n  type b,\n} from '../boot/boot.ts'\n"
     expect(problemsOf('core/backend/plugins-manager/graph.ts', source)).toEqual([
       'core/backend/plugins-manager/graph.ts imports core/backend/boot/boot.ts, past boot\'s header.ts',
     ])

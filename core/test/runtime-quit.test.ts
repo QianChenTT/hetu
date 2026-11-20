@@ -18,7 +18,7 @@ function parts(over: { shutdown?: () => Promise<void>, flush?: () => Promise<voi
           calls.push('shutdown done')
         },
       },
-      carrier: {
+      router: {
         close: () => {
           calls.push('close')
           over.close?.()

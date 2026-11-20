@@ -540,7 +540,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
   // A move's link at the to end taken back once the move is refused, only while the to end holds a file the link can
   // have made: the one the from end was looked at as or the one at the from end now, which the link gave a second
   // name. So another program's note made at the to end since is left. A link that can't be taken back throws what the
-  // carrier answers failed with a fault and records, so the caller isn't told the move was refused while its note sits
+  // router answers failed with a fault and records, so the caller isn't told the move was refused while its note sits
   // at the to end too
   async function takenBack(to: string, from: string, looked: Opened): Promise<void> {
     const there = await lstat(to, { bigint: true }).catch(() => null)
@@ -669,7 +669,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         // A folder picked since prepare, or none now, ends the call: its path belongs to the folder before
         if (opening === null || under !== opening) throw refused('unavailable')
         if (call.action === 'luoshu.list') {
-          // The carrier's canList is what keeps a name from a caller that may not list it, so no listing runs without it
+          // The router's canList is what keeps a name from a caller that may not list it, so no listing runs without it
           if (call.canList === undefined) throw refused('failed')
           // The folder listed looked at again before the walk, as before a read. One gone since lists nothing
           // Every name a listing gives is judged by canList on its own path, so its folder needs no judging again

@@ -1,6 +1,6 @@
 import type { StoppedMode } from '../../api/actions.ts'
 import type { PluginFile } from '../../lib/hash-files.ts'
-import type { Port } from '../carrier/header.ts'
+import type { Port } from '../router/header.ts'
 
 // What the runtime provides, the only part that touches Electron. The plugins manager starts and ends plugins through it
 // and its tests fake it
@@ -30,7 +30,7 @@ export type UtilityStart = { id: string, incarnation: number, code: Buffer, port
 
 // What the plugins manager needs from the runtime, the only part that touches Electron, faked in the plugins manager's tests
 export type Runtime = {
-  // Both ends of a new channel for plugin id: core for the carrier and plugin for the half's code. MessageChannelMain in
+  // Both ends of a new channel for plugin id: core for the router and plugin for the half's code. MessageChannelMain in
   // Electron, whose core end reads only text within the plugin's cap. counted has main weigh each message against the
   // plugin's bytesPerSecond as well, for a port with no relay page in front of it
   channel(id: string, counted?: boolean): { core: Port, plugin: unknown }

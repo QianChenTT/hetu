@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { Call } from '../api/policy-jobs.ts'
-import { cleanup, code, editor, harness, host, hostHalf, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, harness, host, hostHalf, trusted, windowWay, worker } from './router-fakes.ts'
 
 // The core table with one more action whose from names no rule the floor has, as one added to the table without its
 // line in the floor would
@@ -16,16 +16,16 @@ afterEach(cleanup)
 describe('the floor\'s core branch', () => {
   it.each(['on', 'off', 'failed'] as const)('refuses a core action whose from it has no rule for to every caller, with the gate %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return null } })
+    const { router, connect, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
     pluginsManager.installed('luoshu')
-    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const way = windowWay(router, { 'editor-1': editor, trusted })
     const replies = [
       await connect(worker('search')).ask('core.ghost'),
       await connect(host('mcp-http-handler')).ask('core.ghost'),
-      await hostHalf(carrier, host('luoshu')).ask('core.ghost'),
+      await hostHalf(router, host('luoshu')).ask('core.ghost'),
       await way.ask('editor-1', 'core.ghost'),
       await way.ask('trusted', 'core.ghost'),
     ]

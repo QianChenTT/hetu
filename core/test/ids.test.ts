@@ -113,7 +113,7 @@ describe('policy jobs, providers and guards', () => {
 })
 
 describe('reserved ids', () => {
-  // Section 3: every namespace the carrier serves, every policy job, provider and install id and the ids first party keeps
+  // Section 3: every namespace the router serves, every policy job, provider and install id and the ids first party keeps
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',

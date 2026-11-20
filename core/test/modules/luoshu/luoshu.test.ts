@@ -42,13 +42,13 @@ function opened(options: Parameters<typeof createLuoshu>[0] = {}): Luoshu & { he
   return Object.assign(made, { heard })
 }
 
-// A listing carries the carrier's canList, every name allowed unless a test says otherwise
+// A listing carries the router's canList, every name allowed unless a test says otherwise
 const callOf = (action: string, args: unknown, canList: ((path: string) => boolean) | null = () => true): Call => ({
   callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000,
   ...(action === 'luoshu.list' && canList !== null ? { canList } : {}),
 })
 
-// prepare then perform, as the carrier makes a call. A refusal from either comes back as the value thrown or given
+// prepare then perform, as the router makes a call. A refusal from either comes back as the value thrown or given
 async function ask(made: Luoshu, action: string, args: unknown, canList?: ((path: string) => boolean) | null): Promise<unknown> {
   const call = callOf(action, args, canList)
   const prepared = await made.provider.prepare(call)
@@ -155,7 +155,7 @@ describe('the latch from prepare to perform', () => {
     expect(second).toBe(true)
   })
 
-  it('lets go when the carrier stops the call after prepare', async () => {
+  it('lets go when the router stops the call after prepare', async () => {
     const made = opened()
     const first = callOf('luoshu.write', { path: 'a.md', text: 'one' })
     const prepared = await made.provider.prepare(first)
@@ -234,7 +234,7 @@ describe('listing', () => {
     expect(await ask(made, 'luoshu.list', { folder: 'missing' }, () => false)).toEqual({ paths: [], next: null })
   })
 
-  it('refuses a listing that comes without the carrier’s canList', async () => {
+  it('refuses a listing that comes without the router’s canList', async () => {
     expect(await ask(opened(), 'luoshu.list', {}, null)).toEqual({ refused: { code: 'failed' } })
   })
 

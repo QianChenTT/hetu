@@ -22,7 +22,7 @@ const ended: BusSignal = 'events.ended'
 // Handled events between acks while a burst lasts, a quarter of the fixed eventCredits
 const ACK_EVERY = 64
 // The last ack goes again a second after it was sent, then after 2, 4, 8 and 16 s. It goes on every ping too. The
-// carrier drops a message over the rate unread. A lost ack that freed the last credits would hold the bus back for
+// router drops a message over the rate unread. A lost ack that freed the last credits would hold the bus back for
 // good. A repeat the bus already has changes nothing
 const RESEND_FIRST_MS = 1000
 const RESENDS = 5

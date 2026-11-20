@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, code, FakeGuard, harness, worker } from './carrier-fakes.ts'
+import { cleanup, code, FakeGuard, harness, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -105,7 +105,7 @@ describe('a move judged on both ends', () => {
   })
 
   it('records the move with both canonical ends in its scope', async () => {
-    const { recording, carrier, connect, gate, log, luoshu } = harness()
+    const { recording, router, connect, gate, log, luoshu } = harness()
     gate.grants.sorter = [{ type: 'luoshu.write', paths: ['**'] }, { type: 'luoshu.read', paths: ['**'] }]
     luoshu.files.set('a.md', 'a')
     expect((await connect(worker('sorter')).ask('luoshu.move', { from: 'a.md', to: 'b.md' })).ok).toBe(true)

@@ -153,7 +153,7 @@ function isDoor(c: Context, way: Way): boolean {
 }
 
 // 3 floor for events.*, which keeps identity rather than limits, so it holds with the gate off too. A plugin publishes
-// only the topics its manifest declared, from any of its halves. core.* comes only from the carrier and goes only to
+// only the topics its manifest declared, from any of its halves. core.* comes only from the router and goes only to
 // windows. The trusted window hears nothing else. Publishing, a plugin hearing its own topics, a window hearing core.*
 // and unsubscribing skip the gate. A subscribe to anything else is judged under events.subscribe on those topics
 function eventsFloor(c: Context, caller: Caller, spec: EventAction, args: unknown): Kind | No {

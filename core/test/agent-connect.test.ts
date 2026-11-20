@@ -183,10 +183,10 @@ async function started(over: { agents?: { agent: string, capability: Capability 
   const serve = (caller: Caller, action: string, args: unknown, onBehalf?: string) => made.pluginsManager.serve({
     callId: `call-${++n}`, caller, action, args, deadline: Date.now() + 30_000, ...(onBehalf !== undefined ? { onBehalf } : {}),
   } as Call)
-  // core.agentConnect and core.agentConnected as the carrier hands them over once its floor let http's door through
+  // core.agentConnect and core.agentConnected as the router hands them over once its floor let http's door through
   const connect = async (over: Partial<ConnectAsked> = {}) => (await serve(door, 'core.agentConnect', { ...asked, ...over }) as { handle: string }).handle
   const collect = async (handle: string) => (await serve(door, 'core.agentConnected', { handle }) as { answer: string }).answer
-  // core.agentAsk as the carrier hands it over under a live door call for label
+  // core.agentAsk as the router hands it over under a live door call for label
   const agentAsk = (label: string, capabilities: Capability[]) => serve(mcpWorker, 'core.agentAsk', { capabilities }, label)
   const list = async () => await serve(trusted, 'security.list', undefined) as SecurityList
   const state = async () => (await new StateStore(made.dataDir).load()).state

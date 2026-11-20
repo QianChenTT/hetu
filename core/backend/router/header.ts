@@ -5,10 +5,10 @@ import type { Access, Call, Gate, GateTime, Guard, PluginTable, Provider } from 
 import type { FloodControl } from '../flood-control/header.ts'
 import type { Recording } from '../recording/header.ts'
 
-// What the later parts give the carrier and what it offers them, each a small interface the tests fake. The carrier
+// What the later parts give the router and what it offers them, each a small interface the tests fake. The router
 // imports nothing from boot or the plugins manager
 
-// One end of a channel as the carrier holds it. Node's MessagePort fits as it is. Electron's MessagePortMain wraps the
+// One end of a channel as the router holds it. Node's MessagePort fits as it is. Electron's MessagePortMain wraps the
 // data in its message event, so the Electron runtime adapts it
 export type Port = {
   postMessage(message: unknown): void
@@ -39,23 +39,23 @@ export type Debug = (entry: { plugin: string | null, caller: Caller, action: str
 // with its result or throws a refusal
 export type Served = (call: Call) => Promise<unknown>
 
-// What the carrier offers the plugins manager, which calls it and is never called back but through what it handed in:
+// What the router offers the plugins manager, which calls it and is never called back but through what it handed in:
 // its table, the namespaces it serves, the prompt behind an ask and the listeners for what the ways in heard
-export type CarrierDoor = {
+export type RouterDoor = {
   // Binds a half's port to its caller. The plugins manager calls it in the same step that mints the port
   register(port: Port, caller: Caller): void
   // Ends a way: a planned stop or a revoked incarnation. Its calls answer code and nothing more arrives from it
   end(caller: Caller, code?: 'stopped' | 'crashed'): void
   // A lifecycle message down a half's own way: init, deps, stop or ping. Dropped when the way is gone
   send(caller: Caller, message: unknown): void
-  // A policy job state, a plugin state or the grants snapshot changed, so the carrier asks the gate about live
+  // A policy job state, a plugin state or the grants snapshot changed, so the router asks the gate about live
   // subscriptions again
   changed(): void
   // Shutdown has begun. From this call on a policy job, guard or provider that is down answers stopped
   stopping(): void
-  // A limit as the carrier enforces it for one plugin, so the start and stop deadlines follow the same values
+  // A limit as the router enforces it for one plugin, so the start and stop deadlines follow the same values
   limit(plugin: string, name: LimitName): number
-  // The plugin table the carrier reads plugin and policy job state from, on each call and with no copy
+  // The plugin table the router reads plugin and policy job state from, on each call and with no copy
   read(table: PluginTable): void
   // A part serving the namespaces the namespace table gives it
   serve(part: Part, served: Served): void
@@ -65,7 +65,7 @@ export type CarrierDoor = {
   onHeard(listener: Heard): void
 }
 
-export type CarrierOptions = {
+export type RouterOptions = {
   // The holder's interface while the policy job or role is on, else null. A provider by its namespace's holder
   gate: () => Gate | null
   guards: (id: string) => Guard | null
@@ -75,7 +75,7 @@ export type CarrierOptions = {
   // The gate module's count of the gate's time each caller spends in a second, which a listing spends too. None counts
   // nothing
   gateTime?: GateTime
-  // Recording, which takes each call's record, the carrier's own core records and log.segments and log.verify. null
+  // Recording, which takes each call's record, the router's own core records and log.segments and log.verify. null
   // records nothing and serves no log
   recording: Recording | null
   // Whether the trusted window took input long enough to count a Confirm: past the input delay since it last showed or

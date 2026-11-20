@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
-import { cleanup, code, harness, tick, worker } from './carrier-fakes.ts'
+import { cleanup, code, harness, tick, worker } from './router-fakes.ts'
 
 // What another program does right after a move's link, and the path whose every unlink fails
 const disk = { afterLink: null as null | (() => Promise<void>), failing: '' }
@@ -62,8 +62,8 @@ describe.runIf(process.platform === 'win32' || process.platform === 'darwin')('a
     expect(await readFile(path.join(folder, 'taken.md'), 'utf8')).toBe('OWN')
     await parts.recording.flush()
     expect(parts.log.events('audit.call').map(record => record.fields)).toMatchObject([{ action: 'luoshu.move', code: 'failed' }])
-    // The carrier's coalesced records are written as it closes
-    parts.carrier.close()
+    // The router's coalesced records are written as it closes
+    parts.router.close()
     await tick()
     expect(parts.log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'luoshu', step: 'perform', count: 1 }])
   }, 15_000)

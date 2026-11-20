@@ -82,7 +82,7 @@ export const retiredNames: readonly RetiredName[] = [
   {
     name: 'log.history',
     now: 'log.segments',
-    // The action's name only. The event log's own history() method is called log.history() in the carrier, which the
+    // The action's name only. The event log's own history() method is called log.history() in the router, which the
     // pattern leaves out
     pattern: /\blog\.history\b(?!\s*\()/g,
     allowed: [],
@@ -95,7 +95,7 @@ export const retiredNames: readonly RetiredName[] = [
   {
     name: 'floor constants and floor records',
     now: 'limits and core records',
-    // The two phrases only: floor alone still names the carrier's fixed rules
+    // The two phrases only: floor alone still names the router's fixed rules
     pattern: /\bfloor[ -]?(?:constants?|records?)\b/gi,
     allowed: [],
   },
@@ -121,4 +121,5 @@ export const retiredNames: readonly RetiredName[] = [
   { name: 'core.pickFolder', now: 'app.pickFolder', pattern: /\bcore\.pickFolder\b/g, allowed: [] },
   { name: 'security.open', now: 'app.openSecurity', pattern: /\bsecurity\.open\b/g, allowed: [] },
   { name: 'the luoshu\'s lock', now: 'latch', pattern: latchPattern, allowed: [] },
+  { name: 'carrier', now: 'router', pattern: /carriers?/gi, allowed: [] },
 ]

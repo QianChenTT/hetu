@@ -109,7 +109,7 @@ function lent(c: Context, pending: Pending, agent: string): boolean {
 }
 
 // 6 route to a part handed in, then 10 perform by it. An action that names a live call goes on only while that call
-// is open and was delivered on the caller's own way, and the part gets a view of it. A live call that acts for an
+// is open and was delivered on the caller's own way. The part gets a view of it. A live call that acts for an
 // agent is let on only while the gate can judge the agent
 async function serve(c: Context, pending: Pending, served: Served | undefined, args: unknown, names: boolean): Promise<void> {
   if (served === undefined) return finish(c, pending, no('unavailable'))

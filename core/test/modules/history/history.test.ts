@@ -582,7 +582,7 @@ describe('a page of the log', () => {
 })
 
 describe('whose call it is', () => {
-  it('serves any caller the carrier hands it, a plugin or a window, since the gate decided', async () => {
+  it('serves any caller the router hands it, a plugin or a window, since the gate decided', async () => {
     const history = await started(where)
     await commitOf(history, ['a.md'], 'x', { caller: git })
     expect(await ask(history, 'history.log', { path: 'a.md' }, { caller: editor })).toMatchObject({ commits: [{ message: 'x' }] })

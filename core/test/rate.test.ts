@@ -5,7 +5,7 @@ import { countMessage, ENVELOPE_ROOM, messageCap, newBudget, newRate, spend, wei
 const Mi = 1024 * 1024
 
 describe('the text budget', () => {
-  it('is 4 MiB a second per port, as the carrier measures a value, which the human may change like any limit', () => {
+  it('is 4 MiB a second per port, as the router measures a value, which the human may change like any limit', () => {
     expect(defaultLimits.bytesPerSecond).toBe(4 * Mi)
   })
 
@@ -48,8 +48,8 @@ describe('the text budget', () => {
 })
 
 describe('weighing a message', () => {
-  it('weighs JSON text by the larger of what the carrier measures and its length', () => {
-    // A string the carrier measures at 8 and its 3 bytes, 5 characters long
+  it('weighs JSON text by the larger of what the router measures and its length', () => {
+    // A string the router measures at 8 and its 3 bytes, 5 characters long
     expect(weigh('"abc"', 1000)).toEqual({ ok: true, weight: 11 })
     // Two empty objects: the array's 8, its two slots' 16, its keys 0 and 1 and the objects' 16, against 7 characters
     expect(weigh('[{},{}]', 1000)).toEqual({ ok: true, weight: 42 })
@@ -57,7 +57,7 @@ describe('weighing a message', () => {
     expect(weigh(JSON.stringify('\u0001'.repeat(10)), 1000)).toEqual({ ok: true, weight: 62 })
   })
 
-  it('refuses text that isn\'t JSON, isn\'t plain data, nests past the carrier\'s depth or weighs past the cap', () => {
+  it('refuses text that isn\'t JSON, isn\'t plain data, nests past the router\'s depth or weighs past the cap', () => {
     const nested = (depth: number) => '['.repeat(depth) + ']'.repeat(depth)
     expect(weigh(nested(64), 10_000).ok).toBe(true)
     expect(weigh(nested(65), 10_000).ok).toBe(false)

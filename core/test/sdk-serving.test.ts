@@ -3,7 +3,7 @@ import type { Capability } from '../api/capabilities.ts'
 import { definePlugin, type PluginContext, run } from '../sdk/plugin.ts'
 import { Refused } from '../sdk/refused.ts'
 import type { IncomingCall } from '../sdk/serving.ts'
-import { cleanup, code, harness, tick, worker } from './carrier-fakes.ts'
+import { cleanup, code, harness, tick, worker } from './router-fakes.ts'
 import { sdkTransport } from './sdk-fakes.ts'
 
 afterEach(() => {
@@ -26,8 +26,8 @@ async function serving(handler: (call: IncomingCall, args: unknown, ctx: PluginC
   parts.gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
   parts.gate.grants.tester = [{ type: 'plugin.call', targets: ['search'] }, ...testerGrants]
   parts.luoshu.files.set('notes/a.md', 'hello')
-  run(definePlugin({ start: ctx => { ctx.provide('query', (call, args) => handler(call, args, ctx)) } }), sdkTransport(parts.carrier, worker('search')))
-  parts.carrier.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
+  run(definePlugin({ start: ctx => { ctx.provide('query', (call, args) => handler(call, args, ctx)) } }), sdkTransport(parts.router, worker('search')))
+  parts.router.send(worker('search'), { v: 1, kind: 'init', id: 'search', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null })
   await until(() => parts.pluginsManager.lifecycle.some(entry => entry.kind === 'ready'))
   return { ...parts, tester: parts.connect(worker('tester')) }
 }
@@ -39,7 +39,7 @@ describe('a plugin serving its actions through the SDK', () => {
     expect(reply).toMatchObject({ ok: true, result: { paths: ['notes/a.md'] } })
   })
 
-  it('hands the handler the caller, onBehalf and the deadline the carrier set', async () => {
+  it('hands the handler the caller, onBehalf and the deadline the router set', async () => {
     let seen: { call: IncomingCall, args: unknown } | null = null
     const { tester } = await serving((call, args) => {
       seen = { call, args }
@@ -89,7 +89,7 @@ describe('a plugin serving its actions through the SDK', () => {
     expect(code(await tester.ask('search.other', {}))).toBe('failed')
   })
 
-  it('aborts call.signal when the carrier cancels the call', async () => {
+  it('aborts call.signal when the router cancels the call', async () => {
     let seen: IncomingCall | null = null
     const { tester } = await serving(call => {
       seen = call

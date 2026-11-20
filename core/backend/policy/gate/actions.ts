@@ -61,7 +61,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
       return null
     }
   }
-  // A log that can't say counts as failing, and a fault that can't be recorded is lost
+  // A log that can't say counts as failing. A fault that can't be recorded is lost
   const passes = () => {
     try {
       return options.passes() === true
@@ -133,7 +133,7 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   // included, since a store from an older build may hold one: the gate's matcher matches no such path and with the gate
   // off the callee gets back only what it gave. One message asks the gate up to twice per path, synchronously in main,
   // and scopes shaped for the matcher's worst case make each ask slow. So the gate's time counts against the live
-  // call's caller, filterMsPerSecond each second, and one that floods a plugin with calls spends only its own. Past it
+  // call's caller, filterMsPerSecond each second, so one that floods a plugin with calls spends only its own. Past it
   // the call answers throttled and the live call keeps how far it got, so the next try goes on from there and any call
   // finishes within its deadline. That progress is dropped once the gate or the grants snapshot changed, so no answer
   // from before a narrowing stands. For a live call that acts for an agent, the paths the agent may read too. The

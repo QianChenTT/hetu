@@ -127,7 +127,7 @@ describe('the retired names check itself', () => {
     ['const installIds = []', 'installIds: installIds'],
     ["// see core/frontend/mount/page.ts", 'core/frontend/mount: frontend/mount'],
     ["call('luoshu.set', note)", 'luoshu.set: luoshu.set'],
-    ['// the floor records the carrier writes', 'floor constants and floor records: floor records'],
+    ['// the floor records the router writes', 'floor constants and floor records: floor records'],
     ['const FLOOR_CONSTANTS = floorConstants', 'floor constants and floor records: floorConstants'],
     ['// an install plugin is trusted', 'install plugin and host-level plugin: install plugin'],
     ['// a host-level plugin', 'install plugin and host-level plugin: host-level plugin'],
@@ -172,7 +172,7 @@ describe('the retired names check itself', () => {
   it('allows a listed exact text only where it is listed and a layout slot near a policy word in a layout file', () => {
     expect(refused('core/api/changes.ts', "export const classCauses = ['start', 'slot-on']")).toEqual([])
     expect(refused('core/api/changes.ts', 'const slotOn = true')).toEqual(['core/api/changes.ts:1: slotOn (retired slot, now policy job)'])
-    expect(refused('core/backend/carrier/carrier.ts', "if (cause === 'slot-on') return")).toEqual(['core/backend/carrier/carrier.ts:1: slot-on (retired slot, now policy job)'])
+    expect(refused('core/backend/router/router.ts', "if (cause === 'slot-on') return")).toEqual(['core/backend/router/router.ts:1: slot-on (retired slot, now policy job)'])
     expect(refused('core/frontend/editor/layers.ts', '// a slot the gate never sees')).toEqual([])
     expect(refused('core/frontend/trusted/page.ts', '// a slot the gate never sees')).toEqual(['core/frontend/trusted/page.ts:1: slot the gate (retired slot, now policy job)'])
   })

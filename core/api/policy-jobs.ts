@@ -16,7 +16,7 @@ export type Scope = {
   readonly command?: readonly string[]
 }
 
-// A call as the carrier hands it to a provider, a callee or a core action. callId is the carrier's own and deadline is
+// A call as the router hands it to a provider, a callee or a core action. callId is the router's own and deadline is
 // in ms since the epoch, never later than the parent's
 export type Call = {
   readonly callId: string
@@ -36,7 +36,7 @@ export type Call = {
   // For an action that names a live call delivered to its caller: a view of that call, the same object for as long as
   // the call lives
   readonly live?: LiveCall
-  // Aborts once the call ends, answered or stopped, and when a new grants snapshot no longer covers a call let on. A
+  // Aborts once the call ends, answered or stopped, or once a new grants snapshot no longer covers a call let on. A
   // provider that can stop what it does stops then and throws, a single write finishes
   readonly signal?: CallSignal
 }
@@ -80,7 +80,7 @@ export type GuardCall = {
 }
 
 // What the gate decides on: the raw request at precheck and the prepared object at decide. onBehalf rides along and is
-// never decided on, so it grants nothing. agent is set by the carrier alone for a call under a chain that started at
+// never decided on, so it grants nothing. agent is set by the router alone for a call under a chain that started at
 // the agent door. It names the agent whose own grant the call is judged against beside the caller's
 export type Access = {
   readonly stage: 'raw' | 'canonical'
@@ -113,7 +113,7 @@ export type Decision =
 // use still asks for a Confirm
 export type GrantedItem = { readonly capability: Capability, readonly off: boolean, readonly firstUse: boolean }
 
-// What the plugins manager pushes to the gate, numbered so the carrier can refuse an answer made on an older one. plugins holds
+// What the plugins manager pushes to the gate, numbered so the router can refuse an answer made on an older one. plugins holds
 // each plugin's grants as items, a folder plugin's from its entry and a core plugin's from its manifest, and leaves
 // out a plugin holding nothing. Windows' grants are core/api's own and never here. foldCase is whether the luoshu's
 // volume ignores case. execAny names the plugins the human let exec run any command for, past their declared lists.
@@ -235,7 +235,7 @@ export type Provider = {
   release?(call: Call, prepared: Prepared): void
 }
 
-// A policy job or guard role as the carrier applies it: on, off by the human, starting until its module is started,
+// A policy job or guard role as the router applies it: on, off by the human, starting until its module is started,
 // failed (its module's last push threw, or the stopped mode closed it) or absent, held by nothing that runs
 export const policyJobStates = frozen(['on', 'off', 'starting', 'failed', 'absent'] as const)
 export type PolicyJobState = typeof policyJobStates[number]

@@ -10,10 +10,10 @@ import type { Part } from '../api/ids.ts'
 import { FIRST_PARTY_SIGNER, INSTALL_LIST } from '../api/install.ts'
 import type { ExecView, Gate, GrantRiskClassifier, GrantsSnapshot, Opening, Provider } from '../api/policy-jobs.ts'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
-import { Carrier } from '../backend/carrier/carrier.ts'
+import { Router } from '../backend/router/router.ts'
 import type { HumanLimits, PluginTable } from '../api/policy-jobs.ts'
-import type { Asks, CarrierDoor, Heard, Port, Served, WayClosed } from '../backend/carrier/header.ts'
-import { Limits } from '../backend/carrier/limits.ts'
+import type { Asks, RouterDoor, Heard, Port, Served, WayClosed } from '../backend/router/header.ts'
+import { Limits } from '../backend/router/limits.ts'
 import type { CoreModules, CoreModulesOptions } from '../backend/modules/header.ts'
 import { realModules } from './modules-fakes.ts'
 import { createGrantRiskClassifier } from '../backend/policy/grant-risk-classifier/grant-risk-classifier.ts'
@@ -23,7 +23,7 @@ import type { Luoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { PluginsManager, type PluginsManagerOptions } from '../backend/plugins-manager/plugins-manager.ts'
 import type { Landing, PluginsRecording } from '../backend/plugins-manager/header.ts'
 import type { Runtime, UtilityStart, WorkerStart } from '../backend/runtime/header.ts'
-import { carrierOptions } from '../backend/wire.ts'
+import { routerOptions } from '../backend/wire.ts'
 import type { Field } from '../lib/event-log.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 
@@ -43,11 +43,11 @@ export async function until(check: () => boolean, ms = 3000): Promise<void> {
   }
 }
 
-// The carrier's door and recording as the plugins manager uses them, around a real carrier for the ways in. send,
+// The router's door and recording as the plugins manager uses them, around a real router for the ways in. send,
 // changed, stopping and limit are recorded, drain and resume recording's, faked here. What the plugins manager hands in
-// through the door is kept, so each carrier a test builds gets it
-export class FakeLink implements CarrierDoor, PluginsRecording {
-  carrier: Carrier | null = null
+// through the door is kept, so each router a test builds gets it
+export class FakeLink implements RouterDoor, PluginsRecording {
+  router: Router | null = null
   readonly handed: { served: Map<Part, Served>, asks: Asks | null, wayClosed: WayClosed[], heard: Heard[] } = {
     served: new Map(), asks: null, wayClosed: [], heard: [],
   }
@@ -55,7 +55,7 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
   readonly sent: { caller: Caller, message: Message }[] = []
   readonly ended: { caller: Caller, code: string }[] = []
   readonly registered: Caller[] = []
-  // What the plugins manager asked of the carrier, in order: stopping, each record and each lifecycle message by plugin
+  // What the plugins manager asked of the router, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
   landing: (event: string, fields: Record<string, Field>, signal?: AbortSignal) => Landing | Promise<Landing> = () => 'landed'
@@ -67,7 +67,7 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
   private readonly ports = new Map<string, Port>()
 
   register(port: Port, caller: Caller): void {
-    this.carrier!.register(port, caller)
+    this.router!.register(port, caller)
     this.registered.push(caller)
     this.ports.set(keyOf(caller), port)
   }
@@ -76,7 +76,7 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
     this.ended.push({ caller, code })
     if (caller.kind === 'plugin') this.timeline.push(`end ${caller.id}`)
     this.ports.delete(keyOf(caller))
-    this.carrier!.end(caller, code)
+    this.router!.end(caller, code)
   }
 
   send(caller: Caller, message: unknown): void {
@@ -121,7 +121,7 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
   }
 
   read(table: PluginTable): void {
-    this.carrier?.read(table)
+    this.router?.read(table)
   }
 
   serve(part: Part, served: Served): void {
@@ -140,14 +140,14 @@ export class FakeLink implements CarrierDoor, PluginsRecording {
     this.handed.heard.push(listener)
   }
 
-  // A carrier built for the plugins manager, handed the table and what the plugins manager handed the link
-  attach(carrier: Carrier, table: PluginTable): void {
-    this.carrier = carrier
-    carrier.read(table)
-    for (const [part, served] of this.handed.served) carrier.serve(part, served)
-    if (this.handed.asks !== null) carrier.asks(this.handed.asks)
-    for (const listener of this.handed.wayClosed) carrier.onWayClosed(listener)
-    for (const listener of this.handed.heard) carrier.onHeard(listener)
+  // A router built for the plugins manager, handed the table and what the plugins manager handed the link
+  attach(router: Router, table: PluginTable): void {
+    this.router = router
+    router.read(table)
+    for (const [part, served] of this.handed.served) router.serve(part, served)
+    if (this.handed.asks !== null) router.asks(this.handed.asks)
+    for (const listener of this.handed.wayClosed) router.onWayClosed(listener)
+    for (const listener of this.handed.heard) router.onHeard(listener)
   }
 
   events(name: string) {
@@ -194,7 +194,7 @@ export class Half {
     return this.inbox.filter(message => message.kind === kind)
   }
 
-  // A call from this half through the carrier, its reply or null when none came within ms
+  // A call from this half through the router, its reply or null when none came within ms
   async ask(action: string, args: unknown = {}, ms = 1000): Promise<Message | null> {
     const id = 1000 + this.id++
     this.post({ v: 1, kind: 'call', id, action, args })
@@ -476,22 +476,22 @@ export const coreInstall = (): Record<string, Listing> => ({})
 export type ModuleFakes = Partial<Pick<CoreModulesOptions, 'gate' | 'grantRiskClassifier' | 'storage' | 'luoshu' | 'history' | 'exec' | 'heartbeat' | 'securityView' | 'floodControl' | 'trash' | 'off'>>
 
 // The core modules as wireCore makes them, each the real one unless a test hands its own, the luoshu publishing through
-// the carrier the link points at and flood control counting by limit
+// the router the link points at and flood control counting by limit
 export function coreModules(
   dirs: { dataDir: string, installDir: string }, link: FakeLink, fakes: ModuleFakes = {}, limit?: (plugin: string | null, name: LimitName) => number,
 ): CoreModules {
   return realModules({
-    ...dirs, ...fakes, publish: (topic, path) => link.carrier?.publishCore('luoshu', topic, path), ...(limit !== undefined ? { limit } : {}),
+    ...dirs, ...fakes, publish: (topic, path) => link.router?.publishCore('luoshu', topic, path), ...(limit !== undefined ? { limit } : {}),
   })
 }
 
-// A real carrier over the plugins manager and the core modules, built from the options wireCore builds it from, with no
+// A real router over the plugins manager and the core modules, built from the options wireCore builds it from, with no
 // core record log
-export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Carrier {
-  const carrier = new Carrier(carrierOptions(modules, { recording: null }))
-  link.carrier?.close()
-  link.attach(carrier, pluginsManager)
-  return carrier
+export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Router {
+  const router = new Router(routerOptions(modules, { recording: null }))
+  link.router?.close()
+  link.attach(router, pluginsManager)
+  return router
 }
 
 export type Harness = {
@@ -505,7 +505,7 @@ export type Harness = {
   // The gate the core modules hold, the one handed in or one that allows everything
   gate: Gate
   pluginsManager: PluginsManager
-  carrier: Carrier
+  router: Router
 }
 
 const live: Harness[] = []
@@ -516,7 +516,7 @@ export async function tempBase(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'hetu-plugins-manager-'))
 }
 
-// A plugins manager over a real StateStore, the core modules and a real carrier, with the fake runtime. state writes the
+// A plugins manager over a real StateStore, the core modules and a real router, with the fake runtime. state writes the
 // entries and switches the boot hands over. removedKnown stands in for what boot found. The gate allows everything
 // unless modules hands another, as the gate the install held did, and every other core module is the real one unless
 // modules hands a fake
@@ -573,8 +573,8 @@ export async function harness(options: {
     ...options.pluginsManager,
   })
   human.limits = () => pluginsManager.limits()
-  const carrier = wire(pluginsManager, modules, link)
-  const made = { base, installDir, dataDir, store, link, runtime, modules, gate, pluginsManager, carrier }
+  const router = wire(pluginsManager, modules, link)
+  const made = { base, installDir, dataDir, store, link, runtime, modules, gate, pluginsManager, router }
   live.push(made)
   return made
 }
@@ -582,8 +582,8 @@ export async function harness(options: {
 export async function cleanup(): Promise<void> {
   for (const made of live.splice(0)) {
     await made.pluginsManager.shutdown().catch(() => {})
-    made.carrier.close()
-    made.link.carrier?.close()
+    made.router.close()
+    made.link.router?.close()
     for (const port of made.runtime.ports) port.close()
   }
   for (const base of [...bases]) {

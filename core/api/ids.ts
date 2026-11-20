@@ -32,7 +32,7 @@ export const qualifiedName = z.string()
     return dot <= MAX_ID_LENGTH && value.length - dot - 1 <= MAX_NAME_LENGTH
   }, 'a part over its cap')
 
-// The policy jobs the carrier asks, the gate and the grant risk classifier held by the core modules of the same id. The
+// The policy jobs the router asks, the gate and the grant risk classifier held by the core modules of the same id. The
 // log is the core's own
 export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
 
@@ -41,7 +41,7 @@ export const policyJobIds = frozen(['gate', 'grant-risk-classifier'] as const)
 // never the gate. bus: the event bus inside the router. served: a part that keeps its own checks
 export type Route = 'provider' | 'action' | 'bus' | 'served'
 
-// A namespace's server: the part, handed to the router under this name, and the route to it. each: every call is an
+// A namespace's server: the part handed to the router under this name and the route to it. each: every call is an
 // audit record of its own, never coalesced
 export type Server = { readonly part: string, readonly route: Route, readonly each?: true }
 

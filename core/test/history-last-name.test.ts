@@ -54,12 +54,12 @@ async function world(folders: Record<string, Capability[]>) {
   const runtime = new FakeRuntime()
   // History as the core holds it around that provider, started on the data folder as the plugins manager starts
   const modules = { gate: createGate(), luoshu, history: { ...history, provider } }
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0, debug: () => {} } as never)
   open.push(async () => {
     luoshu.close()
     history.close()
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()

@@ -99,7 +99,7 @@ describe.runIf(foldsCase)('a move whose link is taken back', () => {
     disk.afterLink = swapFrom
     Object.assign(disk, { failing: at('taken.md'), fails: 1000 })
     const answer = await moved() as { refused: unknown }
-    // Anything but a refusal answers failed through the carrier, with a fault for the provider and the call recorded
+    // Anything but a refusal answers failed through the router, with a fault for the provider and the call recorded
     expect(answer.refused).toBeInstanceOf(Error)
     expect((answer.refused as Error).message).toMatch(/taken back/)
     expect(await readFile(at('taken.md'), 'utf8')).toBe('OWN')

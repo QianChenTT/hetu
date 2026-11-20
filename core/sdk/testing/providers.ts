@@ -47,7 +47,7 @@ export class MemoryLuoshu implements Provider {
       const { folder } = call.args as { folder?: string }
       return folder !== undefined && folder.split('/').some(isDotName) ? { code: 'not-granted' } : { scope: {} }
     }
-    // A move's two ends, in the order the carrier built its raw scope
+    // A move's two ends, in the order the router built its raw scope
     if (call.action === 'luoshu.move') {
       const { from, to } = call.args as { from: string, to: string }
       return { scope: { paths: [from, to] } }
@@ -104,7 +104,7 @@ export class MemoryLuoshu implements Provider {
   }
 
   // Every note under folder at any depth, the whole luoshu with none, in code-unit order after the name given. Only
-  // names the carrier's canList allows fill a page, so next never names one the caller can't list. A dot name is left
+  // names the router's canList allows fill a page, so next never names one the caller can't list. A dot name is left
   // out even when canList allows it, as the luoshu's walk leaves it out. With no canList it fails
   private list(call: Call): { paths: string[], next: string | null } {
     const { canList } = call

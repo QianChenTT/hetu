@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { defaultLimits } from '../api/limits.ts'
 import type { Recording } from '../backend/recording/header.ts'
 import { createRecording } from '../backend/recording/recording.ts'
-import { FakeLog, tick, worker } from './carrier-fakes.ts'
+import { FakeLog, tick, worker } from './router-fakes.ts'
 
 // Recording on its own over a fake log: what it takes in, what it writes and when the log counts as failed
 const made: Recording[] = []

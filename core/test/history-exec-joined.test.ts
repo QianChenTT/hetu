@@ -22,7 +22,7 @@ const node = process.execPath
 const say = (text: string) => [node, '-e', `process.stdout.write(${JSON.stringify(text)})`]
 
 // The joined core over a real boot with the gate, the luoshu, history and exec as they ship, the notes folder picked and
-// folder plugins with entries in the state, each a fake worker whose calls go through the real carrier
+// folder plugins with entries in the state, each a fake worker whose calls go through the real router
 async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const base = await tempBase()
   const installDir = path.join(base, 'install')
@@ -44,10 +44,10 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   const runtime = new FakeRuntime()
   // The core modules are the ones the core makes, started on the data folder as the plugins manager starts and closed
   // at its shutdown
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, confirmDelayMs: 0 })
   open.push(async () => {
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
@@ -59,7 +59,7 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
 
   const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
   const waiting = new Map<number, (reply: Reply) => void>()
-  const receive = carrier.window<string>(sender => (sender === 'editor' ? editor : null))
+  const receive = router.window<string>(sender => (sender === 'editor' ? editor : null))
   let next = 1
   const window = (action: string, args?: unknown) => new Promise<Reply>(resolve => {
     const id = next++
@@ -73,7 +73,7 @@ async function joined(folders: Folder[], switches: Partial<Switches> = {}) {
   })
   // A call from a folder plugin's worker, its reply within the deadline a command needs
   const plugin = async (id: string, action: string, args: unknown) => (await runtime.half(id).ask(action, args, 15_000)) as Reply | null
-  return { pluginsManager, carrier, dataDir, folder, window, plugin }
+  return { pluginsManager, router, dataDir, folder, window, plugin }
 }
 
 const exists = (file: string) => stat(file).then(() => true, () => false)

@@ -10,7 +10,7 @@ import { call, answered } from './route.ts'
 // 1 bind, the pipes: ports, host handles and the windows' way in, each message counted by flood control before it is
 // read. A way that ends or dies takes its subscriptions and its calls with it
 
-// Binds a plugin half to one end of a channel. The carrier starts the port, since a paused MessagePortMain emits
+// Binds a plugin half to one end of a channel. The router starts the port, since a paused MessagePortMain emits
 // nothing, close included
 export function register(c: Context, port: Port, caller: Caller): void {
   const bound = bindable(c, caller)
@@ -25,7 +25,7 @@ export function register(c: Context, port: Port, caller: Caller): void {
 }
 
 // A host half's in-process way in, bound like a port. Messages are copied both ways as a port copies them, so a host
-// half can't change one after the carrier has read it. They arrive in a later microtask as a port's would
+// half can't change one after the router has read it. They arrive in a later microtask as a port's would
 export function handle(c: Context, caller: Caller, hear: Send): { post: Send } {
   const bound = bindable(c, caller)
   const way = addWay(c, bound, 'handle', message => {
@@ -92,7 +92,7 @@ export function send(c: Context, caller: Caller, message: unknown): void {
   way.send(message)
 }
 
-// For the plugins manager: a limit as the carrier enforces it for one plugin, so the plugins manager's start and stop
+// For the plugins manager: a limit as the router enforces it for one plugin, so the plugins manager's start and stop
 // deadlines follow the same values
 export function limit(c: Context, plugin: string, name: LimitName): number {
   return c.limits.of(plugin, name)
@@ -110,7 +110,7 @@ function bindable(c: Context, caller: Caller): Caller {
   const parsed = callerSchema.safeParse(caller)
   // Windows come through window() and content frames are reserved for #97
   if (!parsed.success || parsed.data.kind !== 'plugin') throw new Error('not a plugin caller')
-  if (c.closed) throw new Error('carrier closed')
+  if (c.closed) throw new Error('router closed')
   const bound = frozen(parsed.data)
   if (c.ways.has(keyOf(bound))) throw new Error('caller already registered')
   return bound
@@ -164,7 +164,7 @@ function receive(c: Context, way: Way, message: unknown, answer: Send): void {
     else if ((kind === 'ready' || kind === 'pong' || kind === 'stopped') && way.plugin !== null) {
       c.tell(c.heard, way.caller, kind)
     }
-    // Anything else, another v and the kinds only the carrier sends included, is dropped unread
+    // Anything else, another v and the kinds only the router sends included, is dropped unread
   } catch {}
 }
 
@@ -176,7 +176,7 @@ function admit(c: Context, way: Way): Admitted {
   return verdict === 'pass' || verdict === 'flood' ? verdict : 'drop'
 }
 
-// The flood cap closes the way and reports the plugin crashed with flood. The carrier marks its own close first,
+// The flood cap closes the way and reports the plugin crashed with flood. The router marks its own close first,
 // since a local close() emits close too
 function flood(c: Context, way: Way): void {
   shut(way)

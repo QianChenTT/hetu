@@ -17,7 +17,7 @@ import { type Editors, Notes } from '../frontend/editor/notes.ts'
 import type { SettingsValue } from '../frontend/editor/settings.ts'
 import type { UiHooks } from '../frontend/editor/ui-port.ts'
 import { Versions } from '../frontend/editor/versions.ts'
-import { cleanup, FakeGuard, harness, windowWay } from './carrier-fakes.ts'
+import { cleanup, FakeGuard, harness, windowWay } from './router-fakes.ts'
 import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -32,7 +32,7 @@ afterEach(async () => {
 type Reply = { id?: number, ok?: boolean, result?: unknown, refusal?: { code: string } }
 
 // The joined core over a real boot, with the gate and the luoshu modules as they ship and the folder picked. Calls come
-// from the editor window, each reply handed back the moment the carrier sends it, or from a plugin-folder plugin
+// from the editor window, each reply handed back the moment the router sends it, or from a plugin-folder plugin
 // approved at class 4 with the grants and the API range given
 type Folder = Record<string, { granted: Capability[], api?: string }>
 async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wire?: Pick<WireOptions, 'trash'>, plugins?: Folder } = {}) {
@@ -55,11 +55,11 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   const runtime = new FakeRuntime()
   // The gate the core modules hold, the shipping one unless holder is given
   const gate = options.holder ?? createGate()
-  const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
+  const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules: { gate, luoshu }, confirmDelayMs: 0, ...options.wire })
   open.push(async () => {
     luoshu.close()
     await pluginsManager.shutdown().catch(() => {})
-    carrier.close()
+    router.close()
     await recording.flush()
     for (const port of runtime.ports) port.close()
     await booted.release()
@@ -69,7 +69,7 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   await pluginsManager.settled()
   const editor: Caller = { kind: 'window', role: 'editor', n: 1 }
   const waiting = new Map<number, (reply: Reply) => void>()
-  const receive = carrier.window<string>(sender => (sender === 'editor' ? editor : null))
+  const receive = router.window<string>(sender => (sender === 'editor' ? editor : null))
   let next = 1
   const ask = (action: string, args?: unknown) => new Promise<Reply>(resolve => {
     const id = next++
@@ -81,7 +81,7 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
       waiting.delete(reply.id)
     })
   })
-  return { pluginsManager, carrier, recording, runtime, dataDir, base, ask, receive }
+  return { pluginsManager, router, recording, runtime, dataDir, base, ask, receive }
 }
 
 // A plugin's port to the editor window's drawer, each reply read once the drawer answered
@@ -119,7 +119,7 @@ async function notes(): Promise<string> {
   return folder
 }
 
-// No core plugin holds a guard once host halves went, so the carrier's harness holds one before the real luoshu, the
+// No core plugin holds a guard once host halves went, so the router's harness holds one before the real luoshu, the
 // editor window asking
 async function guarded(folder: string, check: (call: GuardCall) => 'allow' | 'deny') {
   const base = path.dirname(folder)
@@ -135,7 +135,7 @@ async function guarded(folder: string, check: (call: GuardCall) => 'allow' | 'de
     luoshu.close()
     cleanup()
   })
-  const way = windowWay(parts.carrier, { editor: { kind: 'window', role: 'editor', n: 1 } })
+  const way = windowWay(parts.router, { editor: { kind: 'window', role: 'editor', n: 1 } })
   return { ask: (action: string, args?: unknown) => way.ask('editor', action, args) as Promise<Reply> }
 }
 
@@ -254,7 +254,7 @@ describe('an open note judged on where it is, never on the spelling it was opene
       privui: { granted: scoped('private/**', ['ui.read', 'ui.edit']) },
     } })
     await tick(30)
-    // The editor window's own core link, notes and drawer over the joined carrier
+    // The editor window's own core link, notes and drawer over the joined router
     let listener: ((message: unknown) => void) | null = null
     const link = new CoreLink({
       send: message => made.receive('editor', message, out => listener?.(out)),
@@ -360,9 +360,9 @@ describe('an open note judged on where it is, never on the spelling it was opene
   })
 })
 
-// With the gate off by the human the carrier asks no one about a path, so the luoshu's canonical is the one check left
+// With the gate off by the human the router asks no one about a path, so the luoshu's canonical is the one check left
 describe('the dot rule with the gate off by the human', () => {
-  // A gate that throws at every question, so a call it would have to answer fails if the carrier asks it
+  // A gate that throws at every question, so a call it would have to answer fails if the router asks it
   const asked = () => {
     throw new Error('the gate was asked')
   }
@@ -423,7 +423,7 @@ describe('the dot rule with the gate off by the human', () => {
 
 // The audit trail near 250 calls a second. The vault is a real one's size, 469 notes
 // and about 4.2 MB, or a copy of a real one where HETU_BUDGET_LUOSHU names it
-describe('indexing a vault through the carrier with the log on', () => {
+describe('indexing a vault through the router with the log on', () => {
   it('reads every note within its budget, and a save made halfway doesn\'t wait behind the reads', async () => {
     const folder = await notes()
     const real = process.env.HETU_BUDGET_LUOSHU
@@ -436,7 +436,7 @@ describe('indexing a vault through the carrier with the log on', () => {
         await writeFile(path.join(dir, `note ${i}.md`), line.repeat(93))
       }
     }
-    const { recording, ask, carrier, dataDir } = await joined(folder)
+    const { recording, ask, router, dataDir } = await joined(folder)
 
     const started = performance.now()
     const listed: string[] = []
@@ -467,7 +467,7 @@ describe('indexing a vault through the carrier with the log on', () => {
     const totalMs = performance.now() - started
     console.log(`budget: ${md.length} notes read in ${Math.round(totalMs)} ms, the save answered in ${Math.round(saveMs)} ms`)
 
-    carrier.close()
+    router.close()
     await recording.flush()
     const written = await events(dataDir)
     expect(written.some(record => record.event === 'audit.call' && record.action === 'luoshu.write' && record.code === null)).toBe(true)

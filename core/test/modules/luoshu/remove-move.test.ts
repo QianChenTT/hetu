@@ -59,7 +59,7 @@ function opened(options: LuoshuOptions = {}, trash?: Bin): Opened {
 
 const callOf = (action: string, args: unknown): Call => ({ callId: `c${++n}`, caller, action, args, deadline: Date.now() + 30000 })
 
-// prepare then perform, as the carrier makes a call. A refusal from either comes back as the value thrown or given
+// prepare then perform, as the router makes a call. A refusal from either comes back as the value thrown or given
 async function ask(made: Luoshu, action: string, args: unknown): Promise<unknown> {
   const call = callOf(action, args)
   const prepared = await made.provider.prepare(call)
@@ -473,7 +473,7 @@ describe('the latches of a move', () => {
     expect(held).toEqual({ from: true, to: true })
   })
 
-  it('lets go of both when the carrier stops the move after prepare', async () => {
+  it('lets go of both when the router stops the move after prepare', async () => {
     const made = opened()
     const move = callOf('luoshu.move', { from: 'a.md', to: 'c.md' })
     const prepared = await made.provider.prepare(move) as Prepared

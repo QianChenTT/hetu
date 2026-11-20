@@ -132,7 +132,7 @@ describe('flood control as a core module', () => {
     expect(listed.requests.find(request => request.id === held.held)?.type).toBe('flood-control')
   })
 
-  it('reads off once switched off, so the carrier asks nothing, handing every running plugin its limits again each way', async () => {
+  it('reads off once switched off, so the router asks nothing, handing every running plugin its limits again each way', async () => {
     const limited: string[] = []
     const made = await harness({ ...needing('alpha', 'luoshu'), pluginsManager: { limited: plugin => void limited.push(plugin) } })
     await made.pluginsManager.start()

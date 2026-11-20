@@ -7,7 +7,7 @@ import type { Read } from './verify.ts'
 
 const none: Readonly<Record<string, { readonly from?: readonly string[] }>> = table({})
 
-// A known plugin as the carrier reads it from the plugin table: the running incarnation's number or the last one
+// A known plugin as the router reads it from the plugin table: the running incarnation's number or the last one
 type Known = Viewed & { readonly place: PluginInfo['place'], readonly live: { readonly n: number } | null, readonly incarnations: number }
 
 export function infoOf(k: Known): PluginInfo {

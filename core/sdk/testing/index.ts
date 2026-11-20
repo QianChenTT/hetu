@@ -8,8 +8,8 @@ import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
 import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
-import { Carrier } from '../../backend/carrier/carrier.ts'
-import { Limits } from '../../backend/carrier/limits.ts'
+import { Router } from '../../backend/router/router.ts'
+import { Limits } from '../../backend/router/limits.ts'
 import { createFloodControl } from '../../backend/flood-control/flood-control.ts'
 import { createGateActions } from '../../backend/policy/gate/actions.ts'
 import type { Recording } from '../../backend/recording/header.ts'
@@ -29,11 +29,11 @@ export type { FakeMode }
 export type FakeState = { state: 'ready' } | { state: 'waiting', reason: string } | { state: 'crashed', reason: 'start-timeout' }
 export type FakeReply = { ok: true, result: unknown } | { ok: false, refusal: Refusal }
 
-// A call the carrier delivered to a stand-in, onBehalf only when the caller named one
+// A call the router delivered to a stand-in, onBehalf only when the caller named one
 export type Delivered = { action: string, args: unknown, caller: Caller, onBehalf?: string }
 // What deps tells the plugin under test of a stand-in
 export type StandInState = DepState
-// A plugin the fake core plays for the plugin under test: its actions with their from lists, which the real carrier
+// A plugin the fake core plays for the plugin under test: its actions with their from lists, which the real router
 // enforces, and handle, which answers each call delivered. What handle returns is the result and a throw of { code }
 // is the refusal. Without handle every call answers null. state is ready unless named
 export type StandInOptions = {
@@ -94,8 +94,8 @@ class Way {
   private readonly waiting = new Map<number, (reply: Record<string, unknown>) => void>()
   private readonly post: (message: unknown) => void
 
-  constructor(carrier: Carrier, caller: Caller) {
-    const handle = carrier.handle(caller, message => {
+  constructor(router: Router, caller: Caller) {
+    const handle = router.handle(caller, message => {
       const { kind, id } = message as { kind?: unknown, id?: unknown }
       if (kind !== 'reply' || typeof id !== 'number') return
       this.waiting.get(id)?.(message as Record<string, unknown>)
@@ -120,7 +120,7 @@ class Way {
   }
 }
 
-// The plugin table the carrier reads and what the ways in heard, for one plugin under test and the plugins the fake
+// The plugin table the router reads and what the ways in heard, for one plugin under test and the plugins the fake
 // core plays
 class FakePluginsManager implements PluginTable {
   readonly infos = new Map<string, PluginInfo>()
@@ -185,11 +185,11 @@ function sameCaller(one: Caller, two: Caller): boolean {
   return one.kind === 'plugin' && two.kind === 'plugin' && one.id === two.id && one.half === two.half && one.incarnation === two.incarnation
 }
 
-// A utility half's way: a port registered with the carrier, as the plugins manager registers the port of a utility process
-function portTransportOf(carrier: Carrier, caller: Caller, ports: MessagePort[]): Transport {
+// A utility half's way: a port registered with the router, as the plugins manager registers the port of a utility process
+function portTransportOf(router: Router, caller: Caller, ports: MessagePort[]): Transport {
   const { port1, port2 } = new MessageChannel()
   ports.push(port1, port2)
-  carrier.register(port1, caller)
+  router.register(port1, caller)
   return {
     post: message => port2.postMessage(message),
     listen: next => { port2.on('message', next) },
@@ -197,10 +197,10 @@ function portTransportOf(carrier: Carrier, caller: Caller, ports: MessagePort[])
 }
 
 // A plugin's way on an in-process handle. What arrives before listen waits for it
-function transportOf(carrier: Carrier, caller: Caller): Transport {
+function transportOf(router: Router, caller: Caller): Transport {
   const held: unknown[] = []
   let listener: ((message: unknown) => void) | null = null
-  const handle = carrier.handle(caller, message => {
+  const handle = router.handle(caller, message => {
     if (listener === null) held.push(message)
     else listener(message)
   })
@@ -213,7 +213,7 @@ function transportOf(carrier: Carrier, caller: Caller): Transport {
   }
 }
 
-// A core for a plugin's tests: the real carrier with its eleven steps, a gate as the mode says, the luoshu, storage and
+// A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage and
 // cache in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin runs on it
 // at a time, placed as the plugins manager would place it: mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
@@ -231,14 +231,14 @@ export class FakeCore {
     // The most luoshu calls in flight at once since a test last asked
     busiest(): number
   }
-  // The human's limits for all, which the carrier reads on each use
+  // The human's limits for all, which the router reads on each use
   readonly limits: Partial<Record<LimitName, number>>
 
   private readonly manifest: Manifest
   private readonly half: 'worker' | 'host'
   private readonly pluginsManager: FakePluginsManager
   private readonly gate: ModeGate
-  private readonly carrier: Carrier
+  private readonly router: Router
   private readonly recording: Recording
   private readonly memory: MemoryLuoshu
   private readonly storage: MemoryStorage
@@ -298,7 +298,7 @@ export class FakeCore {
       clock: () => performance.now(),
       fault: () => {},
     })
-    this.carrier = new Carrier({
+    this.router = new Router({
       gateTime: gateActions.time,
       floodControl: () => floodControl,
       gate: () => this.gate,
@@ -306,13 +306,13 @@ export class FakeCore {
       providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
       recording: this.recording,
     })
-    this.carrier.read(this.pluginsManager)
-    this.carrier.serve('plugins-manager', call => this.served(call))
-    this.carrier.serve('recording', call => this.recording.serve(call))
-    this.carrier.serve('gate', gateActions.serve)
-    this.carrier.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
-    this.carrier.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
-    this.luoshuWay = new Way(this.carrier, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
+    this.router.read(this.pluginsManager)
+    this.router.serve('plugins-manager', call => this.served(call))
+    this.router.serve('recording', call => this.recording.serve(call))
+    this.router.serve('gate', gateActions.serve)
+    this.router.onWayClosed((caller, reason) => this.pluginsManager.crashed(caller, reason))
+    this.router.onHeard((caller, kind) => this.pluginsManager.heard(caller, kind))
+    this.luoshuWay = new Way(this.router, { kind: 'plugin', id: 'luoshu', half: 'host', incarnation: 1 })
     this.luoshu = {
       write: async (path, text, options = {}) => {
         this.memory.notes.set(path, text)
@@ -359,9 +359,9 @@ export class FakeCore {
     if (caller === null) return
     this.markState('stopping')
     const stopped = this.pluginsManager.waitFor(caller, 'stopped', defaultLimits.stopGraceMs)
-    this.carrier.send(caller, { v: VERSION, kind: 'stop', graceMs: defaultLimits.stopGraceMs })
+    this.router.send(caller, { v: VERSION, kind: 'stop', graceMs: defaultLimits.stopGraceMs })
     await stopped
-    this.carrier.end(caller, 'stopped')
+    this.router.end(caller, 'stopped')
     this.markState('stopped')
     this.live = null
     this.lastStop = 'human'
@@ -375,7 +375,7 @@ export class FakeCore {
     let way = this.testers.get(id)
     if (way === undefined) {
       this.infos(id, { state: 'ready', place: 'sandboxed', incarnation: 1, serves: 'worker', actions: {}, topics: [] })
-      way = new Way(this.carrier, { kind: 'plugin', id, half: 'worker', incarnation: 1 })
+      way = new Way(this.router, { kind: 'plugin', id, half: 'worker', incarnation: 1 })
       this.testers.set(id, way)
     }
     if (options.grants !== undefined || !this.gate.grants.has(id)) {
@@ -387,7 +387,7 @@ export class FakeCore {
     return way.ask(action, args, defaultLimits.callDeadlineMs + 1000)
   }
 
-  // Plays another plugin on its worker half: the plugin under test calls it through the real carrier, which checks
+  // Plays another plugin on its worker half: the plugin under test calls it through the real router, which checks
   // each action's from list. A requirement it stands in for is no longer missing
   standIn(id: string, options: StandInOptions): StandIn {
     if (id === this.manifest.id || id in providers || this.testers.has(id) || this.standIns.has(id)) {
@@ -395,7 +395,7 @@ export class FakeCore {
     }
     const delivered: Delivered[] = []
     const caller: Caller = { kind: 'plugin', id, half: 'worker', incarnation: 1 }
-    const handle = this.carrier.handle(caller, message => {
+    const handle = this.router.handle(caller, message => {
       const { kind, callId, action, args, onBehalf } = message as Record<string, unknown>
       if (kind !== 'call' || typeof callId !== 'string' || typeof action !== 'string') return
       const call: Delivered = { action, args, caller: (message as { caller: Caller }).caller, ...(typeof onBehalf === 'string' ? { onBehalf } : {}) }
@@ -422,7 +422,7 @@ export class FakeCore {
     if (standIn === undefined) throw new Error(`${id} is no stand-in`)
     standIn.state = state
     this.placeStandIn(id)
-    if (this.live !== null) this.carrier.send(this.live, { v: VERSION, kind: 'deps', deps: this.deps() })
+    if (this.live !== null) this.router.send(this.live, { v: VERSION, kind: 'deps', deps: this.deps() })
   }
 
   // The plugin under test as the plugin list would show it: its state and why, null while it runs
@@ -436,7 +436,7 @@ export class FakeCore {
   }
 
   async close(): Promise<void> {
-    this.carrier.close()
+    this.router.close()
     await this.recording.flush()
     for (const port of this.ports.splice(0)) port.close()
   }
@@ -455,15 +455,15 @@ export class FakeCore {
       topics: this.manifest.provides?.topics ?? [],
     })
     const ready = this.pluginsManager.waitFor(caller, 'ready', this.readyMs)
-    const transport = utility ? portTransportOf(this.carrier, caller, this.ports) : transportOf(this.carrier, caller)
+    const transport = utility ? portTransportOf(this.router, caller, this.ports) : transportOf(this.router, caller)
     run(plugin, transport, this.drawer === null ? {} : { editor: this.drawer.fresh() })
     this.drawer?.connect(this.manifest.capabilities ?? [], this.manifest.views ?? {})
-    this.carrier.send(caller, {
+    this.router.send(caller, {
       v: VERSION, kind: 'init', id: this.manifest.id, incarnation, api: API_VERSION, deps: this.deps(), lastStop: this.lastStop, previousVersion: null,
     })
     if (!(await ready)) {
       this.markState('crashed')
-      this.carrier.end(caller, 'crashed')
+      this.router.end(caller, 'crashed')
       this.lastStop = 'start-timeout'
       return { state: 'crashed', reason: 'start-timeout' }
     }
@@ -484,7 +484,7 @@ export class FakeCore {
     return deps
   }
 
-  // A stand-in as the carrier finds it: a sandboxed plugin answering from its worker, stopped while unavailable
+  // A stand-in as the router finds it: a sandboxed plugin answering from its worker, stopped while unavailable
   private placeStandIn(id: string): void {
     const { state, actions } = this.standIns.get(id)!
     this.infos(id, { state: state === 'unavailable' ? 'stopped' : state, place: 'sandboxed', incarnation: 1, serves: 'worker', actions, topics: [] })
@@ -508,7 +508,7 @@ export class FakeCore {
     this.reason = reason
     this.lastStop = reason
     this.live = null
-    this.carrier.end(live, 'crashed')
+    this.router.end(live, 'crashed')
     return null
   }
 

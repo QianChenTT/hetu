@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { delivery, token, type Caller } from '../api/envelope.ts'
 import { LIST_PAGE, MAX_FILTER_PATHS } from '../api/actions.ts'
 import { MAX_TIMER_MS } from '../api/limits.ts'
-import type { CarrierOptions } from '../backend/carrier/header.ts'
-import { cleanup, code, editor, FakeGuard, harness, type HarnessOptions, tick, windowWay, worker, type Side } from './carrier-fakes.ts'
+import type { RouterOptions } from '../backend/router/header.ts'
+import { cleanup, code, editor, FakeGuard, harness, type HarnessOptions, tick, windowWay, worker, type Side } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -47,7 +47,7 @@ describe('plugin.call', () => {
   })
 
   it('lets only the callers a declared from names reach the action, the plugin\'s own halves aside', async () => {
-    const { http, search, scribe, connect, pluginsManager, carrier } = plugins()
+    const { http, search, scribe, connect, pluginsManager, router } = plugins()
     expect(code(await search.ask('scribe.handle'))).toBe('not-granted')
     http.call('scribe.handle')
     await scribe.delivered('scribe.handle')
@@ -57,7 +57,7 @@ describe('plugin.call', () => {
     expect(deliveries(scribe, 'scribe.handle')).toHaveLength(2)
     // A window is never in from, even with the gate off
     pluginsManager.policyJobs.gate = 'off'
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'scribe.handle'))).toBe('not-granted')
   })
 
@@ -393,7 +393,7 @@ describe('deadlines and cancel', () => {
   // A call with no parent, which only the list of calls the way made can reach
   it.each([
     ['crashes', (parts: ReturnType<typeof plugins>) => parts.scribe.port.close()],
-    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.carrier.end(worker('scribe'))],
+    ['is stopped', (parts: ReturnType<typeof plugins>) => parts.router.end(worker('scribe'))],
   ])('tells the callee at once when the plugin that made a call %s', async (_name, end) => {
     const parts = plugins()
     parts.scribe.call('search.query')
@@ -566,10 +566,10 @@ describe('filterReadable', () => {
   })
 
   it('records a canRead that throws as a fault', async () => {
-    const { carrier, search, got, gate, log } = await incoming()
+    const { router, search, got, gate, log } = await incoming()
     gate.readable = () => { throw new Error('broken') }
     expect(code(await search.ask('gate.filterReadable', { call: got.callId, paths: ['notes/a.md'] }))).toBe('policy-down')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canRead', count: 1 }])
   })
@@ -581,7 +581,7 @@ describe('filterReadable', () => {
     expect((await search.ask('gate.filterReadable', { call: got.callId, paths: paths.slice(1) })).ok).toBe(true)
   })
 
-  // Each canRead below takes a millisecond of main on the carrier's clock
+  // Each canRead below takes a millisecond of main on the router's clock
   async function timed(over: HarnessOptions = {}) {
     const clock = { now: 1000 }
     const parts = await incoming({ clock: () => clock.now, ...over })
@@ -717,10 +717,10 @@ describe('a listing', () => {
   })
 
   it('records a canList that throws and answers policy-down rather than a page it couldn’t check', async () => {
-    const { search, gate, carrier, log } = listing()
+    const { search, gate, router, log } = listing()
     gate.listable = () => { throw new Error('broken') }
     expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canList', count: 1 }])
   })
@@ -744,11 +744,11 @@ describe('a listing', () => {
 
 describe('a crash', () => {
   it('lets the plugins manager move dependents to waiting before any call the plugin held is answered', async () => {
-    const { carrier, connect, pluginsManager } = harness()
+    const { router, connect, pluginsManager } = harness()
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.sandboxed('search', { query: {} })
     const search = connect(worker('search'))
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     way.post('editor-1', { v: 1, kind: 'call', id: 1, action: 'search.query', args: {} })
     await search.delivered('search.query')
     let answeredFirst = -1
@@ -774,7 +774,7 @@ describe('gate.reach', () => {
       { type: 'ui.decoration' },
       { type: 'ui.command' },
     ]
-    const way = windowWay(parts.carrier, { editor })
+    const way = windowWay(parts.router, { editor })
     return { ...parts, way }
   }
 
@@ -845,7 +845,7 @@ describe('gate.reach', () => {
   it('answers policy-down with the gate off once the log has failed, and everything again with recording off', async () => {
     let now = 0
     const parts = harness({ clock: () => now })
-    const way = windowWay(parts.carrier, { editor })
+    const way = windowWay(parts.router, { editor })
     parts.pluginsManager.policyJobs.gate = 'off'
     parts.log.failing = true
     const search = parts.connect(worker('search'))
@@ -857,10 +857,10 @@ describe('gate.reach', () => {
   })
 
   it('refuses policy-down and records a fault when the gate throws', async () => {
-    const { way, gate, carrier, log } = made()
+    const { way, gate, router, log } = made()
     gate.readable = () => { throw new Error('broken') }
     expect(code(await way.ask('editor', 'gate.reach', { plugin: 'alpha', path: 'notes/a.md' }))).toBe('policy-down')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'reach', count: 1 }])
   })

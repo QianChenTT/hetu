@@ -25,7 +25,7 @@ const privateNotes: Capability = { type: 'luoshu.read', paths: ['private/**'] }
 const trusted: Caller = { kind: 'window', role: 'trusted', n: 1 }
 const mcpOf = (version: string, capabilities: Capability[]) => filesFor({ ...workerManifest('mcp', { capabilities, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), version })
 
-// One folder of notes and one install, booted as often as the proof needs: the real boot, plugins manager, carrier, gate and
+// One folder of notes and one install, booted as often as the proof needs: the real boot, plugins manager, router, gate and
 // luoshu, http the install's utility plugin the test drives as the door and mcp the install's own copy, a worker the
 // test answers for, holding read on every note unless items names its own and the agents' items and marks seed gives
 // it, none unless named. history adds hetu's history as it ships
@@ -66,10 +66,10 @@ async function world(
     const runtime = new FakeRuntime()
     // The core modules the core makes, closed at the plugins manager's shutdown
     const modules = grantRiskClassifier === undefined ? {} : { grantRiskClassifier }
-    const { recording, pluginsManager, carrier } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
+    const { recording, pluginsManager, router } = wireCore({ booted, installDir, runtime, modules, confirmDelayMs: 0 })
     const stop = async () => {
       await pluginsManager.shutdown().catch(() => {})
-      carrier.close()
+      router.close()
       await recording.flush()
       for (const port of runtime.ports) port.close()
       await booted.release()
@@ -286,7 +286,7 @@ describe('step 5a part B, the tools, in the joined core', () => {
   const historyOf = (access: 'read' | 'commit', paths: string[]): Capability => ({ type: 'history', access, paths })
 
   // A fake mcp's call of a tool under the door's request: the tool's own schema first, then its row's action as a call
-  // under that request, which the carrier judges against mcp's items and the agent's
+  // under that request, which the router judges against mcp's items and the agent's
   async function call(mcp: Half, under: { parent: string }, name: string, args: unknown) {
     const found = toolFor(name)
     if (found === null) throw new Error(`no tool ${name}`)

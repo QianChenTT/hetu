@@ -2,15 +2,15 @@ import type { MessagePortMain } from 'electron'
 import type { LimitName } from '../../api/limits.ts'
 import { measurePlain } from '../../api/measure.ts'
 import { messageCap, newBudget, spend } from '../../api/rate.ts'
-import type { Port } from '../carrier/header.ts'
+import type { Port } from '../router/header.ts'
 import type { Runtime, WorkerStart } from './header.ts'
 
-// A MessagePortMain as the carrier reads a port. A worker's messages reach main only through the relay in the worker
+// A MessagePortMain as the router reads a port. A worker's messages reach main only through the relay in the worker
 // host page, which forwards nothing but text within the plugin's cap, so the port reads only that and parses it.
 // Anything else is read as a message it can't read, its ports closed, so a half holds no channel but its own. What the
-// carrier sends goes as text too. bytesPerSecond is for a utility half's port, which no relay stands in front of: each
-// message is weighed as the relay weighs one, the larger of its length and what the carrier measures of it, and one
-// over the budget is read as a message it can't read, which the carrier still counts against the rate and drops. The
+// router sends goes as text too. bytesPerSecond is for a utility half's port, which no relay stands in front of: each
+// message is weighed as the relay weighs one, the larger of its length and what the router measures of it, and one
+// over the budget is read as a message it can't read, which the router still counts against the rate and drops. The
 // message has reached main whole by then, as every message does before it can be measured
 function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() => number) | null = null): Port {
   const unreadable: ((value: unknown) => void)[] = []
@@ -50,7 +50,7 @@ function asPort(port: MessagePortMain, cap: () => number, bytesPerSecond: (() =>
 }
 
 // The plugins manager's runtime on Electron. Workers start and end in the hidden renderer. A utility half forks through
-// the utility runtime. limit is the carrier's: a limit as it applies to one plugin
+// the utility runtime. limit is the router's: a limit as it applies to one plugin
 export function electronRuntime(
   channel: () => { port1: MessagePortMain, port2: MessagePortMain },
   workers: Pick<Runtime, 'terminate'> & { start(start: WorkerStart): void },

@@ -188,7 +188,7 @@ describe('the provider actions', () => {
       'luoshu.write': 'luoshu.write',
       'luoshu.remove': 'luoshu.write',
       'luoshu.move': 'luoshu.write',
-      // Free at the gate's decide step: the carrier keeps only the names the gate's canList allows
+      // Free at the gate's decide step: the router keeps only the names the gate's canList allows
       'luoshu.list': null,
       'leases.acquire': 'luoshu.write',
       'leases.renew': null,
@@ -305,7 +305,7 @@ describe('the provider actions', () => {
 describe('the envelope beside a request', () => {
   const call = { v: 1, kind: 'call', id: 1, action: 'luoshu.read', args: { path: 'a.md' } }
 
-  it('leaves args to the carrier, which measures them against the caller\'s own cap', () => {
+  it('leaves args to the router, which measures them against the caller\'s own cap', () => {
     const big = { ...call, args: 'x'.repeat(MiB + 1) }
     expect(request.safeParse(big).success).toBe(false)
     expect(callEnvelope.safeParse(big).success).toBe(true)

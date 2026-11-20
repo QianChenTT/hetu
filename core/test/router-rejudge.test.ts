@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, Prepared, Provider } from '../api/policy-jobs.ts'
-import { cleanup, code, harness, tick, worker, type HarnessOptions } from './carrier-fakes.ts'
+import { cleanup, code, harness, tick, worker, type HarnessOptions } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -37,12 +37,12 @@ function made(over: HarnessOptions = {}) {
   parts.providers.exec = exec
   parts.gate.grants.search = [{ type: 'exec', commands: [build], env: [] }, { type: 'luoshu.write', paths: ['notes/**'] }]
   const search = parts.connect(worker('search'))
-  // The first grants snapshot the carrier reads, as the plugins manager tells it at start, is where it starts
-  parts.carrier.changed()
-  // A new grants snapshot, as the plugins manager pushes one, then tells the carrier
+  // The first grants snapshot the router reads, as the plugins manager tells it at start, is where it starts
+  parts.router.changed()
+  // A new grants snapshot, as the plugins manager pushes one, then tells the router
   const snapshot = () => {
     parts.pluginsManager.current++
-    parts.carrier.changed()
+    parts.router.changed()
   }
   return { ...parts, exec, search, snapshot }
 }
@@ -105,12 +105,12 @@ describe('open calls judged again on a new grants snapshot', () => {
   })
 
   it('judges nothing again while the grants snapshot stays the same', async () => {
-    const { exec, search, gate, carrier } = made()
+    const { exec, search, gate, router } = made()
     search.call('exec.run', { command: build })
     await tick(20)
     const asked = gate.asked.length
     gate.grants.search = []
-    carrier.changed()
+    router.changed()
     await tick(10)
     expect([gate.asked.length - asked, exec.signals[0].aborted]).toEqual([0, false])
     exec.finish()

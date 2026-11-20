@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call } from '../api/policy-jobs.ts'
-import { cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker } from './carrier-fakes.ts'
+import { cleanup, code, editor, harness, host, hostHalf, tick, trusted, windowWay, worker } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -133,10 +133,10 @@ describe('the floor', () => {
 
   it.each(securityActions)('refuses %s for every plugin, MCP and host halves included, in every gate state, without asking the gate', async (action, args) => {
     const seen: Call[] = []
-    const { carrier, connect, gate, pluginsManager } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
+    const { router, connect, gate, pluginsManager } = harness({ core: async call => { seen.push(call); return null }, armed: () => true })
     const plugins = [
       ...['mcp', 'search', 'gate'].map(id => connect(worker(id))),
-      ...['luoshu', 'gate', 'exec'].map(id => hostHalf(carrier, host(id))),
+      ...['luoshu', 'gate', 'exec'].map(id => hostHalf(router, host(id))),
     ]
     for (const state of ['on', 'off', 'failed', 'absent'] as const) {
       pluginsManager.policyJobs.gate = state
@@ -148,8 +148,8 @@ describe('the floor', () => {
 
   it('takes the window lifecycle actions from the windows the core table names', async () => {
     const seen: string[] = []
-    const { carrier } = harness({ core: async call => { seen.push(`${call.caller.kind === 'window' ? call.caller.role : '?'} ${call.action}`); return null }, armed: () => true })
-    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const { router } = harness({ core: async call => { seen.push(`${call.caller.kind === 'window' ? call.caller.role : '?'} ${call.action}`); return null }, armed: () => true })
+    const way = windowWay(router, { 'editor-1': editor, trusted })
     for (const [action, args] of securityActions) {
       for (const sender of ['editor-1', 'trusted']) await way.ask(sender, action, args)
     }
@@ -164,8 +164,8 @@ describe('the floor', () => {
   it('refuses a Confirm from the trusted window before it armed, and takes one after', async () => {
     const seen: Call[] = []
     let armed = false
-    const { carrier } = harness({ core: async call => { seen.push(call); return null }, armed: caller => caller.kind === 'window' && armed })
-    const way = windowWay(carrier, { trusted })
+    const { router } = harness({ core: async call => { seen.push(call); return null }, armed: caller => caller.kind === 'window' && armed })
+    const way = windowWay(router, { trusted })
     expect(code(await way.ask('trusted', 'security.confirm', { requestId: 'req-1' }))).toBe('throttled')
     expect(seen).toEqual([])
     armed = true
@@ -178,8 +178,8 @@ describe('the floor', () => {
   it('refuses the trusted window’s other actions before it armed, and answers its reads', async () => {
     const seen: string[] = []
     let armed = false
-    const { carrier } = harness({ core: async call => { seen.push(call.action); return null }, armed: () => armed })
-    const way = windowWay(carrier, { trusted, 'editor-1': editor })
+    const { router } = harness({ core: async call => { seen.push(call.action); return null }, armed: () => armed })
+    const way = windowWay(router, { trusted, 'editor-1': editor })
     for (const [action, args] of securityActions) {
       if (action === 'security.list') continue
       expect(code(await way.ask('trusted', action, args))).toBe('throttled')
@@ -193,16 +193,16 @@ describe('the floor', () => {
   })
 
   it('refuses every Confirm when nothing says the trusted window armed', async () => {
-    const { carrier } = harness({ core: async () => null })
-    const way = windowWay(carrier, { trusted })
+    const { router } = harness({ core: async () => null })
+    const way = windowWay(router, { trusted })
     expect(code(await way.ask('trusted', 'security.confirm', { requestId: 'req-1' }))).toBe('throttled')
   })
 
   it('takes security.request from any window and security.confirm only from the trusted one, with the gate failed', async () => {
     const seen: Call[] = []
-    const { carrier, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
+    const { router, pluginsManager, gate } = harness({ core: async call => { seen.push(call); return { held: true } }, armed: () => true })
     pluginsManager.policyJobs.gate = 'failed'
-    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const way = windowWay(router, { 'editor-1': editor, trusted })
     const change = { kind: 'plugin.on', plugin: 'search' }
     expect((await way.ask('editor-1', 'security.request', { change })).result).toEqual({ held: true })
     expect((await way.ask('trusted', 'security.request', { change })).ok).toBe(true)
@@ -216,26 +216,26 @@ describe('the floor', () => {
   })
 
   it('answers a core action no later part serves yet unavailable', async () => {
-    const { carrier } = harness()
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const { router } = harness()
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } }))).toBe('unavailable')
   })
 
   it('fails a result from a part the core serves that is not plain data', async () => {
-    const { carrier } = harness({ core: async () => ({ when: new Date(0) }) })
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const { router } = harness({ core: async () => ({ when: new Date(0) }) })
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'security.request', { change: { kind: 'plugin.on', plugin: 'search' } }))).toBe('failed')
   })
 
   // No part of the core serves watchdog.*, so it is a call to a plugin of that id like any other
   it('routes watchdog.* to a plugin of that id and never to the core', async () => {
     const seen: Call[] = []
-    const { carrier, connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
+    const { router, connect, pluginsManager } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = 'off'
     pluginsManager.sandboxed('search')
     expect(code(await connect(worker('search')).ask('watchdog.stop', { plugin: 'search' }))).toBe('unavailable')
-    expect(code(await hostHalf(carrier, host('luoshu')).ask('watchdog.limit', { plugin: 'search' }))).toBe('unavailable')
-    expect(code(await windowWay(carrier, { trusted }).ask('trusted', 'watchdog.restart', { plugin: 'search' }))).toBe('not-granted')
+    expect(code(await hostHalf(router, host('luoshu')).ask('watchdog.limit', { plugin: 'search' }))).toBe('unavailable')
+    expect(code(await windowWay(router, { trusted }).ask('trusted', 'watchdog.restart', { plugin: 'search' }))).toBe('not-granted')
     expect(seen).toEqual([])
   })
 
@@ -247,13 +247,13 @@ describe('the floor', () => {
   })
 
   it.each(['on', 'off', 'failed'] as const)('takes core.agentRefused from http\'s host half on its utility port with the gate %s, asking no gate', async state => {
-    const { carrier, connect, pluginsManager, gate, log } = harness()
+    const { router, connect, pluginsManager, gate, log } = harness()
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     const http = connect(host('mcp-http-handler'))
     expect(await http.ask('core.agentRefused', { reason: 'host', count: 3 })).toMatchObject({ ok: true, result: null })
     expect(gate.asked).toEqual([])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('http.refused').map(record => record.fields)).toEqual([{ reason: 'host', count: 3 }])
   })
@@ -273,20 +273,20 @@ describe('the floor', () => {
 
   it.each(['on', 'off', 'failed'] as const)('refuses the door\'s two core actions to every other caller with the gate %s', async state => {
     const seen: Call[] = []
-    const { carrier, connect, pluginsManager, gate, log } = harness({ core: async call => { seen.push(call); return null } })
+    const { router, connect, pluginsManager, gate, log } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.policyJobs.gate = state
     pluginsManager.utility('mcp-http-handler')
     pluginsManager.sandboxed('search')
-    const way = windowWay(carrier, { 'editor-1': editor, trusted })
+    const way = windowWay(router, { 'editor-1': editor, trusted })
     const callers = [
       // A sandboxed worker and a worker half of http itself, which matches on its id, its way and its place
       connect(worker('search')),
       connect(worker('mcp-http-handler')),
       // Another plugin's host half, on a port and on an in-process handle
       connect(host('exec')),
-      hostHalf(carrier, host('exec', 2)),
+      hostHalf(router, host('exec', 2)),
       // http's host half on a handle, which no utility half is ever given
-      hostHalf(carrier, host('mcp-http-handler')),
+      hostHalf(router, host('mcp-http-handler')),
     ]
     for (const [action, args] of doorActions) {
       const refused = [
@@ -298,14 +298,14 @@ describe('the floor', () => {
     }
     expect(gate.asked).toEqual([])
     expect(seen).toEqual([])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('http.refused')).toEqual([])
   })
 
   it('refuses the door\'s two core actions to http\'s host half on a port when http is not placed in a utility process', async () => {
     const seen: Call[] = []
-    const { carrier, connect, pluginsManager, log } = harness({ core: async call => { seen.push(call); return null } })
+    const { router, connect, pluginsManager, log } = harness({ core: async call => { seen.push(call); return null } })
     pluginsManager.installed('mcp-http-handler')
     const placedHost = connect(host('mcp-http-handler'))
     for (const [action, args] of doorActions) expect(code(await placedHost.ask(action, args))).toBe('not-granted')
@@ -313,15 +313,15 @@ describe('the floor', () => {
     const unknown = connect(host('mcp-http-handler', 2))
     for (const [action, args] of doorActions) expect(code(await unknown.ask(action, args))).toBe('not-granted')
     expect(seen).toEqual([])
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('http.refused')).toEqual([])
   })
 
   it('holds the trusted window to core actions, with the gate on or off', async () => {
-    const { carrier, pluginsManager, luoshu } = harness()
+    const { router, pluginsManager, luoshu } = harness()
     luoshu.files.set('notes/a.md', 'x')
-    const way = windowWay(carrier, { trusted })
+    const way = windowWay(router, { trusted })
     for (const gate of ['on', 'off'] as const) {
       pluginsManager.policyJobs.gate = gate
       expect(code(await way.ask('trusted', 'luoshu.read', { path: 'notes/a.md' }))).toBe('not-granted')
@@ -391,13 +391,13 @@ describe('ui.*', () => {
   it('hands it to the part that serves it after the floor and the ceiling, which asks the gate itself', async () => {
     const seen: Call[] = []
     const ui = async (call: Call) => { seen.push(call); return 'mounted' }
-    const { carrier, connect, pluginsManager, gate } = harness({ drawer: ui })
+    const { router, connect, pluginsManager, gate } = harness({ drawer: ui })
     pluginsManager.policyJobs.gate = 'failed'
     const search = connect(worker('search'))
     expect((await search.ask('ui.view', { title: 'x' })).result).toBe('mounted')
     expect(seen.map(call => [call.caller, call.action, call.args])).toEqual([[worker('search'), 'ui.view', { title: 'x' }]])
     expect(gate.asked).toEqual([])
-    const way = windowWay(carrier, { trusted })
+    const way = windowWay(router, { trusted })
     expect(code(await way.ask('trusted', 'ui.view', {}))).toBe('not-granted')
     pluginsManager.human.plugins.search = { argumentBytes: 64 }
     expect(code(await search.ask('ui.view', { title: 'x'.repeat(100) }))).toBe('invalid')
@@ -407,7 +407,7 @@ describe('ui.*', () => {
 
 describe('the gate policy job', () => {
   it.each(['failed', 'absent'] as const)('refuses calls with power policy-down while the gate is %s', async state => {
-    const { carrier, connect, pluginsManager, gate, luoshu } = harness()
+    const { router, connect, pluginsManager, gate, luoshu } = harness()
     pluginsManager.policyJobs.gate = state
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     pluginsManager.sandboxed('git', { log: {} })
@@ -415,7 +415,7 @@ describe('the gate policy job', () => {
     expect(code(await search.ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(code(await search.ask('git.log'))).toBe('policy-down')
     // Windows get no luoshu access
-    const way = windowWay(carrier, { 'editor-1': editor })
+    const way = windowWay(router, { 'editor-1': editor })
     expect(code(await way.ask('editor-1', 'luoshu.read', { path: 'a.md' }))).toBe('policy-down')
     expect(gate.asked).toEqual([])
     expect(luoshu.prepared).toEqual([])
@@ -453,7 +453,7 @@ describe('the gate policy job', () => {
     expect(gate.asked).toEqual([])
   })
 
-  // The log fails once a record waited logFailMs unwritten, timed on the carrier's clock
+  // The log fails once a record waited logFailMs unwritten, timed on the router's clock
   it('refuses calls with power policy-down while the gate is off and the log has failed', async () => {
     let now = 0
     const { connect, pluginsManager, log, luoshu } = harness({ clock: () => now })
@@ -522,7 +522,7 @@ describe('precheck', () => {
   })
 
   it('refuses one call policy-down when the gate throws and records the fault, the next call decided again', async () => {
-    const { carrier, connect, gate, log, debug, luoshu } = harness()
+    const { router, connect, gate, log, debug, luoshu } = harness()
     luoshu.files.set('a.md', 'x')
     gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }]
     let throws = true
@@ -539,17 +539,17 @@ describe('precheck', () => {
     expect(log.events('fault')).toEqual([{ event: 'fault', fields: { plugin: 'gate', step: 'precheck', count: 1 } }])
     // The gate's own text, for the gate's debug and not the caller's
     expect(debug.map(entry => [entry.plugin, entry.text])).toEqual([['gate', 'grant table at /secret/path broke']])
-    carrier.close()
+    router.close()
   })
 
   it('records a gate that throws at decide as a fault at decide', async () => {
-    const { carrier, connect, gate, log } = harness()
+    const { router, connect, gate, log } = harness()
     gate.decision = access => {
       if (access.stage === 'canonical') throw new Error('broken')
       return { allow: true, view: 1 }
     }
     expect(code(await connect(worker('search')).ask('luoshu.read', { path: 'a.md' }))).toBe('policy-down')
-    carrier.close()
+    router.close()
     await tick()
     expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'decide', count: 1 }])
   })
@@ -653,9 +653,9 @@ describe('a path with a dot segment', () => {
   })
 
   it.each(['on', 'off'] as const)('answers invalid from a window with the gate %s', async state => {
-    const { carrier, gate, luoshu, pluginsManager } = harness()
+    const { router, gate, luoshu, pluginsManager } = harness()
     pluginsManager.policyJobs.gate = state
-    const way = windowWay(carrier, { editor })
+    const way = windowWay(router, { editor })
     for (const path of dotted) {
       expect(code(await way.ask('editor', 'luoshu.read', { path })), path).toBe('invalid')
       expect(code(await way.ask('editor', 'luoshu.write', { path, text: 'x' })), path).toBe('invalid')

@@ -300,13 +300,13 @@ describe('a utility half whose bind failed', () => {
 })
 
 describe('limits the human sets', () => {
-  // The runtime hears each change once it landed and reads the values as the carrier holds them at that moment
+  // The runtime hears each change once it landed and reads the values as the router holds them at that moment
   async function listening() {
     const heard: [string, number][] = []
     const holder: { made: Awaited<ReturnType<typeof harness>> | null } = { made: null }
     holder.made = await harness({
       install: install(),
-      pluginsManager: { limited: plugin => void heard.push([plugin, holder.made!.carrier.limit(plugin, 'messagesPerSecond')]) },
+      pluginsManager: { limited: plugin => void heard.push([plugin, holder.made!.router.limit(plugin, 'messagesPerSecond')]) },
     })
     await holder.made.pluginsManager.start()
     return { made: holder.made, heard }
@@ -331,6 +331,6 @@ describe('limits the human sets', () => {
     const made = await harness({ install: install(), pluginsManager: { limited: () => { throw new Error('no child') } } })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'limit.set', constant: 'messagesPerSecond', value: 20, plugin: 'mcp-http-handler' })
-    expect(made.carrier.limit('mcp-http-handler', 'messagesPerSecond')).toBe(20)
+    expect(made.router.limit('mcp-http-handler', 'messagesPerSecond')).toBe(20)
   })
 })

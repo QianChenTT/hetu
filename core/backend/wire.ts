@@ -3,9 +3,9 @@ import type { Caller } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Booted } from './boot/header.ts'
-import { Carrier } from './carrier/carrier.ts'
-import type { Asks, CarrierOptions, Debug, Served } from './carrier/header.ts'
-import { Limits } from './carrier/limits.ts'
+import { Router } from './router/router.ts'
+import type { Asks, RouterOptions, Debug, Served } from './router/header.ts'
+import { Limits } from './router/limits.ts'
 import { createFloodControl } from './flood-control/flood-control.ts'
 import { createHeartbeat } from './heartbeat/heartbeat.ts'
 import type { Recording } from './recording/header.ts'
@@ -29,7 +29,7 @@ export type WireOptions = {
   // Where the install list is when it isn't in the install folder
   listDir?: string
   runtime: Runtime
-  // The guards expected on an action, the same list for the plugins manager and the carrier. Defaults to core/api's
+  // The guards expected on an action, the same list for the plugins manager and the router. Defaults to core/api's
   guardsFor?: (action: GuardableAction) => readonly string[]
   debug?: Debug
   asks?: Asks
@@ -72,10 +72,10 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
   })
 }
 
-// What the carrier asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
-// that runs holds one. wireCore and the plugins manager's tests both build the carrier from it, so the tests run the
+// What the router asks for: the gate, every provider and flood control from the core modules, no guard, since nothing
+// that runs holds one. wireCore and the plugins manager's tests both build the router from it, so the tests run the
 // wiring that ships
-export function carrierOptions(modules: Holder, rest: Omit<CarrierOptions, 'gate' | 'guards' | 'providers' | 'floodControl'>): CarrierOptions {
+export function routerOptions(modules: Holder, rest: Omit<RouterOptions, 'gate' | 'guards' | 'providers' | 'floodControl'>): RouterOptions {
   return {
     gate: () => modules.gate(),
     guards: () => null,
@@ -88,15 +88,15 @@ export function carrierOptions(modules: Holder, rest: Omit<CarrierOptions, 'gate
 // SHA-256 as hex, which recording is handed so it reaches no Node built-in
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
-// The core joined in its order: the core modules, recording over the one EventLog boot opened, the carrier asking the
+// The core joined in its order: the core modules, recording over the one EventLog boot opened, the router asking the
 // modules for the gate, the providers and flood control and handing each call's record to recording, then the plugins
-// manager, which hands the carrier what it serves and listens for through the carrier's door. The carrier reads the
+// manager, which hands the router what it serves and listens for through the router's door. The router reads the
 // plugins manager's table from here on and never calls the plugins manager
-export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, carrier: Carrier, modules: Holder, recording: Recording } {
+export function wireCore(options: WireOptions): { pluginsManager: PluginsManager, router: Router, modules: Holder, recording: Recording } {
   // The parts built after the ones that tell them something, read once they exist. The luoshu publishes only once
-  // started, which is after the carrier is built
-  const parts: { carrier: Carrier | null, pluginsManager: PluginsManager | null } = { carrier: null, pluginsManager: null }
-  // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the carrier does
+  // started, which is after the router is built
+  const parts: { router: Router | null, pluginsManager: PluginsManager | null } = { router: null, pluginsManager: null }
+  // The human's limits are the plugins manager's, read once it exists. Flood control counts by them as the router does
   const limits = new Limits(() => parts.pluginsManager?.limits() ?? { all: {}, plugins: {} })
   // The modules made here, the one place that builds the parts
   const modules = buildModules({
@@ -105,17 +105,17 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
     ...options.modules,
-    publish: (topic, path) => parts.carrier?.publishCore('luoshu', topic, path),
+    publish: (topic, path) => parts.router?.publishCore('luoshu', topic, path),
     limit: (plugin, name) => limits.of(plugin, name),
   })
   // The log failing is told to the plugins manager, which quits hetu to start it again. Windows hear the log's health
-  // through the carrier
+  // through the router
   const recording = createRecording({
     log: options.booted.log,
     off: () => modules.state('recording') === 'off',
     limit: name => limits.of(null, name),
     hash: sha256,
-    noticed: () => parts.carrier?.status(),
+    noticed: () => parts.router?.status(),
     failed: () => parts.pluginsManager?.controlFailed('log', 'log-failing') ?? false,
   })
   // The gate's own actions and the gate's time each caller spends in a second, which listings spend too
@@ -128,24 +128,24 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     fault: step => recording.coalesced('fault', { plugin: 'gate', step }),
   })
   const { windows } = options
-  const carrier = new Carrier(carrierOptions(modules, {
+  const router = new Router(routerOptions(modules, {
     recording,
     gateTime: gateActions.time,
     ...(windows !== undefined ? { armed: windows.armed } : {}),
     ...(options.guardsFor !== undefined ? { guardsFor: options.guardsFor } : {}),
     ...(options.debug !== undefined ? { debug: options.debug } : {}),
   }))
-  parts.carrier = carrier
+  parts.router = router
   // The runtime serves the windows' own actions, since only it opens windows and dialogs, ends the process and serves
   // frames. Recording serves the log's reads and the gate its own two actions
-  if (windows !== undefined) carrier.serve('runtime', windows.serve)
-  carrier.serve('recording', call => recording.serve(call))
-  carrier.serve('gate', gateActions.serve)
+  if (windows !== undefined) router.serve('runtime', windows.serve)
+  router.serve('recording', call => recording.serve(call))
+  router.serve('gate', gateActions.serve)
   const pluginsManager = new PluginsManager({
     booted: options.booted,
     installDir: options.installDir,
     ...(options.listDir !== undefined ? { listDir: options.listDir } : {}),
-    link: carrier,
+    link: router,
     recording,
     runtime: options.runtime,
     modules,
@@ -156,7 +156,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     ...(options.limited !== undefined ? { limited: options.limited } : {}),
   })
   parts.pluginsManager = pluginsManager
-  carrier.read(pluginsManager)
-  if (options.asks !== undefined) carrier.asks(options.asks)
-  return { pluginsManager, carrier, modules, recording }
+  router.read(pluginsManager)
+  if (options.asks !== undefined) router.asks(options.asks)
+  return { pluginsManager, router, modules, recording }
 }

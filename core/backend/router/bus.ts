@@ -7,7 +7,7 @@ type Send = (message: unknown) => void
 // changed, every path passes with the gate off by the human, or every path is held back while the gate is down
 export type Paths = 'ask' | 'all' | 'none'
 
-// What the carrier lends the bus. key moves whenever the gate's state, whether it can be asked or the grants snapshot does,
+// What the router lends the bus. key moves whenever the gate's state, whether it can be asked or the grants snapshot does,
 // which is when the bus asks the gate about its subscriptions again. view is the grants snapshot number, null when unreadable
 export type BusParts = {
   state(): { key: string, paths: Paths, view: number | null }
@@ -22,7 +22,7 @@ export type BusParts = {
   changed(caller: Caller, change: 'ended' | 'started' | 'waiting', topics: string[]): void
 }
 
-// A half or a window as the carrier names it. owner is its way in, so a way that ends takes its subscriptions and its
+// A half or a window as the router names it. owner is its way in, so a way that ends takes its subscriptions and its
 // credits with it and a new incarnation starts with none. plugin is whose limits apply, null for a window. A window's
 // events go back the way its newest subscribe came
 export type Holder = { owner: object, caller: Caller, plugin: string | null, push: Send, alive: () => boolean }
@@ -58,7 +58,7 @@ type Subscriber = {
 const pathless = (topic: string) => topic.startsWith('core.')
 
 // Subscriptions, credits and delivery. An event is a topic and maybe a path, never content. A path reaches only
-// subscribers the gate says may read it. The carrier decides who may subscribe to and publish what before anything
+// subscribers the gate says may read it. The router decides who may subscribe to and publish what before anything
 // here runs
 export class Bus {
   private readonly parts: BusParts
@@ -91,7 +91,7 @@ export class Bus {
     const subscriber = this.subscriberOf(holder)
     const standing: string[] = []
     const started: string[] = []
-    // The carrier synced the bus before judging the call, so with the gate asked the allow was on this grants snapshot
+    // The router synced the bus before judging the call, so with the gate asked the allow was on this grants snapshot
     const judged = this.paths === 'ask' ? this.view : null
     for (const topic of topics) {
       const held = subscriber.topics.get(topic)

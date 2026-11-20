@@ -7,7 +7,7 @@ import { pluginStates, policyJobStates, type GateTime, type LiveCall, type Plugi
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
-import type { Asks, CarrierOptions, Heard, Served, WayClosed } from './header.ts'
+import type { Asks, RouterOptions, Heard, Served, WayClosed } from './header.ts'
 import type { Counted } from '../flood-control/header.ts'
 import type { CallRecord, Join, Recording } from '../recording/header.ts'
 
@@ -168,7 +168,7 @@ export function refusalIn(value: unknown): No | null {
 // What every step of a call shares: the options, the ways in and the seams to the later parts, each read so that a
 // throw there opens nothing
 export class Context {
-  readonly options: CarrierOptions
+  readonly options: RouterOptions
   readonly now: () => number
   readonly clock: () => number
   readonly limits: Limits
@@ -191,7 +191,7 @@ export class Context {
   readonly wayClosed: WayClosed[] = []
   readonly heard: Heard[] = []
 
-  constructor(options: CarrierOptions, bus: (c: Context) => Bus) {
+  constructor(options: RouterOptions, bus: (c: Context) => Bus) {
     this.options = options
     this.now = options.now ?? Date.now
     this.clock = options.clock ?? (() => performance.now())

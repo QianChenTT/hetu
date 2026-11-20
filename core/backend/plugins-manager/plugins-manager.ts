@@ -32,7 +32,7 @@ import type { Field } from '../../lib/event-log.ts'
 import { parseStrict } from '../../lib/hashed-file.ts'
 import type { Booted, FileResult, Plugin, SecurityState, StateStore, Switches } from '../boot/header.ts'
 import { agentItems } from '../lib/agent-items.ts'
-import type { AskRefusal, Asks, CarrierDoor, Served } from '../carrier/header.ts'
+import type { AskRefusal, Asks, RouterDoor, Served } from '../router/header.ts'
 import { moduleRequires, type CoreModules } from '../modules/header.ts'
 import {
   clear, clearFailedOnce, firstPartyPath, folders, readFailedOnce, readInstalled, stage, swapIn, writeFailedOnce, writeInstalled,
@@ -56,7 +56,7 @@ export type PluginsManagerOptions = {
   // Where the install list is, the install folder unless the build keeps the list apart from the plugins, as a
   // packaged build does inside app.asar
   listDir?: string
-  link: CarrierDoor
+  link: RouterDoor
   // Recording, which the plugins manager calls only while the human has it on
   recording: PluginsRecording
   runtime: Runtime
@@ -270,7 +270,7 @@ function withAsked(held: readonly AgentItem[], change: AgentAsk): AgentItem[] {
 // the core modules, hands them each change and switches them as the human does. It runs no plugin code itself and
 // decides no grant
 export class PluginsManager implements PluginTable {
-  private readonly link: CarrierDoor
+  private readonly link: RouterDoor
   private readonly recording: PluginsRecording
   private readonly runtime: Runtime
   private readonly modules: CoreModules
@@ -397,14 +397,14 @@ ${capabilityKey(change.capability)}`)
       },
       inUse: label => this.labelHeld(label),
     })
-    // Handed to the carrier through its door, which calls them and never names the plugins manager
+    // Handed to the router through its door, which calls them and never names the plugins manager
     this.link.serve('plugins-manager', this.serve)
     this.link.asks(this.asks)
     this.link.onWayClosed((caller, reason) => this.crashed(caller, reason))
     this.link.onHeard((caller, kind) => this.heard(caller, kind))
   }
 
-  // ---- the carrier's seam
+  // ---- the router's seam
 
   // A policy job or guard role: the gate and the grant risk classifier as their core modules read, starting until the
   // modules are started, off only by the human's switch and failed while the module's last push threw or once the
@@ -428,7 +428,7 @@ ${capabilityKey(change.capability)}`)
     return this.state.switches.limits
   }
 
-  // For the carrier, which refuses the door's call for a revoked label before the agent host sees it: the marks on the
+  // For the router, which refuses the door's call for a revoked label before the agent host sees it: the marks on the
   // agent host's entry or in the switches while it has none
   revoked(label: string): boolean {
     const k = this.known.get(agentHost)
@@ -467,7 +467,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- what else the core asks of the plugins manager
 
-  // The core actions the carrier's core seam takes, each once the floor let its caller through
+  // The core actions the router's core seam takes, each once the floor let its caller through
   readonly serve: Served = async call => {
     if (call.action === 'core.self') return call.caller
     if (call.action === 'core.status') return this.banner()
@@ -484,7 +484,7 @@ ${capabilityKey(change.capability)}`)
         return null
       case 'security.list':
         return this.securityList()
-      // The carrier's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
+      // The router's floor let only the agent host under a live call from the door through, so onBehalf is that call's agent
       case 'core.agentAsk':
         return this.agentAsk(call.onBehalf, args.capabilities as Capability[])
       // The floor let only mcp-http-handler's half on its utility port through
@@ -517,7 +517,7 @@ ${capabilityKey(change.capability)}`)
         else await this.restart(k.id, 'human')
         return null
       }
-      // The calling half alone, which the carrier has checked is mcp-http-handler's in its utility process
+      // The calling half alone, which the router has checked is mcp-http-handler's in its utility process
       case 'core.bindFailed': {
         const found = this.runOf(call.caller)
         if (found === null) throw { code: 'not-found' }
@@ -1131,7 +1131,7 @@ ${capabilityKey(change.capability)}`)
   }
 
   // Shutdown after the windows: every plugin in reverse graph order, then the core modules end what they run. The gate
-  // and the grant risk classifier answer to the end. The carrier hears it first, so nothing stopped for shutdown reads
+  // and the grant risk classifier answer to the end. The router hears it first, so nothing stopped for shutdown reads
   // as down
   async shutdown(): Promise<void> {
     if (!this.closing) {
@@ -1483,7 +1483,7 @@ ${capabilityKey(change.capability)}`)
   // ---- the plan and its states
 
   // Judges every plugin, resolves the graph and sets each state. Synchronous, so a crash has moved every dependent to
-  // waiting before the carrier answers a call. The stops and starts it calls for follow in the pump. Each core module is
+  // waiting before the router answers a call. The stops and starts it calls for follow in the pump. Each core module is
   // a node too, ok while on, so a plugin requiring one runs only while it is
   private replan(): void {
     const nodes: Node[] = [
@@ -1551,7 +1551,7 @@ ${capabilityKey(change.capability)}`)
     return 'removed'
   }
 
-  // Tells the carrier, records each policy job that changed and sends deps to every plugin whose own requirements changed
+  // Tells the router, records each policy job that changed and sends deps to every plugin whose own requirements changed
   private refresh(): void {
     for (const id of this.expected()) {
       const now = this.policyJob(id)
@@ -1685,7 +1685,7 @@ ${capabilityKey(change.capability)}`)
     await this.saveInstalled()
   }
 
-  // Mints each half's port and registers it with the carrier in the same step, starts the half from the verified bytes
+  // Mints each half's port and registers it with the router in the same step, starts the half from the verified bytes
   // and sends init down its way. ready must come within readyMs
   private mint(k: Known, live: Live): void {
     const manifest = k.read.manifest!
@@ -1897,7 +1897,7 @@ ${capabilityKey(change.capability)}`)
 
   // ---- the state
 
-  // A security request from a window, which the security view decides. The carrier has checked the caller is a window
+  // A security request from a window, which the security view decides. The router has checked the caller is a window
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
@@ -2021,7 +2021,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
         if (change.plugin === null) all[change.constant] = change.value
         else plugins[change.plugin] = bare({ ...plugins[change.plugin], [change.constant]: change.value })
         await this.writeSwitches({ ...this.state.switches, limits: { all, plugins } })
-        // A raise as well as a lowering, so a half paces itself to what the carrier now counts it against
+        // A raise as well as a lowering, so a half paces itself to what the router now counts it against
         for (const id of change.plugin === null ? [...this.known.keys()] : [change.plugin]) this.limited(id)
         return
       }
@@ -2240,7 +2240,7 @@ ${ask}`)) return { code: 'not-granted', reason: 'declined' }
     this.replan()
   }
 
-  // One applied change: a new grants snapshot pushed to the gate, exec's view of the grants renewed with it and the carrier
+  // One applied change: a new grants snapshot pushed to the gate, exec's view of the grants renewed with it and the router
   // told. When a core module failed or recovered on the way, with this push or one just before it, the plan is made
   // again so what requires it waits or starts
   private bump(moved = false): void {

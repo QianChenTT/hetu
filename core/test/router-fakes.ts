@@ -8,13 +8,13 @@ import type {
   Access, Call, Decision, Gate, Guard, GuardCall, HumanLimits, LogSegment, LogVerification, PluginInfo, PluginTable, Prepared, Provider, PolicyJobState,
 } from '../api/policy-jobs.ts'
 import { windowGrants } from '../api/windows.ts'
-import { Carrier } from '../backend/carrier/carrier.ts'
-import { Limits } from '../backend/carrier/limits.ts'
+import { Router } from '../backend/router/router.ts'
+import { Limits } from '../backend/router/limits.ts'
 import { createFloodControl } from '../backend/flood-control/flood-control.ts'
 import type { CoreLog, Recording } from '../backend/recording/header.ts'
 import { createRecording } from '../backend/recording/recording.ts'
 import { createGateActions } from '../backend/policy/gate/actions.ts'
-import type { Asks, CarrierOptions, Served } from '../backend/carrier/header.ts'
+import type { Asks, RouterOptions, Served } from '../backend/router/header.ts'
 
 export const worker = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'worker', incarnation })
 export const host = (id: string, incarnation = 1): Caller => ({ kind: 'plugin', id, half: 'host', incarnation })
@@ -25,7 +25,7 @@ export type Message = Record<string, unknown>
 
 export const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
 
-// The plugin table the carrier reads, with what the ways in told it through the carrier's door
+// The plugin table the router reads, with what the ways in told it through the router's door
 export class FakePluginsManager implements PluginTable {
   policyJobs: Record<string, PolicyJobState> = { gate: 'on', 'grant-risk-classifier': 'on' }
   plugins: Record<string, PluginInfo> = {}
@@ -185,7 +185,7 @@ export class FakeLuoshu implements Provider {
     await this.hold.prepare
     if (call.action === 'luoshu.list') return { scope: {} }
     const resolve = (path: string) => path.split('/').map(name => this.short.get(name) ?? name).join('/')
-    // A move's two ends, in the order the carrier built its raw scope
+    // A move's two ends, in the order the router built its raw scope
     if (call.action === 'luoshu.move') {
       const { from, to } = call.args as { from: string, to: string }
       return { scope: { paths: [resolve(from), resolve(to)] } }
@@ -200,7 +200,7 @@ export class FakeLuoshu implements Provider {
     await this.hold.perform
     if (this.perform_ !== null) return this.perform_(call, prepared)
     // Every name, unfiltered, as the luoshu lists them
-    // Every name the carrier's canList lets through, as the luoshu lists them, its walk passing dot names by unasked
+    // Every name the router's canList lets through, as the luoshu lists them, its walk passing dot names by unasked
     if (call.action === 'luoshu.list') {
       const names = [...this.files.keys()].sort().filter(name => !name.split('/').some(isDotName))
       return { paths: names.filter(name => call.canList?.(name) === true), next: null }
@@ -231,7 +231,7 @@ export class FakeLuoshu implements Provider {
   }
 }
 
-// The caller's own space, keyed by the caller the carrier names
+// The caller's own space, keyed by the caller the router names
 export class FakeStorage implements Provider {
   readonly values = new Map<string, unknown>()
 
@@ -367,7 +367,7 @@ export class Side {
 
 export const code = (reply: Message) => (reply.refusal as { code?: string } | undefined)?.code ?? null
 
-const live: { carrier: Carrier, ports: MessagePort[] }[] = []
+const live: { router: Router, ports: MessagePort[] }[] = []
 
 // What the harness builds recording from: the log, null for none, how long its lane waits to try again, how often its
 // writer writes and where the log failing is told
@@ -375,9 +375,9 @@ export type RecordingOver = { log?: CoreLog | null, coreRecordRetryMs?: number, 
 
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
 
-// The carrier's options with what a test hands in through its door in place of the plugins manager's
-// gateActions false hands the carrier no gate part and no count of the gate's time
-export type HarnessOptions = Partial<CarrierOptions> & RecordingOver & { core?: Served, drawer?: Served, asks?: Asks, gateActions?: false }
+// The router's options with what a test hands in through its door in place of the plugins manager's
+// gateActions false hands the router no gate part and no count of the gate's time
+export type HarnessOptions = Partial<RouterOptions> & RecordingOver & { core?: Served, drawer?: Served, asks?: Asks, gateActions?: false }
 
 export function harness(given: HarnessOptions = {}) {
   const { log: logGiven, coreRecordRetryMs, auditEveryMs, logFailed, core: coreGiven, drawer, asks: asksGiven, gateActions: withGate, ...over } = given
@@ -390,13 +390,13 @@ export function harness(given: HarnessOptions = {}) {
   const log = logGiven === undefined ? new FakeLog() : logGiven
   const debug: { plugin: string | null, caller: Caller, action: string, text: string }[] = []
   const asks: { ask: string, access: Access }[] = []
-  // The real flood control on the carrier's clock and the fake plugins manager's limits, unless a test hands its own
+  // The real flood control on the router's clock and the fake plugins manager's limits, unless a test hands its own
   const limits = new Limits(() => pluginsManager.limits())
   const clock = over.clock ?? (() => performance.now())
   const floodControl = createFloodControl({ limit: (plugin, name) => limits.of(plugin, name), clock })
   // Recording over the log, off while the fake plugins manager says nothing. Audit records land only on flush unless a
   // test names how often the writer writes, so a test decides when the writer takes them
-  const parts: { carrier: Carrier | null, recording: Recording | null } = { carrier: null, recording: null }
+  const parts: { router: Router | null, recording: Recording | null } = { router: null, recording: null }
   const recording: Recording | null = log === null ? null : createRecording({
     log,
     off: () => pluginsManager.nothing,
@@ -406,10 +406,10 @@ export function harness(given: HarnessOptions = {}) {
     clock,
     retryMs: coreRecordRetryMs ?? 5000,
     everyMs: 'auditEveryMs' in given ? auditEveryMs ?? 100 : 3_600_000,
-    noticed: () => parts.carrier?.status(),
+    noticed: () => parts.router?.status(),
     ...(logFailed !== undefined ? { failed: logFailed } : {}),
   })
-  // The gate module's actions over the gate the carrier asks, as wire.ts makes them
+  // The gate module's actions over the gate the router asks, as wire.ts makes them
   const gateActions = createGateActions({
     gate: () => (over.gate ?? (() => gate))(),
     table: () => pluginsManager,
@@ -418,7 +418,7 @@ export function harness(given: HarnessOptions = {}) {
     clock,
     fault: step => parts.recording?.coalesced('fault', { plugin: 'gate', step }),
   })
-  const carrier = new Carrier({
+  const router = new Router({
     ...(withGate === false ? {} : { gateTime: gateActions.time }),
     floodControl: () => floodControl,
     gate: () => gate,
@@ -428,9 +428,9 @@ export function harness(given: HarnessOptions = {}) {
     debug: entry => { debug.push(entry) },
     ...over,
   })
-  // What the plugins manager and the runtime hand in through the carrier's door: the table, the core actions, the
+  // What the plugins manager and the runtime hand in through the router's door: the table, the core actions, the
   // prompt behind an ask and the listeners for what the ways in heard
-  carrier.read(pluginsManager)
+  router.read(pluginsManager)
   // The plugins manager's core.self and core.agentRefused as it serves them, the second through the recording handed in
   const core: Served = coreGiven ?? (async call => {
     if (call.action === 'core.self') return call.caller
@@ -440,35 +440,35 @@ export function harness(given: HarnessOptions = {}) {
     handed?.coalesced('http.refused', { reason }, undefined, count)
     return null
   })
-  for (const part of ['plugins-manager', 'runtime'] as const) carrier.serve(part, core)
-  if (drawer !== undefined) carrier.serve('drawer', drawer)
+  for (const part of ['plugins-manager', 'runtime'] as const) router.serve(part, core)
+  if (drawer !== undefined) router.serve('drawer', drawer)
   // A test that names asks as undefined has no prompt to raise
   const raising = 'asks' in given ? asksGiven : { raise: (ask: string, access: Access) => { asks.push({ ask, access }); return `req-${asks.length}` } }
-  if (raising !== undefined) carrier.asks(raising)
-  carrier.onWayClosed((caller, reason) => pluginsManager.crashed(caller, reason))
-  carrier.onHeard((caller, kind) => pluginsManager.heard(caller, kind))
-  parts.carrier = carrier
+  if (raising !== undefined) router.asks(raising)
+  router.onWayClosed((caller, reason) => pluginsManager.crashed(caller, reason))
+  router.onHeard((caller, kind) => pluginsManager.heard(caller, kind))
+  parts.router = router
   const ports: MessagePort[] = []
-  live.push({ carrier, ports })
-  // A plugin half on a real MessageChannel, the carrier holding the other end
+  live.push({ router, ports })
+  // A plugin half on a real MessageChannel, the router holding the other end
   const connect = (caller: Caller): Side => {
     const { port1, port2 } = new MessageChannel()
     ports.push(port1, port2)
-    carrier.register(port1, caller)
+    router.register(port1, caller)
     return new Side(port2)
   }
-  // recording is the one the carrier was handed, a test's own included, serving the log's reads as wire.ts hands it
+  // recording is the one the router was handed, a test's own included, serving the log's reads as wire.ts hands it
   const handed = over.recording !== undefined ? over.recording : recording
   if (handed !== recording) recording?.close()
-  if (handed !== null) carrier.serve('recording', call => handed.serve(call))
+  if (handed !== null) router.serve('recording', call => handed.serve(call))
   parts.recording = handed
-  if (withGate !== false) carrier.serve('gate', gateActions.serve)
-  return { carrier, pluginsManager, gate, luoshu, storage, guards, providers, log: log as FakeLog, debug, asks, connect, recording: handed as Recording }
+  if (withGate !== false) router.serve('gate', gateActions.serve)
+  return { router, pluginsManager, gate, luoshu, storage, guards, providers, log: log as FakeLog, debug, asks, connect, recording: handed as Recording }
 }
 
 // A window's way in with a sender check that knows one sender per window
-export function windowWay(carrier: Carrier, senders: Record<string, Caller>) {
-  const receive = carrier.window<string>(sender => senders[sender] ?? null)
+export function windowWay(router: Router, senders: Record<string, Caller>) {
+  const receive = router.window<string>(sender => senders[sender] ?? null)
   const replies: Message[] = []
   let id = 1
   return {
@@ -494,9 +494,9 @@ export function windowWay(carrier: Carrier, senders: Record<string, Caller>) {
 }
 
 // A host half on an in-process handle
-export function hostHalf(carrier: Carrier, caller: Caller) {
+export function hostHalf(router: Router, caller: Caller) {
   const inbox: Message[] = []
-  const handle = carrier.handle(caller, message => { inbox.push(message as Message) })
+  const handle = router.handle(caller, message => { inbox.push(message as Message) })
   let id = 1
   return {
     inbox,
@@ -515,8 +515,8 @@ export function hostHalf(carrier: Carrier, caller: Caller) {
 }
 
 export function cleanup(): void {
-  for (const { carrier, ports } of live.splice(0)) {
-    carrier.close()
+  for (const { router, ports } of live.splice(0)) {
+    router.close()
     for (const port of ports) port.close()
   }
 }
