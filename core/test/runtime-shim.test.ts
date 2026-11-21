@@ -35,21 +35,33 @@ const chosen = {
 }
 
 describe('starting hetu from the shim', () => {
-  // The state folder follows the account's own home and no program hetu runs is found through the client's PATH
-  it('takes the state folder on Windows from the account\'s home and nothing else the client chose but what Windows needs', () => {
+  const windowsBase = { SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32', TEMP: 'C:\\Temp', USERNAME: 'han', USERPROFILE: 'C:\\Users\\han', LOCALAPPDATA: 'C:\\Users\\han\\AppData\\Local' }
+
+  // explorer.exe hands the program to the desktop, which starts it in its own environment, the user's and the
+  // system's PATH among it, so history finds git as it does for a hetu started from the Start menu
+  it('starts an installed hetu on Windows through explorer.exe, taking nothing from the client but what Windows needs', () => {
     const { command, args, env } = hetuStart({ execPath: 'C:\\hetu\\hetu.exe', argv: ['C:\\hetu\\hetu.exe', '--mcp-stdio'], ambient: chosen, platform: 'win32', home: 'C:\\Users\\han' })
-    expect([command, args]).toEqual(['C:\\hetu\\hetu.exe', []])
-    expect(env).toEqual({
-      SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32', TEMP: 'C:\\Temp', USERNAME: 'han',
-      USERPROFILE: 'C:\\Users\\han', LOCALAPPDATA: 'C:\\Users\\han\\AppData\\Local',
-    })
+    expect([command, args]).toEqual(['C:\\Windows\\explorer.exe', ['C:\\hetu\\hetu.exe']])
+    expect(env).toEqual(windowsBase)
   })
 
-  it('takes HOME from the account\'s home on macOS and Linux and nothing else', () => {
-    for (const platform of ['darwin', 'linux'] as const) {
-      const { env } = hetuStart({ execPath: '/hetu', argv: ['/hetu', '--mcp-stdio'], ambient: chosen, platform, home: '/Users/han' })
-      expect(env).toEqual({ HOME: '/Users/han' })
-    }
+  it('starts an installed hetu on macOS through open on its bundle, the way the Finder starts it', () => {
+    const { command, args, env } = hetuStart({ execPath: '/Applications/hetu.app/Contents/MacOS/hetu', argv: ['/Applications/hetu.app/Contents/MacOS/hetu', '--mcp-stdio'], ambient: chosen, platform: 'darwin', home: '/Users/han' })
+    expect([command, args]).toEqual(['/usr/bin/open', ['/Applications/hetu.app']])
+    expect(env).toEqual({ HOME: '/Users/han' })
+  })
+
+  it('starts an installed hetu on Linux itself with HOME from the account\'s home and the system\'s own PATH', () => {
+    const { command, args, env } = hetuStart({ execPath: '/opt/hetu/hetu', argv: ['/opt/hetu/hetu', '--mcp-stdio'], ambient: chosen, platform: 'linux', home: '/home/han' })
+    expect([command, args]).toEqual(['/opt/hetu/hetu', []])
+    expect(env).toEqual({ HOME: '/home/han', PATH: '/usr/local/bin:/usr/bin:/bin' })
+  })
+
+  // No desktop launch passes arguments on, so a run from the source starts electron with the repo itself
+  it('starts a run from the source itself with its arguments and the same clean environment', () => {
+    const { command, args, env } = hetuStart({ execPath: 'C:\\e\\electron.exe', argv: ['C:\\e\\electron.exe', 'C:\\hetu', '--mcp-stdio'], ambient: chosen, platform: 'win32', home: 'C:\\Users\\han' })
+    expect([command, args]).toEqual(['C:\\e\\electron.exe', ['C:\\hetu']])
+    expect(env).toEqual(windowsBase)
   })
 })
 

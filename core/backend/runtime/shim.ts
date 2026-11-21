@@ -35,12 +35,16 @@ export function shimArgv(argv: readonly string[], locked: boolean): boolean {
 // What hetu itself starts with when the shim starts it: nothing in a locked build, the repo in a run from the source
 export const hetuArgv = (argv: readonly string[]) => argv.slice(1).filter(arg => arg !== SHIM_SWITCH)
 
-// How the shim starts hetu: the executable it runs as, its arguments less the switch and an environment built from
-// empty, since the shim's own is whatever the client's config chose. Kept from it are only the names Windows starts no
-// process without, which libuv would carry over anyway (baseEnv): who the user is, where Windows is and a PATH of
-// System32 alone, so no program hetu runs is found through the client's PATH. The folder hetu keeps its state under
-// comes from the account's own home, never from LOCALAPPDATA, HOME or XDG_STATE_HOME as the client set them. Nothing
-// else of hetu's own is passed, HETU_DATA_DIR and HETU_INSTALL_DIR among it
+// How the shim starts hetu, with an environment built from empty, since the shim's own is whatever the client's config
+// chose. Kept from it are only the names Windows starts no process without, which libuv would carry over anyway
+// (baseEnv): who the user is, where Windows is and a PATH of System32 alone. The folder hetu keeps its state under comes
+// from the account's own home, never from LOCALAPPDATA, HOME or XDG_STATE_HOME as the client set them. Nothing else of
+// hetu's own is passed, HETU_DATA_DIR and HETU_INSTALL_DIR among it
+//
+// An installed hetu is started the way the desktop starts it, so it gets the desktop's environment and the PATH
+// history finds git through: explorer.exe hands it to the running shell on Windows and open to Launch Services on
+// macOS. Linux has no such launcher, so hetu runs itself there with the system's own PATH. A run from the source
+// starts electron with its repo itself, since neither launcher passes arguments on
 export function hetuStart(options: {
   execPath: string
   argv: readonly string[]
@@ -48,14 +52,20 @@ export function hetuStart(options: {
   platform: NodeJS.Platform
   home: string
 }): { command: string, args: string[], env: Record<string, string> } {
-  const env: Record<string, string> = { ...baseEnv(options.ambient, options.platform) }
-  if (options.platform === 'win32') {
-    setVariable(env, 'USERPROFILE', options.home, options.platform)
-    setVariable(env, 'LOCALAPPDATA', path.win32.join(options.home, 'AppData', 'Local'), options.platform)
+  const { execPath, platform, home } = options
+  const env: Record<string, string> = { ...baseEnv(options.ambient, platform) }
+  const args = hetuArgv(options.argv)
+  if (platform === 'win32') {
+    setVariable(env, 'USERPROFILE', home, platform)
+    setVariable(env, 'LOCALAPPDATA', path.win32.join(home, 'AppData', 'Local'), platform)
   } else {
-    env.HOME = options.home
+    env.HOME = home
   }
-  return { command: options.execPath, args: hetuArgv(options.argv), env }
+  if (args.length > 0) return { command: execPath, args, env }
+  if (platform === 'win32') return { command: path.win32.join(env.SystemRoot!, 'explorer.exe'), args: [execPath], env }
+  // The executable sits in <bundle>.app/Contents/MacOS
+  if (platform === 'darwin') return { command: '/usr/bin/open', args: [path.posix.resolve(execPath, '../../..')], env }
+  return { command: execPath, args, env: { ...env, PATH: '/usr/local/bin:/usr/bin:/bin' } }
 }
 
 export type Reach = {
