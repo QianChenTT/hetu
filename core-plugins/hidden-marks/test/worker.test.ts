@@ -292,7 +292,7 @@ describe('the settings for which elements hide', () => {
     expect(root(drawer).map(child => child.kind)).toEqual(['button'])
   })
 
-  it('opens a popover from its button with a box for each element answer 7 names, each ticked as hidden at first, and shuts it again', async () => {
+  it('opens a popover from its button with a box for each element answer 7 names, each ticked as hidden at first then shuts it again', async () => {
     const drawer = await started()
     await until(() => root(drawer).length > 0)
     press(drawer)

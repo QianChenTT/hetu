@@ -39,15 +39,15 @@ function treeOf(state: EditorState, to: number) {
   return ensureSyntaxTree(state, to, PARSE_MS) ?? syntaxTree(state)
 }
 
-// The format's runs on the line from..to lies in that overlap it or touch it
-function runsAt(state: EditorState, name: string, from: number, to: number): Run[] {
+// The runs of the nodes named on the line from..to lies in that overlap it or touch it
+function runsAt(state: EditorState, named: (name: string) => boolean, from: number, to: number): Run[] {
   const line = state.doc.lineAt(from)
   const runs: Run[] = []
   treeOf(state, line.to).iterate({
     from: line.from,
     to: line.to,
     enter: ref => {
-      const run = ref.name === name ? runOf(ref.node) : null
+      const run = named(ref.name) ? runOf(ref.node) : null
       if (run !== null && run.from <= to && run.to >= from) runs.push(run)
     },
   })
@@ -56,20 +56,38 @@ function runsAt(state: EditorState, name: string, from: number, to: number): Run
 
 type Cursor = { anchor: number, head: number }
 
+// A line's block markers: quotes, then a list item's bullet or number and its task box, or a heading's #'s
+const BLOCK = /^(?:\s*>\s?)*\s*(?:(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?|#{1,6}(?:\s+|$))?/
+const codeNodes = new Set(['InlineCode', 'FencedCode', 'CodeBlock'])
+
+// Whether pos lies inside code, past its first character and before its last
+function inCode(state: EditorState, pos: number): boolean {
+  for (let node: SyntaxNode | null = treeOf(state, pos).resolveInner(pos, 1); node !== null; node = node.parent) {
+    if (codeNodes.has(node.name) && node.from < pos && pos < node.to) return true
+  }
+  return false
+}
+
 // The changes a format key makes at a selection on one line: the run around it taken off, or the part of the run it
 // holds, else the selection wrapped with the runs it crosses joined into one. A cursor takes its run or the word it is
 // inside. At a run's end the cursor steps out past the closing marker, which is put back so the edit's range holds the
-// cursor. The same key past it steps back in. Null when the key changes nothing
+// cursor. The same key past it steps back in. A line's block markers are never wrapped and nothing is wrapped inside
+// code. A run of another format the selection partly holds is taken whole, so the runs nest. Null when the key changes
+// nothing
 export function toggle(state: EditorState, format: Format, range: Cursor): { changes: ChangeSet, selection?: Cursor } | null {
   const { node, marker } = formats[format]
   let from = Math.min(range.anchor, range.head)
   let to = Math.max(range.anchor, range.head)
-  if (state.doc.lineAt(from).number !== state.doc.lineAt(to).number) return null
+  const line = state.doc.lineAt(from)
+  if (line.number !== state.doc.lineAt(to).number) return null
+  const textFrom = line.from + (BLOCK.exec(line.text)?.[0].length ?? 0)
+  if (to < textFrom || (from === to && from < textFrom)) return null
+  from = Math.max(from, textFrom)
   const text = (at: number) => state.sliceDoc(at, at + 1)
   while (from < to && /\s/.test(text(from))) from++
   while (to > from && /\s/.test(text(to - 1))) to--
   if (from === to && range.anchor !== range.head) return null
-  const runs = runsAt(state, node, from, to)
+  const runs = runsAt(state, name => name === node, from, to)
   const off = (run: Run, at: number, end: number) => ({
     changes: ChangeSet.of([
       at <= run.open.to ? run.open : { from: at, insert: state.sliceDoc(run.close.from, run.close.to) },
@@ -86,14 +104,25 @@ export function toggle(state: EditorState, format: Format, range: Cursor): { cha
     const [at, end] = [Math.max(from, around.open.to), Math.min(to, around.close.from)]
     return at < end ? off(around, at, end) : off(around, around.open.to, around.close.from)
   }
+  if (inCode(state, from) || inCode(state, to)) return null
   if (from === to) {
     const word = state.wordAt(from)
     if (word === null || word.from === from || word.to === from) return null
     ;[from, to] = [word.from, word.to]
   }
-  const start = Math.min(from, ...runs.map(run => run.from))
-  const end = Math.max(to, ...runs.map(run => run.to))
-  return { changes: ChangeSet.of([{ from: start, insert: marker }, ...runs.flatMap(run => [run.open, run.close]), { from: end, insert: marker }], state.doc.length) }
+  const others = runsAt(state, name => name !== node, from, to)
+  for (let grew = true; grew;) {
+    grew = false
+    for (const run of others) {
+      if ((run.from < from && from < run.to && run.to < to) || (from < run.from && run.from < to && to < run.to)) {
+        ;[from, to, grew] = [Math.min(from, run.from), Math.max(to, run.to), true]
+      }
+    }
+  }
+  const joined = runsAt(state, name => name === node, from, to)
+  const start = Math.min(from, ...joined.map(run => run.from))
+  const end = Math.max(to, ...joined.map(run => run.to))
+  return { changes: ChangeSet.of([{ from: start, insert: marker }, ...joined.flatMap(run => [run.open, run.close]), { from: end, insert: marker }], state.doc.length) }
 }
 
 // The markers of each run a change left with nothing between them, a run inside another taken with it, as changes to

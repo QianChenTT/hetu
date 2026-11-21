@@ -87,3 +87,28 @@ describe('the format keys', () => {
     expect(formatKeys).toEqual({ bold: 'Mod-b', italic: 'Mod-i', strike: 'Mod-Shift-s', code: 'Mod-e', highlight: 'Mod-Shift-h' })
   })
 })
+
+describe('a format key beside block markers, code and other runs', () => {
+  it("never wraps a line's block marker, taking the line's text after it", () => {
+    expect(pressed('# Title', 'bold', 0, 7)).toBe('# **Title**')
+    expect(pressed('- item', 'bold', 0, 6)).toBe('- **item**')
+    expect(pressed('> quote', 'bold', 0, 7)).toBe('> **quote**')
+    expect(pressed('12. item', 'bold', 0, 8)).toBe('12. **item**')
+    expect(pressed('> - a b', 'italic', 0, 7)).toBe('> - *a b*')
+    expect(pressed('12. item', 'bold', 1)).toBe(null)
+    expect(pressed('# Title', 'bold', 0, 1)).toBe(null)
+  })
+
+  it('does nothing inside inline code or a code block, code itself still taken off', () => {
+    expect(pressed('x `a b` y', 'bold', 4)).toBe(null)
+    expect(pressed('x `a b` y', 'bold', 4, 9)).toBe(null)
+    expect(pressed('```\nab\n```', 'bold', 5)).toBe(null)
+    expect(pressed('```\nab\n```', 'bold', 4, 6)).toBe(null)
+    expect(pressed('x `a b` y', 'code', 4)).toBe('x a b y')
+  })
+
+  it('takes whole a run of another format it partly holds, so the runs nest', () => {
+    expect(pressed('a *b c* d', 'bold', 5, 9)).toBe('a ***b c* d**')
+    expect(pressed('a *b c* d', 'bold', 0, 4)).toBe('**a *b c*** d')
+  })
+})
