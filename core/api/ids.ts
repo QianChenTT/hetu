@@ -110,6 +110,14 @@ export function isSecurityControl(id: string): boolean {
     || (guardingModuleIds as readonly string[]).includes(id)
 }
 
+// The controls the fail-safe at start covers, each once: the judging modules and every guard expected on a guardable
+// action. One that failed at start, hung main the run before or is missing without the human's switch stops hetu
+// before any other module begins. The guarding modules are not among them, hetu starts on without them. guardsOf
+// defaults to the guards table, tests name others
+export function failSafeControls(guardsOf: (action: GuardableAction) => readonly string[] = action => guards[action]): readonly string[] {
+  return frozen([...new Set<string>([...judgingModuleIds, ...guardableActions.flatMap(guardsOf)])])
+}
+
 // The core's own modules, bundled into main.js and held by the core alone: no install list entry, no hash check of
 // their own and no incarnation. Each keeps its off switch in the state and its id reserved. The six from the merge
 // start in this order, the ones after them have no start of their own

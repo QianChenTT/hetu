@@ -44,6 +44,8 @@ function handing(folder: string | null = null, readyMs = 10000) {
     fault: (id, step) => faults.push(`${id} ${step}`),
     changed: (id, change, reason) => changes.push(reason === null ? `${id} ${change}` : `${id} ${change} ${reason}`),
     heartbeat: { ping: () => {}, unresponsive: () => {}, kill: () => {}, limit: () => 1000 },
+    starting: async () => {},
+    started: async () => {},
   }
   return { handed, faults, changes, next: () => n++ }
 }
@@ -276,6 +278,32 @@ describe('the core modules', () => {
     modules.stop([])
     expect(seen).toEqual([])
     expect(changes).toEqual(['gate stopped stopped-mode'])
+  })
+
+  // A start that hangs main leaves its marker, so the marker names the one control whose start ran
+  it('mark each judging module from before its start until its first push returned, one at a time', async () => {
+    const { options, seen } = fakes()
+    const modules = made(options)
+    const { handed } = handing(notes)
+    handed.starting = async id => { seen.push(`${id} marked`) }
+    handed.started = async id => { seen.push(`${id} unmarked`) }
+    await modules.start([], handed)
+    expect(seen.slice(0, 5)).toEqual(['gate marked', 'gate.stateChanged', 'gate unmarked', 'flood-control marked', 'flood-control unmarked'])
+    expect(seen.slice(5).filter(what => what.endsWith('marked'))).toEqual([])
+  })
+
+  it('mark no judging module the human switched off and start on with a fault when a mark throws', async () => {
+    const { options, seen } = fakes()
+    const modules = made(options)
+    const { handed, faults } = handing(notes)
+    handed.starting = async id => {
+      seen.push(`${id} marked`)
+      throw new Error('disk full')
+    }
+    await modules.start(['flood-control'], handed)
+    expect(seen.filter(what => what.endsWith('marked'))).toEqual(['gate marked'])
+    expect(faults).toEqual(['gate marker'])
+    expect(modules.state('gate')).toBe('on')
   })
 
   it('hand the gate each new grants snapshot and exec its view with it', async () => {
