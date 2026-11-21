@@ -140,7 +140,7 @@ describe('the judge a call with power carries to its provider', () => {
     const renamed = (paths: readonly string[] | undefined) => paths?.map(path => path.replace(/^notes\//, 'moved/'))
     expect(canonical.length).toBeGreaterThan(1)
     expect(again).toEqual(canonical.map(access => ({ ...access, scope: { ...access.scope, paths: renamed(access.scope.paths) } })))
-    expect([...canonical, ...again].map(access => [access.onBehalf, access.pair])).toEqual(Array(canonical.length * 2).fill([agent ?? 'agent-a', agent === undefined ? undefined : { plugin: 'mcp-http-handler', field: agent }]))
+    expect([...canonical, ...again].map(access => [access.onBehalf, access.pair])).toEqual(Array(canonical.length * 2).fill([agent ?? 'agent-a', agent === undefined ? undefined : { plugin: 'mcp-http-handler', field: 'client' }]))
     for (const guard of ['leases', 'second']) {
       const [one, two] = parts.guards[guard].calls
       expect(two).toEqual({ ...one, scope: { ...one.scope, paths: renamed(one.scope.paths) } })

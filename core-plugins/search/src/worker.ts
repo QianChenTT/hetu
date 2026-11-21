@@ -1,7 +1,12 @@
 import { definePlugin, type PluginContext, Refused } from '@hetu/sdk'
 import { Index } from './index.ts'
+import { listAll } from './listing.ts'
+import { threw } from './threw.ts'
+import { Viewer } from './viewer.ts'
 
 const CACHE_KEY = 'index'
+// What the listing at start reads. A path of any other kind is read when an event names it
+const NOTE = '.md'
 // What gate.filterReadable takes in one call
 const MAX_HITS = 1024
 // A read that fails for a while goes again after a second, doubling to half a minute while it keeps failing, for at
@@ -27,8 +32,11 @@ function textOf(args: unknown): string | null {
 async function start(ctx: PluginContext): Promise<void> {
   const saved = await ctx.try(ctx.cache.get({ key: CACHE_KEY }))
   const index = Index.from(saved.ok ? saved.value : null)
+  const viewer = new Viewer(ctx, text => index.search(text))
 
   const retries = new Set<string>()
+  // A failed read found retries full, so a note may be in neither the index nor retries. The next retry lists again
+  let overflowed = false
   let retryMs = FIRST_RETRY_MS
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   const retryLater = () => {
@@ -37,6 +45,10 @@ async function start(ctx: PluginContext): Promise<void> {
       retryTimer = null
       retryMs = Math.min(retryMs * 2, LAST_RETRY_MS)
       readAgain(retries)
+      if (overflowed) {
+        overflowed = false
+        void listing().catch(threw)
+      }
     }, retryMs)
   }
 
@@ -54,10 +66,12 @@ async function start(ctx: PluginContext): Promise<void> {
           for (const path of batch) due.delete(path)
           await Promise.all(batch.map(refresh))
         }
+        // Words typed while the notes were read may find more now
+        viewer.draw()
       } finally {
         reading = false
       }
-    })()
+    })().catch(threw)
   }
 
   // Reads the note again. One that is gone or that search may no longer read leaves the index. One whose read failed
@@ -71,6 +85,7 @@ async function start(ctx: PluginContext): Promise<void> {
         return
       }
       if (retries.size < MAX_RETRIES) retries.add(path)
+      else overflowed = true
       retryLater()
       return
     }
@@ -80,6 +95,16 @@ async function start(ctx: PluginContext): Promise<void> {
     await ctx.try(ctx.events.publish('indexed', path))
   }
 
+  // Each start reads every listed note again, so one changed while search wasn't running is read too. A path the index
+  // holds that the listing no longer names is read again as well and leaves once its read answers not-found, which keeps
+  // a note made after its page was listed. A refused listing leaves the rest of the index as it is
+  async function listing(): Promise<void> {
+    const listed = await listAll(args => ctx.luoshu.list(args))
+    const named = new Set(listed.paths)
+    const unlisted = listed.refused === null ? index.paths().filter(path => !named.has(path)) : []
+    readAgain([...listed.paths.filter(path => path.endsWith(NOTE)), ...unlisted])
+  }
+
   // Answers only the notes the caller may read too
   ctx.provide('query', async (call, args) => {
     const text = textOf(args)
@@ -87,6 +112,7 @@ async function start(ctx: PluginContext): Promise<void> {
     const hits = index.search(text).slice(0, MAX_HITS)
     return { paths: hits.length === 0 ? [] : await ctx.filterReadable(call, hits) }
   })
+  viewer.start()
 
   // A path-less event names no note, so it waits for the resync that follows. A refused subscribe leaves search
   // answering from the index it has
@@ -95,6 +121,8 @@ async function start(ctx: PluginContext): Promise<void> {
       readAgain([...index.paths(), ...retries])
     },
   }))
+  // After the subscribe, so a change made while it lists is heard. The cache answers queries meanwhile
+  void listing().catch(threw)
 
   ctx.onStop(async () => {
     if (retryTimer !== null) clearTimeout(retryTimer)

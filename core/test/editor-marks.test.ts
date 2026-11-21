@@ -38,6 +38,34 @@ describe('drawing marks', () => {
     expect(ranges(marks).map(r => [r.from, r.to])).toEqual([[3, 5]])
   })
 
+  it("carries a hidden range's group and edge to its decoration and nothing for a range without them", () => {
+    const { hidden } = drawMarks([
+      { kind: 'hide', from: 0, to: 2, group: 'bold0', edge: 'open' },
+      { kind: 'hide', from: 5, to: 7, group: 'bold0', edge: 'close' },
+      { kind: 'hide', from: 8, to: 9 },
+    ], doc)
+    expect(ranges(hidden).map(r => r.spec)).toEqual([
+      { class: 'cm-hetu-hidden', group: 'bold0', edge: 'open' },
+      { class: 'cm-hetu-hidden', group: 'bold0', edge: 'close' },
+      { class: 'cm-hetu-hidden' },
+    ])
+  })
+
+  // Text hidden with a style stays in the page, so an IME composing beside it reads the text right. A style can't take
+  // a line break away, so a range over one is replaced
+  it('hides a range within a line with a style and replaces one over a line break', () => {
+    const { hidden } = drawMarks([{ kind: 'hide', from: 0, to: 10 }, { kind: 'hide', from: 8, to: 13, group: 'fence0' }], doc)
+    const [inline, across] = ranges(hidden)
+    expect(inline.spec).toEqual({ class: 'cm-hetu-hidden' })
+    expect(across.spec).toEqual({ group: 'fence0' })
+    // A replaced range is a point to CodeMirror, a styled one is not
+    const points: boolean[] = []
+    hidden.between(0, doc.length, (_from, _to, value) => {
+      points.push(value.point)
+    })
+    expect(points).toEqual([false, true])
+  })
+
   it('leaves out what reaches past the end of the text', () => {
     const { marks, hidden } = drawMarks([
       { kind: 'hide', from: 20, to: 40 },

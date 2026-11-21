@@ -9,10 +9,10 @@ const root = path.join(import.meta.dirname, '..')
 describe('the host half as it ships', () => {
   it('builds into one ES module importing only the built-ins its manifest names and holding the plugin alone', async () => {
     const { node } = JSON.parse(await readFile(path.join(root, 'hetu-plugin.json'), 'utf8')) as { node: string[] }
-    expect(node).toEqual(['http'])
+    expect(node).toEqual(['http', 'net', 'os', 'fs'])
     const built = await buildHost(root, 'src/host.ts', node)
-    expect(built.imports).toEqual(['node:http'])
-    // Importing the module binds nothing: the door opens only from start, once mcp is there
+    expect(built.imports).toEqual(['node:fs/promises', 'node:http', 'node:net', 'node:os'])
+    // Importing the module binds nothing: the door and the pipe open only from start, once mcp is there
     const module = await import(`data:text/javascript;base64,${Buffer.from(built.text).toString('base64')}`) as Record<string, unknown>
     expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
     expect(Object.keys(module)).toEqual(['default'])

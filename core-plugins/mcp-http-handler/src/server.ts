@@ -25,8 +25,9 @@ export type DoorOptions = {
   // no body and the connection closed
   serve: (passed: Passed) => Promise<Answer | Refusal>
   refused: (reason: RefusalReason) => void
+  // The rate every listener shares, false past it
+  take: () => boolean
   limits?: Partial<DoorTimes>
-  clock?: () => number
 }
 
 // What Node's parser is built with: the strict parser, the header limit and a missing Host left to the door's own check
@@ -56,24 +57,11 @@ function rawAnswer(status: number, extra: Readonly<Record<string, string>> = {})
   return `${lines.join('\r\n')}\r\n\r\n`
 }
 
-// Requests in the last second, oldest first. A request counts only once it passed the checks before the rate, so a
-// page on another name can't spend what the agents have
-function rate(perSecond: number, clock: () => number): () => boolean {
-  const times: number[] = []
-  return () => {
-    const now = clock()
-    while (times.length > 0 && now - times[0] >= 1000) times.shift()
-    if (times.length >= perSecond) return false
-    times.push(now)
-    return true
-  }
-}
-
 // Opens the door on 127.0.0.1 and the port given, or rejects. A port that is taken is never traded for another, since
 // every URL a harness keeps names this one
 export function openDoor(options: DoorOptions): Promise<Door> {
   const times: DoorTimes = { headersMs: doorLimits.headersMs, requestMs: doorLimits.requestMs, keepAliveMs: doorLimits.keepAliveMs, checkMs: 1000, ...options.limits }
-  const take = rate(doorLimits.perSecond, options.clock ?? (() => performance.now()))
+  const { take } = options
   const parser: Parser = { maxHeaderSize: doorLimits.headerBytes, insecureHTTPParser: false, requireHostHeader: false }
   // The port the Host must name, the one bound when a test asked for any
   let bound = options.port

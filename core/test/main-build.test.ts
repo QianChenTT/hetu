@@ -156,7 +156,7 @@ describe('the main bundle', () => {
     expect(await checkManifest(root, { install: true, built: true })).toEqual([])
     const text = (await readFile(path.join(root, 'dist', 'host.js'))).toString('utf8')
     const imports = [...new Set([...text.matchAll(/^import\b.*?from\s*"([^"]+)"/gm)].map(match => match[1]))]
-    expect(imports).toEqual(['node:http'])
+    expect(imports.sort()).toEqual(['node:fs/promises', 'node:http', 'node:net', 'node:os'])
     const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`) as Record<string, unknown>
     expect(Object.keys(module)).toEqual(['default'])
     expect((module.default as { kind: string }).kind).toBe('hetu-plugin')
