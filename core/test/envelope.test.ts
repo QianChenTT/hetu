@@ -20,10 +20,10 @@ describe('the fixed lists', () => {
     expect(messageKinds).toEqual(['init', 'ready', 'call', 'reply', 'cancel', 'event', 'ack', 'deps', 'ping', 'pong', 'stop', 'stopped'])
   })
 
-  it('has the seventeen refusal codes', () => {
+  it('has the eighteen refusal codes', () => {
     expect(refusalCodes).toEqual([
       'invalid', 'not-granted', 'not-found', 'needs-confirm', 'switched-off', 'unavailable', 'starting', 'policy-down',
-      'guard-refused', 'guard-down', 'throttled', 'timeout', 'stopped', 'crashed', 'failed', 'stale', 'tampered',
+      'guard-refused', 'guard-down', 'locked', 'throttled', 'timeout', 'stopped', 'crashed', 'failed', 'stale', 'tampered',
     ])
   })
 

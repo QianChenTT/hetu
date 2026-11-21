@@ -53,9 +53,10 @@ export const callEnvelope = z.strictObject({ ...requestFields, args: z.unknown()
 // A caller giving up on a call of its own, named by the id it sent
 export const cancel = z.strictObject({ v: z.literal(VERSION), kind: z.literal('cancel'), id: z.int().nonnegative() })
 
+// locked: another holder's lock is on a note the write reaches, with no word of who holds it
 export const refusalCodes = frozen([
   'invalid', 'not-granted', 'not-found', 'needs-confirm', 'switched-off', 'unavailable', 'starting', 'policy-down',
-  'guard-refused', 'guard-down', 'throttled', 'timeout', 'stopped', 'crashed', 'failed', 'stale', 'tampered',
+  'guard-refused', 'guard-down', 'locked', 'throttled', 'timeout', 'stopped', 'crashed', 'failed', 'stale', 'tampered',
 ] as const)
 export type RefusalCode = typeof refusalCodes[number]
 

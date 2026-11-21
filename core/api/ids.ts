@@ -88,6 +88,9 @@ export const guards: Readonly<Record<GuardableAction, readonly string[]>> = tabl
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
 
+// The guard holding note locks. Its deny answers locked, any other guard's guard-refused
+export const LOCK_GUARD = 'lock'
+
 // The core modules that judge yes or no: the gate on every call and flood control on every message, which bounds what
 // plugins and windows may cost main. With every guard core/api expects they are the security controls one rule holds:
 // switched off by the human, the step is as if it didn't exist and answers yes
