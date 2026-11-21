@@ -1,13 +1,12 @@
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
+import { defineLanguageFacet, ensureSyntaxTree, Language, LanguageSupport, syntaxTree } from '@codemirror/language'
 import type { EditorState, Extension } from '@codemirror/state'
 import { IterMode, type SyntaxNode } from '@lezer/common'
-import type { MarkdownConfig } from '@lezer/markdown'
+import { Emoji, GFM, type MarkdownConfig, parser, Subscript, Superscript } from '@lezer/markdown'
 import type { EditorClient } from '@hetu/sdk'
 
 // Markdown's markers hidden and its text styled, as marks the drawer draws. Each element's hidden markers share one
-// group, so an Alt+click shows them together, and each says whether it opens or closes the element. The text itself
-// never changes and the raw view always shows the markers
+// group, so an Alt+click shows them together. Each says whether it opens or closes the element. The text itself never
+// changes and the raw view always shows the markers
 
 export type Mark = Parameters<EditorClient['decorate']>[3][number]
 type LineStyle = Extract<Mark, { kind: 'line' }>['style']
@@ -32,9 +31,10 @@ const Highlight: MarkdownConfig = {
   ],
 }
 
-// GFM and ==highlight==, the language the editor parses notes with
+// The markdown the editor parses notes with, GFM and its extensions and ==highlight==, as a bare parser: the editor's
+// keys, completions and the HTML it reads inside a note are the page's and never reach a mark
 export function markdownSupport(): Extension {
-  return markdown({ base: markdownLanguage, extensions: [Highlight] })
+  return new LanguageSupport(new Language(defineLanguageFacet(), parser.configure([GFM, Subscript, Superscript, Emoji, Highlight]), [], 'markdown'))
 }
 
 const inlineStyles: Readonly<Record<string, MarkStyle>> = Object.freeze({
