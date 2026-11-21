@@ -93,6 +93,28 @@ describe('open calls judged again on a new grants snapshot', () => {
     await counter.waitFor(message => message.kind === 'cancel' && message.callId === got.callId)
   })
 
+  // What deliver let on is what the new grants snapshot judges: the same capability and target at the canonical stage
+  it('judges a delivered call again on what the gate let on at delivery, then answers it stale', async () => {
+    const { pluginsManager, gate, connect, snapshot } = made()
+    pluginsManager.sandboxed('word-count', { count: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const id = scribe.call('word-count.count', {})
+    await counter.delivered('word-count.count')
+    const asked = () => gate.asked.filter(access => access.caller.kind === 'plugin' && access.caller.id === 'scribe')
+    const [raw, delivered] = asked()
+    expect([raw.stage, delivered.stage, delivered.capability, delivered.scope]).toEqual(['raw', 'canonical', 'plugin.call', { target: 'word-count' }])
+    gate.grants.scribe = [...gate.grants.scribe, { type: 'luoshu.read', paths: ['**'] }]
+    snapshot()
+    expect(asked()).toEqual([raw, delivered, delivered])
+    expect(scribe.repliesTo(id)).toEqual([])
+    gate.grants.scribe = []
+    snapshot()
+    expect(asked()).toEqual([raw, delivered, delivered, delivered])
+    expect(code(await scribe.reply(id))).toBe('stale')
+  })
+
   it('stops nothing when the new grants snapshot widens a grant', async () => {
     const { exec, search, gate, snapshot } = made()
     const id = search.call('exec.run', { command: build })
