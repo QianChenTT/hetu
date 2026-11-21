@@ -13,7 +13,7 @@ import type { ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../api/p
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../backend/boot/state.ts'
 import { Router } from '../backend/router/router.ts'
 import type { HumanLimits, PluginTable } from '../api/policy-jobs.ts'
-import type { Asks, RouterDoor, Heard, Port, Served, WayClosed } from '../backend/router/header.ts'
+import type { Asks, RouterDoor, RouterOptions, Heard, Port, Served, WayClosed } from '../backend/router/header.ts'
 import { Limits } from '../backend/router/limits.ts'
 import type { CoreModules, CoreModulesOptions } from '../backend/modules/header.ts'
 import { realModules } from './modules-fakes.ts'
@@ -486,8 +486,8 @@ export function coreModules(
 
 // A real router over the plugins manager and the core modules, built from the options wireCore builds it from, with no
 // core record log
-export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink): Router {
-  const router = new Router(routerOptions(modules, { recording: null }))
+export function wire(pluginsManager: PluginsManager, modules: CoreModules, link: FakeLink, guardsFor?: RouterOptions['guardsFor']): Router {
+  const router = new Router(routerOptions(modules, { recording: null, ...(guardsFor !== undefined ? { guardsFor } : {}) }))
   link.router?.close()
   link.attach(router, pluginsManager)
   return router
@@ -559,6 +559,8 @@ export async function harness(options: {
   const human: { limits: () => HumanLimits } = { limits: () => ({ all: {}, plugins: {} }) }
   const limits = new Limits(() => human.limits())
   const modules = coreModules({ dataDir, installDir }, link, { ...options.modules, gate, off: loaded.state.switches.off }, (plugin, name) => limits.of(plugin, name))
+  // No guard expected unless a test names its own, the same list for the plugins manager and the router
+  const guardsFor = options.pluginsManager?.guardsFor ?? (() => [])
   const pluginsManager = new PluginsManager({
     booted: { state: loaded.state, checks: loaded.checks, removedKnown: options.removedKnown ?? loaded.removedKnown, store, dataDir },
     installDir,
@@ -570,9 +572,10 @@ export async function harness(options: {
     // A request counts at once unless a test is about the delay
     confirmDelayMs: 0,
     ...options.pluginsManager,
+    guardsFor,
   })
   human.limits = () => pluginsManager.limits()
-  const router = wire(pluginsManager, modules, link)
+  const router = wire(pluginsManager, modules, link, guardsFor)
   const made = { base, installDir, dataDir, store, link, runtime, modules, gate, pluginsManager, router }
   live.push(made)
   return made
