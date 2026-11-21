@@ -33,6 +33,12 @@ function styleOf(style: string): Decoration {
   return made
 }
 
+// The element and the edge ride on the decoration, for the rules on hidden text to read
+function hideOf(mark: Extract<Mark, { kind: 'hide' }>): Decoration {
+  if (mark.group === undefined && mark.edge === undefined) return hide
+  return Decoration.replace({ ...mark.group === undefined ? {} : { group: mark.group }, ...mark.edge === undefined ? {} : { edge: mark.edge } })
+}
+
 function lineOf(style: string): Decoration {
   let made = lined.get(style)
   if (made === undefined) lined.set(style, made = Decoration.line({ class: `cm-hetu-line-${style}` }))
@@ -52,7 +58,7 @@ export function drawMarks(given: readonly Mark[], doc: Text): { marks: Decoratio
     }
     if (mark.to > doc.length) continue
     if (mark.kind === 'mark') marks.push(styleOf(mark.style).range(mark.from, mark.to))
-    else if (mark.kind === 'hide') hidden.push(hide.range(mark.from, mark.to))
+    else if (mark.kind === 'hide') hidden.push(hideOf(mark).range(mark.from, mark.to))
     else hidden.push(Decoration.replace({ widget: new TextWidget(mark.text) }).range(mark.from, mark.to))
   }
   return { marks: Decoration.set(marks, true), hidden: Decoration.set(hidden, true) }

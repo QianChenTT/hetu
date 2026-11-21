@@ -38,6 +38,15 @@ describe('drawing marks', () => {
     expect(ranges(marks).map(r => [r.from, r.to])).toEqual([[3, 5]])
   })
 
+  it("carries a hidden range's group and edge to its decoration and nothing for a range without them", () => {
+    const { hidden } = drawMarks([
+      { kind: 'hide', from: 0, to: 2, group: 'bold0', edge: 'open' },
+      { kind: 'hide', from: 5, to: 7, group: 'bold0', edge: 'close' },
+      { kind: 'hide', from: 8, to: 9 },
+    ], doc)
+    expect(ranges(hidden).map(r => r.spec)).toEqual([{ group: 'bold0', edge: 'open' }, { group: 'bold0', edge: 'close' }, {}])
+  })
+
   it('leaves out what reaches past the end of the text', () => {
     const { marks, hidden } = drawMarks([
       { kind: 'hide', from: 20, to: 40 },
