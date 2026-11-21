@@ -150,8 +150,9 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     const root = path.join(outDir, 'plugins', id)
     await rm(root, { recursive: true, force: true })
     await mkdir(path.join(root, 'dist'), { recursive: true })
-    const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
-    await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
+    // The plugin's folder holds its worker's manifest, so the in-page one is written here from its id, name and version
+    const { name, version } = JSON.parse(await readFile(path.join(source, 'hetu-plugin.json'), 'utf8')) as { name: string, version: string }
+    await writeFile(path.join(root, 'hetu-plugin.json'), `${JSON.stringify({ id, name, version, api: '^2', entries: { page: 'dist/page.js' } }, null, 2)}\n`)
     // Its own code only: CodeMirror is the page's
     await build({
       ...shared,
@@ -162,7 +163,6 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
       target: CHROMIUM,
       packages: 'external',
     })
-    const { version } = JSON.parse(manifest.toString('utf8')) as { version: string }
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   const list = { format: INSTALL_LIST_FORMAT, plugins }

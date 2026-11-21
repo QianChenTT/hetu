@@ -11,7 +11,7 @@
         "core-plugins/hidden-marks/src/marks.ts:142-150",
         "core/frontend/editor/hidden-marks.ts:112-120"
       ],
-      "judged": "The page's hidden marks, which goes once the plugin replaces it in the editor"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -23,7 +23,7 @@
         "core-plugins/hidden-marks/src/marks.ts:37-53",
         "core/frontend/editor/hidden-marks.ts:33-49"
       ],
-      "judged": "The page's hidden marks, which goes once the plugin replaces it in the editor"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -35,7 +35,7 @@
         "core-plugins/hidden-marks/src/marks.ts:17-37",
         "core/frontend/editor/hidden-marks.ts:14-33"
       ],
-      "judged": "The page parses notes with ==highlight== and so does the hidden marks plugin. A plugin imports only the contract and the SDK and the page never runs a plugin's code, so each holds its own copy"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -47,7 +47,7 @@
         "core-plugins/hidden-marks/src/marks.ts:85-95",
         "core/frontend/editor/hidden-marks.ts:57-67"
       ],
-      "judged": "The page's hidden marks, which goes once the plugin replaces it in the editor"
+      "judged": "not yet"
     },
     {
       "files": [

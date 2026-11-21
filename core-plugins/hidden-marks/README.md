@@ -1,3 +1,15 @@
+# hidden-marks
+
 Hidden marks: markdown's markers hidden and its text styled while you type, `**bold**` drawn bold with the asterisks hidden. The text itself never changes and Ctrl+/ always shows the real text
 
-The code is `core/frontend/editor/hidden-marks.ts`, compiled into the editor page from the install. This folder is its core plugin: the manifest with a `page` entry and the module bundled on its own, which the install list hashes. The plugin list shows it and switches it, and the editor applies hidden marks only while it is ready. There is no plugins manager path for in-page code. It is to move behind the editor bridge as a plugin (#98), not built yet
+A first-party plugin built on `@hetu/sdk` that runs in a worker behind the editor bridge, holding `ui.read` on every note and `ui.decoration`. It keeps a copy of each note the human opened, read with `editor.read` and kept in step with each change list `editor.changed` brings, read again when a version is missed. It parses the copy with Lezer's markdown parser and sends the marks for the range the editor draws and a margin around it, at most the bridge's 5000 a note, dropping the elements farthest from that range whole. Each element's hidden markers share one group, whose name holds while the human types inside the element or above it, and each says whether it opens or closes the element. The drawer decides how hidden text behaves
+
+It isn't in the build or the id lists yet: the editor page still compiles in its own hidden marks from `core/frontend/editor/hidden-marks.ts` until this plugin replaces it
+
+- `hetu-plugin.json`: the manifest the plugins manager checks and the fake core grants
+- `src/marks.ts`: the parser's marks, grouped by element, and the cap
+- `src/worker.ts`: the plugin
+- `test/marks.test.ts`: the marks for each element
+- `test/worker.test.ts`: the plugin on `@hetu/sdk/testing` and its fake drawer
+
+`npm test -w core-plugins/hidden-marks` runs the tests
