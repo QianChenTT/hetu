@@ -21,7 +21,7 @@ import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
 import { FakeDrawer } from './drawer.ts'
 import { type FakeMode, holds, ModeGate } from './gate.ts'
-import { MemoryStorage, MemoryLuoshu } from './providers.ts'
+import { MemoryHistory, MemoryStorage, MemoryLuoshu } from './providers.ts'
 
 export { FakeDrawer, holds }
 export type { FakeMode }
@@ -47,8 +47,9 @@ export type StandIn = { readonly id: string, readonly delivered: readonly Delive
 export type CoreCall = { action: string, args: unknown, caller: Caller }
 
 // manifest is the plugin's hetu-plugin.json as an object or a path to it. notes is the luoshu at start
-// latencyMs is how long the luoshu, storage and cache take to answer each call, so a plugin meets a save or a read that
-// takes time. limits are the human's values for all, read each time, so a test may change them while the plugin runs
+// latencyMs is how long the luoshu, storage, cache and history take to answer each call, so a plugin meets a save or a
+// read that takes time. limits are the human's values for all, read each time, so a test may change them while the
+// plugin runs
 // drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
@@ -66,7 +67,7 @@ type Manifest = {
 }
 
 // The plugins the fake core runs itself, each a host plugin serving its namespace
-const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
+const providers = { luoshu: ['changed', 'outside'], storage: [] as string[], history: [] as string[] } as const
 const TESTER = 'tester'
 
 // A manifest with a host entry is a core plugin's, checked as one. An api range this core leaves out throws, as the
@@ -209,9 +210,10 @@ function transportOf(router: Router, caller: Caller): Transport {
   }
 }
 
-// A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage and
-// cache in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin runs on it
-// at a time, placed as the plugins manager would place it: mcp-http-handler's host entry in a utility process on a port
+// A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage,
+// cache and history in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin
+// runs on it at a time, placed as the plugins manager would place it: mcp-http-handler's host entry in a utility process
+// on a port
 export class FakeCore {
   readonly mode: FakeMode
   readonly coreRecords: { event: string, fields: Record<string, Field> }[] = []
@@ -238,6 +240,7 @@ export class FakeCore {
   private readonly recording: Recording
   private readonly memory: MemoryLuoshu
   private readonly storage: MemoryStorage
+  private readonly history: MemoryHistory
   private readonly luoshuWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
@@ -268,6 +271,7 @@ export class FakeCore {
     }
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
+    this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     // Flood control counts by the limits the fake core was given, as the core's does by the human's
     const limits = new Limits(() => this.pluginsManager.limits())
@@ -299,7 +303,7 @@ export class FakeCore {
       floodControl: () => floodControl,
       gate: () => this.gate,
       guards: () => null,
-      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : null),
+      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : id === 'history' ? this.history : null),
       recording: this.recording,
     })
     this.router.read(this.pluginsManager)

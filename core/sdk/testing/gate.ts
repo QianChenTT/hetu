@@ -11,12 +11,14 @@ export type FakeMode = 'manifest' | 'allow-all' | 'deny-all' | 'gate-failed' | '
 // Whether grants hold an access, with core/api's matcher on a volume that keeps case. A plugin that passes here then
 // leans on no volume that folds case
 export function holds(granted: readonly Capability[], access: Pick<Access, 'capability' | 'scope'>): boolean {
+  const covered = (grants: readonly string[]) => (access.scope.paths ?? []).every(path => grants.some(grant => scopeMatches(grant, path, { foldCase: false })))
   return granted.some(item => {
     if (item.type !== access.capability) return false
     if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list' || item.type === 'ui.edit' || item.type === 'ui.read') {
-      const paths = access.scope.paths ?? []
-      return paths.every(path => item.paths.some(grant => scopeMatches(grant, path, { foldCase: false })))
+      return covered(item.paths)
     }
+    // A history item counts only for the access it names, so a read item never covers a commit
+    if (item.type === 'history') return item.access === access.scope.access && covered(item.paths)
     if (item.type === 'plugin.call') return access.scope.target !== undefined && item.targets.includes(access.scope.target)
     if (item.type === 'events.subscribe') return (access.scope.topics ?? []).every(topic => item.topics.includes(topic))
     return true

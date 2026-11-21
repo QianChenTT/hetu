@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
-import { LIST_PAGE } from '../../api/actions.ts'
+import { LIST_PAGE, type HistoryCommit, type ResultOf } from '../../api/actions.ts'
 import type { RefusalCode } from '../../api/envelope.ts'
+import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE } from '../../api/exec.ts'
 import { isDotName } from '../../api/names.ts'
 import type { Call, Prepared, Provider, ProviderRefusal } from '../../api/policy-jobs.ts'
 import { quotas, spaceOf } from '../../api/storage.ts'
+import { signatureOf } from '../../backend/providers/history/history.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
@@ -184,5 +186,78 @@ export class MemoryStorage implements Provider {
       this.spaces[kind].set(name, space)
     }
     return space
+  }
+}
+
+// One commit: its id, the notes it holds as path to text and the entry log answers with
+type Recorded = { id: string, tree: ReadonlyMap<string, string>, entry: HistoryCommit }
+
+// Whether a commit changed a note, anything under a folder or with null anything at all, from the one before it
+function changed(now: ReadonlyMap<string, string>, before: ReadonlyMap<string, string>, target: string | null): boolean {
+  return [...new Set([...now.keys(), ...before.keys()])]
+    .some(path => (target === null || path === target || path.startsWith(`${target}/`)) && now.get(path) !== before.get(path))
+}
+
+// git's strict ISO date, %aI, in UTC
+const isoDate = (at: Date) => at.toISOString().replace(/\.\d{3}Z$/, '+00:00')
+
+// history.* in memory over the luoshu's notes, answering as the history module does. commit records the notes at its
+// paths as one commit, a path with no note as removed, named by the module's own signatureOf, and answers
+// { commit: null } when nothing changed. log lists the commits that changed a note or anything under a folder, newest
+// first. read gives a note's text at a commit or not-found. The gate judges commit and read apart, by path
+export class MemoryHistory implements Provider {
+  readonly notes: Map<string, string>
+  private readonly commits: Recorded[] = []
+  private readonly latencyMs: number
+
+  constructor(notes: Map<string, string>, latencyMs = 0) {
+    this.notes = notes
+    this.latencyMs = latencyMs
+  }
+
+  async prepare(call: Call): Promise<Prepared> {
+    const { path, paths } = call.args as { path?: string, paths?: string[] }
+    return { scope: { paths: call.action === 'history.commit' ? [...new Set(paths)] : [path!] } }
+  }
+
+  async perform(call: Call, prepared: Prepared): Promise<unknown> {
+    await after(this.latencyMs)
+    const paths = prepared.scope.paths!
+    if (call.action === 'history.commit') return this.commit(call, paths)
+    if (call.action === 'history.log') return this.log(paths[0], (call.args as { limit?: number }).limit ?? LOG_PAGE)
+    return this.read(paths[0], (call.args as { commit: string }).commit)
+  }
+
+  private commit(call: Call, paths: readonly string[]): ResultOf<'history.commit'> {
+    const head = this.commits.at(-1)?.tree ?? new Map<string, string>()
+    const tree = new Map(head)
+    let total = 0
+    for (const path of paths) {
+      const text = this.notes.get(path)
+      const bytes = text === undefined ? 0 : Buffer.byteLength(text)
+      total += bytes
+      if (bytes > HISTORY_FILE_BYTES || total > HISTORY_COMMIT_BYTES) throw { code: 'failed', reason: 'too-large' } satisfies ProviderRefusal
+      if (text === undefined) tree.delete(path)
+      else tree.set(path, text)
+    }
+    if (!changed(tree, head, null)) return { commit: null }
+    const { message } = call.args as { message: string }
+    const entry = { ...signatureOf(call), date: isoDate(new Date()), message: message.replace(/\n+$/, '') }
+    const id = createHash('sha1').update(JSON.stringify([this.commits.length, [...tree], entry])).digest('hex')
+    this.commits.push({ id, tree, entry: { commit: id, ...entry } })
+    return { commit: id }
+  }
+
+  private log(target: string, limit: number): ResultOf<'history.log'> {
+    const commits = this.commits
+      .filter((made, at) => changed(made.tree, this.commits[at - 1]?.tree ?? new Map(), target))
+      .reverse().slice(0, limit)
+    return { commits: commits.map(made => ({ ...made.entry })) }
+  }
+
+  private read(target: string, id: string): ResultOf<'history.read'> {
+    const text = this.commits.find(made => made.id === id)?.tree.get(target)
+    if (text === undefined) throw { code: 'not-found' } satisfies ProviderRefusal
+    return { text, version: versionOf(text) }
   }
 }
