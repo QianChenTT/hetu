@@ -106,7 +106,8 @@ export abstract class PluginsLifecycle extends PluginsBase {
     try {
       this.onFailure?.(failure)
     } catch {
-      // The runtime doesn't act on this failure, no relaunch and no box
+      // A throw is the runtime's own fault. A stop already in place loses only its box or window, a relaunch is lost
+      // and hetu runs on with the log failing
     }
   }
 
@@ -300,7 +301,8 @@ export abstract class PluginsLifecycle extends PluginsBase {
         }
         this.startAll()
       } catch {
-        // A throw ends this pass with the plan half applied until the next replan pumps again
+        // A throw ends this pass with the plan half applied, a plugin to stop may run on and one to start waits, until
+        // the next switch, stop, crash or install replans
       }
     } while (this.again)
   }

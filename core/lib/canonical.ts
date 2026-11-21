@@ -103,7 +103,8 @@ async function deepest(base: string, names: string[]): Promise<{ real: string, r
     }
     const reached = within(base, next) && next !== base ? next.slice(withSep(base).length).split(path.sep) : []
     if (reached.some(isDotName)) {
-      // The lstat a missing part gets too, so both take the same steps on the disk
+      // The lstat a missing part gets too, so both take the same steps on the disk. Its answer and its error go unused,
+      // the step is the point
       await lstat(candidate).catch(() => {})
       return { real, rest: names.slice(i), hidden: reached.some(isGitName) ? 'git' : 'dot' }
     }

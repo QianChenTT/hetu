@@ -804,7 +804,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     for (const file of left) {
       if (opening !== walked) return
       const found = await lstat(file).catch(() => null)
-      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => { /* Tried again at the next open */ })
+      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => { /* Stays until the next open tries again, with the bytes of a note removed or written over since if it was a second name, in the human's own folder */ })
     }
   }
 

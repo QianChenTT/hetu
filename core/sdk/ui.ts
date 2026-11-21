@@ -78,7 +78,8 @@ export class Ui implements UiClient {
     this.drawer = drawer
     drawer.onConnect(() => {
       this.trees.clear()
-      // A drawer page that can't take the bindings is gone again, its next connect binds them
+      // Rejected when this drawer page goes too or refuses them, so it runs without the bindings until the next connect
+      // binds them again
       if (this.bindings !== null) drawer.call('view.bind', { bindings: this.bindings }).catch(() => {})
     })
     drawer.listen<{ instance: string }>('view.closed', event => this.trees.delete(event.instance))

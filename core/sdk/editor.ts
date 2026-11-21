@@ -59,11 +59,12 @@ export class Editor implements EditorClient {
     transport.listen(message => {
       if (this.transport === transport) this.heard(message)
     })
-    // A page that can't take its bindings is gone again, the next page's connect sends them
+    // Rejected when this page goes too or refuses them, so it runs without the bindings until the next connect sends
+    // them again
     if (this.bindings !== null) this.send('editor.bind', { bindings: this.bindings }).catch(() => {})
-    // The key stream asked of a page that's gone starts again with the next connect
+    // Rejected when this page goes too or refuses it, so it sends no keys until the next connect asks again
     if (this.stream) this.send('editor.keys', { on: true }).catch(() => {})
-    // Viewport ranges asked of a page that's gone are asked again at the next connect
+    // Rejected when this page goes too or refuses it, so it sends no viewport ranges until the next connect asks again
     if (this.ranges) this.send('editor.viewports', { on: true }).catch(() => {})
     for (const hook of this.connected) hook()
   }

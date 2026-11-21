@@ -177,7 +177,7 @@
       ],
       "hash": "01b5576902e6b567",
       "at": [
-        "core/backend/boot/boot.ts:97-101",
+        "core/backend/boot/boot.ts:98-102",
         "core/lib/event-log.ts:404-409"
       ],
       "judged": "not yet"
@@ -187,9 +187,9 @@
         "core/backend/boot/boot.ts",
         "core/lib/event-log.ts"
       ],
-      "hash": "2f88e7a1d57a363c",
+      "hash": "40393d23592acfa8",
       "at": [
-        "core/backend/boot/boot.ts:95-100",
+        "core/backend/boot/boot.ts:95-101",
         "core/lib/event-log.ts:404-407"
       ],
       "judged": "not yet"
@@ -490,7 +490,7 @@
       "hash": "15dc1334c925a1d2",
       "at": [
         "core/backend/providers/luoshu/luoshu.ts:356-363",
-        "core/lib/canonical.ts:196-201"
+        "core/lib/canonical.ts:197-202"
       ],
       "judged": "not yet"
     },
@@ -694,7 +694,7 @@
       "hash": "3f113f71e5ec0a2f",
       "at": [
         "core/frontend/editor/link.ts:61-67",
-        "core/sdk/editor.ts:163-167"
+        "core/sdk/editor.ts:164-168"
       ],
       "judged": "not yet"
     },
@@ -766,7 +766,7 @@
       "hash": "2981d94d33dbe4d6",
       "at": [
         "core/frontend/trusted/view.ts:338-343",
-        "core/sdk/editor.ts:152-157"
+        "core/sdk/editor.ts:153-158"
       ],
       "judged": "not yet"
     },
@@ -826,7 +826,7 @@
       "hash": "39ee7ea38f19d785",
       "at": [
         "core/sdk/editor.ts:19-23",
-        "core/sdk/editor.ts:112-112"
+        "core/sdk/editor.ts:113-113"
       ],
       "judged": "not yet"
     },

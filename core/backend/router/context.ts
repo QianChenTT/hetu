@@ -229,7 +229,8 @@ export class Context {
     try {
       take(this.recording)
     } catch {
-      // This call's audit record is lost and the reply goes out without it, a record never holds up or fails a call
+      // What recording can't take is lost (a call's record, a fault or its close) and hetu runs on, a record never
+      // holds up or fails a call
     }
   }
 

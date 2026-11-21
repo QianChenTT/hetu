@@ -134,7 +134,8 @@ export abstract class PluginsInstall extends PluginsClasses {
       return false
     }
     await swapIn(this.dataDir, id, dir)
-    // A cache that can't be cleared stays for the new version with no fault recorded, the copy goes on
+    // A cache that can't be cleared stays for the new version with no fault recorded. It holds only what this plugin
+    // wrote and the new version hears the version it replaced, so the copy goes on
     if (previous !== null && previous !== listed.version) await this.clearSpace('cache', id).catch(() => {})
     await this.writeClassed(id, this.classes(cause, id, this.copied(id, read, listed, enabled), confirm))
     if (previous !== null && previous !== listed.version) this.versions.set(id, previous)
