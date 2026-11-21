@@ -230,8 +230,10 @@ export class Bus {
   }
 
   // Ends every live subscription the gate holds of each subscriber whose caller is named, with events.ended, since the
-  // gate couldn't be asked about them again (D-646). A free one and one that stands run on
+  // gate couldn't be asked about them again (D-646). A free one and one that stands run on. The next sync asks again
+  // about every one that waits, since a sync that threw midway took the new key without reaching them all
   endGated(named: (caller: Caller) => boolean): void {
+    this.unsettled = true
     for (const subscriber of [...this.subscribers.values()]) {
       if (!named(subscriber.caller)) continue
       this.end(subscriber, [...subscriber.topics].filter(([, held]) => held.live && !held.free).map(([topic]) => topic))

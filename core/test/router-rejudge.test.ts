@@ -390,6 +390,41 @@ describe('every open call a plugin holds with power ended when the router could 
     expect((await counter.reply(tally)).result).toBe(3)
   })
 
+  // A control that crashed in use refuses all, so one call whose end throws can't keep the rest live. The router's
+  // clock for records throws once, inside the first call's end
+  it('goes on past a call whose end throws, with a fault for it, and still ends the live subscriptions', async () => {
+    let breaks = 0
+    const now = () => {
+      if (breaks > 0) {
+        breaks--
+        throw new Error('broken')
+      }
+      return Date.now()
+    }
+    const { exec, pluginsManager, gate, connect, router, log } = made({ now })
+    pluginsManager.sandboxed('word-count', { count: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    gate.grants.git = [{ type: 'exec', commands: [build], env: [] }, { type: 'events.subscribe', topics: ['luoshu.changed'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const git = connect(worker('git'))
+    expect((await git.ask('events.subscribe', { topics: ['luoshu.changed'] })).result).toEqual({ standing: [] })
+    const count = scribe.call('word-count.count', {})
+    await counter.delivered('word-count.count')
+    const run = git.call('exec.run', { command: build })
+    await tick(20)
+    expect(exec.signals).toHaveLength(1)
+    breaks = 1
+    expect(() => router.revokeAll()).not.toThrow()
+    expect(breaks).toBe(0)
+    expect(code(await scribe.reply(count))).toBe('policy-down')
+    expect(code(await git.reply(run))).toBe('policy-down')
+    await git.waitFor(message => message.kind === 'event' && message.topic === 'events.ended')
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toContainEqual({ plugin: 'router', step: 'revokeAll', count: 1 })
+  })
+
   it('ends nothing while the human has the gate off', async () => {
     const { exec, search, pluginsManager, router } = made()
     pluginsManager.policyJobs.gate = 'off'

@@ -296,11 +296,22 @@ export function rejudge(c: Context): void {
 // When the plugins manager's change threw, no open call was judged again on its grants snapshot. So every open call
 // with power a plugin holds is revoked as policy-down and every live subscription of a plugin the gate holds ends,
 // whether or not its own grant changed, as a control that crashed in use refuses all (D-646). A window's calls and
-// subscriptions run on, as does anything with no power. With the gate off by the human nothing is judged, so nothing ends
+// subscriptions run on, as does anything with no power. With the gate off by the human nothing is judged, so nothing ends.
+// A call whose end throws is recorded and the rest still end, the subscriptions included
 export function revokeAll(c: Context): void {
   if (c.policyJob('gate') === 'off') return
-  for (const pending of withPower(c)) if (pending.caller.kind === 'plugin') revoke(c, pending, c.down('policy-down'))
-  c.bus.endGated(caller => caller.kind === 'plugin')
+  try {
+    for (const pending of withPower(c)) {
+      if (pending.caller.kind !== 'plugin') continue
+      try {
+        revoke(c, pending, c.down('policy-down'))
+      } catch {
+        c.fault('router', 'revokeAll')
+      }
+    }
+  } finally {
+    c.bus.endGated(caller => caller.kind === 'plugin')
+  }
 }
 
 // Every open call with power the gate let on, read as it goes, so one a revoke before it ended is passed by
