@@ -1,16 +1,14 @@
 import { readFileSync } from 'node:fs'
-import { stripTypeScriptTypes } from 'node:module'
 import path from 'node:path'
-import { parse, type Node } from 'acorn'
-import { simple } from 'acorn-walk'
 import { describe, expect, it } from 'vitest'
 import * as actions from '../api/actions.ts'
 import * as ids from '../api/ids.ts'
+import { apiConstants, namedIn, relaysOf, type Named } from './named-parts.ts'
 import { shippedFiles } from './shipped-files.ts'
 
 // The router reaches each part through the contract's namespace table, so its code names no action and no part outside
-// the parts listed here, each with why. A name counts as a string or as a constant of ids.ts or actions.ts it imports
-// that holds exactly one name. Namespaces, caller kinds such as 'plugin', event topics and comments don't count
+// the parts listed here, each with why. A name counts as named-parts.ts counts it: a string or a constant of core/api
+// holding exactly one name. Namespaces, caller kinds such as 'plugin', event topics and comments don't count
 
 const repo = path.join(import.meta.dirname, '..', '..')
 const files = shippedFiles({ kinds: ['ts'] }).filter(file => file.startsWith('core/backend/router/'))
@@ -36,58 +34,8 @@ export const names: ReadonlyMap<string, string> = new Map([
   ...idLists.flatMap(([, list]) => list as readonly string[]),
 ].map(name => [name, partOf(name)]))
 
-// The exported constants of ids.ts and actions.ts that hold exactly one name, with its part
-export const constants: ReadonlyMap<string, string> = new Map(Object.entries({ ...ids, ...actions })
-  .flatMap(([key, value]) => typeof value === 'string' && names.has(value) ? [[key, names.get(value)!] as const] : []))
-
-export type Named = { file: string, line: number, part: string, text: string }
-
-// Each place a file names a part
-export function namedIn(file: string, source: string, known = names, held = constants): Named[] {
-  // Strip mode blanks the types and keeps every line where it was, so the parser's lines are the file's
-  const program = parse(stripTypeScriptTypes(source, { mode: 'strip' }), { ecmaVersion: 'latest', sourceType: 'module', locations: true })
-  const found: Named[] = []
-  const add = (node: Node, text: string, part: string | undefined) => {
-    if (part !== undefined) found.push({ file, line: node.loc!.start.line, part, text })
-  }
-  const literal = (node: Node, value: unknown) => {
-    if (typeof value === 'string') add(node, `'${value}'`, known.get(value))
-  }
-  // Read first, so a use above its import counts too: each constant imported by its name and each namespace import
-  const local = new Map<string, string>()
-  const spaces = new Set<string>()
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration' || !/(^|\/)api\/(ids|actions)\.ts$/.test(String(statement.source.value))) continue
-    for (const specifier of statement.specifiers) {
-      if (specifier.type === 'ImportNamespaceSpecifier') spaces.add(specifier.local.name)
-      if (specifier.type !== 'ImportSpecifier') continue
-      const name = specifier.imported.type === 'Identifier' ? specifier.imported.name : String(specifier.imported.value)
-      if (!held.has(name)) continue
-      local.set(specifier.local.name, name)
-      add(specifier, name, held.get(name))
-    }
-  }
-  // A key in quotes is no expression, so the walk passes it by
-  const key = (node: { computed: boolean, key: Node }) => {
-    if (!node.computed && node.key.type === 'Literal') literal(node.key, (node.key as Node & { value: unknown }).value)
-  }
-  simple(program, {
-    Literal(node) { literal(node, node.value) },
-    TemplateLiteral(node) { if (node.expressions.length === 0) literal(node, node.quasis[0].value.cooked) },
-    Property: key,
-    PropertyDefinition: key,
-    MethodDefinition: key,
-    Identifier(node) {
-      const name = local.get(node.name)
-      if (name !== undefined) add(node, name, held.get(name))
-    },
-    MemberExpression(node) {
-      if (node.object.type !== 'Identifier' || !spaces.has(node.object.name) || node.property.type !== 'Identifier') return
-      add(node, node.property.name, held.get(node.property.name))
-    },
-  })
-  return found.sort((a, b) => a.line - b.line)
-}
+// The exported constants of every core/api module that hold exactly one name, with its part
+export const constants: ReadonlyMap<string, string> = await apiConstants(names)
 
 // What fails: a part named and not listed, a listed part the router no longer names and a why under 10 characters
 export function routerNameProblems(found: readonly Named[], listed: Readonly<Record<string, string>>): string[] {
@@ -100,7 +48,9 @@ export function routerNameProblems(found: readonly Named[], listed: Readonly<Rec
   return problems
 }
 
-const found = files.flatMap(file => namedIn(file, readFileSync(path.join(repo, file), 'utf8')))
+// Every shipped file of core/, so a constant one of them hands on to the router counts too
+const relays = relaysOf(new Map(shippedFiles({ kinds: ['ts'] }).map(file => [file, readFileSync(path.join(repo, file), 'utf8')])), constants)
+const found = files.flatMap(file => namedIn(file, readFileSync(path.join(repo, file), 'utf8'), names, constants, relays))
 
 describe('the parts the router names', () => {
   it('reads every file of the router and the names from the contract', () => {
@@ -152,7 +102,45 @@ describe('the router names check itself', () => {
     ])
   })
 
+  it('fails a constant handed on by another file, through each step of a chain', () => {
+    const relay = 'core/backend/router/relay.ts'
+    const relays = relaysOf(new Map([
+      [relay, "export { LOCK_GUARD } from '../../api/ids.ts'"],
+      ['core/backend/router/all.ts', "export * from '../../api/ids.ts'"],
+      ['core/backend/router/onward.ts', "import { LOCK_GUARD } from '../../api/ids.ts'\nexport { LOCK_GUARD as GUARD }"],
+      ['core/backend/router/chain.ts', "export { GUARD as G } from './onward.ts'"],
+    ]), constants)
+    const lines = (source: string) => namedIn(at, source, names, constants, relays).map(hit => `${hit.line} ${hit.text}`)
+    expect(namedIn(relay, "export { LOCK_GUARD } from '../../api/ids.ts'", names, constants).map(hit => hit.part)).toEqual(['lock'])
+    expect(lines("import { LOCK_GUARD } from './relay.ts'\nf(LOCK_GUARD)")).toEqual(['1 LOCK_GUARD', '2 LOCK_GUARD'])
+    expect(lines("import { LOCK_GUARD } from './all.ts'\nf(LOCK_GUARD)")).toEqual(['1 LOCK_GUARD', '2 LOCK_GUARD'])
+    expect(lines("import { G } from './chain.ts'\nf(G)")).toEqual(['1 LOCK_GUARD', '2 LOCK_GUARD'])
+    expect(lines("import * as r from './relay.ts'\nf(r.LOCK_GUARD)")).toEqual(['2 LOCK_GUARD'])
+    expect(lines("import { LOCK_GUARD } from './elsewhere.ts'\nf(LOCK_GUARD)")).toEqual([])
+  })
+
   it.each([
+    ["import * as ids from '../../api/ids.ts'\nconst { LOCK_GUARD: guard } = ids\nf(guard)", [2, 3]],
+    ["import * as ids from '../../api/ids.ts'\nf(ids['LOCK_GUARD'])", [2]],
+    ["import * as ids from '../../api/ids.ts'\nconst i = ids\nconst j = i\nf(j.LOCK_GUARD)", [4]],
+  ])('fails a constant read off a namespace in %j', (source, lines) => {
+    expect(problems(source)).toEqual(lines.map(line => `${at}:${line} LOCK_GUARD names lock, a part not on the list`))
+  })
+
+  it('reads the single-name constants of every module of core/api', async () => {
+    expect((await apiConstants(new Map([['hetu-install.json', 'install']]))).get('INSTALL_LIST')).toBe('install')
+  })
+
+  it('takes no plugins with paths from core/, which would cut core/ off core-plugins/ too', () => {
+    // @ts-expect-error the two options together
+    const both = () => shippedFiles({ kinds: ['ts'], plugins: 'src', from: 'core' })
+    expect(both).toBeTypeOf('function')
+  })
+
+  it.each([
+    "import net from 'net'",
+    "export * from 'lock'",
+    "export { x } from 'gate'",
     "if (caller.kind === 'plugin') {}",
     "bus.drop('events.dropped')",
     "// asks the 'gate' first\nconst x = 1",
