@@ -295,8 +295,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         await retried(() => rename(temp, target.absolute), target.absolute)
       }
     } catch (err) {
-      // A temp file left here is removed by the walk at open once it is old, the write's own error goes up
-      await rm(temp, { force: true }).catch(() => {})
+      await rm(temp, { force: true }).catch(() => { /* A temp file left here is removed by the walk at open once it is old */ })
       throw err
     }
     await syncDir(path.dirname(target.absolute))
@@ -348,8 +347,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     try {
       await act()
     } catch (err) {
-      // A claim that can't be taken back stays as an empty file at the note's name, the act's error still goes up
-      if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => {})
+      if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => { /* A claim not taken back stays as an empty file at the note's name */ })
       throw err
     }
   }
@@ -755,8 +753,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     clearTimeout(settling.get(relative))
     const timer = setTimeout(() => {
       settling.delete(relative)
-      // A look that throws publishes nothing, as settled itself does for a note it can't read
-      void settled(relative).catch(() => {})
+      void settled(relative).catch(() => { /* A look that throws publishes nothing, as settled does for a note it can't read */ })
     }, settleMs)
     timer.unref?.()
     settling.set(relative, timer)
@@ -807,8 +804,7 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     for (const file of left) {
       if (opening !== walked) return
       const found = await lstat(file).catch(() => null)
-      // A left temp file that can't go now is tried again at the next open
-      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => {})
+      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => { /* Tried again at the next open */ })
     }
   }
 
