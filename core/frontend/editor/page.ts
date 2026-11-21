@@ -10,6 +10,7 @@ import { Layers } from './layers.ts'
 import { type Bridge, CoreLink } from './link.ts'
 import { drawMenu, type MenuData } from './menu.ts'
 import { type NoteNotice, Notes } from './notes.ts'
+import { noteBar, refusalText, type NoteAction } from './note-bar.ts'
 import { Frames } from './frames.ts'
 import { filterNames, listNames } from './palette.ts'
 import { RawSource } from './raw.ts'
@@ -54,14 +55,6 @@ function drawBanner(shell: Shell, lines: string[], notices: Notice[]): void {
   const shown = element('notices')
   shown.replaceChildren(...notices.map(notice => button(notice.text, () => shell.open(notice.id))))
   shown.hidden = notices.length === 0
-}
-
-// What a refusal means to the human
-function refusalText(code: string, reason?: string): string {
-  if (reason === 'too-large') return 'This note is past the size hetu takes, so it can\'t be saved or kept as a draft'
-  if (code === 'unavailable') return 'No notes folder is picked, so nothing can be saved'
-  if (code === 'throttled') return 'hetu is busy, so not every note is listed yet. Open this again in a moment'
-  return `hetu refused: ${code}${reason === undefined ? '' : ` (${reason})`}`
 }
 
 // A press followed on the window until it is released, as a click or a drag
@@ -431,39 +424,27 @@ function start(bridge: Bridge): void {
       noteNotices.delete(id)
       drawNoteBar()
     }
-    const reload = button('Reload', () => {
+    const reload = () => {
       noteNotices.delete(id)
       void theNotes.reload(id).then(() => {
         drawNoteBar()
         drawTitle()
       })
-    })
-    let text: string
-    let actions: HTMLButtonElement[]
-    if (notice.kind === 'draft') {
-      const when = new Date(notice.at).toLocaleString()
-      text = `A draft of this note from ${when} is kept${notice.changedSince ? ', made before the note last changed' : ''}`
-      actions = [
-        button('Restore', () => {
-          theNotes.restore(id)
-          clear()
-        }),
-        button('Discard', () => void theNotes.discard(id).then(clear)),
-      ]
-    } else if (notice.kind === 'stale') {
-      text = 'This note changed outside hetu since it was opened, so it wasn\'t saved. Your text is kept as a draft'
-      actions = [reload]
-    } else if (notice.kind === 'outside') {
-      text = 'This note changed outside hetu while it has unsaved text. Reload keeps your text as a draft'
-      actions = [reload, button('Keep mine', clear)]
-    } else if (notice.kind === 'refused') {
-      text = refusalText(notice.code, notice.reason)
-      actions = [button('Dismiss', clear)]
-    } else {
-      return
     }
-    element('note-text').textContent = text
-    element('note-actions').replaceChildren(...actions)
+    const actions: Record<NoteAction, [string, () => void]> = {
+      restore: ['Restore', () => {
+        theNotes.restore(id)
+        clear()
+      }],
+      discard: ['Discard', () => void theNotes.discard(id).then(clear)],
+      reload: ['Reload', reload],
+      'keep-mine': ['Keep mine', clear],
+      dismiss: ['Dismiss', clear],
+      'take-over': ['Take over', () => void theNotes.takeOver(id).then(saved => settled(id, saved))],
+    }
+    const shown = noteBar(notice)
+    element('note-text').textContent = shown.text
+    element('note-actions').replaceChildren(...shown.actions.map(action => button(...actions[action])))
   }
 
   // focus false opens the note beside the others for the layout to place, leaving the current one current: a plugin's
@@ -500,8 +481,12 @@ function start(bridge: Bridge): void {
 
   async function save(): Promise<void> {
     const id = views.shown()
-    if (id === null) return
-    if (await theNotes.save(id) === 'saved' && noteNotices.get(id)?.kind !== 'draft') noteNotices.delete(id)
+    if (id !== null) settled(id, await theNotes.save(id))
+  }
+
+  // A save that landed clears the note's notice, a draft's offer aside
+  function settled(id: string, saved: Awaited<ReturnType<Notes['save']>>): void {
+    if (saved === 'saved' && noteNotices.get(id)?.kind !== 'draft') noteNotices.delete(id)
     drawTitle()
     drawNoteBar()
     theLayers.schedule()

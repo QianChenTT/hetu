@@ -16,7 +16,7 @@ export type Editors = {
 
 export type NoteNotice =
   | { kind: 'draft', instance: string, path: string, at: number, changedSince: boolean }
-  | { kind: 'stale' | 'outside', instance: string, path: string }
+  | { kind: 'stale' | 'outside' | 'locked', instance: string, path: string }
   | { kind: 'refused', instance: string, path: string, code: string, reason?: string }
 
 // edits names the plugins whose edits the text holds, which the save after a Restore names as onBehalf
@@ -162,7 +162,7 @@ export class Notes {
     this.opened.get(instance)?.edits.add(plugin)
   }
 
-  async save(instance: string): Promise<'saved' | 'stale' | 'refused'> {
+  async save(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused'> {
     const note = this.opened.get(instance)
     if (note === undefined) return 'refused'
     clearTimeout(this.timers.get(instance))
@@ -190,13 +190,27 @@ export class Notes {
       return 'saved'
     }
     const code = written.refusal?.code ?? 'failed'
-    if (code === 'stale') {
+    // A lock answers with no holder, so the notice names none
+    if (code === 'stale' || code === 'locked') {
       await this.keep(note)
-      this.tell({ kind: 'stale', instance, path: note.path })
-      return 'stale'
+      this.tell({ kind: code, instance, path: note.path })
+      return code
     }
     this.refused(note, code, written.refusal?.reason)
     return 'refused'
+  }
+
+  // The human takes a locked note over: the window clears the lock on that note alone, whoever holds it, then saves
+  // again. No Confirm, the human is the policy
+  async takeOver(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused'> {
+    const note = this.opened.get(instance)
+    if (note === undefined) return 'refused'
+    const cleared = await this.link.call('lock.clear', { paths: [note.path] })
+    if (!cleared.ok) {
+      this.refused(note, cleared.refusal?.code ?? 'failed', cleared.refusal?.reason)
+      return 'refused'
+    }
+    return this.save(instance)
   }
 
   async keepAll(): Promise<void> {

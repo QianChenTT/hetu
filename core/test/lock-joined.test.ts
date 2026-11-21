@@ -90,6 +90,18 @@ async function write(half: Half, folder: string, text: string, extra: object = {
   return ask(half, 'luoshu.write', { path: 'a.md', text, baseVersion }, extra)
 }
 
+// A call from the editor window through its way in and its reply
+function windowAsk(router: Awaited<ReturnType<typeof joined>>['router'], action: string, args: unknown): Promise<Message> {
+  const editor = { kind: 'window' as const, role: 'editor' as const, n: 1 }
+  const receive = router.window<string>(sender => (sender === 'editor' ? editor : null))
+  const id = 7000 + next++
+  return new Promise(resolve => {
+    receive('editor', { v: 1, kind: 'call', id, action, args }, message => {
+      if ((message as Message).id === id) resolve(message as Message)
+    })
+  })
+}
+
 const refusal = (reply: Message) => (reply.refusal as { code: string } | undefined)?.code ?? 'ok'
 
 // A lock module whose guard throws, as one that crashed in use, or whose folder throws once told to
@@ -135,6 +147,19 @@ describe('the lock module through the joined core', () => {
     expect(refusal(await write(alpha, folder, 'none'))).toBe('locked')
     expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('as it was')
     expect(refusal(await write(alpha, folder, 'one', { onBehalf: 'client#1' }))).toBe('ok')
+  })
+
+  // The human is the policy: the editor window's save answers locked and its clear frees any holder's lock
+  it('answers locked to the editor window\'s save and lets the window take the note over in one clear', async () => {
+    const { runtime, router, folder } = await joined()
+    expect(refusal(await ask(runtime.half('alpha'), 'lock.set', { paths: ['a.md', 'b.md'], ms: 60_000 }, { onBehalf: 'client#1' }))).toBe('ok')
+    const baseVersion = createHash('sha256').update('as it was').digest('hex')
+    const save = () => windowAsk(router, 'luoshu.write', { path: 'a.md', text: 'human', baseVersion })
+    expect((await save()).refusal).toEqual({ code: 'locked', action: 'luoshu.write' })
+    expect(refusal(await windowAsk(router, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
+    expect(refusal(await save())).toBe('ok')
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('human')
+    expect((await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['b.md'] })
   })
 
   it('lets every write past with the lock switched off, as if its step did not exist', async () => {
