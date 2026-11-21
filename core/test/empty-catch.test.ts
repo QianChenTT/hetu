@@ -17,8 +17,8 @@ const files = shippedFiles({ kinds: ['ts', 'js'], plugins: 'src' })
 
 // Empty is a catch block with no statement, binding or not, and a function passed to .catch with an empty body or
 // one returning undefined or void 0. One returning a literal such as null or false is empty too when the .catch is
-// thrown away, a statement of its own or under void, since nothing reads its answer (D-641). Awaited, returned or
-// assigned, it hands its caller an answer and isn't counted
+// thrown away, a statement of its own, under void or awaited as a statement of its own, since nothing reads its answer
+// (D-641). Assigned, returned or passed on, awaited or not, it hands its caller an answer and isn't counted
 export type Swallow = { file: string, line: number, text: string, form: 'catch' | '.catch', why: string | null }
 
 type Comment = { text: string, start: number, end: number }
@@ -60,9 +60,10 @@ export function swallowsIn(file: string, source: string): Swallow[] {
     const only = (body as Node & { body: Node[] }).body
     return only.length === 1 && only[0].type === 'ReturnStatement' && (only[0] as Node & { argument: Node | null }).argument?.type === 'Literal'
   }
-  // A .catch nothing reads: a statement of its own or under void
+  // A .catch nothing reads: a statement of its own, under void or awaited as a statement of its own
   const thrownAway = (ancestors: readonly Node[]) => {
     const parent = ancestors[ancestors.length - 2]
+    if (parent?.type === 'AwaitExpression') return ancestors[ancestors.length - 3]?.type === 'ExpressionStatement'
     return parent?.type === 'ExpressionStatement' || (parent?.type === 'UnaryExpression' && (parent as Node & { operator: string }).operator === 'void')
   }
   simple(program, {
@@ -132,6 +133,7 @@ describe('the empty catch check itself', () => {
     ['the promise form returning null, thrown away under void', 'void work().catch(() => null)'],
     ['the promise form returning false, thrown away as a statement', 'work().catch(() => false)'],
     ['the promise form with a function returning null, thrown away', 'void work().catch(function () { return null })'],
+    ['the promise form returning null, awaited as a statement', 'await work().catch(() => null)'],
   ])('fails %s', (_name, source) => {
     expect(problems(source)).toEqual([none(1, source)])
   })
@@ -180,7 +182,10 @@ describe('the empty catch check itself', () => {
     'const found = work().catch(() => null)',
     'found = work().catch(() => false)',
     'function read() {\n  return work().catch(() => null)\n}',
-    'await work().catch(() => null)',
+    'const found = await work().catch(() => null)',
+    'found = await work().catch(() => null)',
+    'async function read() {\n  return await work().catch(() => null)\n}',
+    'use(await work().catch(() => null))',
     "void run().catch(() => this.note('fault', { plugin: id, step: 'copy' }))",
     "void run().catch((err: unknown) => console.error(`didn't load: ${String(err)}`))",
     'void run().then(() => {})',

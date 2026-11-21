@@ -93,6 +93,7 @@ export function clientsOf(options: ClientsOptions): Clients {
   const timer = setInterval(() => {
     if (polling) return
     polling = true
+    // A poll the core fails is tried again on the next tick, the revoke still held there, so it lands late and is never lost
     poll().catch(() => {}).finally(() => { polling = false })
   }, revokeEveryMs)
   timer.unref?.()
