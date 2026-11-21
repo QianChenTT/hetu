@@ -13,6 +13,16 @@ The steps import downward only, `open-calls.ts` first, then `provide.ts`, `shape
 - `limits.ts`: the limits as they apply to one plugin with the human's values
 - `header.ts`: its door and what the later parts give it, each a small interface the tests fake: the gate, the providers and flood control from the core modules, recording, the guards, which nothing holds yet and the gate module's count of the gate's time (`gateTime`)
 
+Who writes an open call (`Pending`, D-632): `open-calls.ts` makes it in `admitted` and what is set there stays as set. Each field written after that has one owner, which writes it through a small setter of its own:
+
+| Owner | Fields |
+|---|---|
+| `open-calls.ts` | `timer`, `children` (changed only in place), `done`, `revoked`, `live` |
+| `provide.ts` | `gate`, `scope`, `refusedScope`, `judged`, `performing` |
+| `route.ts` | `callee`, `coalesce` |
+
+Every field of `Pending` is `readonly`, so `npm run typecheck` fails any other write whatever the variable is called. The setters stay unexported but `setScope`, which `route.ts` calls with the topics a subscribe made live. A write outside the owner that has to stay casts to `Writable`, which drops only `readonly`, with its why on the line: `(pending as Writable<Pending>).scope = x // clash: <why>`. `core/test/clash-casts.test.ts` fails a cast with no why or a why under 10 characters. It holds the list of every clash, none today, so a new one fails until it is listed and a growing list says the rule needs updating. It also fails a setter called from a file off its list. The way in (`Way`) is not a call and is left out
+
 The parts it is handed: the plugins manager serves `core.*`, `security.*` and `plugin.*`, the runtime `app.*` and `editor.*`, recording `log.*`, the gate module `gate.*` and the drawer `ui.*`, each through `serve` under the part's name in the table. A namespace whose part nobody handed in answers `unavailable`. Recording also takes each call's record and the router's own core records. The log's state decides nothing of a call. A throw in a part is that call failed or that record lost
 
 Every call carries a signal into perform (`Call.signal`), which aborts when the call ends. On a new grants snapshot the router asks the gate again, with no prompt, about every open call with power on the frozen copy it judged. A refused one is revoked as `stale`, or as `policy-down` when the gate throws or is down. A call not yet judged is judged on the newest grants snapshot when it gets there and a widened grant stops nothing. With the gate off by the human every call passes and no open call is judged again
