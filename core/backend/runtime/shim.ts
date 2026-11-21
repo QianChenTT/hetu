@@ -2,8 +2,10 @@ import { spawn } from 'node:child_process'
 import { createReadStream, createWriteStream, writeSync } from 'node:fs'
 import net from 'node:net'
 import { userInfo } from 'node:os'
+import path from 'node:path'
 import type { Duplex, Readable, Writable } from 'node:stream'
 import { pipeName } from '../../api/pipe.ts'
+import { baseEnv, setVariable } from '../../lib/clean-env.ts'
 
 // hetu.exe --mcp-stdio, the shim: a program on this computer that speaks MCP over stdio starts hetu with this one switch
 // and gets its stdin and stdout relayed to the local pipe mcp-http-handler serves. It is Electron's main with no window,
@@ -32,6 +34,29 @@ export function shimArgv(argv: readonly string[], locked: boolean): boolean {
 
 // What hetu itself starts with when the shim starts it: nothing in a locked build, the repo in a run from the source
 export const hetuArgv = (argv: readonly string[]) => argv.slice(1).filter(arg => arg !== SHIM_SWITCH)
+
+// How the shim starts hetu: the executable it runs as, its arguments less the switch and an environment built from
+// empty, since the shim's own is whatever the client's config chose. Kept from it are only the names Windows starts no
+// process without, which libuv would carry over anyway (baseEnv): who the user is, where Windows is and a PATH of
+// System32 alone, so no program hetu runs is found through the client's PATH. The folder hetu keeps its state under
+// comes from the account's own home, never from LOCALAPPDATA, HOME or XDG_STATE_HOME as the client set them. Nothing
+// else of hetu's own is passed, HETU_DATA_DIR and HETU_INSTALL_DIR among it
+export function hetuStart(options: {
+  execPath: string
+  argv: readonly string[]
+  ambient: Readonly<Record<string, string | undefined>>
+  platform: NodeJS.Platform
+  home: string
+}): { command: string, args: string[], env: Record<string, string> } {
+  const env: Record<string, string> = { ...baseEnv(options.ambient, options.platform) }
+  if (options.platform === 'win32') {
+    setVariable(env, 'USERPROFILE', options.home, options.platform)
+    setVariable(env, 'LOCALAPPDATA', path.win32.join(options.home, 'AppData', 'Local'), options.platform)
+  } else {
+    env.HOME = options.home
+  }
+  return { command: options.execPath, args: hetuArgv(options.argv), env }
+}
 
 export type Reach = {
   // Rejects when nothing serves the pipe
@@ -99,14 +124,16 @@ function idsOf(line: string, requests: boolean): string[] {
 export type RelayParts = { input: Readable, output: Writable, pipe: Duplex, errors: (line: string) => void, answerWaitMs?: number }
 
 // Relays stdin to the pipe and the pipe to stdout until one ends, then gives the exit code once stdout is flushed: 0
-// when stdin ended, 1 when the pipe or stdout went first. A Windows pipe breaks outright on a half-close and the handler
-// cancels the calls of a connection that closed, so after stdin ends the pipe stays open whole until what was written
-// went out and each request passed on was answered, at the latest the answer wait later
+// when stdin ended with every answer back, 1 when stdin failed, an answer never came or the pipe or stdout went first.
+// A Windows pipe breaks outright on a half-close and the handler cancels the calls of a connection that closed, so
+// after stdin ends the pipe stays open whole until what was written went out and each request passed on was answered,
+// at the latest the answer wait later
 export function relay(parts: RelayParts): Promise<number> {
   const { input, output, pipe, errors } = parts
   const owed = new Set<string>()
   let writing = 0
   let ended = false
+  let failed = false
   let told = false
   let cap: NodeJS.Timeout | undefined
 
@@ -130,15 +157,18 @@ export function relay(parts: RelayParts): Promise<number> {
     if (ended) return
     ended = true
     cap = setTimeout(() => {
-      errors(`closed the pipe with ${owed.size} answer${owed.size === 1 ? '' : 's'} owed`)
+      errors(`closed the pipe with ${answersOwed()}`)
+      told = true
       pipe.destroy()
     }, parts.answerWaitMs ?? ANSWER_WAIT_MS)
     cap.unref()
     settle()
   }
+  const answersOwed = () => `${owed.size} answer${owed.size === 1 ? '' : 's'} owed`
   input.once('end', end)
   input.once('error', error => {
     errors(`stdin failed: ${error.message}`)
+    failed = true
     end()
   })
 
@@ -164,7 +194,8 @@ export function relay(parts: RelayParts): Promise<number> {
       clearTimeout(cap)
       input.pause()
       if (!ended && !told) errors('hetu closed the connection')
-      const code = ended ? 0 : 1
+      else if (owed.size > 0 && !told) errors(`hetu closed the connection with ${answersOwed()}`)
+      const code = ended && !failed && owed.size === 0 ? 0 : 1
       if (output.destroyed) resolve(code)
       else output.end(() => resolve(code))
     })
@@ -203,7 +234,8 @@ export function runShim(app: { whenReady(): Promise<unknown>, exit(code: number)
     connect: () => connect(at),
     // hetu on its own, holding none of the shim's stdio, so the client's pipes end with the shim
     start: () => {
-      const hetu = spawn(process.execPath, hetuArgv(process.argv), { detached: true, stdio: 'ignore' })
+      const { command, args, env } = hetuStart({ execPath: process.execPath, argv: process.argv, ambient: process.env, platform: process.platform, home: userInfo().homedir })
+      const hetu = spawn(command, args, { env, detached: true, stdio: 'ignore' })
       hetu.once('error', error => shimError(`could not start hetu: ${error.message}`))
       hetu.unref()
     },

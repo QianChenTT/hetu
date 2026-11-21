@@ -1,6 +1,6 @@
 import { Duplex, PassThrough } from 'node:stream'
 import { describe, expect, it } from 'vitest'
-import { hetuArgv, reachPipe, relay, shimArgv } from '../backend/runtime/shim.ts'
+import { hetuArgv, hetuStart, reachPipe, relay, shimArgv } from '../backend/runtime/shim.ts'
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -24,6 +24,32 @@ describe('the shim\'s arguments', () => {
   it('start hetu itself with nothing in a locked build and with the repo in a run from the source', () => {
     expect(hetuArgv(['hetu.exe', '--mcp-stdio'])).toEqual([])
     expect(hetuArgv(['electron', '--no-sandbox', 'C:\\hetu', '--mcp-stdio'])).toEqual(['--no-sandbox', 'C:\\hetu'])
+  })
+})
+
+// The environment an MCP client's config hands the shim, every name in it the config's choice
+const chosen = {
+  LOCALAPPDATA: 'C:\\elsewhere', HOME: '/elsewhere', XDG_STATE_HOME: '/elsewhere', USERPROFILE: 'C:\\elsewhere', HETU_DATA_DIR: 'C:\\elsewhere',
+  HETU_INSTALL_DIR: 'C:\\elsewhere', PATH: 'C:\\elsewhere', NODE_OPTIONS: '--require C:\\elsewhere\\x.js', ELECTRON_RUN_AS_NODE: '1',
+  SystemRoot: 'C:\\Windows', TEMP: 'C:\\Temp', USERNAME: 'han',
+}
+
+describe('starting hetu from the shim', () => {
+  // The state folder follows the account's own home and no program hetu runs is found through the client's PATH
+  it('takes the state folder on Windows from the account\'s home and nothing else the client chose but what Windows needs', () => {
+    const { command, args, env } = hetuStart({ execPath: 'C:\\hetu\\hetu.exe', argv: ['C:\\hetu\\hetu.exe', '--mcp-stdio'], ambient: chosen, platform: 'win32', home: 'C:\\Users\\han' })
+    expect([command, args]).toEqual(['C:\\hetu\\hetu.exe', []])
+    expect(env).toEqual({
+      SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32', TEMP: 'C:\\Temp', USERNAME: 'han',
+      USERPROFILE: 'C:\\Users\\han', LOCALAPPDATA: 'C:\\Users\\han\\AppData\\Local',
+    })
+  })
+
+  it('takes HOME from the account\'s home on macOS and Linux and nothing else', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      const { env } = hetuStart({ execPath: '/hetu', argv: ['/hetu', '--mcp-stdio'], ambient: chosen, platform, home: '/Users/han' })
+      expect(env).toEqual({ HOME: '/Users/han' })
+    }
   })
 })
 
@@ -181,16 +207,34 @@ describe('the relay', () => {
     expect(shim.written()).toBe(`${notification()}\n`)
   })
 
-  it('closes the pipe past the wait with answers still owed, saying so on stderr and exits 0', async () => {
+  it('closes the pipe past the wait with answers still owed, saying so on stderr and exits 1', async () => {
     const shim = relayed({ answerWaitMs: 20 })
     shim.input.write(`${request(1)}\n`)
     shim.input.end()
     await tick()
     expect(shim.pipe.destroyed).toBe(false)
-    expect(await shim.code).toBe(0)
+    expect(await shim.code).toBe(1)
     expect(shim.pipe.destroyed).toBe(true)
     expect(shim.errors).toEqual(['closed the pipe with 1 answer owed'])
     expect(shim.out()).toBe('')
+  })
+
+  it('exits 1 saying so when hetu closes the pipe after stdin ended with answers still owed', async () => {
+    const shim = relayed()
+    shim.input.write(`${request(1)}\n${request(2)}\n`)
+    shim.input.end()
+    await tick()
+    shim.pipe.destroy()
+    expect(await shim.code).toBe(1)
+    expect(shim.errors).toEqual(['hetu closed the connection with 2 answers owed'])
+  })
+
+  it('exits 1 when stdin can\'t be read, closing the pipe', async () => {
+    const shim = relayed()
+    shim.input.destroy(Object.assign(new Error('read EIO'), { code: 'EIO' }))
+    expect(await shim.code).toBe(1)
+    expect(shim.pipe.destroyed).toBe(true)
+    expect(shim.errors).toEqual(['stdin failed: read EIO'])
   })
 
   it('exits 1 with a line on stderr and nothing on stdout when hetu closes the pipe first', async () => {
