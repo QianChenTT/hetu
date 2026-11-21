@@ -77,6 +77,8 @@ describe('the router names check itself', () => {
   it.each([
     ["c.policyJob('luoshu')", `${at}:1 'luoshu' names luoshu, a part not on the list`],
     ["if (call.action === 'luoshu.write') {}", `${at}:1 'luoshu.write' names luoshu, a part not on the list`],
+    // An events action splits the bus block by action (D-540, D-635)
+    ["if (call.action === 'events.publish') {}", `${at}:1 'events.publish' names router, a part not on the list`],
     ['const action = `lock.set`', `${at}:1 'lock.set' names lock, a part not on the list`],
     ["const table = { 'history.read': 1 }", `${at}:1 'history.read' names history, a part not on the list`],
     ["switch (id) {\n  case 'heartbeat': break\n}", `${at}:2 'heartbeat' names heartbeat, a part not on the list`],
