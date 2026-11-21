@@ -291,6 +291,13 @@ describe('write-then-run: no file from the notes folder or hetu\'s data as a pro
     await refuses(() => [node, '--import', `\t\n${pathToFileURL(noted()).href}`])
   })
 
+  // What exec can't read it can't judge, so a file URL that won't parse or decode is refused (D-640)
+  it('refuses a file URL it cannot parse or decode', async () => {
+    await refuses(() => [node, '-e', '0', 'file://['])
+    await refuses(() => [node, '-e', '0', 'file:///%E0%A4%A'])
+    await refuses(() => [node, '-e', '0', '--x=file:///%E0%A4%A'])
+  })
+
   it('refuses a program that lies in the notes folder, by its path or found by its name', async () => {
     const planted = path.join(notes, 'bin')
     await mkdir(planted)
