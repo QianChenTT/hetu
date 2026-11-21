@@ -25,7 +25,8 @@ describe('hetu with every core module and core plugin switched off', () => {
         const reply = message as { kind?: string, id?: number }
         if (reply.kind === 'reply' && reply.id === 1000) resolve(reply)
       })
-      bridge.send({ v: 1, kind: 'call', id: 1000, action: 'core.status' })
+      // The envelope holds args as a field every call carries, so a call without it is refused invalid
+      bridge.send({ v: 1, kind: 'call', id: 1000, action: 'core.status', args: {} })
     }))
     expect(status).toMatchObject({ ok: true, result: { stopped: null } })
     // main answers, so no modal box holds it, and the editor is still the one window
