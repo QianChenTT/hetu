@@ -602,6 +602,13 @@ describe('the drawer', () => {
     await until(async () => (await ranges()) > 0)
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+End')
+    // The real hidden-marks plugin marked the big note: each list line drawn shows a dot, its bold text and its link's
+    // text, none of their markers or the link's target
+    const marked = async () => {
+      const drawn = (await editor.locator('.editor:not([hidden]) .cm-line').allInnerTexts()).filter(line => line.includes('line '))
+      return drawn.length > 0 && drawn.every(line => /^• line \d+ with some text and a link$/.test(line))
+    }
+    await until(marked)
     // For each key: when its event was made, when the character itself is on screen, then when the worker's mark on it is.
     // The event's own time counts what the key waited behind other work on the page
     await editor.evaluate(() => {
@@ -699,6 +706,7 @@ describe('the drawer', () => {
     await tick(2000)
     sitting.search.load = { reads: readsTyped - readsBefore }
     expect(sitting.search.load.reads).toBeGreaterThan(0)
+    expect(await marked()).toBe(true)
 
     const measured = process.env.HETU_MEASURE
     if (measured !== undefined) await writeFile(measured, JSON.stringify(sitting))
