@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -215,6 +215,18 @@ describe('lock.clear', () => {
     expect(await ask(lock, 'lock.clear', { paths: ['projects/plan.md'] }, { root: editor, caller: leases })).toEqual(free)
     expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('deny')
     expect(check(lock, ['mine.md'], { root: editor })).toBe('allow')
+  })
+
+  // With no gate before prepare, a refusal from the disk would tell a link out of the notes folder from a plain name
+  it('answers a plugin\'s clear on a path canonical refuses as on a missing name, clearing nothing', async () => {
+    const { lock } = made()
+    await mkdir(path.join(base, 'outside'))
+    await symlink(path.join(base, 'outside'), path.join(folder, 'linked'), 'junction')
+    const missing = await ask(lock, 'lock.clear', { paths: ['plainmissing/x.md'] }, { root: plugin('search') })
+    expect(missing).toBeNull()
+    for (const paths of [['linked/x.md'], ['.git/config'], ['plainmissing/x.md', 'linked/x.md']]) {
+      expect([paths, await ask(lock, 'lock.clear', { paths }, { root: plugin('search') })]).toEqual([paths, missing])
+    }
   })
 
   // The human taking a note over

@@ -84,9 +84,13 @@ export function createLock(options: LockOptions): Lock {
       const { folder, dataDir, installDir } = opening
       const paths = (call.args as { paths?: unknown } | null)?.paths
       if (!Array.isArray(paths)) return refused('invalid')
+      // A plugin's clear has no gate before it, so a path canonical refuses is a missing name it leaves out, which no
+      // lock holds. A refusal would tell a link out of the notes folder from a plain name
+      const quiet = call.action === 'lock.clear' && call.caller.kind !== 'window'
       const relative: string[] = []
       for (const path of paths) {
         const target = usable(call.action, await canonical(folder, path as string, { dataDir, installDir }))
+        if (!('ok' in target) && quiet) continue
         if (!('ok' in target)) return target
         relative.push(target.relative)
       }
