@@ -69,8 +69,6 @@ describe('what the trusted window draws', () => {
     expect(actions({ from: 'core', place: 'core', id: 'luoshu', class: null })).toEqual(['switch-off'])
     expect(actions({ from: 'core', place: 'core', id: 'luoshu', state: 'failed', reason: 'start-failed', class: null })).toEqual(['switch-off'])
     expect(actions({ from: 'core', place: 'core', id: 'gate', state: 'off', on: false, security: true, class: null })).toEqual(['switch-on'])
-    // A page plugin stops only with its switch and restarts only with hetu
-    expect(actions({ from: 'install', place: 'page', id: 'hidden-marks' })).toEqual(['switch-off', 'reset'])
   })
 
   // A utility half stops and restarts within a run, so a human who freed the port it failed on brings it back here

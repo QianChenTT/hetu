@@ -329,7 +329,7 @@ export function stoppedCause(mode: StoppedMode): string {
 export type ListedPlugin = {
   id: string
   from: 'core' | 'install' | 'folder'
-  place: 'core' | 'host' | 'utility' | 'sandboxed' | 'page'
+  place: 'core' | 'host' | 'utility' | 'sandboxed'
   state: PluginState
   reason: string | null
   security: boolean

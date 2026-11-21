@@ -135,7 +135,6 @@ export function placeOf(id: string, read: Read, from: 'install' | 'folder'): Plu
   const entries = read.manifest?.entries
   if (entries === undefined) return from === 'install' ? 'host' : 'sandboxed'
   if (entries.host !== undefined) return from === 'install' && isOne(utilityIds, id) ? 'utility' : 'host'
-  if (entries.worker === undefined && entries.page !== undefined) return 'page'
   return 'sandboxed'
 }
 

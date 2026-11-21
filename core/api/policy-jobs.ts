@@ -211,7 +211,7 @@ export type PluginState = typeof pluginStates[number]
 // topics are the manifest's provides.topics, each published as <id>.<name>, which the bus reads
 export type PluginInfo = {
   state: PluginState
-  place: 'host' | 'utility' | 'sandboxed' | 'page'
+  place: 'host' | 'utility' | 'sandboxed'
   incarnation: number
   serves: string
   actions: Readonly<Record<string, { readonly from?: readonly string[] }>>

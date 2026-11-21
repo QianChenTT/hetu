@@ -99,7 +99,7 @@ export type ViewSpec = z.infer<typeof viewSpec>
 const views = map(localName, viewSpec).refine(entries => Object.keys(entries).length <= MAX_VIEWS, `more than ${MAX_VIEWS} views`)
 
 const folderEntries = { worker: entryPath.optional(), frames: map(frameName, entryPath).optional() }
-const installEntries = { ...folderEntries, host: entryPath.optional(), page: entryPath.optional() }
+const installEntries = { ...folderEntries, host: entryPath.optional() }
 
 // A frames map counts only with a frame in it, an empty one gives the plugin nothing to run
 function someEntry(entries: Record<string, unknown>): boolean {
@@ -134,7 +134,7 @@ function framesHeld(manifest: Drawn): boolean {
   return Object.values(manifest.views ?? {}).every(view => view.frame === undefined || Object.hasOwn(frames, view.frame))
 }
 
-// A manifest from the install, where host and page entries, guards, the Node built-ins and install-only types may
+// A manifest from the install, where a host entry, guards, the Node built-ins and install-only types may
 // appear
 export const installManifest = plain(
   z.strictObject({
