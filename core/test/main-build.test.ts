@@ -182,7 +182,7 @@ describe('each core module\'s Node built-ins', () => {
       storage: ['node:crypto', 'node:fs/promises', 'node:path'],
       luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
       history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
-      exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+      exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path', 'node:url'],
       'flood-control': [],
       heartbeat: [],
       recording: [],

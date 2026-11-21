@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { commandKey, envNameProblem, EXEC_OUTPUT_BYTES, EXEC_RUNNING } from '../../../api/exec.ts'
 import type { Call, ExecRole, ExecView, Opening, Prepared, Provider, ProviderRefusal } from '../../../api/policy-jobs.ts'
 import { asOpened, baseEnv, findProgram, inside, runClean, throughShare, withDeclared } from '../../../lib/clean-env.ts'
@@ -77,9 +78,10 @@ async function resolvedDeep(file: string): Promise<string> {
   }
 }
 
-// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path.
-// A URL parser drops spaces and control characters before a URL, so they don't hide one. A file URL naming a host is
-// a share. null for a file URL that won't parse or decode, which can't be judged (D-640)
+// What an argument could name as a file: the argument itself, what follows an equals sign in it and a file URL's path
+// as node reads it, decoded before the slash ahead of a drive letter is dropped. A URL parser drops spaces and control
+// characters before a URL, so they don't hide one. A file URL naming a host is a share on Windows. null for a file URL
+// that won't parse, decode or turn into a path, which can't be judged (D-640)
 function namedBy(arg: string): string[] | null {
   const found = [arg]
   const equals = arg.indexOf('=')
@@ -87,9 +89,7 @@ function namedBy(arg: string): string[] | null {
   for (const text of [...found]) {
     if (!/^[\x00-\x20]*file:/i.test(text)) continue
     try {
-      const url = new URL(text)
-      const local = decodeURIComponent(process.platform === 'win32' ? url.pathname.replace(/^\/(?=[A-Za-z]:)/, '') : url.pathname)
-      found.push(url.hostname === '' ? path.normalize(local) : `//${url.hostname}${url.pathname}`)
+      found.push(fileURLToPath(new URL(text)))
     } catch {
       return null
     }

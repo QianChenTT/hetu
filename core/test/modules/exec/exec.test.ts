@@ -298,6 +298,32 @@ describe('write-then-run: no file from the notes folder or hetu\'s data as a pro
     await refuses(() => [node, '-e', '0', '--x=file:///%E0%A4%A'])
   })
 
+  // A program reads a file URL's path decoded, so an encoded colon after the drive letter still opens the note. node
+  // takes a file URL with --import
+  const encoded = (colon: string) => `file:///${noted()[0]}${colon}${noted().slice(2).split('\\').join('/')}`
+  it.runIf(onWindows)('refuses a file URL with the drive letter\'s colon encoded', () => refuses(() => [node, '--import', encoded('%3A'), '-e', '0']))
+  it.runIf(onWindows)('refuses one with the colon encoded in lower case', () => refuses(() => [node, '--import', encoded('%3a'), '-e', '0']))
+  it.runIf(onWindows)('refuses one with the colon encoded after an equals sign', () => refuses(() => [node, `--import=${encoded('%3A')}`, '-e', '0']))
+
+  it.runIf(onWindows)('runs a script by a file URL with an encoded colon from anywhere else, read as its real path', async () => {
+    const script = path.join(base, 'outside', 'ok.js')
+    await writeFile(script, 'process.stdout.write("ran")')
+    const command = [node, '--import', `file:///${script[0]}%3A${script.slice(2).split('\\').join('/')}`, '-e', '0']
+    const exec = await started(viewOf({ git: [{ commands: [command], env: [] }] }))
+    expect(await run(exec, command)).toMatchObject({ code: 0, stdout: 'ran' })
+  })
+
+  it('refuses a file URL that climbs into the notes folder by encoded dots', () =>
+    refuses(() => [node, pathToFileURL(path.join(base, 'outside', 'x.js')).href.replace(/outside\/x\.js$/, 'outside/%2e%2e/notes/x.js')]))
+
+  it.runIf(onWindows)('refuses the other ways a file URL can name a note on Windows', async () => {
+    const slashed = () => noted().split('\\').join('/')
+    await refuses(() => [node, pathToFileURL(path.join(base, 'outside', 'x.js')).href.replace(/outside\/x\.js$/, 'outside/..%5Cnotes/x.js')])
+    await refuses(() => [node, `file:${slashed()}`])
+    await refuses(() => [node, `FILE://localhost/${slashed()}`])
+    await refuses(() => [node, '-e', '0', 'file:////server/share/x.js'])
+  })
+
   it('refuses a program that lies in the notes folder, by its path or found by its name', async () => {
     const planted = path.join(notes, 'bin')
     await mkdir(planted)

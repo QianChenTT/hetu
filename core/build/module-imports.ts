@@ -23,7 +23,8 @@ export const moduleFolders: Readonly<Record<CoreModuleId, string>> = {
 
 // The Node built-ins each core module may reach, by the exact name it imports. The gate and the grant risk
 // classifier judge from what they are handed and touch nothing. Storage reads and writes its files. The luoshu watches
-// and writes the notes folder. History and exec run git and the commands a plugin was granted. Flood control counts
+// and writes the notes folder. History and exec run git and the commands a plugin was granted. Exec also reads a file
+// URL in an argument as node does. Flood control counts
 // what it is handed, the heartbeat asks the core through what it is handed and recording writes through the log and
 // hashes with what it is handed. The security view decides from what it is handed. The lock reads the notes folder
 // to turn each path it is asked about canonical
@@ -33,7 +34,7 @@ export const moduleBuiltins: Readonly<Record<CoreModuleId, readonly string[]>> =
   storage: ['node:crypto', 'node:fs/promises', 'node:path'],
   luoshu: ['node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
   history: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
-  exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path'],
+  exec: ['node:child_process', 'node:crypto', 'node:fs', 'node:fs/promises', 'node:path', 'node:url'],
   'flood-control': [],
   heartbeat: [],
   recording: [],
