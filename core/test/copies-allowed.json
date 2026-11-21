@@ -3,6 +3,54 @@
   "clones": [
     {
       "files": [
+        "core-plugins/hidden-marks/src/marks.ts",
+        "core/frontend/editor/hidden-marks.ts"
+      ],
+      "hash": "17790e301b94cc7b",
+      "at": [
+        "core-plugins/hidden-marks/src/marks.ts:142-150",
+        "core/frontend/editor/hidden-marks.ts:112-120"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core-plugins/hidden-marks/src/marks.ts",
+        "core/frontend/editor/hidden-marks.ts"
+      ],
+      "hash": "228c89e463bba255",
+      "at": [
+        "core-plugins/hidden-marks/src/marks.ts:37-53",
+        "core/frontend/editor/hidden-marks.ts:33-49"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core-plugins/hidden-marks/src/marks.ts",
+        "core/frontend/editor/hidden-marks.ts"
+      ],
+      "hash": "78c62332412b7dd5",
+      "at": [
+        "core-plugins/hidden-marks/src/marks.ts:17-37",
+        "core/frontend/editor/hidden-marks.ts:14-33"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core-plugins/hidden-marks/src/marks.ts",
+        "core/frontend/editor/hidden-marks.ts"
+      ],
+      "hash": "c9505366fdfce502",
+      "at": [
+        "core-plugins/hidden-marks/src/marks.ts:85-95",
+        "core/frontend/editor/hidden-marks.ts:57-67"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
         "core-plugins/layout/src/worker.ts",
         "core-plugins/layout/src/worker.ts"
       ],
@@ -56,7 +104,7 @@
       ],
       "hash": "71b052d622096ade",
       "at": [
-        "core/api/editor.ts:105-116",
+        "core/api/editor.ts:108-119",
         "core/api/ui.ts:491-506"
       ],
       "judged": "not yet"
