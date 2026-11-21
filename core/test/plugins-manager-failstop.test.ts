@@ -1,7 +1,8 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CoreStatus, SecurityList } from '../api/actions.ts'
+import { START_HUNG, type CoreStatus, type SecurityList } from '../api/actions.ts'
 import type { Caller } from '../api/envelope.ts'
 import type { Failure } from '../backend/runtime/header.ts'
 import { afterFailure, Ending } from '../backend/runtime/quit.ts'
@@ -371,6 +372,25 @@ describe('the fail-safe at start', () => {
     await made.pluginsManager.start()
     expect(made.pluginsManager.stopped()).toBe(null)
     expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    // The router reads the same switch, so the guard is no step and a write passes it
+    expect(made.pluginsManager.policyJob('leases')).toBe('off')
+  })
+
+  it('starts again with an expected guard nothing holds switched off once its off applied in the stopped mode', async () => {
+    const base = await tempBase()
+    const expecting = { guardsFor: () => ['leases'] }
+    const made = await harness({ base, ...plugins(), pluginsManager: expecting })
+    await made.pluginsManager.start()
+    expect(made.pluginsManager.stopped()).toMatchObject({ control: 'leases', why: 'start-failed' })
+    // What the Confirm applies. The contract expects no guard yet, so its typed word can't be asked for here
+    await made.pluginsManager.apply({ kind: 'plugin.off', plugin: 'leases' })
+    const { switches } = (await made.store.load()).state
+    expect(switches.off).toContain('leases')
+    await made.pluginsManager.shutdown()
+    const again = await harness({ base, switches, pluginsManager: expecting })
+    await again.pluginsManager.start()
+    expect(again.pluginsManager.stopped()).toBe(null)
+    expect(again.pluginsManager.policyJob('leases')).toBe('off')
   })
 
   // Only a clean Quit or a change applied in the stopped mode clears the restart marker, so a failure that comes back
@@ -406,6 +426,135 @@ describe('the fail-safe at start', () => {
     // A clean Quit is what clears it
     await new Ending().leave(second.pluginsManager)
     expect(await exists(path.join(second.dataDir, 'failed-once'))).toBe(false)
+  })
+
+  // A start that hangs main can't be tested by hanging, so the gate's first push looks at the disk instead and a
+  // marker left in place stands for the hang the run before
+  describe('the start marker', () => {
+    const starting = (dataDir: string, id: string) => path.join(dataDir, 'starting', id)
+    const marked = (id: string) => async ({ dataDir }: { dataDir: string }) => {
+      await mkdir(path.join(dataDir, 'starting'), { recursive: true })
+      await writeFile(starting(dataDir, id), '')
+    }
+
+    it('stands for the gate alone while its first grants snapshot is pushed and is gone once its start returned', async () => {
+      const gate = allowAll()
+      const push = gate.stateChanged.bind(gate)
+      const onDisk: boolean[][] = []
+      let dataDir = ''
+      gate.stateChanged = view => {
+        if (onDisk.length === 0) onDisk.push([existsSync(starting(dataDir, 'gate')), existsSync(starting(dataDir, 'flood-control'))])
+        push(view)
+      }
+      const made = await harness({ ...plugins(), modules: { gate }, before: async dirs => { dataDir = dirs.dataDir } })
+      await made.pluginsManager.start()
+      expect(onDisk).toEqual([[true, false]])
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(await readdir(path.join(made.dataDir, 'starting'))).toEqual([])
+    })
+
+    it('stops hetu in the fail-safe naming the control whose start hung the run before, before any module begins', async () => {
+      const { modules, untouched, picked } = counted()
+      const gate = allowAll()
+      const made = await harness({
+        ...plugins(), modules: { ...modules, gate },
+        before: async dirs => {
+          await picked(dirs)
+          await marked('gate')(dirs)
+        },
+      })
+      await made.pluginsManager.start()
+      await made.pluginsManager.settled()
+      const mode = { control: 'gate', why: 'start-failed', reason: START_HUNG, again: false }
+      expect(made.pluginsManager.stopped()).toEqual(mode)
+      expect(made.link.events('core.stopped')).toEqual([mode])
+      expect(gate.views).toEqual([])
+      untouched()
+      noCall(made)
+    })
+
+    it('clears the marker once the gate\'s off applied in the stopped mode, so the next launch starts with it off', async () => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), before: marked('gate') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toMatchObject({ control: 'gate', reason: START_HUNG })
+      await made.pluginsManager.request({ kind: 'plugin.off', plugin: 'gate' }, trustedWindow)
+      const [held] = made.pluginsManager.pending()
+      await made.pluginsManager.confirm(held.id, { typed: 'gate' })
+      const { switches } = (await made.store.load()).state
+      expect(switches.off).toContain('gate')
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(false)
+      await made.pluginsManager.shutdown()
+      const again = await harness({ base, switches })
+      await again.pluginsManager.start()
+      expect(again.pluginsManager.stopped()).toBe(null)
+      expect(again.pluginsManager.policyJob('gate')).toBe('off')
+    })
+
+    it('keeps the marker through Quit, so the next launch lands in the fail-safe again', async () => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), before: marked('gate') })
+      await made.pluginsManager.start()
+      await made.pluginsManager.shutdown()
+      await new Ending().leave(made.pluginsManager)
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(true)
+      const again = await harness({ base })
+      await again.pluginsManager.start()
+      expect(again.pluginsManager.stopped()).toMatchObject({ control: 'gate', reason: START_HUNG })
+    })
+
+    // A second hang leaves a new marker, so Try again can't loop the fail-safe for good
+    it.each([
+      ['on the stopped screen', false],
+      ['in the native box', true],
+    ])('clears the marker through Try again %s, so the next launch starts as usual', async (_where, box) => {
+      const base = await tempBase()
+      const made = await harness({ base, ...plugins(), switches: box ? { off: ['security-view'] } : {}, before: marked('gate') })
+      await made.pluginsManager.start()
+      const mode = made.pluginsManager.stopped()!
+      expect(mode).toMatchObject({ control: 'gate', reason: START_HUNG })
+      const ending = new Ending()
+      if (box) {
+        afterFailure({ action: 'stopped', mode, box }, {
+          quitting: () => false, announce: () => {}, quit: () => {},
+          ending, showTrusted: () => {}, showBox: () => 'retry', closeEditors: () => {}, packaged: false, env: {}, later: () => {},
+        })
+      } else ending.relaunch()
+      await made.pluginsManager.shutdown()
+      await ending.leave(made.pluginsManager)
+      const third = await harness({ base, switches: box ? { off: ['security-view'] } : {} })
+      await third.pluginsManager.start()
+      expect(third.pluginsManager.stopped()).toBe(null)
+    })
+
+    // A clear that failed after the off applied leaves the marker of a control already off
+    it('holds nothing back for the marker of a control the human switched off and clears it', async () => {
+      const made = await harness({ ...plugins(), switches: { off: ['gate'] }, before: marked('gate') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(existsSync(starting(made.dataDir, 'gate'))).toBe(false)
+    })
+
+    it('has shutdown wait for the clear of a marker, so a quit during the start leaves none', async () => {
+      const gate = allowAll()
+      const push = gate.stateChanged.bind(gate)
+      let quit: Promise<boolean> | null = null
+      let made!: Awaited<ReturnType<typeof harness>>
+      gate.stateChanged = view => {
+        push(view)
+        quit ??= made.pluginsManager.shutdown().then(() => existsSync(starting(made.dataDir, 'gate')))
+      }
+      made = await harness({ ...plugins(), modules: { gate } })
+      await made.pluginsManager.start()
+      expect(await quit).toBe(false)
+    })
+
+    it('holds nothing back for a marker naming no control the fail-safe covers', async () => {
+      const made = await harness({ ...plugins(), before: marked('storage') })
+      await made.pluginsManager.start()
+      expect(made.pluginsManager.stopped()).toBe(null)
+      expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
+    })
   })
 
   it('refuses everything and stops nothing for the gate failing in use', async () => {
