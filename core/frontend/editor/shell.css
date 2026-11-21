@@ -453,6 +453,7 @@ body {
 .cm-hetu-warning { text-decoration: underline wavy #c88800; }
 .cm-hetu-info { text-decoration: underline dotted #1a5fb4; }
 .cm-hetu-widget { color: #555555; }
+.cm-hetu-hidden { display: none; }
 .cm-hetu-line-h1 { font-size: 1.8em; font-weight: bold; }
 .cm-hetu-line-h2 { font-size: 1.5em; font-weight: bold; }
 .cm-hetu-line-h3 { font-size: 1.3em; font-weight: bold; }

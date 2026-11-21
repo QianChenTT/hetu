@@ -41,9 +41,9 @@ const judged = (gate: ReturnType<typeof harness>['gate'], action: string) =>
 
 describe('the pair a chain under a plugin root carries', () => {
   it.each([
-    ['mcp-http-handler', 'handler', 'mcp', 'mcp.handle', 'client#1'],
-    ['beta', 'beta', 'search', 'search.query', 'a field of beta\'s own'],
-  ] as const)('judges every call under %s\'s call with the root plugin and the field, the root call itself with neither', async (id, rootSide, calleeSide, action, field) => {
+    ['mcp-http-handler', 'handler', 'mcp', 'mcp.handle', 'client#1', 'client'],
+    ['beta', 'beta', 'search', 'search.query', 'a field of beta\'s own', 'a field of beta\'s own'],
+  ] as const)('judges every call under %s\'s call with the root plugin and the field\'s grant key, the root call itself with neither', async (id, rootSide, calleeSide, action, field, key) => {
     const parts = chain()
     const callee = parts[calleeSide]
     const rootCaller = rootSide === 'handler' ? host(id) : worker(id)
@@ -53,8 +53,8 @@ describe('the pair a chain under a plugin root carries', () => {
     ])
     expect((await callee.ask('luoshu.read', { path: 'inbox/a.md' }, under)).ok).toBe(true)
     expect(judged(parts.gate, 'luoshu.read')).toEqual([
-      { stage: 'raw', root: rootCaller, onBehalf: field, pair: { plugin: id, field } },
-      { stage: 'canonical', root: rootCaller, onBehalf: field, pair: { plugin: id, field } },
+      { stage: 'raw', root: rootCaller, onBehalf: field, pair: { plugin: id, field: key } },
+      { stage: 'canonical', root: rootCaller, onBehalf: field, pair: { plugin: id, field: key } },
     ])
   })
 
@@ -121,7 +121,7 @@ describe('the pair a chain under a plugin root carries', () => {
     expect(field.got.root).toEqual(worker('beta'))
   })
 
-  it('gives a part a live call\'s root, onBehalf and pair, the root call\'s own pair included', async () => {
+  it('gives a part a live call\'s root, whole onBehalf and pair, the root call\'s own pair included', async () => {
     const parts = chain()
     const lives: LiveCall[] = []
     parts.router.serve('gate', async call => { lives.push(call.live!); return [] })
@@ -130,7 +130,7 @@ describe('the pair a chain under a plugin root carries', () => {
     parts.mcp.call('search.query', {}, under)
     const deeper = await parts.search.delivered('search.query')
     expect((await parts.search.ask('gate.filterReadable', { call: deeper.callId, paths: ['inbox/a.md'] })).ok).toBe(true)
-    const pair = { plugin: 'mcp-http-handler', field: 'client#1' }
+    const pair = { plugin: 'mcp-http-handler', field: 'client' }
     expect(lives.map(live => [live.caller, live.root, live.onBehalf, live.pair])).toEqual([
       [host('mcp-http-handler'), host('mcp-http-handler'), 'client#1', pair], [worker('mcp'), host('mcp-http-handler'), 'client#1', pair],
     ])
@@ -183,7 +183,7 @@ describe('the router with no rule of its own on a field', () => {
     parts.router.stopping()
     expect((await parts.mcp.ask('luoshu.read', { path: 'inbox/a.md' }, under)).ok).toBe(true)
     expect(parts.gate.asked.filter(access => access.action === 'luoshu.read').map(access => access.pair))
-      .toEqual(Array(2).fill({ plugin: 'mcp-http-handler', field: 'client#1' }))
+      .toEqual(Array(2).fill({ plugin: 'mcp-http-handler', field: 'client' }))
   })
 
   it('answers a gate that is down for a chain carrying a pair as for any call', async () => {

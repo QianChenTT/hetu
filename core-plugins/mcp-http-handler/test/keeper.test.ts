@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
+import { mkdtempSync } from 'node:fs'
 import http from 'node:http'
 import net, { type AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { type Delivered, type FakeCore, fakeCore, type StandIn } from '@hetu/sdk/testing'
@@ -37,8 +40,8 @@ async function freePort(): Promise<number> {
   return port
 }
 
-const canConnect = (port: number) => new Promise<boolean>(resolve => {
-  const socket = net.connect({ host: '127.0.0.1', port })
+const canConnect = (port: number | string) => new Promise<boolean>(resolve => {
+  const socket = typeof port === 'string' ? net.connect(port) : net.connect({ host: '127.0.0.1', port })
   socket.once('connect', () => { socket.destroy(); resolve(true) })
   socket.once('error', () => resolve(false))
 })
@@ -66,8 +69,12 @@ function post(port: number, options: { headers?: Record<string, string>, body?: 
 const goodToken: TokenSeam = text => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
 
 // http on the fake core with mcp as a stand-in whose handle echoes what reached it
-async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, answer?: (call: Delivered) => unknown } = {}) {
+// A pipe name no other test or run holds, elsewhere than Windows in a folder of the user's own as the pipe's is
+const freshPipe = () => (process.platform === 'win32' ? `\\\\.\\pipe\\hetu-test-${randomUUID()}` : path.join(mkdtempSync(path.join(tmpdir(), 'hetu-test-')), 'mcp.sock'))
+
+async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' | 'unavailable', port?: number, pipe?: string, answer?: (call: Delivered) => unknown } = {}) {
   const port = options.port ?? await freePort()
+  const pipe = options.pipe ?? freshPipe()
   const core = fakeCore({ manifest })
   cores.push(core)
   const mcp: StandIn = core.standIn('mcp', {
@@ -75,8 +82,8 @@ async function started(options: { token?: TokenSeam, mcp?: 'ready' | 'starting' 
     handle: options.answer ?? (call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null, args: call.args }) })),
     state: options.mcp ?? 'ready',
   })
-  const state = await core.start(httpPlugin({ port, token: options.token ?? goodToken }))
-  return { core, mcp, port, state }
+  const state = await core.start(httpPlugin({ port, token: options.token ?? goodToken, pipe }))
+  return { core, mcp, port, pipe, state }
 }
 
 describe('http on the fake core', () => {
@@ -169,6 +176,50 @@ describe('http on the fake core', () => {
     const counts = Object.fromEntries(core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => [record.fields.reason, record.fields.count]))
     expect(counts).toEqual({ host: 5, origin: 1, token: 1 })
     expect(mcp.delivered).toEqual([])
+  })
+
+  it('opens the pipe beside the door exactly while mcp is there', async () => {
+    const { core, pipe } = await started({ mcp: 'unavailable' })
+    await tick(100)
+    expect(await canConnect(pipe)).toBe(false)
+    core.setState('mcp', 'ready')
+    await until(() => canConnect(pipe))
+    core.setState('mcp', 'unavailable')
+    await until(async () => !(await canConnect(pipe)))
+    core.setState('mcp', 'ready')
+    await until(() => canConnect(pipe))
+  })
+
+  it('asks the core to connect the client a pipe connection\'s initialize names with no redirect and closes it when the core can\'t answer', async () => {
+    const { core, mcp, pipe } = await started()
+    await until(() => canConnect(pipe))
+    const socket = net.connect(pipe)
+    let closed = false
+    let text = ''
+    socket.on('data', data => { text += data.toString('utf8') })
+    socket.on('error', () => {})
+    socket.on('close', () => { closed = true })
+    socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { clientInfo: { name: 'claude-code', version: '2' } } })}\n`)
+    await until(() => closed)
+    expect(text).toBe('{"jsonrpc":"2.0","id":0,"error":{"code":-32000,"message":"refused"}}\n')
+    const asked = core.coreCalls.filter(call => call.action === 'core.consentAsk')
+    expect(asked).toHaveLength(1)
+    expect(asked[0].args).toMatchObject({ client: 'claude-code', name: null, redirect: null })
+    expect((asked[0].args as { field: string }).field).toMatch(/^claude-code#[1-9][0-9]*$/)
+    expect(mcp.delivered).toEqual([])
+    await until(() => core.coreRecords.some(record => record.event === 'mcp-http-handler.refused'))
+    expect(core.coreRecords.filter(record => record.event === 'mcp-http-handler.refused').map(record => record.fields.reason)).toEqual(['token'])
+  })
+
+  it('fails with bind-failed when another server holds the pipe\'s name', async () => {
+    const pipe = freshPipe()
+    const holder = net.createServer()
+    holders.push(holder)
+    await new Promise<void>(resolve => holder.listen(pipe, resolve))
+    const { core } = await started({ pipe })
+    await until(() => core.coreCalls.length === 1)
+    expect(core.coreCalls).toEqual([{ action: 'core.bindFailed', args: { reason: 'bind-failed' }, caller: { kind: 'plugin', id: 'mcp-http-handler', half: 'host', incarnation: 1 } }])
+    expect(core.status()).toEqual({ state: 'failed', reason: 'bind-failed' })
   })
 
   it('writes no token, body, query, Host or Origin text to any record or line', async () => {

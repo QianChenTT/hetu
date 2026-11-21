@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "api": "^3",
   "entries": { "host": "dist/host.js" },
-  "node": ["http"],
+  "node": ["http", "net", "os", "fs"],
   "capabilities": [{ "type": "plugin.call", "targets": ["mcp"] }]
 }

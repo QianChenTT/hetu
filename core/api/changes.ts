@@ -109,18 +109,18 @@ export const clientName = seenText(MAX_CLIENT_NAME_LENGTH)
 // A client's connect the core raises alone from core.consentAsk, never one security.request carries. plugin is the
 // plugin whose host half asked, which sets field on the calls it makes for the client once the human confirmed it,
 // client is the client id, clientHost its host when it is a URL with one and null otherwise, name the one its document
-// gives or null, redirect where the client gets its answer and redirectHost that address's host. The core took both
-// hosts. A Confirm changes no state
+// gives or null, redirect where the client gets its answer and redirectHost that address's host, both null for a client
+// on this computer that reaches the plugin over its local pipe. The core took both hosts. A Confirm changes no state
 export const consentAsk = z.strictObject({
   kind: z.literal('consent.ask'),
   plugin: pluginId,
   client: screenText(MAX_CLIENT_ID_LENGTH),
   clientHost: screenText(MAX_CLIENT_ID_LENGTH).nullable(),
   name: clientName.nullable(),
-  redirect: screenText(MAX_REDIRECT_LENGTH),
-  redirectHost: screenText(MAX_REDIRECT_LENGTH),
+  redirect: screenText(MAX_REDIRECT_LENGTH).nullable(),
+  redirectHost: screenText(MAX_REDIRECT_LENGTH).nullable(),
   field: label,
-})
+}).refine(given => (given.redirect === null) === (given.redirectHost === null), 'redirectHost beside redirect only')
 export type ConsentAsk = z.infer<typeof consentAsk>
 
 export type Change = z.infer<typeof change> | ClassRaised | IdentityAsk | ConsentAsk

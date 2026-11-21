@@ -1,10 +1,13 @@
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
 import { syntaxTree } from '@codemirror/language'
-import { Annotation, type ChangeSet, Compartment, EditorState, type Extension, Prec, StateEffect, StateField, Transaction } from '@codemirror/state'
+import {
+  Annotation, type ChangeSet, Compartment, EditorState, type Extension, Prec, StateEffect, StateField, Transaction, type TransactionSpec,
+} from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, keymap, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
 import { hiddenMarks, markdownSupport } from './hidden-marks.ts'
+import { hiddenRules, hiddenText } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
 import { drawMarks } from './marks.ts'
@@ -38,13 +41,46 @@ const none: Drawn = { marks: Decoration.none, hidden: Decoration.none }
 
 // The plugins' marks by owner and then by set, mapped through each change
 type Owned = ReadonlyMap<string, ReadonlyMap<string, readonly Mark[]>>
-const setMarks = StateEffect.define<{ owner: string, set: string, marks: Mark[] }>()
+export const setMarks = StateEffect.define<{ owner: string, set: string, marks: Mark[] }>()
 const clearMarks = StateEffect.define<string>()
 
-const pluginMarks = StateField.define<{ owned: Owned, drawn: Drawn }>({
-  create: () => ({ owned: new Map(), drawn: none }),
+// An element shown on an Alt+click: one plugin's group, so no plugin's name reaches another's hidden text
+type Shown = { owner: string, group: string }
+const reveal = StateEffect.define<Shown[]>()
+
+// The span of each of a plugin's groups, from its first hidden range to its last
+function hullsOf(sets: ReadonlyMap<string, readonly Mark[]> | undefined): Map<string, { from: number, to: number }> {
+  const hulls = new Map<string, { from: number, to: number }>()
+  for (const marks of sets?.values() ?? []) {
+    for (const mark of marks) {
+      if (mark.kind !== 'hide' || mark.group === undefined) continue
+      const hull = hulls.get(mark.group)
+      hulls.set(mark.group, hull === undefined ? { from: mark.from, to: mark.to } : { from: Math.min(hull.from, mark.from), to: Math.max(hull.to, mark.to) })
+    }
+  }
+  return hulls
+}
+
+// What an Alt+click at pos shows: each plugin's innermost group whose span holds pos and the cursor put there. Null when
+// pos is in no group, so the click goes on as a plain one
+export function revealClick(state: EditorState, pos: number): TransactionSpec | null {
+  const shown: Shown[] = []
+  for (const [owner, sets] of state.field(pluginMarks).owned) {
+    let best: { group: string, size: number } | null = null
+    for (const [group, hull] of hullsOf(sets)) {
+      if (pos < hull.from || pos > hull.to) continue
+      if (best === null || hull.to - hull.from < best.size) best = { group, size: hull.to - hull.from }
+    }
+    if (best !== null) shown.push({ owner, group: best.group })
+  }
+  return shown.length === 0 ? null : { effects: reveal.of(shown), selection: { anchor: pos } }
+}
+
+export const pluginMarks = StateField.define<{ owned: Owned, shown: readonly Shown[], drawn: Drawn }>({
+  create: () => ({ owned: new Map(), shown: [], drawn: none }),
   update(value, tr) {
     let owned = value.owned
+    let shown = value.shown
     let moved = false
     if (tr.docChanged) {
       owned = new Map([...owned].map(([owner, sets]) => [owner, new Map([...sets].map(([set, marks]) => [set, mapThrough(marks, tr.changes)]))]))
@@ -63,15 +99,29 @@ const pluginMarks = StateField.define<{ owned: Owned, drawn: Drawn }>({
         next.delete(effect.value)
         owned = next
         moved = true
+      } else if (effect.is(reveal)) {
+        shown = [...shown, ...effect.value.filter(one => !shown.some(had => had.owner === one.owner && had.group === one.group))]
+        moved = true
       }
     }
+    // An element is hidden again once no cursor is inside it, its edges included
+    if (shown.length > 0 && (moved || tr.selection !== undefined)) {
+      const heads = tr.newSelection.ranges.map(range => range.head)
+      const kept = shown.filter(one => {
+        const hull = hullsOf(owned.get(one.owner)).get(one.group)
+        return hull !== undefined && heads.some(head => head >= hull.from && head <= hull.to)
+      })
+      if (kept.length !== shown.length) moved = true
+      shown = kept
+    }
     if (!moved) return value
-    const all = [...owned.values()].flatMap(sets => [...sets.values()].flat())
-    return { owned, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
+    const all = [...owned].flatMap(([owner, sets]) => [...sets.values()].flat()
+      .filter(mark => mark.kind !== 'hide' || !shown.some(one => one.owner === owner && one.group === mark.group)))
+    return { owned, shown, drawn: all.length === 0 ? none : drawMarks(all, tr.state.doc) }
   },
-  // A plugin's hidden ranges are not atomic: a delete beside one takes one character, not the whole range the plugin
-  // chose. Hidden marks' own, from the install, are
+  // The drawer's rules for hidden text read the hidden ranges, so no plugin's are atomic
   provide: field => [
+    hiddenText.of(view => view.state.field(field).drawn.hidden),
     EditorView.decorations.from(field, value => value.drawn.marks),
     EditorView.decorations.from(field, value => value.drawn.hidden),
   ],
@@ -110,7 +160,7 @@ const hiddenMarksView = ViewPlugin.fromClass(class {
   provide: plugin => [
     EditorView.decorations.of(view => view.plugin(plugin)?.drawn.marks ?? Decoration.none),
     EditorView.decorations.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
-    EditorView.atomicRanges.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
+    hiddenText.of(view => view.plugin(plugin)?.drawn.hidden ?? Decoration.none),
   ],
 })
 
@@ -149,6 +199,7 @@ export class EditorViews implements Editors {
           EditorView.cspNonce.of(this.nonce),
           history(),
           markdownSupport(),
+          hiddenRules,
           EditorView.lineWrapping,
           keymap.of([...defaultKeymap, ...historyKeymap]),
           Prec.lowest(EditorView.domEventHandlers({ keydown: event => this.hooks.key(id, event) })),
@@ -158,6 +209,18 @@ export class EditorViews implements Editors {
               if (this.shownId === id) return
               this.shownId = id
               this.hooks.focused?.(id)
+            },
+            // Alt+click shows the element under the pointer. The click is taken whole, so the cursor stays at the place
+            // pointed at, not where the shown markers push the text to
+            mousedown: (event, view) => {
+              if (!event.altKey || event.button !== 0) return false
+              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+              const spec = pos === null ? null : revealClick(view.state, pos)
+              if (spec === null) return false
+              event.preventDefault()
+              view.dispatch(spec)
+              view.focus()
+              return true
             },
           }),
           this.marksSwitch.of(this.marksOn ? hiddenMarksView : []),

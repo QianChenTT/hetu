@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ack, busSignals, caller, event, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, signal, VERSION,
+  ack, busSignals, caller, event, grantKeyOf, kindOf, messageKinds, reasonCodes, refusal, refusalCodes, reply, request, signal, VERSION,
 } from '../api/envelope.ts'
 import { defaultLimits } from '../api/limits.ts'
 import { MAX_DEPTH, plainProblem } from '../api/plain.ts'
@@ -103,6 +103,8 @@ describe('a request', () => {
     ['an onBehalf with a line separator', call({ onBehalf: 'claude #1' })],
     ['an onBehalf with a paragraph separator', call({ onBehalf: 'claude #1' })],
     ['an onBehalf with a lone surrogate', call({ onBehalf: 'claude\ud800#1' })],
+    // A pair's grants are keyed by the field up to its first #, so a field starting with one would key on nothing
+    ['an onBehalf starting with #', call({ onBehalf: '#7' })],
     // Floor rule 1, a message never names the sender
     ['a caller in the message', call({ caller: { kind: 'plugin', id: 'gate', half: 'host', incarnation: 1 } })],
     ['an unknown field', call({ chain: [] })],
@@ -287,6 +289,21 @@ describe('a refusal', () => {
     ['prototype', { code: 'invalid', action: 'luoshu.read', prototype: 1 }],
   ])('refuses %s', (_name, value) => {
     expect(refusal.safeParse(value).success).toBe(false)
+  })
+})
+
+describe('the grant key of a field', () => {
+  it('is the field up to its first #, or the whole field when it holds none', () => {
+    expect(grantKeyOf('claude-code#1')).toBe('claude-code')
+    expect(grantKeyOf('https://claude.ai/oauth/doc#12')).toBe('https://claude.ai/oauth/doc')
+    expect(grantKeyOf('a#b#c')).toBe('a')
+    expect(grantKeyOf('a#')).toBe('a')
+    expect(grantKeyOf('note bot')).toBe('note bot')
+  })
+
+  it('keys each field a request takes on something', () => {
+    for (const onBehalf of ['#7', '#', '##1']) expect(request.safeParse(call({ onBehalf })).success, onBehalf).toBe(false)
+    expect(request.safeParse(call({ onBehalf: 'a#' })).success).toBe(true)
   })
 })
 
