@@ -1,6 +1,7 @@
 import { definePlugin, type Plugin } from '@hetu/sdk'
-import type { TokenSeam } from './checks.ts'
+import { doorLimits, type TokenSeam } from './checks.ts'
 import { mcpServe } from './mcp.ts'
+import { rate } from './rate.ts'
 import { refusalCounter } from './report.ts'
 import { type Door, type DoorTimes, openDoor } from './server.ts'
 
@@ -15,6 +16,7 @@ export function httpPlugin(options: HttpOptions): Plugin {
     start(ctx) {
       const counter = refusalCounter((reason, count) => ctx.call('core', 'refused', { reason, count }))
       const serve = mcpServe((args, call) => ctx.call('mcp', 'handle', args, call))
+      const take = rate(doorLimits.perSecond, () => performance.now())
       let door: Door | null = null
       let failed = false
       let stopping = false
@@ -26,7 +28,7 @@ export function httpPlugin(options: HttpOptions): Plugin {
         const wanted = ctx.has('mcp')
         if (wanted && door === null) {
           try {
-            door = await openDoor({ port: options.port, token: options.token, serve, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })
+            door = await openDoor({ port: options.port, token: options.token, serve, take, refused: reason => counter.hit(reason), ...(options.limits === undefined ? {} : { limits: options.limits }) })
           } catch (error) {
             failed = true
             const reason = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
