@@ -7,7 +7,7 @@ import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
 import { checkModuleImports } from './module-imports.ts'
 
 // The first-party plugins built, each a worker from src/worker.ts
-const FIRST_PARTY = ['search', 'layout']
+const FIRST_PARTY = ['layout']
 // The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
 // utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
 // main.js

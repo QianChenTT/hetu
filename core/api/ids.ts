@@ -134,7 +134,7 @@ export const utilityIds = frozen(['mcp-http-handler'] as const)
 
 // First-party plugins in the plugin folder, layout among them as hetu's own look. A copy there keeps the id only with
 // the reserved first-party signer and bytes equal to the install's copy, which the plugins manager checks
-export const firstPartyIds = frozen(['mcp', 'git', 'search', 'artifacts', 'notify', 'layout'] as const)
+export const firstPartyIds = frozen(['mcp', 'git', 'artifacts', 'notify', 'layout'] as const)
 
 const reserved = new Set<string>([
   ...coreNamespaces,

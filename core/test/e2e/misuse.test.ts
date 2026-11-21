@@ -159,7 +159,7 @@ describe('a plugin named hetu', () => {
       ] })
     `)
     await until(async () => (await editor.locator('#overlay .hetu-strip').count()) === 1)
-    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(title => title !== 'search · Search')).toEqual(['board · Security check'])
+    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Security check'])
     expect(await editor.locator('#overlay .hetu-strip').allInnerTexts()).toEqual(['board'])
   })
 })

@@ -39,21 +39,12 @@ describe('the main bundle', () => {
     expect(await readFile(path.join(out, 'main.js'), 'utf8')).toMatch(/from ["']electron["']/)
   })
 
-  it('writes search into the install as a first-party copy, built, with the hash of its files', async () => {
-    const out = await outDir()
-    await buildMain(out)
-    const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
-    const root = path.join(out, 'plugins', 'search')
-    expect(Object.keys(list.plugins).sort()).toEqual(['hidden-marks', 'layout', 'mcp-http-handler', 'search'])
-    expect(list.plugins.search).toEqual({ path: 'plugins/search', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
-    expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
-  })
-
-  it('writes hetu\'s own layout into the install as a first-party copy, a worker holding ui.layout and storage', async () => {
+  it('writes hetu\'s own layout into the install as its one first-party copy, a worker holding ui.layout and storage', async () => {
     const out = await outDir()
     await buildMain(out)
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     const root = path.join(out, 'plugins', 'layout')
+    expect(Object.keys(list.plugins).sort()).toEqual(['hidden-marks', 'layout', 'mcp-http-handler'])
     expect(list.plugins.layout).toEqual({ path: 'plugins/layout', version: '0.1.0', hash: hashFiles(await readFiles(root)), firstParty: true })
     expect((await readFiles(root)).map(file => file.path).sort()).toEqual(['dist/worker.js', 'hetu-plugin.json'])
     expect(await checkManifest(root, { built: true })).toEqual([])

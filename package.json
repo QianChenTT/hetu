@@ -13,14 +13,13 @@
     "daemon",
     "editor",
     "core-plugins/mcp-http-handler",
-    "core-plugins/layout",
-    "core-plugins/search"
+    "core-plugins/layout"
   ],
   "scripts": {
     "dev": "node scripts/dev.ts",
     "seed": "npm run seed -w daemon",
     "seed:fresh": "npm run seed -w daemon -- --fresh",
-    "test": "npm test -w core -w daemon -w core-plugins/mcp-http-handler -w core-plugins/layout -w core-plugins/search --if-present",
+    "test": "npm test -w core -w daemon -w core-plugins/mcp-http-handler -w core-plugins/layout --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:copies": "node scripts/check-copies.ts",
     "build:main": "node core/build/main.ts",
