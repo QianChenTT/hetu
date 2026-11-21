@@ -29,8 +29,17 @@ export const token = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 
 // The caller's own label for one of the caller's clients, such as an OAuth client id, which can be a URL. The label
 // reaches the callee, guards and the audit. Under a plugin root it is the field of the chain's pair, which the gate
-// judges on the pair's own items. The trusted window lists it to revoke, so nothing in it draws as nothing
-export const label = seenText(MAX_LABEL_LENGTH)
+// judges on the pair's own items. The trusted window lists it to revoke, so nothing in it draws as nothing. A field
+// starting with # is refused, as its grant key would be empty
+export const label = seenText(MAX_LABEL_LENGTH).refine(field => grantKeyOf(field) !== '')
+
+// The part of a field a pair's grants, asks and revoke are keyed by: the field up to its first #, or the whole field
+// when it holds none, so each session of one client shares the client's grants. The whole field stays the holder and
+// what records name
+export function grantKeyOf(field: string): string {
+  const at = field.indexOf('#')
+  return at === -1 ? field : field.slice(0, at)
+}
 
 const requestFields = {
   v: z.literal(VERSION),

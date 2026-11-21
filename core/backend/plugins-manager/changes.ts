@@ -1,7 +1,7 @@
 import path from 'node:path'
 import type { PendingRequest } from '../../api/actions.ts'
 import { change as changeSchema, identityAsk, type Change } from '../../api/changes.ts'
-import { type Caller } from '../../api/envelope.ts'
+import { grantKeyOf, type Caller } from '../../api/envelope.ts'
 import { firstPartyIds } from '../../api/ids.ts'
 import { FIRST_PARTY_SIGNER, isNewer } from '../../api/install.ts'
 import { frozen } from '../../api/plain.ts'
@@ -20,11 +20,13 @@ import { type UpdateOutcome, type Known, isOne, isModule, refused, placeOf, togg
 export abstract class PluginsChanges extends PluginsInstall {
   // ---- the state
 
-  // A security request from a window, which the security view decides. The router has checked the caller is a window
+  // A security request from a window, which the security view decides. The router has checked the caller is a window.
+  // A revoke naming one session's field is taken as the revoke of its client, so its record names what it revokes
   request(input: unknown, from: Caller): Promise<RequestAnswer> {
     const parsed = changeSchema.safeParse(input)
     if (!parsed.success) return Promise.reject({ code: 'invalid' })
-    return this.requests.request(parsed.data, from)
+    const change = parsed.data.kind === 'identity.revoke' ? { ...parsed.data, field: grantKeyOf(parsed.data.field) } : parsed.data
+    return this.requests.request(change, from)
   }
 
   // The trusted window's Confirm of a held request, with what the human typed where the change asks for it
