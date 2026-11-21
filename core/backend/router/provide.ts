@@ -53,6 +53,19 @@ export function judge(c: Context, pending: Pending, stage: Access['stage'], capa
   return decideFor(c, pending, stage, capability, scope, prompt)
 }
 
+// 8 decide for a call delivered to a plugin, which no guard judges, recording what the gate let on so a new grants
+// snapshot judges it again
+export function judgeDelivery(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'power' }>): No | null {
+  const refused = judge(c, pending, 'canonical', kind.capability, kind.scope)
+  if (refused === null) pending.judged = { kind, scope: kind.scope }
+  return refused
+}
+
+// What the call is recorded as covering
+export function setScope(pending: Pending, scope: Scope | undefined): void {
+  pending.scope = scope
+}
+
 // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
 // scope that lacks one of those places fails, since the second requirement would judge nothing
 export function judgeAll(c: Context, pending: Pending, stage: Access['stage'], kind: Extract<Kind, { kind: 'power' }>, scope: Scope, prompt = true): No | null {

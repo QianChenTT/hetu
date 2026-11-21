@@ -4,7 +4,7 @@ import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
 import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Target, type Kind } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf } from './open-calls.ts'
-import { judge, judgeAll, askable, provide } from './provide.ts'
+import { judge, judgeAll, judgeDelivery, askable, provide, setScope } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
 
 // The entry of every call through its steps, then 6 route by the namespace table: the parts handed in under their
@@ -89,7 +89,7 @@ function events(c: Context, pending: Pending, spec: EventAction, args: unknown, 
   const standing = c.bus.subscribe(holder, topics, free, down)
   if (standing.length > 0) {
     const live = topics.filter(topic => !standing.includes(topic))
-    pending.scope = live.length > 0 ? frozen({ topics: live }) : undefined
+    setScope(pending, live.length > 0 ? frozen({ topics: live }) : undefined)
     if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
     // Counted per half, since the topics are the plugin's to pick
     c.coalesced('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
@@ -131,9 +131,8 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
   const callee = c.ways.get(keyOf({ kind: 'plugin', id: target.target, half: info.serves, incarnation: info.incarnation }))
   if (callee === undefined || !callee.open || callee.send === null) return finish(c, pending, no('unavailable'))
   if (kind.kind === 'power') {
-    const refused = judge(c, pending, 'canonical', kind.capability, kind.scope)
+    const refused = judgeDelivery(c, pending, kind)
     if (refused !== null) return finish(c, pending, { ok: false, ...refused })
-    pending.judged = { kind, scope: kind.scope }
   }
   if (c.clock() >= pending.due) return stop(c, pending, 'timeout')
   pending.callee = callee
