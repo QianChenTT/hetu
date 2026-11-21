@@ -341,6 +341,24 @@ describe('answer 5: markers hide once the closing marker is typed', () => {
     expect(note.visible).toBe('x word more')
     expect(note.styled('strong')).toEqual(['**word more**'])
   })
+
+  // D-648: one key short of the bold closer CommonMark reads *word* as italic, kept as built
+  it('shows x *word in italics one key short of the closer and bold with every marker hidden after it', async () => {
+    const note = await opened('x ')
+    note.click(2)
+    await note.type('**word*')
+    expect(note.text).toBe('x **word*')
+    expect(note.visible).toBe('x *word')
+    expect(note.styled('em')).toEqual(['*word*'])
+    expect(note.styled('strong')).toEqual([])
+    expect(note.marks.flatMap(mark => (mark.kind === 'hide' ? [[mark.from, mark.to]] : []))).toEqual([[3, 4], [8, 9]])
+    await note.type('*')
+    expect(note.text).toBe('x **word**')
+    expect(note.visible).toBe('x word')
+    expect(note.styled('strong')).toEqual(['**word**'])
+    expect(note.styled('em')).toEqual([])
+    expect(note.marks.flatMap(mark => (mark.kind === 'hide' ? [[mark.from, mark.to]] : []))).toEqual([[2, 4], [8, 10]])
+  })
 })
 
 describe('answer 6: deleting the last visible character of a run removes its markers', () => {
