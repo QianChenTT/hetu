@@ -423,3 +423,21 @@ describe('answer 8: copying gives the markdown', () => {
     expect(note.copied).toBe('text')
   })
 })
+
+describe('answer 9: the settings choose which elements hide', () => {
+  it("shows bold's markers while Bold is unticked, every other element still hidden, and hides them once ticked", async () => {
+    const note = await opened('x **bold** y\nx [link](https://e.com) y')
+    const settings = note.drawer.instances().find(one => one.view === 'settings')!.instance
+    // The box's change as the popover sends it, then the plugin's marks drawn again until the note looks as expected
+    const choose = async (hides: boolean, looks: string) => {
+      note.drawer.emit({ topic: 'view.event', instance: settings, node: 'hide-bold', type: 'change', value: hides })
+      await until(() => {
+        note.state = settled(note.state.update({ effects: setMarks.of({ owner: OWNER, set: 'marks', marks: note.marks }) }).state)
+        return note.visible === looks
+      })
+    }
+    await choose(false, 'x **bold** y\nx link y')
+    expect(note.styled('strong')).toEqual(['**bold**'])
+    await choose(true, 'x bold y\nx link y')
+  })
+})

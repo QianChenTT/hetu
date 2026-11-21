@@ -751,35 +751,54 @@ describe('hidden marks in the window', () => {
       await editor.mouse.click(x, y)
       if (modifier !== undefined) await editor.keyboard.up(modifier)
     }
+    // The cursor in the shown note's editor, read from its view as CodeMirror's EditorView.findFromDOM reaches it
+    const head = () => editor.evaluate(() => {
+      type Found = { cmTile: { root: { view: { state: { selection: { main: { head: number } } } } } } }
+      const content = document.querySelector('.editor:not([hidden]) .cm-content') as unknown as Found
+      return content.cmTile.root.view.state.selection.main.head
+    })
+    // A frame drawn, by which the editor's settle has run too, as it runs in a microtask after each update
+    const frame = () => editor.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    const third = (await editor.locator('.editor:not([hidden]) .cm-line').nth(2).boundingBox())!
+    const away = async () => {
+      await click(third.x + third.width - 2, third.y + third.height / 2)
+      await until(async () => (await head()) === text.length)
+    }
 
-    // Answer 10: a plain, Ctrl or Shift click on the bold word shows nothing, an Alt+click shows its markers
+    // Answer 10: a plain, Ctrl or Shift click on the bold word shows nothing, an Alt+click shows its markers. Each
+    // click starts away from the word, so the cursor in the word says the editor took the click before "nothing shown"
+    // is checked
     const word = await bold()
     for (const modifier of [undefined, 'Control', 'Shift'] as const) {
+      await away()
       await click(word.x + word.width / 2, word.y + word.height / 2, modifier)
-      await tick(300)
+      await until(async () => (await head()) > 4 && (await head()) < 8)
+      await frame()
       expect((await lines())[0], modifier ?? 'plain').toBe('x bold y')
     }
     await click(word.x + word.width / 2, word.y + word.height / 2, 'Alt')
     await until(async () => (await lines())[0] === 'x **bold** y')
     // Hidden again once the cursor leaves it
-    const third = (await editor.locator('.editor:not([hidden]) .cm-line').nth(2).boundingBox())!
-    await click(third.x + third.width - 2, third.y + third.height / 2)
+    await away()
     await until(async () => (await lines())[0] === 'x bold y')
 
-    // Answer 4: a click at the end of the word, text typed there stays bold, then the bold key and the text after it
-    // is plain, where Chromium alone would put it before the hidden closer
+    // Answer 4: a click at the end of the word and the bold key, then the text after it is plain, where Chromium alone
+    // would put it before the hidden closer. The "er" typed first proves nothing, as plain Chromium also puts it inside
+    // the run. The " next" after the key is the proof
     const end = await bold()
     await click(end.x + end.width - 1, end.y + end.height / 2)
     await editor.keyboard.type('er')
     expect((await saved()).split('\n')[0]).toBe('x **bolder** y')
     await editor.keyboard.press('ControlOrMeta+b')
-    await tick(300)
+    // The plugin's answer puts the cursor past the closer at 12
+    await until(async () => (await head()) === 12)
+    await frame()
     await editor.keyboard.type(' next')
     expect((await saved()).split('\n')[0]).toBe('x **bolder** next y')
     expect((await lines())[0]).toBe('x bolder next y')
 
-    // Answer 8 on the system clipboard, its text put back after: the element whole copies its markdown, a part of one
-    // what was selected (Y16)
+    // Answer 8 on the system clipboard: the element whole copies its markdown, a part of one what was selected (Y16).
+    // Only the clipboard's text is put back after, an image or any other format on it is lost
     const before = await app.evaluate(({ clipboard }) => clipboard.readText())
     try {
       const copied = async (box: Box) => {
@@ -796,8 +815,8 @@ describe('hidden marks in the window', () => {
       await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), before)
     }
 
-    // Answer 9: the plugin's settings, an item whose popover holds a box for each element. Bold unticked shows its
-    // markers, ticked again hides them
+    // Answer 9: the plugin's settings, an item whose popover holds a box for each element. Bold unticked shows bold's
+    // markers and no other element's, ticked again hides them
     await editor.getByRole('button', { name: 'Marks' }).click()
     const box = editor.locator('#overlay .hetu-popover label', { hasText: 'Bold' })
     await until(async () => (await box.count()) === 1)
@@ -805,6 +824,7 @@ describe('hidden marks in the window', () => {
     await box.click()
     await until(async () => (await lines())[0] === 'x **bolder** next y')
     expect((await lines())[1]).toBe('x **bold text** y')
+    expect((await lines())[2]).toBe('x link y')
     await box.click()
     await until(async () => (await lines())[0] === 'x bolder next y')
   })
