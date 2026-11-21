@@ -67,7 +67,8 @@ const pipeAnswers = () => new Promise<boolean>(resolve => {
 })
 
 // lines are the whole stdout lines that read as JSON. strays are the others, each as JSON text so a \r or an empty one
-// shows, for the test to say there are none
+// shows, for the test to say there are none. Electron on Windows writes \r\n as the very first bytes of stdout, the
+// one line a client gets that isn't the shim's, so that one alone is passed over
 type Shim = { lines: () => unknown[], strays: () => string[], stderr: () => string, send: (message: unknown) => void, end: () => void, exit: Promise<number | null> }
 
 // hetu --mcp-stdio as an MCP client starts it, on the test's data folder, each stdout line read as JSON
@@ -81,7 +82,8 @@ function shim(dataDir: string, installDir: string): Shim {
   child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
   let err = ''
   child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString('utf8') })
-  const read = () => out.split('\n').slice(0, -1).map((line): { json: unknown } | { stray: string } => {
+  const electrons = () => (process.platform === 'win32' && out.startsWith('\r\n') ? out.slice(2) : out)
+  const read = () => electrons().split('\n').slice(0, -1).map((line): { json: unknown } | { stray: string } => {
     try {
       return { json: JSON.parse(line) as unknown }
     } catch {
