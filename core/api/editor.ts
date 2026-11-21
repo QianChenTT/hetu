@@ -54,16 +54,18 @@ const instance = z.string().regex(/^n[0-9]{1,12}$/)
 const version = z.int().min(0)
 
 const range = { from: position, to: position }
+// group names the element a mark belongs to: an Alt+click anywhere in the element shows its hidden ranges and the text
+// its widgets stand for, a line style counting as its whole line. edge says whether a hidden range opens or closes the
+// element. Both came within API version 3 as additions
+const group = localName.optional()
 export const mark = z.union([
-  z.strictObject({ kind: z.literal('mark'), ...range, style: z.enum(markStyles) }).refine(m => m.to > m.from, 'an empty range'),
-  // group names the element the range belongs to, its hidden ranges shown together on an Alt+click. edge says whether
-  // the range opens or closes it. Both came within API version 3 as additions
-  z.strictObject({ kind: z.literal('hide'), ...range, group: localName.optional(), edge: z.enum(['open', 'close']).optional() })
+  z.strictObject({ kind: z.literal('mark'), ...range, style: z.enum(markStyles), group }).refine(m => m.to > m.from, 'an empty range'),
+  z.strictObject({ kind: z.literal('hide'), ...range, group, edge: z.enum(['open', 'close']).optional() })
     .refine(m => m.to > m.from, 'an empty range'),
   // Replaces the range with the text, or sits at a point when the range is empty. Screen text, so nothing in it hides
   // or reorders what follows. The raw view still shows what it covers
-  z.strictObject({ kind: z.literal('widget'), ...range, text: screenText(MAX_WIDGET_TEXT) }).refine(m => m.to >= m.from, 'to before from'),
-  z.strictObject({ kind: z.literal('line'), from: position, style: z.enum(lineStyles) }),
+  z.strictObject({ kind: z.literal('widget'), ...range, text: screenText(MAX_WIDGET_TEXT), group }).refine(m => m.to >= m.from, 'to before from'),
+  z.strictObject({ kind: z.literal('line'), from: position, style: z.enum(lineStyles), group }),
 ])
 export type Mark = z.infer<typeof mark>
 export type MarkStyle = typeof markStyles[number]

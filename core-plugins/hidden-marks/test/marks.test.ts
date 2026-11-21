@@ -31,18 +31,18 @@ describe('hidden marks', () => {
   it('styles a heading line and hides its marker with the space after it', () => {
     expect(sorted(marksOf('# Title'))).toEqual([
       { kind: 'hide', from: 0, to: 2, group: 'g0ATXHeading1', edge: 'open' },
-      { kind: 'line', from: 0, style: 'h1' },
+      { kind: 'line', from: 0, style: 'h1', group: 'g0ATXHeading1' },
     ])
   })
 
   it('draws a bullet in place of a list marker', () => {
-    expect(marksOf('- item')).toEqual([{ kind: 'widget', from: 0, to: 1, text: '•' }])
+    expect(marksOf('- item')).toEqual([{ kind: 'widget', from: 0, to: 1, text: '•', group: 'g0ListItem' }])
   })
 
   it('draws a rule as a line style and hides its dashes', () => {
     expect(sorted(marksOf('---'))).toEqual([
       { kind: 'hide', from: 0, to: 3, group: 'g0HorizontalRule' },
-      { kind: 'line', from: 0, style: 'rule' },
+      { kind: 'line', from: 0, style: 'rule', group: 'g0HorizontalRule' },
     ])
   })
 
@@ -65,7 +65,7 @@ describe('hidden marks', () => {
   it('hides a quote marker and styles the line', () => {
     expect(sorted(marksOf('> said'))).toEqual([
       { kind: 'hide', from: 0, to: 2, group: 'g0Blockquote', edge: 'open' },
-      { kind: 'line', from: 0, style: 'quote' },
+      { kind: 'line', from: 0, style: 'quote', group: 'g0Blockquote' },
     ])
   })
 
@@ -130,6 +130,13 @@ describe("an element's markers", () => {
       { kind: 'hide', from: 8, to: 10, group: 'g0Blockquote', edge: 'open' },
       { kind: 'hide', from: 10, to: 12, group: 'g10Blockquote', edge: 'open' },
     ])
+  })
+
+  it("share their group with the element's line styles, so an Alt+click on a heading's or a block's text shows them", () => {
+    const groups = (text: string) => new Set(marksOf(text).map(mark => mark.group))
+    expect(groups('## T ##')).toEqual(new Set(['g0ATXHeading2']))
+    expect(groups('T\n=')).toEqual(new Set(['g0SetextHeading1']))
+    expect(groups('```\ncode\n```')).toEqual(new Set(['g0FencedCode']))
   })
 
   it('are named once per element, with the node it is and where it starts', () => {

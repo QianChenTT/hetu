@@ -41,11 +41,20 @@ describe('a mark', () => {
     expect(mark.safeParse({ kind: 'hide', from: 0, to: 2, group: 'g' }).success).toBe(true)
   })
 
+  it("takes a styled range, a line style and a widget into an element's group, so its visible part is the element too", () => {
+    for (const given of [
+      { kind: 'mark', from: 0, to: 2, style: 'em', group: 'g' },
+      { kind: 'line', from: 0, style: 'h1', group: 'g' },
+      { kind: 'widget', from: 0, to: 1, text: '•', group: 'g' },
+    ]) expect(mark.safeParse(given).data).toEqual(given)
+  })
+
   it.each([
     ['an edge other than open or close', { kind: 'hide', from: 0, to: 2, edge: 'middle' }],
     ['a group that is no name', { kind: 'hide', from: 0, to: 2, group: 'a b' }],
     ['a group past 64 characters', { kind: 'hide', from: 0, to: 2, group: 'g'.repeat(65) }],
-    ['a group on a styled range', { kind: 'mark', from: 0, to: 2, style: 'em', group: 'g' }],
+    ['a group on a line style that is no name', { kind: 'line', from: 0, style: 'h1', group: 'a b' }],
+    ['an edge on a styled range', { kind: 'mark', from: 0, to: 2, style: 'em', edge: 'open' }],
     ['an edge on a widget', { kind: 'widget', from: 0, to: 1, text: '•', edge: 'open' }],
   ])('refuses %s', (_name, given) => {
     expect(mark.safeParse(given).success).toBe(false)

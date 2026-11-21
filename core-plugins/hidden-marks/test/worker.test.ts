@@ -71,7 +71,7 @@ describe('hidden marks behind the bridge', () => {
     await until(() => has(drawer, instance, strong(7, 12)))
     drawer.type(instance, { from: 0, insert: '# ' })
     await until(() => has(drawer, instance, strong(9, 14)))
-    expect(marksOn(drawer, instance)).toContainEqual({ kind: 'line', from: 0, style: 'h1' })
+    expect(marksOn(drawer, instance)).toContainEqual(expect.objectContaining({ kind: 'line', from: 0, style: 'h1' }))
   })
 
   it('reads the note again when a change never reached it, where applying the next would leave its copy wrong', async () => {
@@ -179,7 +179,7 @@ describe('hidden marks as notes open, close and the drawer refuses or lags', () 
     drawer.type(instance, { from: 13, insert: '!' })
     release()
     await until(() => has(drawer, instance, strong(8, 13)))
-    expect(marksOn(drawer, instance)).toContainEqual({ kind: 'line', from: 0, style: 'h1' })
+    expect(marksOn(drawer, instance)).toContainEqual(expect.objectContaining({ kind: 'line', from: 0, style: 'h1' }))
   })
 
   it('holds no more changes than its bound while a read is out and reads again for those past it', async () => {
