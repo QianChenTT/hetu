@@ -184,8 +184,8 @@ export default definePlugin({
       const note = notes.get(event.instance)
       const range = event.selection[0]
       if (note === undefined || note.state === null || note.version !== event.version || range === undefined) return
-      const changes = toggle(note.state, event.command as Format, range)
-      if (changes !== null) void ctx.try(ctx.editor.edit(event.instance, event.version, changes.toJSON()))
+      const made = toggle(note.state, event.command as Format, range)
+      if (made !== null) void ctx.try(ctx.editor.edit(event.instance, event.version, made.changes.toJSON(), made.selection))
     })
     // The settings: an item in the status row whose button opens a popover with a box for each element, ticked while
     // it hides, so they take no place a view would. A change is stored, then every note marked again

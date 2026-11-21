@@ -329,3 +329,16 @@ describe('the settings for which elements hide', () => {
     expect(hiddenAt(drawer, again, 0)).toBe(false)
   })
 })
+
+describe('the format key at the end of a run', () => {
+  it('steps out of the run, so the next text typed there is plain', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', '**important**')
+    await until(() => has(drawer, instance, strong(0, 13)))
+    drawer.command('bold', instance, [{ anchor: 11, head: 11 }])
+    await until(() => drawer.selection(instance)?.head === 13)
+    const at = drawer.selection(instance)?.head ?? 0
+    drawer.type(instance, { from: at, insert: ' next' })
+    expect(drawer.text(instance)).toBe('**important** next')
+  })
+})

@@ -54,10 +54,13 @@ function runsAt(state: EditorState, name: string, from: number, to: number): Run
   return runs
 }
 
+type Cursor = { anchor: number, head: number }
+
 // The changes a format key makes at a selection on one line: the run around it taken off, or the part of the run it
 // holds, else the selection wrapped with the runs it crosses joined into one. A cursor takes its run or the word it is
-// inside. Null when the key changes nothing
-export function toggle(state: EditorState, format: Format, range: { anchor: number, head: number }): ChangeSet | null {
+// inside. At a run's end the cursor steps out past the closing marker, which is put back so the edit's range holds the
+// cursor. The same key past it steps back in. Null when the key changes nothing
+export function toggle(state: EditorState, format: Format, range: Cursor): { changes: ChangeSet, selection?: Cursor } | null {
   const { node, marker } = formats[format]
   let from = Math.min(range.anchor, range.head)
   let to = Math.max(range.anchor, range.head)
@@ -67,11 +70,18 @@ export function toggle(state: EditorState, format: Format, range: { anchor: numb
   while (to > from && /\s/.test(text(to - 1))) to--
   if (from === to && range.anchor !== range.head) return null
   const runs = runsAt(state, node, from, to)
-  const off = (run: Run, at: number, end: number) => ChangeSet.of([
-    at <= run.open.to ? run.open : { from: at, insert: state.sliceDoc(run.close.from, run.close.to) },
-    end >= run.close.from ? run.close : { from: end, insert: state.sliceDoc(run.open.from, run.open.to) },
-  ], state.doc.length)
+  const off = (run: Run, at: number, end: number) => ({
+    changes: ChangeSet.of([
+      at <= run.open.to ? run.open : { from: at, insert: state.sliceDoc(run.close.from, run.close.to) },
+      end >= run.close.from ? run.close : { from: end, insert: state.sliceDoc(run.open.from, run.open.to) },
+    ], state.doc.length),
+  })
   const around = runs.find(run => run.from <= from && to <= run.to)
+  if (around !== undefined && range.anchor === range.head && from >= around.close.from) {
+    const { close } = around
+    const at = from > close.from ? close.from : close.to
+    return { changes: ChangeSet.of({ ...close, insert: state.sliceDoc(close.from, close.to) }, state.doc.length), selection: { anchor: at, head: at } }
+  }
   if (around !== undefined) {
     const [at, end] = [Math.max(from, around.open.to), Math.min(to, around.close.from)]
     return at < end ? off(around, at, end) : off(around, around.open.to, around.close.from)
@@ -83,7 +93,7 @@ export function toggle(state: EditorState, format: Format, range: { anchor: numb
   }
   const start = Math.min(from, ...runs.map(run => run.from))
   const end = Math.max(to, ...runs.map(run => run.to))
-  return ChangeSet.of([{ from: start, insert: marker }, ...runs.flatMap(run => [run.open, run.close]), { from: end, insert: marker }], state.doc.length)
+  return { changes: ChangeSet.of([{ from: start, insert: marker }, ...runs.flatMap(run => [run.open, run.close]), { from: end, insert: marker }], state.doc.length) }
 }
 
 // The markers of each run a change left with nothing between them, a run inside another taken with it, as changes to

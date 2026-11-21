@@ -6,8 +6,14 @@ import { markdownSupport } from '../src/marks.ts'
 // The text after the format's key at the selection from anchor to head, or null when the key changes nothing
 function pressed(text: string, format: Format, anchor: number, head = anchor): string | null {
   const state = EditorState.create({ doc: text, extensions: [markdownSupport()] })
-  const changes = toggle(state, format, { anchor, head })
-  return changes === null ? null : changes.apply(state.doc).toString()
+  const made = toggle(state, format, { anchor, head })
+  return made === null ? null : made.changes.apply(state.doc).toString()
+}
+
+// Where the key puts the cursor, undefined when it leaves it to the drawer
+function placedBy(text: string, format: Format, at: number) {
+  const state = EditorState.create({ doc: text, extensions: [markdownSupport()] })
+  return toggle(state, format, { anchor: at, head: at })?.selection
 }
 
 describe('a format key on a selection', () => {
@@ -48,10 +54,18 @@ describe('a format key on a selection', () => {
 })
 
 describe('a format key at the cursor', () => {
-  it('turns off the run the cursor is inside, at its ends too', () => {
+  it('turns off the run the cursor is inside, at its start too', () => {
     expect(pressed('a **word** here', 'bold', 5)).toBe('a word here')
-    expect(pressed('a **word** here', 'bold', 8)).toBe('a word here')
     expect(pressed('a **word** here', 'bold', 4)).toBe('a word here')
+    expect(placedBy('a **word** here', 'bold', 5)).toBeUndefined()
+  })
+
+  it('steps out of the run at its end, its closing marker put back with the cursor after it, so typing goes on plain', () => {
+    expect(pressed('**important**', 'bold', 11)).toBe('**important**')
+    expect(placedBy('**important**', 'bold', 11)).toEqual({ anchor: 13, head: 13 })
+    expect(placedBy('a *word* here', 'italic', 7)).toEqual({ anchor: 8, head: 8 })
+    // The same key past the closing marker steps back in
+    expect(placedBy('**important**', 'bold', 13)).toEqual({ anchor: 11, head: 11 })
   })
 
   it('wraps the word the cursor is inside', () => {
