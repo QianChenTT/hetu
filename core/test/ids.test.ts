@@ -137,7 +137,7 @@ describe('reserved ids', () => {
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
     'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
-    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
+    'mcp', 'git', 'search', 'artifacts', 'notify', 'layout',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -145,7 +145,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'])
+    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'artifacts', 'notify', 'layout'])
   })
 
   it.each(expected)('reserves %j', id => {
@@ -157,7 +157,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
+  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)

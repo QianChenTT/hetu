@@ -120,10 +120,13 @@ function luoshuFor(platform: string) {
 
 const format = z.literal(FORMAT)
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
-// recording in off and never written again. watchdog in off is a core plugin that is gone, read with the id dropped
+// recording in off and never written again. watchdog in off is a core plugin that is gone, read with the id dropped.
+// file-explorer in removed is a first-party plugin that became a community plugin, read with the id dropped too
+const retiredFirstParty: readonly unknown[] = ['file-explorer']
 const switchesFields = {
   ...switches.shape, recordNothing: z.boolean().optional(),
   off: z.preprocess(value => (Array.isArray(value) ? value.filter(id => id !== 'watchdog') : value), switches.shape.off),
+  removed: z.preprocess(value => (Array.isArray(value) ? value.filter(id => !retiredFirstParty.includes(id)) : value), switches.shape.removed),
 }
 const switchesFile = z.strictObject({ format, ...switchesFields })
 const pluginFile = z.strictObject({ format, ...plugin.shape })

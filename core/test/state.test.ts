@@ -322,7 +322,7 @@ describe('writing', () => {
       off: switchable,
       devMode: ids,
       execAnyCommand: ids,
-      removed: ['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'],
+      removed: ['mcp', 'git', 'search', 'artifacts', 'notify'],
       limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { heartbeatMs: 9000 }])) },
     }
     await store.writeSwitches(switches)
@@ -990,6 +990,21 @@ describe('the dropped watchdog', () => {
     expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain('watchdog')
+  })
+})
+
+// The file explorer, first-party before it became a community plugin, may still be removed in a file: read with the id
+// dropped
+describe('the retired first-party ids', () => {
+  it('reads a file naming one in removed with the id dropped and the rest of removed kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, removed: ['git', 'file-explorer'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.removedKnown).toBe(true)
+    expect(loaded.state.switches.removed).toEqual(['git'])
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('file-explorer')
   })
 })
 
