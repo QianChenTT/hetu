@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 import path from 'node:path'
 import { parse, type Node } from 'acorn'
-import { simple } from 'acorn-walk'
+import { ancestor, simple } from 'acorn-walk'
 import { describe, expect, it } from 'vitest'
 import { shippedFiles } from './shipped-files.ts'
 
@@ -16,7 +16,9 @@ const repo = path.join(import.meta.dirname, '..', '..')
 const files = shippedFiles({ kinds: ['ts', 'js'], plugins: 'src' })
 
 // Empty is a catch block with no statement, binding or not, and a function passed to .catch with an empty body or
-// one returning undefined or void 0. A .catch returning null or a value hands its caller an answer and isn't counted
+// one returning undefined or void 0. One returning a literal such as null or false is empty too when the .catch is
+// thrown away, a statement of its own or under void, since nothing reads its answer (D-641). Awaited, returned or
+// assigned, it hands its caller an answer and isn't counted
 export type Swallow = { file: string, line: number, text: string, form: 'catch' | '.catch', why: string | null }
 
 type Comment = { text: string, start: number, end: number }
@@ -51,11 +53,25 @@ export function swallowsIn(file: string, source: string): Swallow[] {
     const line = lineOf(body.start)
     found.push({ file, line, text: lines[line - 1].trim(), form, why: whyFor(body) })
   }
+  // The literal a function answers, as its body or its one return
+  const literal = (body: Node) => {
+    if (body.type === 'Literal') return true
+    if (body.type !== 'BlockStatement') return false
+    const only = (body as Node & { body: Node[] }).body
+    return only.length === 1 && only[0].type === 'ReturnStatement' && (only[0] as Node & { argument: Node | null }).argument?.type === 'Literal'
+  }
+  // A .catch nothing reads: a statement of its own or under void
+  const thrownAway = (ancestors: readonly Node[]) => {
+    const parent = ancestors[ancestors.length - 2]
+    return parent?.type === 'ExpressionStatement' || (parent?.type === 'UnaryExpression' && (parent as Node & { operator: string }).operator === 'void')
+  }
   simple(program, {
     CatchClause(node) {
       if (node.body.body.length === 0) add(node.body, 'catch')
     },
-    CallExpression(node) {
+  })
+  ancestor(program, {
+    CallExpression(node, _state, ancestors) {
       const callee = node.callee
       if (callee.type !== 'MemberExpression' || callee.computed || callee.property.type !== 'Identifier' || callee.property.name !== 'catch') return
       const handler = node.arguments[0]
@@ -63,7 +79,7 @@ export function swallowsIn(file: string, source: string): Swallow[] {
       const body = handler.body
       const empty = body.type === 'BlockStatement' ? body.body.length === 0
         : (body.type === 'Identifier' && body.name === 'undefined') || (body.type === 'UnaryExpression' && body.operator === 'void' && body.argument.type === 'Literal')
-      if (empty) add(body, '.catch')
+      if (empty || (literal(body) && thrownAway(ancestors as Node[]))) add(body, '.catch')
     },
   })
   return found.sort((a, b) => a.line - b.line)
@@ -113,6 +129,9 @@ describe('the empty catch check itself', () => {
     ['the promise form returning void 0', 'void work().catch(() => void 0)'],
     ['the promise form with a function', 'void work().catch(function () {})'],
     ['the promise form with an async arrow', 'void work().catch(async () => {})'],
+    ['the promise form returning null, thrown away under void', 'void work().catch(() => null)'],
+    ['the promise form returning false, thrown away as a statement', 'work().catch(() => false)'],
+    ['the promise form with a function returning null, thrown away', 'void work().catch(function () { return null })'],
   ])('fails %s', (_name, source) => {
     expect(problems(source)).toEqual([none(1, source)])
   })
@@ -127,6 +146,7 @@ describe('the empty catch check itself', () => {
     ['inside the promise form\'s braces', `void work().catch(() => { /* ${why} */ })`],
     ['on the line directly above', `// ${why}\ntry { x() } catch {}`],
     ['on the line above the promise form', `// ${why}\nawait handle.close().catch(() => {})`],
+    ['on the line above a thrown away null', `// ${why}\nvoid work().catch(() => null)`],
     ['as two lines directly above', `// a listener that throws can't stop the change\n// the change already happened\ntry { x() } catch {}`],
     ['as a block comment directly above', `/* ${why} */\ntry { x() } catch {}`],
   ])('passes a why %s', (_name, source) => {
@@ -157,6 +177,10 @@ describe('the empty catch check itself', () => {
     'function read() {\n  try { return x() } catch { return null }\n}',
     "try { x() } catch { c.fault('flood-control', step) }",
     'const found = await lstat(file).catch(() => null)',
+    'const found = work().catch(() => null)',
+    'found = work().catch(() => false)',
+    'function read() {\n  return work().catch(() => null)\n}',
+    'await work().catch(() => null)',
     "void run().catch(() => this.note('fault', { plugin: id, step: 'copy' }))",
     "void run().catch((err: unknown) => console.error(`didn't load: ${String(err)}`))",
     'void run().then(() => {})',

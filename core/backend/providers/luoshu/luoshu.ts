@@ -295,7 +295,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
         await retried(() => rename(temp, target.absolute), target.absolute)
       }
     } catch (err) {
-      await rm(temp, { force: true }).catch(() => { /* A temp file left here is removed by the walk at open once it is old */ })
+      // A temp file left here is removed by the walk at open once it is old, the write's own error goes up
+      await rm(temp, { force: true }).catch(() => {})
       throw err
     }
     await syncDir(path.dirname(target.absolute))
@@ -347,7 +348,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     try {
       await act()
     } catch (err) {
-      if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => { /* A claim not taken back stays as an empty file at the note's name */ })
+      // A claim that can't be taken back stays as an empty file at the note's name, the act's error still goes up
+      if (await holds(target, mine)) await retried(() => unlink(target), target).catch(() => {})
       throw err
     }
   }
@@ -753,7 +755,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     clearTimeout(settling.get(relative))
     const timer = setTimeout(() => {
       settling.delete(relative)
-      void settled(relative).catch(() => { /* A look that throws publishes nothing, as settled does for a note it can't read */ })
+      // A look that throws publishes nothing, as settled itself does for a note it can't read
+      void settled(relative).catch(() => {})
     }, settleMs)
     timer.unref?.()
     settling.set(relative, timer)
@@ -804,7 +807,8 @@ export function createLuoshu(options: LuoshuOptions = {}): Luoshu {
     for (const file of left) {
       if (opening !== walked) return
       const found = await lstat(file).catch(() => null)
-      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => { /* Stays until the next open tries again, with the bytes of a note removed or written over since if it was a second name, in the human's own folder */ })
+      // Stays until the next open tries again, a second name keeping old note bytes in the human's own folder
+      if (found?.isFile() && Date.now() - found.mtimeMs > LEFT_MS) await unlink(file).catch(() => {})
     }
   }
 
