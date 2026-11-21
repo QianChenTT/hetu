@@ -121,11 +121,9 @@ function luoshuFor(platform: string) {
 const format = z.literal(FORMAT)
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
 // recording in off and never written again. watchdog in off is a core plugin that is gone and hidden-marks one that
-// became a first-party plugin, each read with the id dropped
-const switchesFields = {
-  ...switches.shape, recordNothing: z.boolean().optional(),
-  off: z.preprocess(value => (Array.isArray(value) ? value.filter(id => id !== 'watchdog' && id !== 'hidden-marks') : value), switches.shape.off),
-}
+// became a first-party plugin, each read with the id dropped, which boot records, and written back without it once
+const droppedOff = ['watchdog', 'hidden-marks'] as const
+const switchesFields = { ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, ...corePluginIds, ...droppedOff])) }
 const switchesFile = z.strictObject({ format, ...switchesFields })
 const pluginFile = z.strictObject({ format, ...plugin.shape })
 
@@ -156,7 +154,8 @@ export type Check = {
 // state is what to run with. After a failed check state differs from the files and must not be written back as is.
 // removedKnown is true only when removed came from a switches file that checked out. With that file absent, failed or
 // newer the defaults name no tombstone, so a first-party plugin with no entry may be one the human removed
-export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean }
+// dropped is the ids the switches named in off that are no core plugin any more
+export type Loaded = { state: SecurityState, suspect: boolean, checks: Check[], removedKnown: boolean, dropped: string[] }
 
 // Loosens nothing: every core module and core plugin on, empty lists, false switches and no raised limits
 export function defaultSwitches(): Switches {
@@ -232,10 +231,14 @@ function withoutFormat<T extends { format: typeof FORMAT }>(file: T): Omit<T, 'f
   return rest
 }
 
-// The switches as a file holds them, recordNothing from before recording was a core module read as recording in off
-function switchesOf(read: Switches & { recordNothing?: boolean }): Switches {
+// The switches as a file holds them, recordNothing from before recording was a core module read as recording in off,
+// with the ids off names that are no core plugin any more
+function switchesOf(read: Omit<Switches, 'off'> & { off: string[], recordNothing?: boolean }): { switches: Switches, dropped: string[] } {
   const { recordNothing, ...rest } = read
-  return recordNothing === true && !rest.off.includes('recording') ? { ...rest, off: [...rest.off, 'recording'] } : rest
+  const isDropped = (id: string) => (droppedOff as readonly string[]).includes(id)
+  const off = rest.off.filter(id => !isDropped(id)) as Switches['off']
+  if (recordNothing === true && !off.includes('recording')) off.push('recording')
+  return { switches: { ...rest, off }, dropped: rest.off.filter(isDropped) }
 }
 
 // What Finder and Explorer leave in a folder the user only looked at. Never read, so they can't stand in for an entry
@@ -349,8 +352,8 @@ export class StateStore {
     return this.serial(() => this.read())
   }
 
-  // Each file the last load read in format 2 written back in this format from the state that load gave, once. One
-  // whose write fails stays in format 2 and is read the same way at the next start. Gives back each file with the
+  // Each file the last load read in format 2 or with ids it dropped written back in this format from the state that
+  // load gave, once. One whose write fails stays as it was and is read the same way at the next start. Gives back each file with the
   // error code of a write that failed
   async upgrade(state: SecurityState): Promise<{ check: Check['check'], id?: string, error?: string }[]> {
     const done: { check: Check['check'], id?: string, error?: string }[] = []
@@ -382,8 +385,9 @@ export class StateStore {
     // A bad or missing switches file never touches the luoshu and a bad luoshu file never touches the switches
     const switchesRead = await this.checkFile(this.file('switches.json'), switchesFile, switchesOlder)
     checks.push({ check: 'switches', result: switchesRead.result })
-    if (switchesRead.older === true) this.older.push({ check: 'switches' })
-    if (switchesRead.value) state.switches = switchesOf(withoutFormat(switchesRead.value))
+    let dropped: string[] = []
+    if (switchesRead.value) ({ switches: state.switches, dropped } = switchesOf(withoutFormat(switchesRead.value)))
+    if (switchesRead.older === true || dropped.length > 0) this.older.push({ check: 'switches' })
 
     // Absent is a luoshu not picked yet
     const luoshuRead = await this.checkFile(this.file('luoshu.json'), this.luoshuFile, this.luoshuOlder)
@@ -395,7 +399,7 @@ export class StateStore {
 
     // A newer file is a newer build's state under an older build, which the banner shows, not tampering
     const suspect = checks.some(c => c.result !== 'ok' && c.result !== 'absent' && c.result !== 'newer')
-    return { state, suspect, checks, removedKnown: switchesRead.result === 'ok' }
+    return { state, suspect, checks, removedKnown: switchesRead.result === 'ok', dropped }
   }
 
   // Entries only. The plugin files check is the plugins manager's, which reads the bytes that run, so nothing here changes

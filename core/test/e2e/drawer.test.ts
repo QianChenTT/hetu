@@ -1,13 +1,14 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { cp, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { held, type Run, type Sitting, summary } from '../../../scripts/measure-bridge.ts'
 import type { Capability } from '../../api/capabilities.ts'
+import { INSTALL_LIST } from '../../api/install.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage } from './helpers.ts'
+import { entryFor, filesFor, firstPartyEntry, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { cleanup, editorPage, exited, launch, logged, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -143,7 +144,8 @@ export default definePlugin({
 `
 
 type Load = { granted: Capability[], manifest?: object }
-type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, loads?: Record<string, Load>, off?: string[] }
+// marksOff is hidden marks switched off by the human: the install's own copy in the plugin folder with its entry off
+type Setup = { notes: Record<string, string>, plugins?: Record<string, Capability[]>, loads?: Record<string, Load>, marksOff?: boolean }
 
 async function built(code: string): Promise<string> {
   const source = await temp()
@@ -157,7 +159,14 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   for (const [name, text] of Object.entries(setup.notes)) await writeFile(path.join(folder, name), text)
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), off: setup.off ?? [] })
+  await store.writeSwitches(defaultSwitches())
+  if (setup.marksOff === true) {
+    const install = path.join(repo, 'core', 'dist')
+    const listed = (JSON.parse(await readFile(path.join(install, INSTALL_LIST), 'utf8')) as { plugins: Record<string, { version: string, hash: string }> }).plugins['hidden-marks']!
+    await cp(path.join(install, 'plugins', 'hidden-marks'), path.join(dataDir, 'plugins', 'hidden-marks'), { recursive: true })
+    const granted: Capability[] = [{ type: 'ui.read', paths: ['**'] }, { type: 'ui.decoration' }]
+    await store.writePlugin('hidden-marks', firstPartyEntry(listed.hash, { version: listed.version, granted, enabled: false }))
+  }
   await store.writeLuoshu({ folder })
   const plugins: [string, Load, string][] = []
   if (setup.plugins !== undefined) {
@@ -261,7 +270,7 @@ describe('the drawer', () => {
   })
 
   it('shows the markers with hidden-marks switched off', async () => {
-    const { editor } = await started({ notes: { 'a.md': '**bold** text' }, off: ['hidden-marks'] })
+    const { editor } = await started({ notes: { 'a.md': '**bold** text' }, marksOff: true })
     await open(editor, 'a.md')
     await tick(500)
     expect(await shown(editor).innerText()).toBe('**bold** text')
@@ -316,7 +325,7 @@ describe('the drawer', () => {
   })
 
   it('takes outside text into a clean buffer without moving the cursor, adding to undo or marking it unsaved', async () => {
-    const { editor, folder } = await started({ notes: { 'a.md': 'line one\nline two\nline three' }, off: ['hidden-marks'] })
+    const { editor, folder } = await started({ notes: { 'a.md': 'line one\nline two\nline three' }, marksOff: true })
     await open(editor, 'a.md')
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+Home')
@@ -382,7 +391,7 @@ describe('the drawer', () => {
   it("lets a Backspace beside a plugin's hidden text take only the visible character before it, naming no plugin on the save", async () => {
     const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
     const text = 'Keep: do NOT pay Bob until the audit ends. Then sign.'
-    const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': text }, plugins: { painter: granted }, off: ['hidden-marks'] })
+    const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': text }, plugins: { painter: granted }, marksOff: true })
     await open(editor, 'a.md')
     const worker = await pluginWorker(app, 'painter')
     await until(async () => (await drive(worker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)

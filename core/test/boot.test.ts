@@ -272,6 +272,23 @@ describe('the luoshu file', () => {
   })
 })
 
+// Ids a switches file may name in off from an older build, a core plugin that is gone or that became a first-party
+// plugin: dropped, recorded and written back without them once
+describe('a switch-off of an id that is no core plugin any more', () => {
+  it('drops hidden-marks from off with a record naming it, writes the switches back without it and records nothing the next boot', async () => {
+    await stopped(await started())
+    await plant(stateFile('switches.json'), JSON.stringify({ format: 3, ...noSwitches, off: ['net', 'hidden-marks'] }))
+    const booted = await started()
+    expect(booted.suspect).toBe(false)
+    expect(booted.state.switches.off).toEqual(['net'])
+    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toEqual([{ event: 'boot.dropped', file: 'switches', id: 'hidden-marks' }])
+    expect(await readFile(stateFile('switches.json'), 'utf8')).not.toContain('hidden-marks')
+    await stopped(booted)
+    await started()
+    expect((await bootRecords()).filter(record => record.event === 'boot.dropped')).toHaveLength(1)
+  })
+})
+
 // A newer build wrote the state, so this build runs on defaults and never writes over what the newer one left
 describe('a state file in a newer format', () => {
   it('runs on the default switches, writes no default over the file and logs it, nothing suspect', async () => {
