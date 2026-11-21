@@ -69,7 +69,7 @@
       "hash": "5d9d206721bbfe46",
       "at": [
         "core/api/install.ts:19-24",
-        "core/api/manifest.ts:70-71"
+        "core/api/manifest.ts:76-77"
       ],
       "judged": "not yet"
     },
@@ -117,7 +117,7 @@
       "hash": "45618560e67450f5",
       "at": [
         "core/backend/boot/boot.ts:61-65",
-        "core/backend/boot/state.ts:181-184"
+        "core/backend/boot/state.ts:182-185"
       ],
       "judged": "not yet"
     },
@@ -176,7 +176,7 @@
       ],
       "hash": "153d478ed3c86d72",
       "at": [
-        "core/backend/boot/state.ts:181-186",
+        "core/backend/boot/state.ts:182-187",
         "core/backend/providers/luoshu/luoshu.ts:238-243"
       ],
       "judged": "not yet"
@@ -188,7 +188,7 @@
       ],
       "hash": "32d147def6696b83",
       "at": [
-        "core/backend/boot/state.ts:182-189",
+        "core/backend/boot/state.ts:183-190",
         "core/backend/providers/luoshu/luoshu.ts:239-246"
       ],
       "judged": "not yet"
@@ -200,7 +200,7 @@
       ],
       "hash": "2b6df8a1e9515d7f",
       "at": [
-        "core/backend/boot/state.ts:280-288",
+        "core/backend/boot/state.ts:281-289",
         "core/lib/event-log.ts:250-258"
       ],
       "judged": "not yet"
@@ -212,10 +212,58 @@
       ],
       "hash": "985d3fdd0da0c26f",
       "at": [
-        "core/backend/boot/state.ts:284-291",
+        "core/backend/boot/state.ts:285-292",
         "core/lib/event-log.ts:254-262"
       ],
       "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/lock/lock.ts",
+        "core/backend/providers/exec/exec.ts"
+      ],
+      "hash": "122a5fb9c12b2ea8",
+      "at": [
+        "core/backend/lock/lock.ts:9-14",
+        "core/backend/providers/exec/exec.ts:24-30"
+      ],
+      "judged": "the same meaning: the refusal helper every provider writes, one definition in lib for all five providers is its own change"
+    },
+    {
+      "files": [
+        "core/backend/lock/lock.ts",
+        "core/backend/providers/exec/exec.ts"
+      ],
+      "hash": "911be3f7847a0b79",
+      "at": [
+        "core/backend/lock/lock.ts:90-94",
+        "core/backend/providers/exec/exec.ts:174-177"
+      ],
+      "judged": "the shape of Provider.perform as the contract types it, not one meaning"
+    },
+    {
+      "files": [
+        "core/backend/lock/lock.ts",
+        "core/backend/providers/history/history.ts"
+      ],
+      "hash": "31d6d034603fb7d2",
+      "at": [
+        "core/backend/lock/lock.ts:75-79",
+        "core/backend/providers/history/history.ts:364-368"
+      ],
+      "judged": "the shape of Provider.prepare as the contract types it, not one meaning"
+    },
+    {
+      "files": [
+        "core/backend/lock/lock.ts",
+        "core/backend/providers/luoshu/luoshu.ts"
+      ],
+      "hash": "48916f43da798e6e",
+      "at": [
+        "core/backend/lock/lock.ts:76-81",
+        "core/backend/providers/luoshu/luoshu.ts:623-628"
+      ],
+      "judged": "the shape of Provider.prepare as the contract types it, not one meaning"
     },
     {
       "files": [
@@ -260,8 +308,8 @@
       ],
       "hash": "86eab647647beac4",
       "at": [
-        "core/backend/plugins-manager/base.ts:385-392",
-        "core/backend/plugins-manager/base.ts:420-424"
+        "core/backend/plugins-manager/base.ts:394-401",
+        "core/backend/plugins-manager/base.ts:429-433"
       ],
       "judged": "not yet"
     },
@@ -272,8 +320,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/changes.ts:147-151",
-        "core/backend/plugins-manager/changes.ts:455-459"
+        "core/backend/plugins-manager/changes.ts:150-154",
+        "core/backend/plugins-manager/changes.ts:459-463"
       ],
       "judged": "not yet"
     },
@@ -284,8 +332,8 @@
       ],
       "hash": "91353fb6522643e5",
       "at": [
-        "core/backend/plugins-manager/changes.ts:147-151",
-        "core/backend/plugins-manager/changes.ts:368-372"
+        "core/backend/plugins-manager/changes.ts:150-154",
+        "core/backend/plugins-manager/changes.ts:372-376"
       ],
       "judged": "not yet"
     },
@@ -334,18 +382,6 @@
       "at": [
         "core/backend/providers/exec/exec.ts:218-226",
         "core/backend/providers/history/history.ts:419-427"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/backend/providers/exec/exec.ts",
-        "core/backend/providers/history/history.ts"
-      ],
-      "hash": "ac66a44ef05a4bd9",
-      "at": [
-        "core/backend/providers/exec/exec.ts:146-150",
-        "core/backend/providers/history/history.ts:365-369"
       ],
       "judged": "not yet"
     },
