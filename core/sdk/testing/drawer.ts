@@ -1,4 +1,4 @@
-import { ChangeSet, Text } from '@codemirror/state'
+import { ChangeSet, type ChangeSpec, Text } from '@codemirror/state'
 import type { Capability } from '../../api/capabilities.ts'
 import type { BridgeEvent, Mark } from '../../api/editor.ts'
 import type { ViewSpec } from '../../api/manifest.ts'
@@ -12,7 +12,8 @@ import { holds } from './gate.ts'
 // manifest's ui items and scopes. Edits are taken only at the note's current version, with no rebase, and marks are
 // kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's editor draws only after the
 // plugin asked with editor.viewports and only of a note it reads, each range once. A command goes only when the plugin
-// bound a key to it, with the note, its version and the selection only when it reads the note
+// bound a key to it, with the note, its version and the selection only when it reads the note. A change the test
+// types goes to a plugin that reads the note as CodeMirror's change list
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -127,6 +128,17 @@ export class FakeDrawer {
       this.tell({ topic: 'editor.command', command, instance: null })
     }
     return true
+  }
+
+  // The human changed the note, its version on by one. A plugin that reads the note hears the change list unless told
+  // is false, as a change lost on the way
+  type(instance: string, changes: ChangeSpec, told = true): void {
+    const note = this.notes.get(instance)
+    if (note === undefined) throw new Error(`no note ${instance} is open`)
+    const set = ChangeSet.of(changes, note.text.length)
+    note.text = set.apply(note.text)
+    note.version++
+    if (told && this.reads(note.path)) this.tell({ topic: 'editor.changed', instance, version: note.version, changes: set.toJSON() })
   }
 
   text(instance: string): string | null {

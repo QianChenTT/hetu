@@ -517,7 +517,7 @@ describe("the fake drawer's ranges and commands", () => {
     await made.start(definePlugin({
       start(ctx) {
         given = ctx
-        for (const topic of ['opened', 'viewport', 'command'] as const) ctx.editor.on(topic, event => heard.push({ ...event }))
+        for (const topic of ['opened', 'viewport', 'command', 'changed'] as const) ctx.editor.on(topic, event => heard.push({ ...event }))
       },
     }))
     return { heard, ctx: given as unknown as PluginContext }
@@ -578,6 +578,25 @@ describe("the fake drawer's ranges and commands", () => {
     await ctx.editor.viewports(true)
     await until(() => ranges(heard).length === 2)
     expect(ranges(heard)).toEqual([range(instance, 0, 0, 11), range(instance, 0, 3, 11)])
+  })
+
+  it("tells a plugin that reads the note each change the human makes, as CodeMirror's change list at the note's new version, unless the change is lost", async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    const secret = drawer.openNote('secret/a.md', 'hidden')
+    drawer.type(instance, { from: 5, insert: '!' })
+    drawer.type(instance, { from: 0, to: 1, insert: 'H' }, false)
+    drawer.type(instance, [{ from: 0, insert: '>' }, { from: 6, insert: '?' }])
+    drawer.type(secret, { from: 0, insert: 'x' })
+    await until(() => heard.filter(event => event.topic === 'editor.changed').length === 2)
+    await tick(5)
+    expect(heard.filter(event => event.topic === 'editor.changed')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.changed', instance, version: 1, changes: [5, [0, '!']] },
+      { v: 1, kind: 'event', topic: 'editor.changed', instance, version: 3, changes: [[0, '>'], 6, [0, '?']] },
+    ])
+    expect(drawer.text(instance)).toBe('>Hello!?')
+    expect(await ctx.editor.read(instance)).toEqual({ text: '>Hello!?', version: 3, selection: [{ anchor: 0, head: 0 }] })
   })
 
   it('sends each range once to a plugin that asked twice', async () => {
