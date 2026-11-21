@@ -82,6 +82,8 @@ export class Notes {
   private readonly byPath = new Map<string, string>()
   private readonly opening = new Map<string, Promise<string>>()
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
+  // The notes whose last save answered locked and that no take over has started on since
+  private readonly locked = new Set<string>()
   private n = 0
 
   constructor(link: CoreLink, editors: Editors, tell: (notice: NoteNotice) => void, clock: () => number = () => Date.now()) {
@@ -192,6 +194,7 @@ export class Notes {
     const code = written.refusal?.code ?? 'failed'
     // A lock answers with no holder, so the notice names none
     if (code === 'stale' || code === 'locked') {
+      if (code === 'locked') this.locked.add(instance)
       await this.keep(note)
       this.tell({ kind: code, instance, path: note.path })
       return code
@@ -201,10 +204,11 @@ export class Notes {
   }
 
   // The human takes a locked note over: the window clears the lock on that note alone, whoever holds it, then saves
-  // again. No Confirm, the human is the policy
-  async takeOver(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused'> {
+  // again. No Confirm, the human is the policy. Once per locked answer, so a second click saves nothing on the old
+  // version and answers null
+  async takeOver(instance: string): Promise<'saved' | 'stale' | 'locked' | 'refused' | null> {
     const note = this.opened.get(instance)
-    if (note === undefined) return 'refused'
+    if (note === undefined || !this.locked.delete(instance)) return null
     const cleared = await this.link.call('lock.clear', { paths: [note.path] })
     if (!cleared.ok) {
       this.refused(note, cleared.refusal?.code ?? 'failed', cleared.refusal?.reason)

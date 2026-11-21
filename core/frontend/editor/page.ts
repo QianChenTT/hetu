@@ -440,7 +440,9 @@ function start(bridge: Bridge): void {
       reload: ['Reload', reload],
       'keep-mine': ['Keep mine', clear],
       dismiss: ['Dismiss', clear],
-      'take-over': ['Take over', () => void theNotes.takeOver(id).then(saved => settled(id, saved))],
+      'take-over': ['Take over', () => void theNotes.takeOver(id).then(saved => {
+        if (saved !== null) settled(id, saved)
+      })],
     }
     const shown = noteBar(notice)
     element('note-text').textContent = shown.text

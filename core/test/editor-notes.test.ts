@@ -25,7 +25,7 @@ function fakeEditors() {
 }
 
 // A luoshu of notes by path, each with its version, and the window's storage space. A read answers the path the note
-// is at, and links names other spellings that resolve to a note, as a junction or another case does. A write of a path
+// is at and links names other spellings that resolve to a note, as a junction or another case does. A write of a path
 // in locked answers locked until lock.clear frees it
 function started(files: Record<string, string> = { 'a.md': 'note a' }, links: Record<string, string> = {}) {
   const notes = new Map(Object.entries(files).map(([path, text]) => [path, { text, version: `v-${text}` }]))
@@ -302,6 +302,27 @@ describe('a locked note', () => {
     expect(files.get('a.md')?.text).toBe('mine')
     expect(notes.opened.get(instance)).toMatchObject({ dirty: false, version: 'v-mine' })
     expect(space.has(keyOf('a.md'))).toBe(false)
+  })
+
+  // A second click while the first runs or after it would save again on the old version and answer stale
+  it('takes a note over once per locked answer, a second take over doing nothing until the next locked answer', async () => {
+    const { notes, views, core, told, locked } = started()
+    locked.add('a.md')
+    const instance = await notes.open('a.md')
+    expect(await notes.takeOver(instance)).toBe(null)
+    views.type(instance, 'mine')
+    notes.changed(instance)
+    await notes.save(instance)
+    expect(await Promise.all([notes.takeOver(instance), notes.takeOver(instance)])).toEqual(['saved', null])
+    expect(await notes.takeOver(instance)).toBe(null)
+    expect(core.calls('lock.clear')).toHaveLength(1)
+    expect(core.calls('luoshu.write')).toHaveLength(2)
+    expect(told.map(notice => notice.kind)).toEqual(['locked'])
+    locked.add('a.md')
+    views.type(instance, 'mine again')
+    notes.changed(instance)
+    expect(await notes.save(instance)).toBe('locked')
+    expect(await notes.takeOver(instance)).toBe('saved')
   })
 
   it('tells the refusal and saves nothing more when the clear is refused', async () => {
