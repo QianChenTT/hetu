@@ -6,6 +6,8 @@
   "entries": { "worker": "dist/worker.js" },
   "capabilities": [
     { "type": "ui.read", "paths": ["**"] },
-    { "type": "ui.decoration" }
+    { "type": "ui.edit", "paths": ["**"] },
+    { "type": "ui.decoration" },
+    { "type": "ui.command" }
   ]
 }

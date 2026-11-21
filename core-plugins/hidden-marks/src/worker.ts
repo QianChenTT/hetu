@@ -1,6 +1,7 @@
 import { syntaxTreeAvailable } from '@codemirror/language'
 import { ChangeSet, EditorState } from '@codemirror/state'
 import { definePlugin, type PluginContext } from '@hetu/sdk'
+import { emptied, type Format, formatKeys, toggle } from './format.ts'
 import { hiddenMarks, keepNearest, markdownSupport, type Named } from './marks.ts'
 
 // Hidden marks as a worker behind the editor bridge. It keeps a copy of each open note's text from editor.read, in
@@ -56,18 +57,18 @@ export default definePlugin({
       return note
     }
 
-    // A change list onto the copy, false when it doesn't fit the text
-    const apply = (note: Note, changes: unknown): boolean => {
-      if (note.state === null) return false
+    // A change list onto the copy, null when it doesn't fit the text
+    const apply = (note: Note, changes: unknown): ChangeSet | null => {
+      if (note.state === null) return null
       let set: ChangeSet
       try {
         set = ChangeSet.fromJSON(changes)
         note.state = note.state.update({ changes: set }).state
       } catch {
-        return false
+        return null
       }
       note.groups = note.groups.map(kept => ({ ...kept, from: set.mapPos(kept.from, 1) }))
-      return true
+      return set
     }
 
     // A note closed meanwhile is forgotten. After any other refusal the range and the names stay and the next event
@@ -88,14 +89,19 @@ export default definePlugin({
       draw(instance, note)
     }
 
-    // A change at version onto the copy. A version missed reads the text again. False when it did
+    // A change at version onto the copy. A version missed reads the text again. False when it did. A run the change
+    // emptied loses its markers by an edit made for that version, which the drawer refuses once the human typed there
     const step = (instance: string, note: Note, version: number, changes: unknown): boolean => {
       if (version <= note.version) return true
-      if (version !== note.version + 1 || !apply(note, changes)) {
+      const before = note.state
+      const set = version === note.version + 1 ? apply(note, changes) : null
+      if (before === null || set === null) {
         void read(instance, note)
         return false
       }
       note.version = version
+      const gone = emptied(before, set)
+      if (gone !== null) void ctx.try(ctx.editor.edit(instance, version, gone.toJSON()))
       return true
     }
 
@@ -161,6 +167,17 @@ export default definePlugin({
       else if (note.heard.length < MAX_HEARD) note.heard.push({ version: event.version, changes: event.changes })
       else note.lost = true
     })
+    // A format key toggles its format at the selection it came with, on the copy at the key's version. A key while the
+    // copy is behind or reading goes unanswered
+    ctx.editor.on('command', event => {
+      if (event.topic !== 'editor.command' || event.instance === null || !Object.hasOwn(formatKeys, event.command)) return
+      const note = notes.get(event.instance)
+      const range = event.selection[0]
+      if (note === undefined || note.state === null || note.version !== event.version || range === undefined) return
+      const changes = toggle(note.state, event.command as Format, range)
+      if (changes !== null) void ctx.try(ctx.editor.edit(event.instance, event.version, changes.toJSON()))
+    })
+    await ctx.try(ctx.editor.bind(Object.entries(formatKeys).map(([command, key]) => ({ key, command }))))
     await ctx.try(ctx.editor.viewports(true))
   },
 })

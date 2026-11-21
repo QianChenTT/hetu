@@ -217,3 +217,59 @@ describe('hidden marks as notes open, close and the drawer refuses or lags', () 
     expect({ a: groupAt(drawer, instance, 3), b: groupAt(drawer, instance, 10) }).toEqual(named)
   })
 })
+
+describe('the format keys behind the bridge', () => {
+  it('binds each format key and toggles its format at the selection the key came with', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a word')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    expect(['bold', 'italic', 'strike', 'code', 'highlight'].every(format => drawer.command(format, 'n0'))).toBe(true)
+    drawer.command('bold', instance, [{ anchor: 2, head: 6 }])
+    await until(() => drawer.text(instance) === 'a **word**')
+  })
+
+  it('turns a run off with the cursor inside it, once its own edit came back as a change', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a word')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    drawer.command('bold', instance, [{ anchor: 2, head: 6 }])
+    await until(() => has(drawer, instance, strong(2, 10)))
+    drawer.command('bold', instance, [{ anchor: 6, head: 6 }])
+    await until(() => drawer.text(instance) === 'a word')
+  })
+})
+
+describe('a run the human empties', () => {
+  const settled = (drawer: FakeDrawer, instance: string, version: number) => drawer.versions.get(`${instance} marks`) === version
+
+  it('loses its markers once the last character between them goes, a run inside another with it', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a **b** c ***d*** e')
+    await until(() => has(drawer, instance, strong(2, 7)))
+    drawer.type(instance, { from: 4, to: 5 })
+    await until(() => drawer.text(instance) === 'a  c ***d*** e')
+    drawer.type(instance, { from: 8, to: 9 })
+    await until(() => drawer.text(instance) === 'a  c  e')
+  })
+
+  it('keeps its markers when the human typed between them before the edit came, the edit refused stale', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a **b** c')
+    await until(() => has(drawer, instance, strong(2, 7)))
+    drawer.type(instance, { from: 4, to: 5 })
+    drawer.type(instance, { from: 4, insert: 'x' })
+    await until(() => drawer.calls.includes('editor.edit') && settled(drawer, instance, 2))
+    await tick(20)
+    expect(drawer.text(instance)).toBe('a **x** c')
+  })
+
+  it('keeps markers the human typed with nothing between them', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', 'a ')
+    await until(() => drawer.versions.has(`${instance} marks`))
+    drawer.type(instance, { from: 2, insert: '****' })
+    await until(() => settled(drawer, instance, 1))
+    await tick(20)
+    expect(drawer.calls).not.toContain('editor.edit')
+  })
+})

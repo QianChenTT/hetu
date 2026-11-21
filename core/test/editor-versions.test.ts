@@ -131,6 +131,15 @@ describe('a stale edit', () => {
     expect(note.versions.rebase(edit, 0)).toBe('stale')
   })
 
+  it("answers stale for an emptied run's markers taken away after the human typed between them", () => {
+    const note = typing('a **b** c')
+    note.remove(4, 5)
+    const edit = ChangeSet.of([{ from: 2, to: 4 }, { from: 4, to: 6 }], note.text().length)
+    note.insert(4, 'x')
+    expect(note.versions.rebase(edit, 1)).toBe('stale')
+    expect(note.text()).toBe('a **x** c')
+  })
+
   it('answers stale when its length is not the length at its version', () => {
     const note = typing('abc')
     note.insert(0, 'x')
