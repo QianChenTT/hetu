@@ -39,49 +39,54 @@ export type Way = {
 
 export type Root = { principal: string, plugin: string | null, caller: Caller }
 
+// An open call. Every field is readonly, so a field written after creation is written only through its owner's setter,
+// by the README's table. A write outside the owner that has to stay casts to Writable with its why on the line
 export type Pending = {
-  callId: string
-  id: number
-  way: Way
-  answer: Send
-  caller: Caller
+  readonly callId: string
+  readonly id: number
+  readonly way: Way
+  readonly answer: Send
+  readonly caller: Caller
   // The parent's for a sub-call, the caller's own text otherwise
-  onBehalf: string | undefined
+  readonly onBehalf: string | undefined
   // The pair the call is judged for beside its caller: the chain's under a plugin root, none for the root call itself
-  pair: Pair | undefined
-  action: string
-  parent: Pending | null
-  root: Root
-  depth: number
-  deadline: number
+  readonly pair: Pair | undefined
+  readonly action: string
+  readonly parent: Pending | null
+  readonly root: Root
+  readonly depth: number
+  readonly deadline: number
   // The deadline on the clock no change of the wall clock moves. The steps check it before they hand a call on, since
   // a gate or a guard can run past it before the timer gets a turn
-  due: number
+  readonly due: number
   // Gives the call's room back to the flood control that took it, null when none did
-  release: (() => void) | null
-  children: Set<Pending>
-  callee: Way | null
-  timer: ReturnType<typeof setTimeout> | null
-  done: boolean
-  started: number
-  gate: PolicyJobState
-  scope: Scope | undefined
+  readonly release: (() => void) | null
+  readonly children: Set<Pending>
+  readonly callee: Way | null
+  readonly timer: ReturnType<typeof setTimeout> | null
+  readonly done: boolean
+  readonly started: number
+  readonly gate: PolicyJobState
+  readonly scope: Scope | undefined
   // The paths of a second ask the gate or a guard refused after the last one let on, which a call that ends refused
   // records in place of scope
-  refusedScope: Scope | undefined
-  coalesce: boolean
+  readonly refusedScope: Scope | undefined
+  readonly coalesce: boolean
   // The view of this call a part gets with an action that names it, made once, so a part can keep what it needs with it
-  live: LiveCall | null
+  readonly live: LiveCall | null
   // Aborts the signal the call carries into perform
-  ended: AbortController
+  readonly ended: AbortController
   // What the gate let on at the canonical stage, which a new grants snapshot judges again, null until then and for a
   // call with no power
-  judged: { kind: Extract<Kind, { kind: 'power' }>, scope: Scope } | null
+  readonly judged: { kind: Extract<Kind, { kind: 'power' }>, scope: Scope } | null
   // The code a call its grant no longer covers answers once its perform throws
-  revoked: RefusalCode | null
+  readonly revoked: RefusalCode | null
   // A provider's perform was called, so a revoke lets it end on its own rather than answering at once
-  performing: boolean
+  readonly performing: boolean
 }
+
+// T with only readonly dropped, for an owner's setter and a clash, which the cast check counts
+export type Writable<T> = { -readonly [K in keyof T]: T[K] }
 
 // Where a call goes, by the route the namespace table gives its namespace: the part serving it with the contract's entry
 // for the action, or a plugin. each: every call is an audit record of its own

@@ -3,7 +3,7 @@ import { MAX_TIMER_MS } from '../../api/limits.ts'
 import { frozen, measurePlain } from '../../api/plain.ts'
 import type { Call, LiveCall } from '../../api/policy-jobs.ts'
 import type { Charged, Held } from '../flood-control/header.ts'
-import { no, pairOf, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
+import { no, pairOf, refusalIn, type Context, type Send, type Way, type Root, type Pending, type Writable, type Kind, type No, type Outcome, type About, type Shaped } from './context.ts'
 
 // 4 ceiling and the life of an open call: its deadline, cancel, stop and finish, the one exit of every call, where
 // 11 record happens
@@ -64,8 +64,9 @@ export function admitted(c: Context,
   }
   way.made.set(pending.id, pending)
   parent?.children.add(pending)
-  pending.timer = setTimeout(() => stop(c, pending, 'timeout'), left)
-  pending.timer.unref?.()
+  const timer = setTimeout(() => stop(c, pending, 'timeout'), left)
+  timer.unref?.()
+  setTimer(pending, timer)
   return pending
 }
 
@@ -109,7 +110,7 @@ export function thrown(c: Context, pending: Pending, plugin: string | null, step
 // answers makes its own calls
 export function finish(c: Context, pending: Pending, outcome: Outcome): void {
   if (pending.done) return
-  pending.done = true
+  setDone(pending, true)
   for (const child of [...pending.children]) stop(c, child, 'stopped')
   if (pending.timer !== null) clearTimeout(pending.timer)
   pending.ended.abort(outcome.ok ? 'answered' : outcome.code)
@@ -182,22 +183,39 @@ export function revoke(c: Context, pending: Pending, code: RefusalCode): void {
     if (!child.done) pending.children.delete(child)
   }
   if (!pending.performing) return stop(c, pending, code)
-  pending.revoked = code
+  setRevoked(pending, code)
   pending.ended.abort(code)
 }
 
 // The view of a live call a part gets with an action that names it, the same object for the call's life. pair is the
 // one its chain carries, the root call's included, which its own judgements leave out
 export function liveOf(pending: Pending): LiveCall {
-  if (pending.live === null) {
-    const pair = pairOf(pending.root.caller, pending.onBehalf)
-    pending.live = frozen({
-      caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin, root: pending.root.caller,
-      ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
-      ...(pair !== undefined ? { pair } : {}),
-      open: () => !pending.done,
-    })
-  }
-  return pending.live
+  if (pending.live !== null) return pending.live
+  const pair = pairOf(pending.root.caller, pending.onBehalf)
+  const live: LiveCall = frozen({
+    caller: pending.caller, principal: pending.way.principal, plugin: pending.way.plugin, root: pending.root.caller,
+    ...(pending.onBehalf !== undefined ? { onBehalf: pending.onBehalf } : {}),
+    ...(pair !== undefined ? { pair } : {}),
+    open: () => !pending.done,
+  })
+  setLive(pending, live)
+  return live
+}
+
+// The fields of an open call this file owns, written only here
+function setTimer(pending: Pending, timer: Pending['timer']): void {
+  (pending as Writable<Pending>).timer = timer
+}
+
+function setDone(pending: Pending, done: boolean): void {
+  (pending as Writable<Pending>).done = done
+}
+
+function setRevoked(pending: Pending, revoked: Pending['revoked']): void {
+  (pending as Writable<Pending>).revoked = revoked
+}
+
+function setLive(pending: Pending, live: Pending['live']): void {
+  (pending as Writable<Pending>).live = live
 }
 

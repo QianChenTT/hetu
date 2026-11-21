@@ -6,7 +6,7 @@ import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
 import type { Paths } from './bus.ts'
-import { no, isOne, field, refusalIn, type Context, type Pending, type Kind, type No, type Outcome, type Asker } from './context.ts'
+import { no, isOne, field, refusalIn, type Context, type Pending, type Writable, type Kind, type No, type Outcome, type Asker } from './context.ts'
 import { stop, result, thrown, finish, callOf, revoke } from './open-calls.ts'
 
 // 5 precheck to 10 perform: the gate's answers, the guards and a provider's sequence from prepare to perform, with what
@@ -49,7 +49,7 @@ function gateOpen(c: Context): 'decide' | 'pass' | RefusalCode {
 // lets a call on. A throw refuses this one call and is recorded. An ask, at the canonical stage only, becomes
 // needs-confirm with the request the prompt holds, or not-granted with no prompt raised when prompt is false
 export function judge(c: Context, pending: Pending, stage: Access['stage'], capability: CapabilityType, scope: Scope, prompt = true): No | null {
-  if (stage === 'raw') pending.gate = c.policyJob('gate')
+  if (stage === 'raw') setGate(pending, c.policyJob('gate'))
   return decideFor(c, pending, stage, capability, scope, prompt)
 }
 
@@ -57,13 +57,8 @@ export function judge(c: Context, pending: Pending, stage: Access['stage'], capa
 // snapshot judges it again
 export function judgeDelivery(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'power' }>): No | null {
   const refused = judge(c, pending, 'canonical', kind.capability, kind.scope)
-  if (refused === null) pending.judged = { kind, scope: kind.scope }
+  if (refused === null) setJudged(pending, { kind, scope: kind.scope })
   return refused
-}
-
-// What the call is recorded as covering
-export function setScope(pending: Pending, scope: Scope | undefined): void {
-  pending.scope = scope
 }
 
 // A call's requirement and then its second one, when its action has one, on the paths at the places it names. A
@@ -212,7 +207,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   }
   if (pending.done) return release()
   if (prepared === null) return finish(c, pending, { ok: false, ...(refusalIn(given) ?? { code: 'failed' }) })
-  pending.scope = prepared.scope
+  setScope(pending, prepared.scope)
 
   // Nothing awaits from here to perform. Perform gets the frozen copy the gate and the guards judge, never the object
   // prepare gave, which could answer another path when read again
@@ -222,7 +217,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     return finish(c, pending, { ok: false, ...refused })
   }
   cleared = prepared
-  if (kind.kind === 'power') pending.judged = { kind, scope: prepared.scope }
+  if (kind.kind === 'power') setJudged(pending, { kind, scope: prepared.scope })
   // A gate or a guard that ran past the deadline leaves the call no time to act in
   if (c.clock() >= pending.due) {
     release()
@@ -230,7 +225,7 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
   }
 
   let performed: unknown
-  pending.performing = true
+  setPerforming(pending, true)
   try {
     performed = await provider.perform(call, prepared)
   } catch (err) {
@@ -273,12 +268,12 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
   const now: Prepared = frozen({ ...prepared, scope: { ...prepared.scope, paths: [...paths] } })
   const refused = judged(c, pending, kind, now, false)
   if (refused !== null) {
-    pending.refusedScope = now.scope
+    setRefusedScope(pending, now.scope)
     return refused
   }
-  pending.scope = now.scope
-  pending.refusedScope = undefined
-  pending.judged = { kind, scope: now.scope }
+  setScope(pending, now.scope)
+  setRefusedScope(pending, undefined)
+  setJudged(pending, { kind, scope: now.scope })
   return null
 }
 
@@ -398,3 +393,24 @@ function listingRefused(c: Context, pending: Pending): RefusalCode | null {
   return c.gateTime()?.spent(pending.way.principal, pending.way.plugin) === true ? 'throttled' : null
 }
 
+// The fields of an open call this file owns, written only here but scope, which route.ts sets on a subscribe (D-632)
+function setGate(pending: Pending, gate: Pending['gate']): void {
+  (pending as Writable<Pending>).gate = gate
+}
+
+// What the call is recorded as covering
+export function setScope(pending: Pending, scope: Pending['scope']): void {
+  (pending as Writable<Pending>).scope = scope
+}
+
+function setRefusedScope(pending: Pending, refusedScope: Pending['refusedScope']): void {
+  (pending as Writable<Pending>).refusedScope = refusedScope
+}
+
+function setJudged(pending: Pending, judged: Pending['judged']): void {
+  (pending as Writable<Pending>).judged = judged
+}
+
+function setPerforming(pending: Pending, performing: boolean): void {
+  (pending as Writable<Pending>).performing = performing
+}

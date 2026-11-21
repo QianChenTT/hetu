@@ -2,7 +2,7 @@ import type { EventAction } from '../../api/actions.ts'
 import { answer as answerSchema, calleeRefusalCodes, VERSION } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import type { Served } from './header.ts'
-import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Target, type Kind } from './context.ts'
+import { no, newId, isOne, keyOf, field, whoOf, topicsOf, joinTopics, type Context, type Send, type Way, type Pending, type Writable, type Target, type Kind } from './context.ts'
 import { charge, admitted, stop, result, thrown, finish, early, callOf, liveOf } from './open-calls.ts'
 import { judge, judgeAll, judgeDelivery, askable, provide, setScope } from './provide.ts'
 import { shape, floorOf } from './shape.ts'
@@ -90,7 +90,7 @@ function events(c: Context, pending: Pending, spec: EventAction, args: unknown, 
   if (standing.length > 0) {
     const live = topics.filter(topic => !standing.includes(topic))
     setScope(pending, live.length > 0 ? frozen({ topics: live }) : undefined)
-    if (!gated.some(topic => live.includes(topic))) pending.coalesce = true
+    if (!gated.some(topic => live.includes(topic))) setCoalesce(pending, true)
     // Counted per half, since the topics are the plugin's to pick
     c.coalesced('events.waiting', { ...whoOf(way.caller), ...topicsOf(standing) }, { by: whoOf(way.caller), join: joinTopics })
   }
@@ -135,7 +135,7 @@ function deliver(c: Context, pending: Pending, target: Extract<Target, { kind: '
     if (refused !== null) return finish(c, pending, { ok: false, ...refused })
   }
   if (c.clock() >= pending.due) return stop(c, pending, 'timeout')
-  pending.callee = callee
+  setCallee(pending, callee)
   callee.delivered.set(pending.callId, pending)
   callee.send({
     v: VERSION, kind: 'call', callId: pending.callId, caller: pending.caller, action: pending.action, args,
@@ -159,3 +159,11 @@ export function answered(c: Context, way: Way, message: unknown): void {
   result(c, pending, way.plugin, parsed.data.result)
 }
 
+// The fields of an open call this file owns, written only here
+function setCallee(pending: Pending, callee: Pending['callee']): void {
+  (pending as Writable<Pending>).callee = callee
+}
+
+function setCoalesce(pending: Pending, coalesce: boolean): void {
+  (pending as Writable<Pending>).coalesce = coalesce
+}
