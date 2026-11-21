@@ -298,12 +298,15 @@ export class Context {
   }
 
   // The gate module's count of the gate's time: throttled once the caller spent its second, null with time left or no
-  // count handed in. A count that throws crashed in use, so it is recorded and refuses as the gate down (D-645)
+  // count handed in. A count that throws or answers other than yes or no crashed in use, so it is recorded and refuses
+  // as the gate down (D-645)
   gateSpent(principal: string, plugin: string | null): RefusalCode | null {
     const time = this.options.gateTime
     if (time === undefined) return null
     try {
-      return time.spent(principal, plugin) === true ? 'throttled' : null
+      const spent: unknown = time.spent(principal, plugin)
+      if (typeof spent !== 'boolean') throw new Error('a count that answers neither yes nor no')
+      return spent ? 'throttled' : null
     } catch {
       this.fault('gate', 'spent')
       return this.down('policy-down')
@@ -314,8 +317,9 @@ export class Context {
     try {
       this.options.gateTime?.charge(principal, ms)
     } catch {
-      // This call's gate time goes uncounted. The throttle only spreads the gate's time and the gate already judged
-      // the call
+      // This call's gate time goes uncounted and the call still answers, since whether it should refuse isn't decided.
+      // A charge that always throws turns the throttle off for good, so each throw is recorded
+      this.fault('gate', 'charge')
     }
   }
 
