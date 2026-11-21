@@ -9,11 +9,11 @@ import { holds } from './gate.ts'
 
 // An editor page's drawer in memory, for a plugin's tests: the plugin's views and skeleton applied as the drawer would,
 // notes the test opens served through the editor bridge, and events the test sends. It holds the plugin to its
-// manifest's ui items and scopes. Edits are taken only at the note's current version, with no rebase, and marks are
-// kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's editor draws only after the
-// plugin asked with editor.viewports and only of a note it reads, each range once. A command goes only when the plugin
-// bound a key to it, with the note, its version and the selection only when it reads the note. A change the test
-// types goes to a plugin that reads the note as CodeMirror's change list
+// manifest's ui items and scopes. Edits are taken only at the note's current version with no rebase and told back as
+// the note's next change. Marks are kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's
+// editor draws only after the plugin asked with editor.viewports and only of a note it reads, each range once. A
+// command goes only when the plugin bound a key to it, with the note, its version and the selection only when it reads
+// the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -289,6 +289,7 @@ export class FakeDrawer {
           throw new Refusal('invalid')
         }
         held.version++
+        this.tell({ topic: 'editor.changed', instance: call.args.instance, version: held.version, changes: changes.toJSON() })
         return { version: held.version }
       }
       case 'editor.decorate': {
