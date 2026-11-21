@@ -8,7 +8,6 @@ import {
   utilityIds, type CoreModuleId, type GuardableAction,
 } from '../../api/ids.ts'
 import { FIRST_PARTY_SIGNER, type InstallList, type Listed } from '../../api/install.ts'
-import { frozen } from '../../api/plain.ts'
 import { capabilityKey, type Capability } from '../../api/capabilities.ts'
 import type { HumanLimits, Opening, PluginInfo, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
@@ -117,8 +116,8 @@ export type Known = {
 
 export type Staged = { dir: string, read: Read }
 
-// The order core plugins start in, each after the core modules. A requirement still starts before its dependent
-export const bootOrder = frozen(['net', 'mcp-http-handler'] as const)
+// The order core plugins start in, the order ids.ts lists them. A requirement still starts before its dependent
+export const bootOrder = corePluginIds
 
 export const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at

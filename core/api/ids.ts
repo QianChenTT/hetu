@@ -129,8 +129,9 @@ export const coreModuleIds = frozen([
 ] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built
-export const corePluginIds = frozen(['mcp-http-handler', 'net'] as const)
+// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built.
+// They start in this order, each after the core modules
+export const corePluginIds = frozen(['net', 'mcp-http-handler'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half
