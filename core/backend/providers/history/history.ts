@@ -293,6 +293,7 @@ export function createHistory(options: HistoryOptions = {}): History {
       return { commit: made }
     } catch (err) {
       // The index back to the last commit, so a call that failed leaves nothing for the next one to commit
+      // An index left as it is here starts over at the next commit's own read-tree, the call's error still goes up
       await run(repo, parent === null ? ['read-tree', '--empty'] : ['read-tree', parent]).catch(() => {})
       throw err
     }

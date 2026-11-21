@@ -47,7 +47,9 @@ export class CoreRecordLane {
     this.failing = failing
     try {
       this.noticed()
-    } catch {}
+    } catch {
+      // Windows miss this turn of the core record log's health and read it with core.status next time
+    }
   }
 
   // Records waiting for the log and records dropped since the backlog last emptied

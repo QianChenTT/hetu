@@ -167,7 +167,9 @@ export class AuditWriter {
       this.source.ack(last)
       try {
         this.refused(batch.length)
-      } catch {}
+      } catch {
+        // The batch is already let go, only the record counting it is lost
+      }
       return 'dropped'
     }
     this.held = null

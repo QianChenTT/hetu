@@ -331,7 +331,9 @@ export class CoreModules implements Holder {
     try {
       const ms = this.handed?.readyMs(id)
       if (typeof ms === 'number' && Number.isSafeInteger(ms) && ms > 0) return Math.min(ms, MAX_TIMER_MS)
-    } catch {}
+    } catch {
+      // A readyMs the plugins manager can't give leaves the default below
+    }
     return defaultLimits.readyMs
   }
 
@@ -397,7 +399,9 @@ export class CoreModules implements Holder {
       const reason = now === 'failed' ? this.reason(id) : change === 'stopped' ? (now === 'off' ? 'off' : why) : null
       try {
         this.handed?.changed(id, change, reason)
-      } catch {}
+      } catch {
+        // A listener that throws can't stop the change, the change already happened
+      }
     }
     return any
   }
@@ -405,7 +409,9 @@ export class CoreModules implements Holder {
   private fault(id: CoreModuleId, step: string): void {
     try {
       this.handed?.fault(id, step)
-    } catch {}
+    } catch {
+      // Only the record of the fault is lost, what failed was already handled where it failed
+    }
   }
 }
 
@@ -416,6 +422,8 @@ export function luoshuPublish(publish: (topic: string, path: string) => void): (
     if (!(luoshuTopics as readonly string[]).includes(topic)) return
     try {
       publish(topic, path)
-    } catch {}
+    } catch {
+      // The note is already written, a publish that throws loses its event and never fails the write
+    }
   }
 }

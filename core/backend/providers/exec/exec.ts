@@ -90,7 +90,9 @@ function namedBy(arg: string): string[] {
       const url = new URL(text)
       const local = decodeURIComponent(process.platform === 'win32' ? url.pathname.replace(/^\/(?=[A-Za-z]:)/, '') : url.pathname)
       found.push(url.hostname === '' ? path.normalize(local) : `//${url.hostname}${url.pathname}`)
-    } catch {}
+    } catch {
+      // A file URL that won't parse or decode adds no path here, the argument is still checked as itself
+    }
   }
   return found
 }
@@ -203,6 +205,7 @@ export function createExec(options: ExecOptions = {}): Exec {
         const left = (running.get(id) ?? 1) - 1
         if (left <= 0) running.delete(id)
         else running.set(id, left)
+        // A working folder that can't go now is swept with the other run- folders at the next start
         await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
       }
     },
@@ -227,6 +230,7 @@ export function createExec(options: ExecOptions = {}): Exec {
       await mkdir(dir, { recursive: true })
       // Working folders a crash left mid-run
       for (const name of await readdir(dir)) {
+        // A folder that can't go now is tried again at the next start, each run makes a new one
         if (name.startsWith('run-')) await rm(path.join(dir, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {})
       }
       stopping = new AbortController()
