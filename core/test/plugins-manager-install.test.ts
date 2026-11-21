@@ -260,6 +260,16 @@ describe('core plugins', () => {
     expect(reasonOf(pluginsManager, 'outline')).toBe('requires')
   })
 
+  // The lock guards and serves lock.*, so a plugin that calls lock.set may start after it as one starts after the luoshu
+  it('starts a plugin that requires the lock, a security control serving a provider namespace, once the lock serves', async () => {
+    const { pluginsManager, runtime } = await harness({
+      folder: { leases: filesFor(workerManifest('leases', { requires: ['lock'] })) }, entries: { leases: signed() },
+    })
+    await pluginsManager.start()
+    expect(stateOf(pluginsManager, 'leases')).toBe('ready')
+    expect(runtime.half('leases').got('init')[0]).toMatchObject({ deps: { lock: 'ready' } })
+  })
+
   it('reads a core module\'s state as its policy job state and none for an id that is no module', async () => {
     const { pluginsManager } = await harness({ switches: { off: ['grant-risk-classifier'] } })
     await pluginsManager.start()

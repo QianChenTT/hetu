@@ -364,12 +364,13 @@ ${capabilityKey(change.capability)}`)
     return isModule(id) || isOne(Object.values(providers), id) || this.expected().includes(id)
   }
 
-  // A security control is required by nothing and a core module requires nothing in the graph. Core plugins require only
-  // core plugins and core modules
+  // A security control serving no provider namespace is required by nothing, the lock serving lock.* may be, as the
+  // luoshu is. A core module requires nothing in the graph. Core plugins require only core plugins and core modules
   protected requiresProblem(k: Known): boolean {
     const requires = k.read.manifest?.requires ?? []
     if (isModule(k.id) && requires.length > 0) return true
-    return requires.some(id => isSecurityControl(id) || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
+    return requires.some(id => (isSecurityControl(id) && !isOne(Object.values(providers), id))
+      || (k.from === 'install' && !isOne(corePluginIds, id) && !isModule(id)))
   }
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
