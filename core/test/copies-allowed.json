@@ -177,8 +177,8 @@
       ],
       "hash": "01b5576902e6b567",
       "at": [
-        "core/backend/boot/boot.ts:95-99",
-        "core/lib/event-log.ts:401-406"
+        "core/backend/boot/boot.ts:97-101",
+        "core/lib/event-log.ts:404-409"
       ],
       "judged": "not yet"
     },
@@ -187,10 +187,10 @@
         "core/backend/boot/boot.ts",
         "core/lib/event-log.ts"
       ],
-      "hash": "40393d23592acfa8",
+      "hash": "2f88e7a1d57a363c",
       "at": [
-        "core/backend/boot/boot.ts:94-98",
-        "core/lib/event-log.ts:401-404"
+        "core/backend/boot/boot.ts:95-100",
+        "core/lib/event-log.ts:404-407"
       ],
       "judged": "not yet"
     },
@@ -235,10 +235,10 @@
         "core/backend/boot/state.ts",
         "core/lib/event-log.ts"
       ],
-      "hash": "2b6df8a1e9515d7f",
+      "hash": "25b580ba531dbd29",
       "at": [
-        "core/backend/boot/state.ts:290-298",
-        "core/lib/event-log.ts:250-258"
+        "core/backend/boot/state.ts:290-299",
+        "core/lib/event-log.ts:250-259"
       ],
       "judged": "not yet"
     },
@@ -247,10 +247,10 @@
         "core/backend/boot/state.ts",
         "core/lib/event-log.ts"
       ],
-      "hash": "985d3fdd0da0c26f",
+      "hash": "34de6a4af15102f1",
       "at": [
-        "core/backend/boot/state.ts:294-301",
-        "core/lib/event-log.ts:254-262"
+        "core/backend/boot/state.ts:294-302",
+        "core/lib/event-log.ts:254-263"
       ],
       "judged": "not yet"
     },
@@ -274,7 +274,7 @@
       "hash": "911be3f7847a0b79",
       "at": [
         "core/backend/lock/lock.ts:97-101",
-        "core/backend/providers/exec/exec.ts:174-177"
+        "core/backend/providers/exec/exec.ts:176-179"
       ],
       "judged": "not yet"
     },
@@ -286,7 +286,7 @@
       "hash": "31d6d034603fb7d2",
       "at": [
         "core/backend/lock/lock.ts:78-82",
-        "core/backend/providers/history/history.ts:364-368"
+        "core/backend/providers/history/history.ts:365-369"
       ],
       "judged": "not yet"
     },
@@ -345,8 +345,8 @@
       ],
       "hash": "86eab647647beac4",
       "at": [
-        "core/backend/plugins-manager/base.ts:395-402",
-        "core/backend/plugins-manager/base.ts:430-434"
+        "core/backend/plugins-manager/base.ts:398-405",
+        "core/backend/plugins-manager/base.ts:433-437"
       ],
       "judged": "not yet"
     },
@@ -357,8 +357,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/changes.ts:152-156",
-        "core/backend/plugins-manager/changes.ts:461-465"
+        "core/backend/plugins-manager/changes.ts:154-158",
+        "core/backend/plugins-manager/changes.ts:464-468"
       ],
       "judged": "not yet"
     },
@@ -369,8 +369,8 @@
       ],
       "hash": "91353fb6522643e5",
       "at": [
-        "core/backend/plugins-manager/changes.ts:152-156",
-        "core/backend/plugins-manager/changes.ts:374-378"
+        "core/backend/plugins-manager/changes.ts:154-158",
+        "core/backend/plugins-manager/changes.ts:376-380"
       ],
       "judged": "not yet"
     },
@@ -382,7 +382,7 @@
       "hash": "2c2066769d83be6a",
       "at": [
         "core/backend/plugins-manager/changes.ts:29-34",
-        "core/backend/plugins-manager/requests.ts:200-207"
+        "core/backend/plugins-manager/requests.ts:202-209"
       ],
       "judged": "not yet"
     },
@@ -393,8 +393,8 @@
       ],
       "hash": "0945904caf56f734",
       "at": [
-        "core/backend/plugins-manager/requests.ts:206-210",
-        "core/backend/plugins-manager/requests.ts:280-284"
+        "core/backend/plugins-manager/requests.ts:208-212",
+        "core/backend/plugins-manager/requests.ts:286-290"
       ],
       "judged": "not yet"
     },
@@ -405,8 +405,8 @@
       ],
       "hash": "53ae8bfbeb5ba176",
       "at": [
-        "core/backend/plugins-manager/requests.ts:194-198",
-        "core/backend/plugins-manager/requests.ts:274-280"
+        "core/backend/plugins-manager/requests.ts:196-200",
+        "core/backend/plugins-manager/requests.ts:280-286"
       ],
       "judged": "not yet"
     },
@@ -417,8 +417,8 @@
       ],
       "hash": "53ef9d2c8148efc5",
       "at": [
-        "core/backend/providers/exec/exec.ts:218-226",
-        "core/backend/providers/history/history.ts:419-427"
+        "core/backend/providers/exec/exec.ts:221-229",
+        "core/backend/providers/history/history.ts:420-428"
       ],
       "judged": "not yet"
     },
@@ -429,8 +429,8 @@
       ],
       "hash": "b8ffacd3a37a55e5",
       "at": [
-        "core/backend/providers/exec/exec.ts:232-237",
-        "core/backend/providers/history/history.ts:431-436"
+        "core/backend/providers/exec/exec.ts:236-241",
+        "core/backend/providers/history/history.ts:432-437"
       ],
       "judged": "not yet"
     },
@@ -442,7 +442,7 @@
       "hash": "0950428060ffbe31",
       "at": [
         "core/backend/providers/history/history.ts:236-240",
-        "core/backend/providers/history/history.ts:326-329"
+        "core/backend/providers/history/history.ts:327-330"
       ],
       "judged": "not yet"
     },
@@ -526,7 +526,7 @@
       "hash": "d2126f632b2aa031",
       "at": [
         "core/backend/providers/storage/store.ts:148-152",
-        "core/lib/event-log.ts:502-506"
+        "core/lib/event-log.ts:505-509"
       ],
       "judged": "not yet"
     },
@@ -694,7 +694,7 @@
       "hash": "3f113f71e5ec0a2f",
       "at": [
         "core/frontend/editor/link.ts:61-67",
-        "core/sdk/editor.ts:160-164"
+        "core/sdk/editor.ts:163-167"
       ],
       "judged": "not yet"
     },
@@ -706,7 +706,7 @@
       "hash": "57275e794bfc4997",
       "at": [
         "core/frontend/editor/menu.ts:49-55",
-        "core/frontend/editor/page.ts:37-43"
+        "core/frontend/editor/page.ts:38-44"
       ],
       "judged": "not yet"
     },
@@ -717,7 +717,7 @@
       ],
       "hash": "2bd770ef0f36c627",
       "at": [
-        "core/frontend/editor/page.ts:689-695",
+        "core/frontend/editor/page.ts:676-682",
         "core/frontend/workers/page.ts:19-25"
       ],
       "judged": "not yet"
@@ -729,7 +729,7 @@
       ],
       "hash": "5e1bc8266ba8a937",
       "at": [
-        "core/frontend/editor/page.ts:689-695",
+        "core/frontend/editor/page.ts:676-682",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"
@@ -766,7 +766,7 @@
       "hash": "2981d94d33dbe4d6",
       "at": [
         "core/frontend/trusted/view.ts:338-343",
-        "core/sdk/editor.ts:149-154"
+        "core/sdk/editor.ts:152-157"
       ],
       "judged": "not yet"
     },
@@ -826,7 +826,7 @@
       "hash": "39ee7ea38f19d785",
       "at": [
         "core/sdk/editor.ts:19-23",
-        "core/sdk/editor.ts:109-109"
+        "core/sdk/editor.ts:112-112"
       ],
       "judged": "not yet"
     },
@@ -850,7 +850,7 @@
       "hash": "2d0d1c973c8b1292",
       "at": [
         "core/sdk/plugin.ts:77-82",
-        "core/sdk/transport.ts:49-54"
+        "core/sdk/transport.ts:55-60"
       ],
       "judged": "not yet"
     }
