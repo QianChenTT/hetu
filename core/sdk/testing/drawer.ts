@@ -148,6 +148,7 @@ export class FakeDrawer {
   type(instance: string, changes: ChangeSpec, told = true): void {
     const note = this.notes.get(instance)
     if (note === undefined) throw new Error(`no note ${instance} is open`)
+    this.answering = null
     const set = ChangeSet.of(changes, note.text.length)
     note.text = set.apply(note.text)
     note.version++

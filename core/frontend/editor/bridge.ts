@@ -58,6 +58,8 @@ type Drawn = { version: number, from: number, to: number, stamp: number }
 
 // The nodes one plugin's draws may have the drawer look at in a second, past which a draw answers throttled
 export const NODES_PER_SECOND = 200_000
+// How long after the human's key a plugin's edit may still place the cursor in answer to it
+export const ANSWER_MS = 1000
 
 const noHooks: UiHooks = { drawn() {}, changed() {}, post: () => 'unavailable', open: async () => {} }
 const noSettings = (): SettingsValue => ({ layout: null, plain: false, theme: null, favorites: [], keys: {} })
@@ -79,9 +81,10 @@ type Connection = {
   readonly told: Set<string>
   // What it had the drawer do in the second that started at start
   spent: { start: number, marks: number, chars: number, nodes: number }
-  // The note and version of the last command the human invoked through its binding, which one edit may place the
-  // cursor in answer to
-  answering: { instance: string, version: number } | null
+  // The last command the human invoked through its binding, which one edit may place the cursor in answer to: its note,
+  // version and selection and when the key came. Any other key, a binding changed, a refused edit with a cursor and
+  // ANSWER_MS gone close it, as a move of the caret or a change does at the edit
+  answering: { instance: string, version: number, selection: string, at: number } | null
 }
 
 class Refusal {
@@ -225,6 +228,7 @@ export class Drawer {
   key(instance: string | null, key: string): boolean {
     if (RESERVED_KEYS.includes(key)) return false
     const open = instance === null ? undefined : this.find(instance)
+    for (const conn of this.connections.values()) conn.answering = null
     const bound = [...this.connections.values()].filter(conn => conn.bindings.has(key))
     const picked = this.settings().keys[key]
     const owner = bound.length === 1 ? bound[0] : bound.find(conn => conn.plugin === picked)
@@ -233,7 +237,7 @@ export class Drawer {
       const command = conn.bindings.get(key) as string
       // Where the human was when the key came, sent once the core says the plugin reads the note
       const at = open === undefined ? undefined : { version: open.versions.version, selection: open.selection() }
-      conn.answering = open === undefined || at === undefined ? null : { instance: open.id, version: at.version }
+      conn.answering = open === undefined || at === undefined ? null : { instance: open.id, version: at.version, selection: JSON.stringify(at.selection), at: this.clock() }
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
         if (!this.live(conn)) return
@@ -284,7 +288,7 @@ export class Drawer {
     const held = await this.reachOf(conn.plugin)
     if (!this.live(conn)) return
     this.ui.held(conn.plugin, held.verbs)
-    if (!held.verbs.includes('ui.command')) conn.bindings = new Map()
+    if (!held.verbs.includes('ui.command')) [conn.bindings, conn.answering] = [new Map(), null]
     if (!held.verbs.includes('ui.keys')) conn.keys = false
     for (const id of [...conn.marked]) {
       const instance = this.find(id)
@@ -398,6 +402,7 @@ export class Drawer {
   private async serve(conn: Connection, text: string): Promise<void> {
     const call = parseDrawerCall(text)
     if (call === null) {
+      conn.answering = null
       const id = idOf(text)
       if (id !== null) this.send(conn, refused(id, 'invalid'))
       return
@@ -474,6 +479,9 @@ export class Drawer {
         return { version: instance.versions.version }
       }
       case 'editor.edit': {
+        const { selection } = call.args
+        const asked = selection === undefined ? null : conn.answering
+        if (selection !== undefined) conn.answering = null
         const instance = await this.reached(plugin, call.args.instance, needs.edit)
         let changes: ChangeSet
         try {
@@ -481,12 +489,11 @@ export class Drawer {
         } catch {
           throw new Refusal('invalid')
         }
-        const { selection } = call.args
         if (selection !== undefined) {
-          const asked = conn.answering
-          conn.answering = null
-          if (asked?.instance !== instance.id || asked.version !== call.args.version) throw new Refusal('not-granted')
+          const late = asked === null || this.clock() - asked.at > ANSWER_MS
+          if (late || asked.instance !== instance.id || asked.version !== call.args.version) throw new Refusal('not-granted')
           if (instance.versions.version !== call.args.version) throw new Refusal('stale')
+          if (JSON.stringify(instance.selection()) !== asked.selection) throw new Refusal('not-granted')
         }
         const rebased = instance.versions.rebase(changes, call.args.version)
         if (rebased === 'stale') throw new Refusal('stale')
@@ -499,6 +506,7 @@ export class Drawer {
       case 'editor.bind': {
         const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
         if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')
+        for (const each of this.connections.values()) each.answering = null
         conn.bindings = new Map(bindings)
         return null
       }
