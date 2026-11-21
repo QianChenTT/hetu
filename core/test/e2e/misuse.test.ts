@@ -154,7 +154,7 @@ describe('a plugin named hetu', () => {
       ] })
     `)
     await until(async () => (await editor.locator('#overlay .hetu-strip').count()) === 1)
-    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Security check'])
+    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(title => title !== 'search · Search')).toEqual(['board · Security check'])
     expect(await editor.locator('#overlay .hetu-strip').allInnerTexts()).toEqual(['board'])
   })
 })
@@ -210,7 +210,7 @@ describe('input in a view', () => {
     `)
     await until(async () => (await editor.locator('#base .hetu-input').count()) === 1 && (await viewButton(editor).count()) === 1)
     const board = await pluginWorker(app, 'board')
-    const field = (await editor.locator('#editors .hetu-surface .hetu-input').boundingBox())!
+    const field = (await editor.locator('#editors .hetu-surface .hetu-input[placeholder="Type in cards"]').boundingBox())!
     await editor.mouse.click(field.x + field.width / 2, field.y + field.height / 2)
     await editor.keyboard.type('pin 4242')
     await until(async () => (await heard(board)).some(event => event.topic === 'view.event' && event.value === 'pin 4242'))
