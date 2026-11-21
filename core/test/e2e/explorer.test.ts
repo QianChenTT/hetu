@@ -50,9 +50,9 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   return { app, editor, dataDir, folder }
 }
 
-// The explorer's view: the one surface holding a list, which no other view here draws. Its New note button gives way
+// The explorer's view: the surface holding a list that isn't search's view, which lists its hits too. Its New note
 // to an input while a name is typed
-const explorer = (editor: Page) => editor.locator('#editors .hetu-surface', { has: editor.locator('.hetu-list') })
+const explorer = (editor: Page) => editor.locator('#editors .hetu-surface', { has: editor.locator('.hetu-list'), hasNot: editor.getByPlaceholder('Words to find') })
 const row = (view: Locator, text: string) => view.getByRole('button', { name: text, exact: true })
 const status = (view: Locator) => view.innerText()
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')

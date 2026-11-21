@@ -1,13 +1,13 @@
 import type { StoppedMode } from '../../api/actions.ts'
 import { withdrawnWith } from '../../api/changes.ts'
 import { VERSION, type Caller } from '../../api/envelope.ts'
-import { coreModuleIds } from '../../api/ids.ts'
+import { coreModuleIds, failSafeControls } from '../../api/ids.ts'
 import { bindFailures, type DepState, type Init, type StopReason } from '../../api/lifecycle.ts'
 import { API_VERSION } from '../../api/manifest.ts'
 import { frozen } from '../../api/plain.ts'
 import type { PluginState } from '../../api/policy-jobs.ts'
 import { moduleRequires } from '../modules/header.ts'
-import { clear, clearFailedOnce, writeFailedOnce } from './folders.ts'
+import { clear, clearFailedOnce, clearStartMarker, writeFailedOnce } from './folders.ts'
 import { plan, type Node, type Verdict } from './graph.ts'
 import type { Beating } from '../heartbeat/header.ts'
 import type { Failure } from '../runtime/header.ts'
@@ -112,6 +112,12 @@ export abstract class PluginsLifecycle extends PluginsBase {
   async cleanQuit(): Promise<void> {
     while (this.markerWork.size > 0) await Promise.all(this.markerWork)
     await clearFailedOnce(this.dataDir).catch(() => {})
+  }
+
+  // The human chose Try again: every start marker goes, so the next launch starts as usual and a start that hangs again
+  // leaves a new one
+  async triedAgain(): Promise<void> {
+    for (const id of failSafeControls(action => this.guardsFor(action))) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
   }
 
   // Resolves once nothing is starting or stopping and nothing more can start

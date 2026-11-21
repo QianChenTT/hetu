@@ -361,8 +361,8 @@ export default definePlugin({
     await until(() => workers.workers().length === 1)
     const worker = workers.workers()[0] as PageWorker
     const prefix = 'https://claude.ai/oauth/'
-    const long = `${prefix}${'x'.repeat(255 - prefix.length)}#7`
-    const fields = [long, 'client#1', 'cIient#1']
+    const long = `${prefix}${'x'.repeat(255 - prefix.length)}-7`
+    const fields = [long, 'client-1', 'cIient-1']
 
     // Each ask waits for the human, who confirms it in the trusted window once its delay passed
     await tick(PAST_DELAY)
@@ -376,14 +376,14 @@ export default definePlugin({
       await page.getByRole('button', { name: 'Confirm' }).click()
       await until(async () => (await page.locator('section.request').count()) === 0)
     }
-    await showing(page, '"cIient#1" under asker · luoshu.read on "inbox/**"')
+    await showing(page, '"cIient-1" under asker · luoshu.read on "inbox/**"')
     const identities = page.locator('section.identities')
     expect(await identities.locator('h2').innerText()).toBe('Identities')
     expect(await identities.innerText()).not.toMatch(/\bagents?\b/i)
 
     // One more ask stays waiting, so its heading is measured beside the rows
-    expect(await askFor(worker, 'client#2')).toEqual({ asked: 'waiting' })
-    await until(async () => (await page.locator('section.request h1 span.label').innerText().catch(() => '')) === '"client#2"')
+    expect(await askFor(worker, 'client-2')).toEqual({ asked: 'waiting' })
+    await until(async () => (await page.locator('section.request h1 span.label').innerText().catch(() => '')) === '"client-2"')
     const measured = await page.evaluate(() => {
       const width = document.documentElement.clientWidth
       const lines = [...document.querySelectorAll('section.identities p.identity'), document.querySelector('section.request h1')!]
@@ -411,21 +411,21 @@ export default definePlugin({
       expect(drawn.fits).toBe(true)
       expect(drawn.right).toBeLessThanOrEqual(measured.width)
     }
-    expect(measured.all.map(drawn => drawn.label)).toEqual([...fields.map(field => JSON.stringify(field)), '"client#2"'])
+    expect(measured.all.map(drawn => drawn.label)).toEqual([...fields.map(field => JSON.stringify(field)), '"client-2"'])
     expect(new Set(Object.values(measured.widths)).size).toBe(1)
 
     // Cancel and revoke turns the waiting pair away, Revoke takes a pair's items at once with no Confirm
     await tick(PAST_DELAY)
     await page.getByRole('button', { name: 'Cancel and revoke' }).click()
-    await showing(page, '"client#2" under asker · revoked until hetu quits')
+    await showing(page, '"client-2" under asker · revoked until hetu quits')
     await tick(PAST_DELAY)
-    await identities.locator('p.identity', { hasText: '"client#1"' }).getByRole('button', { name: 'Revoke' }).click()
-    await showing(page, '"client#1" under asker · revoked until hetu quits')
+    await identities.locator('p.identity', { hasText: '"client-1"' }).getByRole('button', { name: 'Revoke' }).click()
+    await showing(page, '"client-1" under asker · revoked until hetu quits')
     expect(await page.locator('section.request').count()).toBe(0)
-    expect(await identities.locator('p.identity', { hasText: '"client#1"' }).getByRole('button').count()).toBe(0)
-    expect(await logged(dataDir, 'security.applied', { kind: 'identity.revoke', target: 'asker', field: 'client#1', by: 'narrows' })).toBe(true)
+    expect(await identities.locator('p.identity', { hasText: '"client-1"' }).getByRole('button').count()).toBe(0)
+    expect(await logged(dataDir, 'security.applied', { kind: 'identity.revoke', target: 'asker', field: 'client-1', by: 'narrows' })).toBe(true)
     // A revoked pair asks for nothing again in the run
-    await expect(askFor(worker, 'client#1')).rejects.toThrow(/not-granted/)
+    await expect(askFor(worker, 'client-1')).rejects.toThrow(/not-granted/)
   })
 })
 

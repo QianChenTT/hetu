@@ -1,0 +1,148 @@
+import { definePlugin, Refused } from '@hetu/sdk'
+import { afterEach, describe, expect, it } from 'vitest'
+import { listAll, RETRY_MS, WAIT_MS } from '../src/listing.ts'
+import search from '../src/worker.ts'
+import { close, core, finds, query, until, wrapped } from './helpers.ts'
+
+afterEach(close)
+
+// A luoshu of names paged two at a time, refusing the pages a test names with the codes it names, in turn
+function luoshu(names: string[], refusals: Record<string, string[]> = {}) {
+  const asked: (string | undefined)[] = []
+  const list = async ({ after }: { after?: string }) => {
+    asked.push(after)
+    const code = refusals[after ?? '']?.shift()
+    if (code !== undefined) throw new Refused(code as never, 'luoshu.list')
+    const from = after === undefined ? 0 : names.indexOf(after) + 1
+    const paths = names.slice(from, from + 2)
+    return { paths, next: from + 2 < names.length ? paths.at(-1)! : null }
+  }
+  return { list, asked }
+}
+
+function waits() {
+  const waited: number[] = []
+  return { waited, wait: async (ms: number) => { waited.push(ms) } }
+}
+
+describe('a listing', () => {
+  it('takes every page, each after the last name of the one before', async () => {
+    const { list, asked } = luoshu(['a.md', 'b.md', 'c.md', 'd.md', 'e.md'])
+    expect(await listAll(list)).toEqual({ paths: ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'], refused: null })
+    expect(asked).toEqual([undefined, 'b.md', 'd.md'])
+  })
+
+  // The SDK tries a throttled call again within its deadline, past which the page comes back throttled here
+  it('asks for a throttled page again a second later and goes on from it', async () => {
+    const { list, asked } = luoshu(['a.md', 'b.md', 'c.md', 'd.md', 'e.md'], { 'b.md': ['throttled', 'throttled'] })
+    const { waited, wait } = waits()
+    expect(await listAll(list, wait)).toEqual({ paths: ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'], refused: null })
+    expect(asked).toEqual([undefined, 'b.md', 'b.md', 'b.md', 'd.md'])
+    expect(waited).toEqual([RETRY_MS, RETRY_MS])
+  })
+
+  it('ends at any other refusal with the pages it has', async () => {
+    const { list } = luoshu(['a.md', 'b.md', 'c.md', 'd.md', 'e.md'], { 'b.md': ['unavailable'] })
+    const { waited, wait } = waits()
+    expect(await listAll(list, wait)).toEqual({ paths: ['a.md', 'b.md'], refused: 'unavailable' })
+    expect(waited).toEqual([])
+  })
+
+  it('gives up on a page still throttled once it waited WAIT_MS in all', async () => {
+    const { list } = luoshu(['a.md', 'b.md', 'c.md'], { 'b.md': Array(1000).fill('throttled') })
+    const { waited, wait } = waits()
+    expect(await listAll(list, wait)).toEqual({ paths: ['a.md', 'b.md'], refused: 'throttled' })
+    expect(waited.reduce((sum, ms) => sum + ms, 0)).toBe(WAIT_MS)
+  })
+})
+
+// The index an older run left in the cache under the same plugin id
+const older = (notes: Record<string, string[]>) => definePlugin({ start: async ctx => {
+  await ctx.cache.set({ key: 'index', value: { v: 1, notes } })
+} })
+
+describe('the listing at start', () => {
+  it('reads every note of a folder it never heard of and only notes', async () => {
+    const { fake } = core({ notes: { 'a.md': 'fox', 'deep/er/b.md': 'otter fox', 'c.txt': 'heron' } })
+    expect(await fake.start(search)).toEqual({ state: 'ready' })
+    await finds(fake, 'fox', ['a.md', 'deep/er/b.md'])
+    expect(await query(fake, 'heron')).toEqual([])
+  })
+
+  // A page holds 1000 names
+  it('reads past the first page', async () => {
+    const notes: Record<string, string> = {}
+    for (let i = 0; i < 1005; i++) notes[`notes/${String(i).padStart(4, '0')}.md`] = `word${i}`
+    const { fake } = core({ notes })
+    await fake.start(search)
+    await finds(fake, 'word1004', ['notes/1004.md'], 10_000)
+  }, 15_000)
+
+  it('reads a note again that changed while search wasn\'t running and drops one no longer listed', async () => {
+    const { fake } = core({ notes: { 'notes/a.md': 'new words' } })
+    await fake.start(older({ 'notes/a.md': ['old'], 'notes/gone.md': ['old'] }))
+    await fake.stop()
+    await fake.start(search)
+    await finds(fake, 'new', ['notes/a.md'])
+    await finds(fake, 'old', [])
+    await fake.stop()
+    expect(fake.stored('cache', 'index')).toEqual({ v: 1, notes: { 'notes/a.md': ['new', 'words'] } })
+  })
+
+  it('reads the listed notes a batch at a time', async () => {
+    const notes: Record<string, string> = {}
+    for (let i = 0; i < 100; i++) notes[`notes/${i}.md`] = `fox ${i}`
+    const { fake } = core({ notes, latencyMs: 5 })
+    await fake.start(search)
+    await until(async () => (await query(fake, 'fox')).length === 100, 10_000)
+    const peak = fake.luoshu.busiest()
+    expect(peak).toBeGreaterThan(8)
+    expect(peak).toBeLessThanOrEqual(17)
+  }, 15_000)
+
+  it('keeps the index it has when the listing is refused', async () => {
+    const { fake } = core({ notes: { 'notes/a.md': 'fox' } })
+    await fake.start(older({ 'notes/cached.md': ['heron'] }))
+    await fake.stop()
+    fake.luoshu.refuseNext('unavailable')
+    await fake.start(search)
+    await finds(fake, 'heron', ['notes/cached.md'])
+    await fake.luoshu.write('notes/b.md', 'otter')
+    await finds(fake, 'otter', ['notes/b.md'])
+    expect(await query(fake, 'heron')).toEqual(['notes/cached.md'])
+    expect(await query(fake, 'fox')).toEqual([])
+  })
+})
+
+// The shape of core/test/luoshu-joined.test.ts's vault, there read by 16 readers through the router with the log on.
+// Here search's own loop reads it through the fake core
+describe('the listing at start in a vault of 469 notes search never saw', () => {
+  it('reads every note, at most 16 at a time and finds a word in a note no event named', async () => {
+    const line = 'A line of a note about something worth keeping, with a [[link]] and some **bold** words in it.\n'
+    const notes: Record<string, string> = {}
+    for (let i = 0; i < 469; i++) notes[`folder ${i % 23}/note ${i}.md`] = line.repeat(93) + (i === 233 ? 'quokka\n' : '')
+    const { fake } = core({ notes, latencyMs: 2 })
+    await fake.start(search)
+    await until(async () => (await query(fake, 'keeping')).length === 469, 20_000)
+    expect(await query(fake, 'quokka')).toEqual(['folder 3/note 233.md'])
+    const peak = fake.luoshu.busiest()
+    expect(peak).toBeGreaterThan(8)
+    expect(peak).toBeLessThanOrEqual(16)
+  }, 30_000)
+})
+
+describe('reads that fail for a while at start', () => {
+  // More notes than search keeps to read again, every read refused while the luoshu is busy
+  it('loses no note past the notes it keeps to read again', async () => {
+    const notes: Record<string, string> = {}
+    // Two halves, since a query answers at most 1024 notes
+    for (let i = 0; i < 1100; i++) notes[`notes/${String(i).padStart(4, '0')}.md`] = i % 2 === 0 ? 'even' : 'odd'
+    const { fake } = core({ notes })
+    let refusing = 1100
+    const busy = wrapped(ctx => ({
+      luoshu: { ...ctx.luoshu, read: args => (refusing-- > 0 ? Promise.reject(new Refused('unavailable', 'luoshu.read')) : ctx.luoshu.read(args)) },
+    }))
+    await fake.start(busy)
+    await until(async () => (await query(fake, 'even')).length === 550 && (await query(fake, 'odd')).length === 550, 8000)
+  }, 15_000)
+})

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { pluginId } from '../../api/ids.ts'
@@ -13,6 +13,7 @@ export const folders = {
   plugins: (dataDir: string, id: string) => path.join(dataDir, 'plugins', id),
   staging: (dataDir: string) => path.join(dataDir, 'staging'),
   failedOnce: (dataDir: string) => path.join(dataDir, 'failed-once'),
+  starting: (dataDir: string) => path.join(dataDir, 'starting'),
   cache: (dataDir: string, id: string) => path.join(dataDir, 'cache', id),
   storage: (dataDir: string, id: string) => path.join(dataDir, 'storage', id),
   installed: (dataDir: string) => path.join(dataDir, 'installed.json'),
@@ -99,6 +100,35 @@ export async function writeFailedOnce(dataDir: string, id: string): Promise<void
 
 export async function clearFailedOnce(dataDir: string): Promise<void> {
   await retried(() => rm(folders.failedOnce(dataDir), { force: true }))
+}
+
+// A judging control's start marker, written and synced before its start, so a start that hangs main is caught at the
+// next launch even after a force quit. Empty: it can only hold hetu in the fail-safe, so it needs no hash
+export async function writeStartMarker(dataDir: string, id: string): Promise<void> {
+  await mkdir(folders.starting(dataDir), { recursive: true })
+  const handle = await open(path.join(folders.starting(dataDir), id), 'w')
+  try {
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await syncDir(folders.starting(dataDir))
+}
+
+export async function clearStartMarker(dataDir: string, id: string): Promise<void> {
+  await retried(() => rm(path.join(folders.starting(dataDir), id), { force: true }))
+  await syncDir(folders.starting(dataDir))
+}
+
+// The controls among ids whose start marker a run left, in the order of ids. A name that is none of them is no marker
+// and a folder that can't be read holds nothing back, since a marker only holds hetu in the fail-safe
+export async function readStartMarkers(dataDir: string, ids: readonly string[]): Promise<string[]> {
+  try {
+    const names = await readdir(folders.starting(dataDir))
+    return ids.filter(id => names.includes(id))
+  } catch {
+    return []
+  }
 }
 
 const installedFile = z.strictObject({
