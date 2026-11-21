@@ -57,6 +57,7 @@ export function httpPlugin(options: HttpOptions): Plugin {
       ctx.onDeps(() => sync())
       ctx.onStop(async () => {
         stopping = true
+        // The stop goes on whatever the last step did, the door it left open is closed below
         await turn.catch(() => {})
         for (const one of [door, pipe]) await one?.close()
         door = null
