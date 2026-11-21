@@ -33,7 +33,11 @@ export const callers: Readonly<Record<string, readonly string[]>> = {
 
 export type Cast = { file: string, line: number, text: string, setter: boolean, why: string | null }
 
-// Each Writable cast in a file. A setter's own write is the cast in set<Field> of the field's owner writing that field
+type Fn = Node & { type: 'FunctionDeclaration' | 'FunctionExpression' | 'ArrowFunctionExpression', id?: { name: string } | null, params: Node[], body: Node & { body?: Node[] } }
+const isFn = (node: Node): node is Fn => ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)
+
+// Each Writable cast in a file. A setter's own write is the one statement of set<Field> in the field's owner, writing
+// that field of the setter's first parameter, so a write in a nested function, a loop or beside other code is a clash
 export function castsIn(file: string, source: string): Cast[] {
   const comments: [number, number][] = []
   const program = parse(stripTypeScriptTypes(source, { mode: 'strip' }), {
@@ -50,9 +54,15 @@ export function castsIn(file: string, source: string): Cast[] {
       const field = left.property.name
       const index = at.find(index => index >= left.start && index < left.property.start)
       if (index === undefined || !source.startsWith('Writable<Pending>', index)) return
-      const named = [...above].reverse().find(each => each.type === 'FunctionDeclaration' || each.type === 'VariableDeclarator') as Node & { id?: { name?: string } } | undefined
-      const name = named?.id?.name
-      if (owners[field] === path.posix.basename(file) && name === `set${field[0].toUpperCase()}${field.slice(1)}`) setters.add(index)
+      const depth = above.findLastIndex(isFn)
+      if (depth === -1) return
+      const fn = above[depth] as Fn
+      const declarator = above[depth - 1] as Node & { id?: { name?: string } } | undefined
+      const name = fn.id?.name ?? (declarator?.type === 'VariableDeclarator' ? declarator.id?.name : undefined)
+      const first = fn.params[0] as Node & { name?: string } | undefined
+      const only = fn.body === node || (fn.body.body?.length === 1 && (fn.body.body[0] as Node & { expression?: Node }).expression === node)
+      if (owners[field] === path.posix.basename(file) && name === `set${field[0].toUpperCase()}${field.slice(1)}` && only
+        && first?.type === 'Identifier' && left.object.type === 'Identifier' && left.object.name === first.name) setters.add(index)
     },
   })
   const lines = source.split('\n')
@@ -81,11 +91,12 @@ export function clashProblems(casts: readonly Cast[], listed: readonly string[])
 }
 
 // What fails: a file naming another file's exported setter off that setter's list, an exported setter with no list
-// and a listed caller that no longer names it
+// and a listed caller that no longer names it. A setter is a router file's set<Name>, a setVariable in core/lib is not
 export function setterProblems(sources: ReadonlyMap<string, string>, listed: Readonly<Record<string, readonly string[]>>): string[] {
   const trees = new Map([...sources].map(([file, source]) => [file, parse(stripTypeScriptTypes(source, { mode: 'strip' }), { ecmaVersion: 'latest', sourceType: 'module', locations: true })]))
   const exported = new Map<string, string>()
   for (const [file, tree] of trees) {
+    if (!file.startsWith(router)) continue
     for (const statement of tree.body) {
       const declared = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null
       if (declared?.type === 'FunctionDeclaration' && /^set[A-Z]/.test(declared.id.name)) exported.set(declared.id.name, file)
@@ -112,8 +123,10 @@ export function setterProblems(sources: ReadonlyMap<string, string>, listed: Rea
   return [...new Set(problems)]
 }
 
-const casts = files.flatMap(file => castsIn(file, readFileSync(path.join(repo, file), 'utf8')))
-const routerSources = new Map(files.filter(file => file.startsWith(router)).map(file => [file, readFileSync(path.join(repo, file), 'utf8')]))
+const sources = new Map(files.map(file => [file, readFileSync(path.join(repo, file), 'utf8')]))
+const casts = files.flatMap(file => castsIn(file, sources.get(file)!))
+// The setter callers check reads every shipped file of core, each through read so a sample can plant one
+const scanned = (read: (file: string) => string) => new Map(files.map(file => [file, read(file)]))
 
 describe('the casts that drop readonly', () => {
   it('reads every shipped file and finds each owner\'s setters in its owner', () => {
@@ -130,7 +143,7 @@ describe('the casts that drop readonly', () => {
   })
 
   it('lets a setter be called only by its owner and the files on its list', () => {
-    expect(setterProblems(routerSources, callers)).toEqual([])
+    expect(setterProblems(scanned(file => sources.get(file)!), callers)).toEqual([])
   })
 })
 
@@ -177,6 +190,10 @@ describe('the clash casts check itself', () => {
     ['a field written by a computed key', 'function setScope(pending: Pending) {\n  (pending as Writable<Pending>)[\'scope\'] = undefined\n}\n', 'core/backend/router/provide.ts'],
     ['a type that names it', 'type Open = Writable<Pending>\n', at],
     ['a cast to another type', 'function setScope(way: Way) {\n  (way as Writable<Way>).scope = undefined\n}\n', 'core/backend/router/provide.ts'],
+    ['a write to another call in a loop in a setter', 'function setScope(pending: Pending, scope: Scope) {\n  for (const other of others) { (other as Writable<Pending>).scope = scope }\n}\n', 'core/backend/router/provide.ts'],
+    ['a write in an arrow nested in a setter', 'function setScope(pending: Pending, scope: Scope) {\n  others.forEach(() => { (pending as Writable<Pending>).scope = undefined })\n}\n', 'core/backend/router/provide.ts'],
+    ['a setter writing a parameter but its first', 'function setScope(first: Pending, pending: Pending) {\n  (pending as Writable<Pending>).scope = undefined\n}\n', 'core/backend/router/provide.ts'],
+    ['a setter doing more than its write', 'function setScope(pending: Pending, scope: Scope) {\n  (pending as Writable<Pending>).scope = scope\n  others.push(pending)\n}\n', 'core/backend/router/provide.ts'],
   ])('counts %s as a clash', (_name, source, file) => {
     expect(castsIn(file, source).map(cast => cast.setter)).toEqual([false])
   })
@@ -209,5 +226,11 @@ describe('the setter callers check itself', () => {
       `${provide} exports setScope with no list of callers: keep it unexported or list them`,
     ])
     expect(setterProblems(new Map([[provide, owner], [route, 'const x = 1']]), listed)).toEqual([`${route} is on setScope's list and no longer calls it: remove it`])
+  })
+
+  it('reads every shipped file of core, so a caller outside the router fails', () => {
+    const outside = 'core/backend/main.ts'
+    expect(files).toContain(outside)
+    expect(setterProblems(scanned(file => file === outside ? calls : sources.get(file)!), callers)).toEqual([`${outside}:2 calls setScope, a setter of ${provide} off its list`])
   })
 })
