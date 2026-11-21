@@ -41,7 +41,7 @@ export type PluginsManagerOptions = {
   modules: CoreModules
   // The rules the install list's paths follow, the platform the install is on
   platform?: string
-  // The guards expected on an action. Defaults to core/api's list, which is empty until #77
+  // The guards expected on an action. Defaults to core/api's list
   guardsFor?: (action: GuardableAction) => readonly string[]
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
   logWrites?: () => boolean
@@ -291,8 +291,9 @@ ${capabilityKey(change.capability)}`)
   // ---- the router's seam
 
   // A policy job or guard role: a core module as it reads, starting until the modules are started, off only by the
-  // human's switch and failed while the module's last push threw or once the stopped mode closed it. Nothing that runs
-  // holds a guard role, so an expected guard reads off by the human's switch, which the router skips and absent otherwise
+  // human's switch and failed while the module's last push threw or once the stopped mode closed it. Only core modules
+  // hold a guard role, so any other expected guard reads off by the human's switch, which the router skips and absent
+  // otherwise
   policyJob(id: string): PolicyJobState {
     if (!isModule(id)) return isOne(this.state.switches.off, id) && this.expected().includes(id) ? 'off' : 'absent'
     const state = this.modules.state(id)

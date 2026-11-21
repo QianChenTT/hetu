@@ -133,10 +133,11 @@ class FakePluginsManager implements PluginTable {
     this.all = all
   }
 
-  // The grant risk classifier policy job reads off, as with the human's switch
+  // The grant risk classifier policy job and the lock read off, as with the human's switch, so no write here waits on
+  // a lock module the fake core doesn't hold
   policyJob(id: string): PolicyJobState {
     if (id === 'gate') return this.gateState
-    return id === 'grant-risk-classifier' ? 'off' : 'absent'
+    return id === 'grant-risk-classifier' || id === 'lock' ? 'off' : 'absent'
   }
 
   view(): number {

@@ -88,7 +88,7 @@ export const arrows: Readonly<Record<string, readonly string[]>> = {
   boot: ['contract', 'lib', 'backend-lib'],
   'plugins-manager': ['contract', 'lib', 'backend-lib', 'router', 'boot', 'runtime', 'modules', 'heartbeat', 'recording', 'security-view'],
   runtime: ['contract', 'lib', 'backend-lib', 'router', 'boot'],
-  modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'security-view'],
+  modules: ['contract', 'lib', 'backend-lib', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'lock', 'security-view'],
   gate: ['contract'],
   'grant-risk-classifier': ['contract'],
   storage: ['contract', 'lib'],
