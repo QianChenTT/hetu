@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { CoreAction, EventAction, ProviderAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
-import { reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
+import { grantKeyOf, reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
 import { pluginStates, policyJobStates, type GateTime, type LiveCall, type Pair, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
@@ -113,10 +113,10 @@ export type Shaped =
 
 export const no = (code: RefusalCode, reason?: ReasonCode): Outcome => ({ ok: false, code, ...(reason ? { reason } : {}) })
 
-// The pair a chain carries: the root plugin's id and the onBehalf it set. A window's onBehalf names who a change was
-// made for and makes no pair, nor does a chain whose root set none
+// The pair a chain carries: the root plugin's id and the grant key of the onBehalf it set. A window's onBehalf names
+// who a change was made for and makes no pair, nor does a chain whose root set none
 export function pairOf(root: Caller, field: string | undefined): Pair | undefined {
-  return field !== undefined && root.kind === 'plugin' ? frozen({ plugin: root.id, field }) : undefined
+  return field !== undefined && root.kind === 'plugin' ? frozen({ plugin: root.id, field: grantKeyOf(field) }) : undefined
 }
 
 // Random, in core/api's token grammar

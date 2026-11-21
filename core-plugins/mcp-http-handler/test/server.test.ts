@@ -2,6 +2,7 @@ import http from 'node:http'
 import net from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { doorLimits, type Refusal, type RefusalReason, type TokenSeam } from '../src/checks.ts'
+import { rate } from '../src/rate.ts'
 import { type Answer, type Door, openDoor, type Passed } from '../src/server.ts'
 
 // Every test drives the door with raw sockets, so any Host, header or framing can be sent as written and nothing is
@@ -23,6 +24,7 @@ async function made(options: {
   serve?: (passed: Passed) => Promise<Answer | Refusal>
   limits?: Parameters<typeof openDoor>[0]['limits']
   clock?: () => number
+  take?: () => boolean
 } = {}): Promise<Made> {
   const refused: RefusalReason[] = []
   const passed: Passed[] = []
@@ -35,7 +37,7 @@ async function made(options: {
     },
     refused: reason => void refused.push(reason),
     ...(options.limits !== undefined ? { limits: options.limits } : {}),
-    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+    take: options.take ?? rate(doorLimits.perSecond, options.clock ?? (() => performance.now())),
   })
   doors.push(door)
   return { door, port: door.address.port, refused, passed }
@@ -132,7 +134,7 @@ describe('the bind', () => {
   it('rejects when the port is taken and tries no other', async () => {
     const { port } = await made()
     const listen = vi.spyOn(http.Server.prototype, 'listen')
-    await expect(openDoor({ port, token: () => null, serve: async () => ({ status: 200, body: null }), refused: () => {} }))
+    await expect(openDoor({ port, token: () => null, serve: async () => ({ status: 200, body: null }), refused: () => {}, take: () => true }))
       .rejects.toMatchObject({ code: 'EADDRINUSE' })
     expect(listen).toHaveBeenCalledTimes(1)
   })
@@ -811,6 +813,15 @@ describe('counts', () => {
     expect(passed).toHaveLength(50)
     now = 1000
     expect(responses((await exchange(port, good)).raw)[0].status).toBe(200)
+  })
+
+  it('spends the rate it is handed, which another listener shares', async () => {
+    const take = rate(2, () => 0)
+    take()
+    const { port, refused } = await made({ token: anyToken, take })
+    const good = post(port, ['Authorization: Bearer good'])
+    expect(responses((await exchange(port, good.repeat(2), 2000)).raw).map(response => response.status)).toEqual([200, 429])
+    expect(refused).toEqual(['rate'])
   })
 })
 
