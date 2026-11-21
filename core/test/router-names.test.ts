@@ -136,7 +136,7 @@ describe('the router names check itself', () => {
   it('takes no plugins with paths from core/, which would cut core/ off core-plugins/ too', () => {
     // @ts-expect-error the two options together
     const both = () => shippedFiles({ kinds: ['ts'], plugins: 'src', from: 'core' })
-    expect(both).toBeTypeOf('function')
+    expect(both).toThrow("plugins: 'src' takes paths from the repo, not from: 'core'")
   })
 
   it.each([

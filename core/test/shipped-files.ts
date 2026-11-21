@@ -15,6 +15,7 @@ const posix = (file: string) => file.split(path.sep).join('/')
 type Options = { kinds: readonly Kind[] } & ({ plugins?: undefined, from?: 'core' } | { plugins: 'src', from?: undefined })
 
 export function shippedFiles({ kinds, plugins, from }: Options): string[] {
+  if (plugins === 'src' && from === 'core') throw new Error("plugins: 'src' takes paths from the repo, not from: 'core'")
   const kind = new RegExp(`\\.(${kinds.join('|')})$`)
   const files: string[] = []
   const walk = (dir: string) => {
