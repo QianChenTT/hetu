@@ -87,13 +87,13 @@ describe('policy jobs, providers and guards', () => {
   it('lists the controls the fail-safe at start covers: every judging module and every guard core/api expects, once each', () => {
     expect(failSafeControls()).toEqual([...judgingModuleIds, ...new Set(Object.values(guards).flat())])
     expect(failSafeControls()).toEqual(['gate', 'flood-control'])
-    expect(failSafeControls(() => ['leases'])).toEqual(['gate', 'flood-control', 'leases'])
-    for (const id of guardingModuleIds) expect(failSafeControls(() => ['leases'])).not.toContain(id)
+    expect(failSafeControls(() => ['lock'])).toEqual(['gate', 'flood-control', 'lock'])
+    for (const id of guardingModuleIds) expect(failSafeControls(() => ['lock'])).not.toContain(id)
   })
 
   it("names the provider of every namespace", () => {
     expect(providers).toEqual({
-      luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net',
+      luoshu: 'luoshu', lock: 'lock', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net',
     })
   })
 
@@ -101,13 +101,13 @@ describe('policy jobs, providers and guards', () => {
     expect(coreNamespaces).toEqual(['core', 'security', 'events', 'ui', 'plugin', 'log', 'editor', 'gate', 'app'])
   })
 
-  it('lets guards hook the luoshu\'s writes, removes and moves and expects none until leases ships', () => {
+  it('lets guards hook the luoshu\'s writes, removes and moves and expects none until the lock module is wired', () => {
     expect(guardableActions).toEqual(['luoshu.write', 'luoshu.remove', 'luoshu.move'])
     expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
   it('lists the core plugins, utility and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual(['leases', 'mcp-http-handler', 'net', 'hidden-marks'])
+    expect(corePluginIds).toEqual(['mcp-http-handler', 'net', 'hidden-marks'])
   })
 
   it('lists the core modules main holds apart from the core plugins', () => {
@@ -126,8 +126,9 @@ describe('policy jobs, providers and guards', () => {
     }
   })
 
-  it('serves every provider from a core module or a core plugin', () => {
-    for (const id of Object.values(providers)) expect([...coreModuleIds, ...corePluginIds]).toContain(id)
+  // lock answers unavailable until its module is held
+  it('serves every provider from a core module or a core plugin, lock once its module is wired', () => {
+    for (const id of Object.values(providers)) expect([...coreModuleIds, ...corePluginIds, 'lock']).toContain(id)
   })
 })
 
@@ -136,7 +137,7 @@ describe('reserved ids', () => {
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
-    'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
+    'luoshu', 'lock', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
     'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
   ]
 
@@ -157,7 +158,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
+  it.each(['leases', 'searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)

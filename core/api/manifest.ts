@@ -7,8 +7,8 @@ import { themeSpec } from './ui.ts'
 
 // The core API's major version. A manifest whose api range leaves this version out still parses and is refused with
 // api, not invalid. Version 2 renamed the ui items to ui.view and ui.layout and added views and themes. Version 3 added
-// ui.edit, ui.read, luoshu.remove and luoshu.move
-export const API_VERSION = 3
+// ui.edit, ui.read, luoshu.remove and luoshu.move. Version 4 added lock.set with the lock actions
+export const API_VERSION = 4
 
 // What each major did to the one before it: the capability types it added, removed and reshaped, and whether a core
 // action, a bridge verb or an event lost or changed a field. A narrower rule on who may call what is no change here,
@@ -25,6 +25,8 @@ export const apiChanges: Readonly<Record<number, ApiChange>> = table({
   // editor.edit takes ui.edit in place of luoshu.write and editor.open needs a read, which an older plugin meets as a
   // refusal. gate.reach changed, which only windows call
   3: { added: ['ui.edit', 'ui.read'], removed: [], reshaped: [], actionsChanged: false },
+  // leases.* had no provider, so an older plugin calling one met a refusal before
+  4: { added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false },
 })
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024

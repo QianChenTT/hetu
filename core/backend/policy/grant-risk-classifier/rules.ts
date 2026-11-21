@@ -56,6 +56,8 @@ function classOf(granted: Capability): number {
     case 'luoshu.list':
       return 1
     case 'luoshu.write':
+    // A lock keeps every other writer off the note, so it weighs as a write and tells its holder nothing
+    case 'lock.set':
       return granted.paths.every(confined) ? 2 : 4
     // Each edit waits in the editor for the human's save, so every scope is a writer's, ** included
     case 'ui.edit':

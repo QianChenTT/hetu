@@ -42,7 +42,7 @@ const noSwitches = {
 }
 // Most switches away from the defaults, so a field the code drops or mixes up shows
 const switchesIn = {
-  off: ['gate', 'leases'],
+  off: ['gate', 'net'],
   devMode: ['my-plugin'],
   skipVerification: false,
   allowUnsigned: [HASH],
@@ -152,7 +152,7 @@ describe('defaults', () => {
 
   it('hands out a new object each time, so a caller can not change the next default', () => {
     const changed = defaultState()
-    changed.switches.off.push('leases')
+    changed.switches.off.push('net')
     changed.switches.devMode.push('search')
     changed.switches.limits.all.callsInFlight = 1000
     changed.switches.limits.plugins.search = { readyMs: 1 }
@@ -286,7 +286,7 @@ describe('writing', () => {
     await store.writePlugin('search', state.plugins.search)
     const again = await store.load()
     expect(again.suspect).toBe(false)
-    expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'leases', 'history'] })
+    expect(again.state.switches).toEqual({ ...switchesIn, off: ['gate', 'net', 'history'] })
     expect(again.state.luoshu).toEqual(luoshuIn)
     expect(again.state.plugins.search).toEqual(state.plugins.search)
   })
@@ -674,8 +674,8 @@ const kinds: Kind[] = [
       ['skipVerification that is not a boolean', switchesText({ skipVerification: 1 })],
       ['off as a string', switchesText({ off: 'gate' })],
       ['a first-party id in off', switchesText({ off: ['search'] })],
-      ['an id outside the grammar in off', switchesText({ off: ['../leases'] })],
-      ['an id twice in off', switchesText({ off: ['gate', 'leases', 'gate'] })],
+      ['an id outside the grammar in off', switchesText({ off: ['../net'] })],
+      ['an id twice in off', switchesText({ off: ['gate', 'net', 'gate'] })],
       ['a namespace no plugin holds in dev mode', switchesText({ devMode: ['ui'] })],
       ['an id outside the grammar in dev mode', switchesText({ devMode: ['Search'] })],
       ['an id twice in execAnyCommand', switchesText({ execAnyCommand: ['search', 'search'] })],
@@ -984,10 +984,10 @@ describe('the retired recordNothing', () => {
 describe('the dropped watchdog', () => {
   it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'watchdog', 'leases'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'watchdog', 'net'] }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
-    expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
+    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain('watchdog')
   })
@@ -1010,7 +1010,7 @@ describe('what the hash does not catch', () => {
     // The old file carries its own hash line, so a plain copy puts it back
     await writeFile(switchesPath(), oldFile)
     const loaded = await store.load()
-    expect(loaded.state.switches.off).toEqual(['gate', 'leases'])
+    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
     expect(loaded.suspect).toBe(false)
   })
 })

@@ -39,8 +39,8 @@ const sha256 = z.string().regex(/^[0-9a-f]{64}$/)
 
 // Paths gate.filterReadable takes in one call
 export const MAX_FILTER_PATHS = 1024
-// Paths one lease takes
-export const MAX_LEASE_PATHS = 64
+// Paths one lock.set, lock.clear or lock.held names
+export const MAX_LOCK_PATHS = 64
 // Topics one subscribe or unsubscribe names. A half holds at most topicsPerHalf in all
 export const MAX_CALL_TOPICS = 64
 
@@ -80,8 +80,8 @@ export const MAX_FIELDS_ASKED = 64
 // live call delivered to the caller on the same way in, which the part serving the action gets a view of
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true, readonly live?: true }
 
-// A provider action. capability null is a free action: the caller's own storage and cache and a lease holder's own
-// leases, which the provider keys by the caller the router names, and a listing. scope names the argument the raw
+// A provider action. capability null is a free action: the caller's own storage and cache and clearing locks, which the
+// provider keys by the caller the router names, and a listing. scope names the argument the raw
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
 // which the router puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
@@ -259,15 +259,21 @@ const providerTable = {
     also: { capability: 'luoshu.read', ends: ['from'] },
     write: true,
   },
-  'leases.acquire': {
-    capability: 'luoshu.write',
-    args: z.strictObject({ paths: z.array(path).min(1).max(MAX_LEASE_PATHS) }),
+  // Locks the notes at these paths for ms from now, so no other holder's write, remove or move reaches them. The holder
+  // is the caller's own chain: the root plugin and the pair it carries, never a name in the arguments. Setting a lock
+  // the caller already holds renews it. The lock module clamps ms to its cap
+  'lock.set': {
+    capability: 'lock.set',
+    args: z.strictObject({ paths: z.array(path).min(1).max(MAX_LOCK_PATHS), ms: z.int().min(1) }),
     scope: 'paths',
     write: true,
   },
-  'leases.renew': { capability: null, args: nothing, scope: null, write: true },
-  'leases.release': { capability: null, args: nothing, scope: null, write: true },
-  'leases.list': { capability: null, args: nothing, scope: null, write: false },
+  // A plugin clears only the locks its own chain holds and a window any lock, the human taking a note over
+  'lock.clear': { capability: null, args: z.strictObject({ paths: z.array(path).min(1).max(MAX_LOCK_PATHS) }), scope: null, write: true },
+  // Which of these paths are locked, by anyone, never by whom. The caller reads every one
+  'lock.held': {
+    capability: 'luoshu.read', args: z.strictObject({ paths: z.array(path).min(1).max(MAX_LOCK_PATHS) }), scope: 'paths', write: false,
+  },
   'storage.get': { capability: null, args: key, scope: null, write: false },
   'storage.set': { capability: null, args: keyed, scope: null, write: true },
   'storage.delete': { capability: null, args: key, scope: null, write: true },
@@ -425,6 +431,11 @@ export type ActionResults = {
   'luoshu.remove': null
   'luoshu.move': null
   'luoshu.list': { paths: string[], next: string | null }
+  // ms is the time the lock was set for, after the cap
+  'lock.set': { ms: number }
+  'lock.clear': null
+  // The paths of the ones asked about that are locked, as the caller spelled them
+  'lock.held': { paths: string[] }
   'app.pickFolder': string | null
   'gate.reach': { read: boolean, edit: boolean, uiRead: boolean, list: boolean, verbs: string[] }
   'core.views': { plugins: CoreViewsPlugin[] }

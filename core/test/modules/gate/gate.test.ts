@@ -223,7 +223,7 @@ describe('ui.edit', () => {
 
   it('serves no action that changes the disk, whatever its scope', () => {
     const gate = gateOn({ alpha: [item({ type: 'ui.edit', paths: ['**'] })] })
-    for (const action of ['luoshu.write', 'luoshu.remove', 'luoshu.move', 'leases.acquire']) {
+    for (const action of ['luoshu.write', 'luoshu.remove', 'luoshu.move', 'lock.set']) {
       const asked = { ...access(alpha, 'luoshu.write', { paths: ['notes/a.md'] }), action }
       expect(gate.decide(asked)).toMatchObject({ allow: false, code: 'not-granted' })
     }
@@ -338,7 +338,8 @@ describe('coverage', () => {
       ['luoshu.write', 'luoshu.write', 'path', 'paths'],
       ['luoshu.remove', 'luoshu.write', 'path', 'paths'],
       ['luoshu.move', 'luoshu.write', 'ends', 'paths'],
-      ['leases.acquire', 'luoshu.write', 'paths', 'paths'],
+      ['lock.set', 'lock.set', 'paths', 'paths'],
+      ['lock.held', 'luoshu.read', 'paths', 'paths'],
       ['history.commit', 'history', 'paths', 'access'],
       ['history.log', 'history', 'path', 'access'],
       ['history.read', 'history', 'path', 'access'],

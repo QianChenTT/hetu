@@ -52,10 +52,11 @@ describe('a manifest', () => {
   })
 
   it('parses an api range outside this core, which the plugins manager refuses with api', () => {
-    expect(API_VERSION).toBe(3)
+    expect(API_VERSION).toBe(4)
+    expect(supportsApi('^4')).toBe(true)
     expect(supportsApi('^3')).toBe(true)
     expect(supportsApi('^1')).toBe(false)
-    expect(supportsApi('^4')).toBe(false)
+    expect(supportsApi('^5')).toBe(false)
     expect(supportsApi('^0')).toBe(false)
     // A prefix of this version is another version
     expect(supportsApi('^10')).toBe(false)
@@ -114,6 +115,14 @@ describe('a manifest', () => {
       expect(supportsApi('^2', ['luoshu.read', 'ui.edit'])).toBe(false)
       expect(supportsApi('^2', ['ui.read'])).toBe(false)
       expect(supportsApi('^3', ['ui.edit', 'ui.read'])).toBe(true)
+    })
+
+    // The lock actions came with lock.set. leases.* had no provider, so an older plugin calling one met a refusal before
+    it('keeps version 3 under version 4, which only added lock.set, unless the manifest names it', () => {
+      expect(apiChanges[4]).toEqual({ added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false })
+      expect(supportsApi('^3', ['luoshu.write', 'ui.edit'])).toBe(true)
+      expect(supportsApi('^3', ['lock.set'])).toBe(false)
+      expect(supportsApi('^4', ['lock.set'])).toBe(true)
     })
   })
 
