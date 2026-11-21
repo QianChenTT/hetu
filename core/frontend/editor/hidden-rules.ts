@@ -2,7 +2,7 @@ import { deleteGroupBackward, deleteGroupForward } from '@codemirror/commands'
 import {
   EditorSelection, type EditorState, type Extension, Facet, findClusterBreak, Prec, StateEffect, StateField, type TransactionSpec,
 } from '@codemirror/state'
-import { type DecorationSet, type EditorView, type KeyBinding, keymap, ViewPlugin } from '@codemirror/view'
+import { type DecorationSet, EditorView, type KeyBinding, keymap, ViewPlugin } from '@codemirror/view'
 
 // The drawer's rules for text a plugin hid, the same for every plugin: the caret never rests inside it, arrows step over
 // it to the next character the human sees, the keys that delete take only characters the human sees, Enter never splits
@@ -102,6 +102,15 @@ const placed = StateField.define<number | null>({
     return tr.docChanged || tr.selection !== undefined ? null : value
   },
 })
+
+// Where text typed from..to goes instead: the placed caret, when the caret is there and the text lands in the stretch of
+// hidden text it rests after, since Chromium puts it before that text. Null to leave it where it lands
+export function typedAt(state: EditorState, sets: Sets, from: number, to: number): number | null {
+  const kept = state.field(placed, false)
+  if (typeof kept !== 'number' || from !== to || state.selection.main.head !== kept || !state.selection.main.empty) return null
+  const spot = spotAt(sets, kept)
+  return from >= spot.from && from < kept ? kept : null
+}
 
 // The selection the rules allow in place of the one there, or null when it already holds. A caret placed just after a
 // closing marker stays, so typing there goes past the run
@@ -281,8 +290,17 @@ export const hiddenKeys: readonly KeyBinding[] = [
   { mac: 'Ctrl-t', run: swapHere },
 ]
 
+// Text typed at a placed caret, outside an IME composition, goes where the caret was placed
+const typedHere = EditorView.inputHandler.of((view, from, to, text) => {
+  const at = view.composing ? null : typedAt(view.state, setsOf(view), from, to)
+  if (at === null) return false
+  view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length }, userEvent: 'input.type' })
+  return true
+})
+
 export const hiddenRules: Extension = [
   placed,
+  typedHere,
   Prec.highest(keymap.of([{ key: 'Enter', run: breakHere, shift: breakHere }, { mac: 'Ctrl-o', run: breakHere }])),
   Prec.high(keymap.of(hiddenKeys)),
   settler,

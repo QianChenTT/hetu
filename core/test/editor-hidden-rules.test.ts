@@ -4,7 +4,7 @@ import type { DecorationSet, EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Mark } from '../api/editor.ts'
 import { pluginMarks, setMarks } from '../frontend/editor/editor.ts'
-import { beforeBreak, hiddenKeys, hiddenRules, move, placeCaret, remove, removeTo, settle } from '../frontend/editor/hidden-rules.ts'
+import { beforeBreak, hiddenKeys, hiddenRules, move, placeCaret, remove, removeTo, settle, typedAt } from '../frontend/editor/hidden-rules.ts'
 
 // x **bold** y, then ## Title: the bold markers at 2-4 and 8-10, the heading's marker at 13-16
 const bold = 'x **bold** y\n## Title'
@@ -267,6 +267,13 @@ describe('a caret a plugin placed in answer to the human', () => {
     const state = placed(10)
     expect(head(state)).toBe(10)
     expect(state.update({ changes: { from: 10, insert: ' next' } }).state.doc.toString()).toBe('x **bold** next y\n## Title')
+  })
+
+  it('takes text typed there past the closing marker, where Chromium puts it before the hidden text', () => {
+    const state = placed(10)
+    expect(typedAt(state, sets(state), 8, 8)).toBe(10)
+    expect(typedAt(state, sets(state), 4, 4)).toBe(null)
+    expect(typedAt(placed(3), sets(placed(3)), 2, 2)).toBe(null)
   })
 
   it('rests as any caret once the human moves it there or after it typed', () => {
