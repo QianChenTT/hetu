@@ -6,8 +6,8 @@ import { refusedWords } from './mcp.ts'
 import type { Answer, Passed } from './server.ts'
 
 // The local pipe beside the door: MCP's stdio framing, one JSON-RPC message a line, from a program on this computer the
-// shim relays. No token is traded on it. The first line, MCP's initialize, names the client, which joins through the
-// clients table before anything is served. Every line then goes to the same serving part as the door's, on behalf of
+// shim relays. No token is traded on it. The first line names the client, which joins through the clients table before
+// anything is served. Every line then goes to the same serving part as the door's, on behalf of
 // the connection's own label and under the door's rate. A request past the rate or the calls in flight, or one the
 // serving part answers with a fixed body, gets a JSON-RPC error with its id and the connection stays. A line past the
 // cap, bytes that are no UTF-8 and a refused first line are recorded by their reason and close the connection
@@ -25,19 +25,24 @@ export type Pipe = { close(): Promise<void> }
 
 const NEWLINE = 0x0a
 
-// An initialize as far as it is read. Reading a field of any value JSON gives but null throws nothing
-type Initialize = { method?: unknown, params?: { clientInfo?: { name?: unknown, title?: unknown } } } | null
+// Where MCP from 2026-07-28 on, which has no initialize, carries the client's name in each request's _meta
+const CLIENT_INFO = 'io.modelcontextprotocol/clientInfo'
 
-// The client an initialize names by clientInfo.name, with its title as the name the connect shows when it gives one.
-// null for a line that is no initialize naming a client
+// A first line as far as it is read. Reading a field of any value JSON gives but null throws nothing
+type Info = { name?: unknown, title?: unknown }
+type First = { method?: unknown, params?: { clientInfo?: Info, _meta?: Record<string, Info | undefined> } } | null
+
+// The client a first line names by its clientInfo's name, with its title as the name the connect shows when it gives
+// one: an initialize's own clientInfo, or the clientInfo in any other request's _meta, such as the server/discover a
+// client of both eras sends first. null for a line that names no client
 export function clientOf(line: Buffer): { client: string, name: string | null } | null {
-  let message: Initialize
+  let message: First
   try {
-    message = JSON.parse(line.toString('utf8')) as Initialize
+    message = JSON.parse(line.toString('utf8')) as First
   } catch {
     return null
   }
-  const info = message?.method === 'initialize' ? message.params?.clientInfo : undefined
+  const info = message?.method === 'initialize' ? message.params?.clientInfo : message?.params?._meta?.[CLIENT_INFO]
   if (typeof info?.name !== 'string' || info.name === '') return null
   return { client: info.name, name: typeof info.title === 'string' ? info.title : null }
 }
@@ -144,7 +149,7 @@ export async function openPipe(options: PipeOptions): Promise<Pipe> {
       }
       const named = clientOf(line)
       if (named === null) {
-        answerError(line, 'invalid request', -32600)
+        answerError(line, 'invalid params', -32602)
         return refuse('malformed')
       }
       const got = await options.clients.join(named.client, named.name, () => socket.destroy()).catch(() => null)

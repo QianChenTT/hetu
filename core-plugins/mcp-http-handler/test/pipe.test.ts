@@ -106,6 +106,14 @@ const initialize = (name: unknown = 'claude-code', title?: unknown) => JSON.stri
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name, version: '2.0.0', ...(title === undefined ? {} : { title }) } },
 })
 
+// A request of MCP from 2026-07-28 on, which has no initialize: each request carries the protocol version, the
+// client's capabilities and its clientInfo in _meta. null leaves the clientInfo out
+const CLIENT_INFO = 'io.modelcontextprotocol/clientInfo'
+const modern = (method: string, info: unknown = { name: 'claude-code', version: '3.0.0' }) => JSON.stringify({
+  jsonrpc: '2.0', id: 1, method,
+  params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {}, ...(info === null ? {} : { [CLIENT_INFO]: info }) } },
+})
+
 const answered = (line: string) => JSON.parse(line) as { label: string, line: string }
 
 // The JSON-RPC error a refused request is answered with
@@ -148,9 +156,41 @@ describe('a connection joining', () => {
     expect(core.asked).toHaveLength(1)
   })
 
-  it('refuses a first line that is no initialize naming a client as malformed, closes and asks the core nothing', async () => {
+  it('names its client by a modern first request\'s clientInfo in _meta as a dual-era client\'s server/discover carries it and serves that line as it came', async () => {
+    const { path: at, core, passed } = await made()
+    const client = await connect(at)
+    client.socket.write(`${modern('server/discover')}\n`)
+    await until(() => client.lines.length === 1)
+    expect(core.asked).toEqual([{ client: 'claude-code', name: null, redirect: null, field: 'claude-code#1' }])
+    expect(answered(client.lines[0])).toEqual({ label: 'claude-code#1', line: modern('server/discover') })
+    expect(passed).toHaveLength(1)
+  })
+
+  it('names its client by any modern request\'s clientInfo with its title as the name', async () => {
+    const { path: at, core } = await made()
+    const client = await connect(at)
+    client.socket.write(`${modern('tools/list', { name: 'claude-code', version: '3', title: 'Claude Code' })}\n`)
+    await until(() => client.lines.length === 1)
+    expect(core.asked).toEqual([{ client: 'claude-code', name: 'Claude Code', redirect: null, field: 'claude-code#1' }])
+  })
+
+  it('refuses a modern first request with no clientInfo with a JSON-RPC error carrying its id and closes, asking the core nothing', async () => {
+    const { path: at, core, refused } = await made()
+    const client = await connect(at)
+    client.socket.write(`${modern('server/discover', null)}\n`)
+    await until(() => client.closed())
+    expect(client.lines).toEqual([error(1, 'invalid params', -32602)])
+    expect(refused).toEqual(['malformed'])
+    expect(core.asked).toEqual([])
+  })
+
+  it('refuses a first line that names no client as malformed, closes and asks the core nothing', async () => {
     for (const first of ['not json', '{"jsonrpc":"2.0","id":0,"method":"tools/list"}', initialize(7), initialize(''), '[]', 'null', '5', '"initialize"',
-    '{"method":"initialize","params":null}', '{"method":"initialize","params":"x"}', '{"method":"initialize","params":{"clientInfo":"claude-code"}}']) {
+    '{"method":"initialize","params":null}', '{"method":"initialize","params":"x"}', '{"method":"initialize","params":{"clientInfo":"claude-code"}}',
+    modern('server/discover', { name: 7 }), modern('server/discover', { name: '' }), '{"method":"server/discover","params":{"_meta":"x"}}',
+    '{"method":"server/discover","params":{"_meta":{"clientInfo":{"name":"claude-code"}}}}',
+    // An initialize is named by its own clientInfo alone
+    JSON.stringify({ method: 'initialize', params: { _meta: { [CLIENT_INFO]: { name: 'claude-code' } } } })]) {
       const { path: at, core, refused, passed } = await made()
       const client = await connect(at)
       client.socket.write(`${first}\n`)
@@ -166,7 +206,7 @@ describe('a connection joining', () => {
     const client = await connect(at)
     client.socket.write('{"jsonrpc":"2.0","id":"a","method":"tools/list"}\n')
     await until(() => client.closed())
-    expect(client.lines).toEqual([error('a', 'invalid request', -32600)])
+    expect(client.lines).toEqual([error('a', 'invalid params', -32602)])
   })
 
   it('refuses a client the human turned away as token, answers its initialize with a JSON-RPC error, closes and serves nothing', async () => {
