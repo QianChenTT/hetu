@@ -230,7 +230,9 @@ export abstract class PluginsBase {
     this.limited = plugin => {
       try {
         options.limited?.(plugin)
-      } catch {}
+      } catch {
+        // Halves that miss their new limits pace to the old ones, the router already counts against the new
+      }
     }
     this.clock = options.clock ?? (() => performance.now())
     this.state = booted.state
@@ -301,6 +303,7 @@ ${capabilityKey(change.capability)}`)
 
   // A start marker's write or clear, kept among the marker work until it ends either way
   protected marking(work: Promise<void>): Promise<void> {
+    // The caller gets work and its error, this copy only tells the marker work when it ended
     const ended = work.catch(() => {})
     this.markerWork.add(ended)
     void ended.then(() => this.markerWork.delete(ended))
@@ -477,6 +480,7 @@ ${capabilityKey(change.capability)}`)
   // One change or update at a time, so no two read the state and write it back over each other
   protected serial<T>(work: () => Promise<T>): Promise<T> {
     const run = this.queue.then(work)
+    // The caller gets run and its error, the queue only waits for it so one failed change never blocks the next
     this.queue = run.catch(() => {})
     return run
   }
@@ -528,7 +532,9 @@ ${capabilityKey(change.capability)}`)
     try {
       const given = this.link.limit(id, name)
       if (Number.isSafeInteger(given) && given > 0) value = given
-    } catch {}
+    } catch {
+      // A limit the router can't give is the default, as for one the human never set
+    }
     return Math.min(value, MAX_TIMER_MS)
   }
 

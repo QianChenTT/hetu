@@ -71,7 +71,9 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       case 'core.refused':
         try {
           if (call.caller.kind === 'plugin') this.recording.coalesced(`${call.caller.id}.refused`, { reason: args.reason as string }, undefined, args.count as number)
-        } catch {}
+        } catch {
+          // The refusals the plugin reports go unrecorded, they happened in the plugin and this only counts them
+        }
         return null
       case 'core.stop':
       case 'core.restart': {
@@ -248,6 +250,7 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
     // control the human switched off is left from a clear that failed, holds nothing back and is cleared
     const markers = await readStartMarkers(this.dataDir, controls)
     const off = markers.filter(id => isOne(this.state.switches.off, id))
+    // A marker that stays holds nothing back while its control is off and the next start clears it again
     for (const id of off) await this.marking(clearStartMarker(this.dataDir, id)).catch(() => {})
     const hung = markers.find(id => !off.includes(id))
     if (hung !== undefined) return this.enterStopped({ control: hung, why: 'start-failed', reason: START_HUNG, again: false })

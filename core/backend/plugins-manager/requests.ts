@@ -182,7 +182,9 @@ export class Requests {
     else if (this.head?.id !== id) this.head = { id, at: this.host.clock() }
     try {
       this.host.changed()
-    } catch {}
+    } catch {
+      // Windows not told of this change see the list as it is at their next read of it
+    }
   }
 
   // Drops each request whose time ran out, with its record. A lapsed request can't be confirmed
@@ -245,7 +247,9 @@ export class Requests {
     let asked: unknown
     try {
       asked = view.asked(change, effect, from, this.host.confirmOff())
-    } catch {}
+    } catch {
+      // A throw leaves no word, which below records a fault and answers failed
+    }
     if (asked === 'apply' || asked === 'land' || asked === 'hold') return asked
     this.host.fault('asked')
     throw { code: 'failed' }
@@ -259,7 +263,9 @@ export class Requests {
     let confirmed: unknown
     try {
       confirmed = view.confirms(change, inLine, typed)
-    } catch {}
+    } catch {
+      // A view that throws gives no word, so the Confirm counts nothing and a fault is recorded below
+    }
     if (confirmed === 'ok' || confirmed === 'throttled' || confirmed === 'invalid') return confirmed
     this.host.fault('confirms')
     return 'failed'

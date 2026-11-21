@@ -79,7 +79,9 @@ export abstract class PluginsClasses extends PluginsIdentities {
     let answer: unknown
     try {
       answer = classifier.classes(table)
-    } catch {}
+    } catch {
+      // A throw leaves no answer, which the check below refuses and records as a fault
+    }
     const checked = checkedAnswer(table, answer)
     if (checked === null) this.note('fault', { plugin: 'grant-risk-classifier', step: 'classify' })
     return checked
