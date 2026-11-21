@@ -66,7 +66,9 @@ const pipeAnswers = () => new Promise<boolean>(resolve => {
   socket.once('error', () => resolve(false))
 })
 
-type Shim = { lines: () => unknown[], send: (message: unknown) => void, end: () => void, exit: Promise<number | null> }
+// lines are the whole stdout lines that read as JSON. strays are the others, each as JSON text so a \r or an empty one
+// shows, for the test to say there are none
+type Shim = { lines: () => unknown[], strays: () => string[], stderr: () => string, send: (message: unknown) => void, end: () => void, exit: Promise<number | null> }
 
 // hetu --mcp-stdio as an MCP client starts it, on the test's data folder, each stdout line read as JSON
 function shim(dataDir: string, installDir: string): Shim {
@@ -77,10 +79,20 @@ function shim(dataDir: string, installDir: string): Shim {
   shims.push(child)
   let out = ''
   child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
-  child.stderr.resume()
+  let err = ''
+  child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString('utf8') })
+  const read = () => out.split('\n').slice(0, -1).map((line): { json: unknown } | { stray: string } => {
+    try {
+      return { json: JSON.parse(line) as unknown }
+    } catch {
+      return { stray: JSON.stringify(line) }
+    }
+  })
   const exit = new Promise<number | null>(resolve => child.once('exit', code => resolve(code)))
   return {
-    lines: () => out.split('\n').slice(0, -1).map(line => JSON.parse(line) as unknown),
+    lines: () => read().flatMap(one => ('json' in one ? [one.json] : [])),
+    strays: () => read().flatMap(one => ('stray' in one ? [one.stray] : [])),
+    stderr: () => err,
     send: message => child.stdin.write(`${JSON.stringify(message)}\n`),
     end: () => child.stdin.end(),
     exit,
@@ -139,5 +151,8 @@ describe('hetu --mcp-stdio', () => {
     second.end()
     expect(await first.exit).toBe(0)
     expect(await second.exit).toBe(0)
+    // stdout carries nothing but protocol lines, stderr shown when it does
+    expect(first.strays(), first.stderr().slice(0, 2000)).toEqual([])
+    expect(second.strays(), second.stderr().slice(0, 2000)).toEqual([])
   })
 })
