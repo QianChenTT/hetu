@@ -46,7 +46,7 @@ describe('an approval\'s answer', () => {
   })
 })
 
-// A lock keeps every other writer off a note, the human included until he takes it over, and tells its holder nothing
+// A lock keeps every other writer off a note, the human included until he takes it over and tells its holder nothing
 describe('lock.set', () => {
   it('is class 2 confined to a folder or a note and asks nothing at first use', () => {
     const locks: Capability = { type: 'lock.set', paths: ['projects/**', 'plan.md'] }

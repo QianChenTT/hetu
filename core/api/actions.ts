@@ -81,7 +81,7 @@ export const MAX_FIELDS_ASKED = 64
 export type CoreAction = { readonly from: CoreFrom, readonly args: z.ZodType, readonly reads?: true, readonly live?: true }
 
 // A provider action. capability null is a free action: the caller's own storage and cache and clearing locks, which the
-// provider keys by the caller the router names, and a listing. scope names the argument the raw
+// provider keys by the caller the router names and a listing. scope names the argument the raw
 // scope comes from, ends a move's from and to in that order. access is what a history action does with its paths,
 // which the router puts in the scope itself. also is a second requirement on some of the ends, judged at both stages
 // like the first and on the ends prepare gave at decide. A write stays one audit record and reads are coalesced.
