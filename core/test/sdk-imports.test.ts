@@ -54,6 +54,32 @@ describe('what a plugin bundles from the SDK', () => {
     expect(sdk.isDotName).toBe(scope.isDotName)
   })
 
+  // A plugin checks a path as the schema does, with no zod in its bundle
+  it('hands a plugin the core\'s own actionPathProblem, the one the path schema refuses by', async () => {
+    const [sdk, actions] = await Promise.all([import('../sdk/index.ts'), import('../api/actions.ts')])
+    expect(sdk.actionPathProblem).toBe(actions.actionPathProblem)
+    for (const path of ['notes/.obsidian/a.md', 'a//b.md', 'C:/a.md']) {
+      const parsed = providerActions['luoshu.read'].args.safeParse({ path })
+      expect(parsed.success).toBe(false)
+      expect(parsed.error?.issues[0].message).toBe(sdk.actionPathProblem(path))
+    }
+    expect(sdk.actionPathProblem('notes/a.md')).toBeNull()
+  })
+
+  it('bundles the path check with no zod and no Node', async () => {
+    const result = await build({
+      entryPoints: [path.join(import.meta.dirname, '..', 'api', 'paths.ts')],
+      bundle: true,
+      platform: 'neutral',
+      write: false,
+      metafile: true,
+      logLevel: 'silent',
+    })
+    const inputs = Object.keys(result.metafile.inputs)
+    expect(inputs.some(input => input.endsWith('api/paths.ts'))).toBe(true)
+    expect(inputs.filter(input => input.includes('zod') || input.startsWith('node:'))).toEqual([])
+  })
+
   it('names every provider action core/api has', () => {
     expect([...providerActionNames].sort()).toEqual(Object.keys(providerActions).sort())
   })

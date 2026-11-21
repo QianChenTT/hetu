@@ -7,7 +7,8 @@ import type { LimitName } from './limits.ts'
 import { coreNamespaces, localName, MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { bindFailures } from './lifecycle.ts'
 import { frozen } from './plain.ts'
-import { hidesOnScreen, isDotName, MAX_SCOPE_LENGTH, pathProblem } from './scope.ts'
+import { actionPathProblem } from './paths.ts'
+import { hidesOnScreen, MAX_SCOPE_LENGTH } from './scope.ts'
 import type { ViewSpec } from './manifest.ts'
 import type { LogSegment, LogVerification, PluginState, PolicyJobState } from './policy-jobs.ts'
 import type { ThemeSpec } from './ui.ts'
@@ -16,12 +17,8 @@ import type { ThemeSpec } from './ui.ts'
 // actions come from its manifest and their args stay opaque. ui.* comes with the runtime and the drawer, so it has no
 // action here yet. Each provider's own step settles its list: net has none yet
 
-// Why a path no action takes, or null: a spelling no canonical path holds, or a dot segment, which names no note. The
-// one definition of both, read by the path schema and by the core's own publish, which no schema checks.
-// gate.filterReadable drops a path it names from its answer
-export function actionPathProblem(value: string): string | null {
-  return pathProblem(value) ?? (value.split('/').some(isDotName) ? 'a dot segment' : null)
-}
+// Where it always was for the router and the gate. paths.ts holds it apart from zod, so the SDK hands it to plugins
+export { actionPathProblem }
 
 // A path as the caller wrote it, for every action. The matcher judges this text at precheck and the provider's prepare
 // canonicalises it. A spelling no canonical path holds or a dot segment is refused here, so it answers invalid before
