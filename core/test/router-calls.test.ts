@@ -740,6 +740,16 @@ describe('a listing', () => {
     clock.now += 1000
     expect((await search.ask('luoshu.list', {})).ok).toBe(true)
   })
+
+  // A count that crashed in use refuses all, by the judging-controls rule (D-645)
+  it('answers policy-down with a fault when the gate-time count throws, and the luoshu is never asked', async () => {
+    const { search, luoshu, router, log } = listing({ gateTime: { spent: () => { throw new Error('broken') }, charge() {} } })
+    expect(code(await search.ask('luoshu.list', {}))).toBe('policy-down')
+    expect(luoshu.performed).toEqual([])
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'spent', count: 1 }])
+  })
 })
 
 describe('a crash', () => {

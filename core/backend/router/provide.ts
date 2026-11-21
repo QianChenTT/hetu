@@ -367,7 +367,7 @@ function listerOf(c: Context, pending: Pending): { canList: (path: string) => bo
     charge: () => {
       if (charged) return
       charged = true
-      c.gateTime()?.charge(pending.way.principal, c.clock() - started)
+      c.gateCharge(pending.way.principal, c.clock() - started)
     },
   }
 }
@@ -388,12 +388,12 @@ function listed(c: Context, lister: { canList: (path: string) => boolean, threw:
   return { ok: true, result: { paths: [...paths], next } }
 }
 
-// Before a listing is made: refused while the gate can't be asked, throttled once the caller spent its second. So a
-// flood of listings costs main at most one listing past the budget each second
+// Before a listing is made: refused while the gate can't be asked or its count of the gate's time throws, throttled
+// once the caller spent its second. So a flood of listings costs main at most one listing past the budget each second
 function listingRefused(c: Context, pending: Pending): RefusalCode | null {
   if (c.policyJob('gate') === 'off') return null
   if (!askable(c)) return c.down('policy-down')
-  return c.gateTime()?.spent(pending.way.principal, pending.way.plugin) === true ? 'throttled' : null
+  return c.gateSpent(pending.way.principal, pending.way.plugin)
 }
 
 // The fields of an open call this file owns, written only here but scope, which route.ts sets on a subscribe (D-632)

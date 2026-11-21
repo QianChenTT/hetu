@@ -4,7 +4,7 @@ import type { CapabilityType } from '../../api/capabilities.ts'
 import { grantKeyOf, reasonCodes, refusalCodes, type Caller, type ReasonCode, type RefusalCode } from '../../api/envelope.ts'
 import { frozen } from '../../api/plain.ts'
 import { guards as expectedGuards, type GuardableAction, type Part } from '../../api/ids.ts'
-import { pluginStates, policyJobStates, type GateTime, type LiveCall, type Pair, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
+import { pluginStates, policyJobStates, type LiveCall, type Pair, type PluginInfo, type PluginTable, type Scope, type PolicyJobState } from '../../api/policy-jobs.ts'
 import type { Field } from '../../lib/event-log.ts'
 import { Bus } from './bus.ts'
 import { Limits } from './limits.ts'
@@ -297,26 +297,25 @@ export class Context {
     }
   }
 
-  // The gate module's count of the gate's time, null with none handed in. A throw counts nothing
-  gateTime(): GateTime | null {
+  // The gate module's count of the gate's time: throttled once the caller spent its second, null with time left or no
+  // count handed in. A count that throws crashed in use, so it is recorded and refuses as the gate down (D-645)
+  gateSpent(principal: string, plugin: string | null): RefusalCode | null {
     const time = this.options.gateTime
     if (time === undefined) return null
-    return {
-      spent: (principal, plugin) => {
-        try {
-          return time.spent(principal, plugin) === true
-        } catch {
-          return false
-        }
-      },
-      charge: (principal, ms) => {
-        try {
-          time.charge(principal, ms)
-        } catch {
-          // This call's gate time goes uncounted. The throttle only spreads the gate's time and the gate already judged
-          // the call
-        }
-      },
+    try {
+      return time.spent(principal, plugin) === true ? 'throttled' : null
+    } catch {
+      this.fault('gate', 'spent')
+      return this.down('policy-down')
+    }
+  }
+
+  gateCharge(principal: string, ms: number): void {
+    try {
+      this.options.gateTime?.charge(principal, ms)
+    } catch {
+      // This call's gate time goes uncounted. The throttle only spreads the gate's time and the gate already judged
+      // the call
     }
   }
 
