@@ -38,6 +38,10 @@ export class FakeDrawer {
   // Notes the plugin opened with editor.open
   readonly opened: string[] = []
   readonly marks = new Map<string, Mark[]>()
+  // The version each set of marks was sent for, by instance and set
+  readonly versions = new Map<string, number>()
+  // The verb of each call the plugin made, oldest first
+  readonly calls: string[] = []
   private granted: readonly Capability[] = []
   private views: Record<string, ViewSpec> = {}
   private readonly trees = new Map<string, UiNode>()
@@ -51,6 +55,11 @@ export class FakeDrawer {
   private readonly sent = new Map<string, number>()
   private commands = new Set<string>()
   private stamped = 0
+  // Answers held back by verb and the code the next call of a verb is refused with
+  private readonly held = new Map<string, (() => void)[]>()
+  private readonly refusals = new Map<string, string>()
+  // Notes the plugin sent marks for, the only ones hetu's drawer tells closed
+  private readonly marked = new Set<string>()
 
   // A client for the next run of the plugin
   fresh(): Editor {
@@ -141,6 +150,28 @@ export class FakeDrawer {
     if (told && this.reads(note.path)) this.tell({ topic: 'editor.changed', instance, version: note.version, changes: set.toJSON() })
   }
 
+  // The note closed in the editor, told to the plugin only when it sent marks for it
+  closeNote(instance: string): void {
+    if (!this.notes.delete(instance)) throw new Error(`no note ${instance} is open`)
+    this.sent.delete(instance)
+    if (this.marked.delete(instance)) this.tell({ topic: 'editor.closed', instance })
+  }
+
+  // Holds each answer to verb, made when the call comes, until the function returned lets them go, as a slow drawer
+  delay(verb: string): () => void {
+    this.held.set(verb, [])
+    return () => {
+      const waiting = this.held.get(verb) ?? []
+      this.held.delete(verb)
+      for (const send of waiting) send()
+    }
+  }
+
+  // Refuses the next call of verb with code
+  refuseNext(verb: string, code: string): void {
+    this.refusals.set(verb, code)
+  }
+
   text(instance: string): string | null {
     return this.notes.get(instance)?.text.toString() ?? null
   }
@@ -174,11 +205,20 @@ export class FakeDrawer {
     let reply: unknown
     try {
       if (call === null) throw new Refusal('invalid')
+      this.calls.push(call.verb)
+      const refusal = this.refusals.get(call.verb)
+      if (refusal !== undefined) {
+        this.refusals.delete(call.verb)
+        throw new Refusal(refusal)
+      }
       reply = { v: 1, kind: 'reply', id, ok: true, result: this.answer(call) }
     } catch (err) {
       reply = { v: 1, kind: 'reply', id, ok: false, refusal: { code: err instanceof Refusal ? err.code : 'failed' } }
     }
-    queueMicrotask(() => this.toPlugin?.(reply))
+    const send = () => queueMicrotask(() => this.toPlugin?.(reply))
+    const waiting = call === null ? undefined : this.held.get(call.verb)
+    if (waiting === undefined) send()
+    else waiting.push(send)
   }
 
   private answer(call: NonNullable<ReturnType<typeof parseDrawerCall>>): unknown {
@@ -255,6 +295,8 @@ export class FakeDrawer {
         need('ui.decoration')
         const held = note(call.args.instance)
         this.marks.set(`${call.args.instance} ${call.args.set}`, call.args.marks)
+        this.versions.set(`${call.args.instance} ${call.args.set}`, call.args.version)
+        this.marked.add(call.args.instance)
         return { version: held.version }
       }
       case 'editor.bind':
