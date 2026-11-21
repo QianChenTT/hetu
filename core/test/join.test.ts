@@ -458,7 +458,6 @@ describe('core.status, for a window\'s banner', () => {
       modulesOff: [],
       logWrites: true,
       luoshuPicked: false,
-      page: [],
       pending: [],
       stopped: null,
       suspect: [],

@@ -4,48 +4,12 @@
     {
       "files": [
         "core-plugins/hidden-marks/src/marks.ts",
-        "core/frontend/editor/hidden-marks.ts"
-      ],
-      "hash": "17790e301b94cc7b",
-      "at": [
-        "core-plugins/hidden-marks/src/marks.ts:142-150",
-        "core/frontend/editor/hidden-marks.ts:112-120"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core-plugins/hidden-marks/src/marks.ts",
-        "core/frontend/editor/hidden-marks.ts"
-      ],
-      "hash": "228c89e463bba255",
-      "at": [
-        "core-plugins/hidden-marks/src/marks.ts:37-53",
-        "core/frontend/editor/hidden-marks.ts:33-49"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core-plugins/hidden-marks/src/marks.ts",
-        "core/frontend/editor/hidden-marks.ts"
+        "core/frontend/editor/markdown.ts"
       ],
       "hash": "78c62332412b7dd5",
       "at": [
         "core-plugins/hidden-marks/src/marks.ts:17-37",
-        "core/frontend/editor/hidden-marks.ts:14-33"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core-plugins/hidden-marks/src/marks.ts",
-        "core/frontend/editor/hidden-marks.ts"
-      ],
-      "hash": "c9505366fdfce502",
-      "at": [
-        "core-plugins/hidden-marks/src/marks.ts:85-95",
-        "core/frontend/editor/hidden-marks.ts:57-67"
+        "core/frontend/editor/markdown.ts:10-29"
       ],
       "judged": "not yet"
     },
@@ -165,7 +129,7 @@
       "hash": "45618560e67450f5",
       "at": [
         "core/backend/boot/boot.ts:61-65",
-        "core/backend/boot/state.ts:181-184"
+        "core/backend/boot/state.ts:182-185"
       ],
       "judged": "not yet"
     },
@@ -224,7 +188,7 @@
       ],
       "hash": "153d478ed3c86d72",
       "at": [
-        "core/backend/boot/state.ts:181-186",
+        "core/backend/boot/state.ts:182-187",
         "core/backend/providers/luoshu/luoshu.ts:238-243"
       ],
       "judged": "not yet"
@@ -236,7 +200,7 @@
       ],
       "hash": "32d147def6696b83",
       "at": [
-        "core/backend/boot/state.ts:182-189",
+        "core/backend/boot/state.ts:183-190",
         "core/backend/providers/luoshu/luoshu.ts:239-246"
       ],
       "judged": "not yet"
@@ -248,7 +212,7 @@
       ],
       "hash": "2b6df8a1e9515d7f",
       "at": [
-        "core/backend/boot/state.ts:280-288",
+        "core/backend/boot/state.ts:281-289",
         "core/lib/event-log.ts:250-258"
       ],
       "judged": "not yet"
@@ -260,7 +224,7 @@
       ],
       "hash": "985d3fdd0da0c26f",
       "at": [
-        "core/backend/boot/state.ts:284-291",
+        "core/backend/boot/state.ts:285-292",
         "core/lib/event-log.ts:254-262"
       ],
       "judged": "not yet"
@@ -692,7 +656,7 @@
       ],
       "hash": "2bd770ef0f36c627",
       "at": [
-        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/editor/page.ts:689-695",
         "core/frontend/workers/page.ts:19-25"
       ],
       "judged": "not yet"
@@ -704,7 +668,7 @@
       ],
       "hash": "5e1bc8266ba8a937",
       "at": [
-        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/editor/page.ts:689-695",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"

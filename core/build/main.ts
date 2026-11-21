@@ -9,15 +9,11 @@ import { checkModuleImports } from './module-imports.ts'
 
 // The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
 // or the community package npm installed at the commit package.json pins
-const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
+const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community', 'hidden-marks': 'hetu' } as const
 // The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
 // utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
 // main.js
 const INSTALL = ['mcp-http-handler']
-// The in-page core plugins, each a module the editor page compiles in from core/frontend/editor. The install's copy
-// holds its manifest and the module bundled on its own, which its hash and the human's switch cover. There is no
-// plugins manager path for in-page code
-const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
 
 const core = path.join(import.meta.dirname, '..')
 const repo = path.join(core, '..')
@@ -144,26 +140,6 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     const root = path.join(outDir, 'plugins', id)
     const { version } = await writeFirstParty(source, root, from)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
-  }
-  for (const [id, module] of Object.entries(PAGE)) {
-    const source = path.join(core, '..', 'core-plugins', id)
-    const root = path.join(outDir, 'plugins', id)
-    await rm(root, { recursive: true, force: true })
-    await mkdir(path.join(root, 'dist'), { recursive: true })
-    // The plugin's folder holds its worker's manifest, so the in-page one is written here from its id, name and version
-    const { name, version } = JSON.parse(await readFile(path.join(source, 'hetu-plugin.json'), 'utf8')) as { name: string, version: string }
-    await writeFile(path.join(root, 'hetu-plugin.json'), `${JSON.stringify({ id, name, version, api: '^2', entries: { page: 'dist/page.js' } }, null, 2)}\n`)
-    // Its own code only: CodeMirror is the page's
-    await build({
-      ...shared,
-      entryPoints: [path.join(frontend, 'editor', module)],
-      outfile: path.join(root, 'dist', 'page.js'),
-      platform: 'browser',
-      format: 'esm',
-      target: CHROMIUM,
-      packages: 'external',
-    })
-    plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   const list = { format: INSTALL_LIST_FORMAT, plugins }
   await writeFile(path.join(outDir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)

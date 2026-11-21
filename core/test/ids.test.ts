@@ -96,8 +96,8 @@ describe('policy jobs, providers and guards', () => {
     expect(guards).toEqual({ 'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [] })
   })
 
-  it('lists the core plugins, utility and in-page, with CodeMirror in the drawer and no editor-core', () => {
-    expect(corePluginIds).toEqual(['leases', 'mcp-http-handler', 'net', 'hidden-marks'])
+  it('lists the core plugins, with CodeMirror in the drawer and no editor-core', () => {
+    expect(corePluginIds).toEqual(['leases', 'mcp-http-handler', 'net'])
   })
 
   it('lists the core modules main holds apart from the core plugins', () => {
@@ -126,8 +126,8 @@ describe('reserved ids', () => {
   const expected = [
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
-    'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler', 'hidden-marks',
-    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout',
+    'luoshu', 'leases', 'history', 'exec', 'net', 'mcp-http-handler',
+    'mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout', 'hidden-marks',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -135,7 +135,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout'])
+    expect(firstPartyIds).toEqual(['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify', 'layout', 'hidden-marks'])
   })
 
   it.each(expected)('reserves %j', id => {

@@ -6,6 +6,7 @@ import { boot } from '../backend/boot/boot.ts'
 import { StateStore } from '../backend/boot/state.ts'
 import { PluginsManager } from '../backend/plugins-manager/plugins-manager.ts'
 import type { Landing } from '../backend/plugins-manager/header.ts'
+import { readInstalled, writeInstalled } from '../backend/plugins-manager/folders.ts'
 import {
   cleanup, coreInstall, coreModules, filesFor, firstPartyEntry, harness, hashOf, plant, reasonOf, stateOf, until, wire, workerManifest,
   type Files, type Listing,
@@ -47,6 +48,19 @@ describe('the first-party reconcile', () => {
     expect(await readdir(path.join(made.dataDir, 'staging'))).toEqual([])
     // An applied change, so the grants snapshot moved on
     expect(made.pluginsManager.view()).toBe(2)
+  })
+
+  // Hidden marks ran in the editor page as a core plugin before it became a first-party worker, so a data folder from
+  // then holds it in the record of the install's core plugins and nothing in the plugin folder
+  it('copies a plugin the last run held as a core plugin as it copies any first-party plugin, with no update heard', async () => {
+    const marks = filesFor(workerManifest('hidden-marks', { version: '0.1.0', capabilities: [{ type: 'ui.decoration' }] }))
+    const made = await harness({ install: installWith({ 'hidden-marks': marks }) })
+    await writeInstalled(made.dataDir, { 'hidden-marks': { version: '0.1.0', hash: 'c'.repeat(64) } })
+    await made.pluginsManager.start()
+    expect(stateOf(made.pluginsManager, 'hidden-marks')).toBe('ready')
+    expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'hidden-marks', version: '0.1.0' }])
+    expect(made.link.events('plugin.updated')).toEqual([])
+    expect(Object.keys(await readInstalled(made.dataDir))).toEqual([])
   })
 
   it('copies nothing the human removed, whose tombstone stands', async () => {

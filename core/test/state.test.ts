@@ -993,6 +993,20 @@ describe('the dropped watchdog', () => {
   })
 })
 
+// Hidden marks, a core plugin in the editor page before it became a first-party worker, may still be switched off in a
+// file: read with the id dropped, never a suspect file, so it runs again
+describe('hidden marks off from when it ran in the page', () => {
+  it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'hidden-marks', 'net'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.state.switches.off).toEqual(['gate', 'net'])
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain('hidden-marks')
+  })
+})
+
 // The limits the design accepts: detect only against a program that knows hetu, threats 24, 25 and 55
 describe('what the hash does not catch', () => {
   it('accepts an edit whose hash was rewritten too', async () => {

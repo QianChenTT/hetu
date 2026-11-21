@@ -386,8 +386,6 @@ export type CoreStatus = {
   modulesOff: string[]
   logWrites: boolean
   luoshuPicked: boolean
-  // The in-page core plugins that are ready, which the editor window applies: hidden-marks
-  page: string[]
   pending: PendingRequest[]
   stopped: StoppedMode | null
   // The kinds of state file that failed their check at this start or went missing after an earlier run, never a path.
