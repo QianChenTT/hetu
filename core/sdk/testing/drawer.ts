@@ -21,7 +21,7 @@ type Selection = { anchor: number, head: number }[]
 // The range the note's editor draws, stamped in the order the test moved it. It goes in the note's version when sent,
 // as hetu's drawer sends the range the editor still draws
 type Drawn = { from: number, to: number, stamp: number }
-type Note = { path: string, text: Text, version: number, drawn: Drawn }
+type Note = { path: string, text: Text, version: number, drawn: Drawn, selection?: { anchor: number, head: number } }
 
 class Refusal {
   readonly code: string
@@ -54,6 +54,8 @@ export class FakeDrawer {
   private asked = false
   private readonly sent = new Map<string, number>()
   private commands = new Set<string>()
+  // The note and version of the last command sent with its note, which one edit may place the cursor in answer to
+  private answering: { instance: string, version: number } | null = null
   private stamped = 0
   // Answers held back by verb and the code the next call of a verb is refused with
   private readonly held = new Map<string, (() => void)[]>()
@@ -131,7 +133,9 @@ export class FakeDrawer {
   command(command: string, instance?: string, selection: Selection = [{ anchor: 0, head: 0 }]): boolean {
     if (!this.commands.has(command)) return false
     const note = instance === undefined ? undefined : this.notes.get(instance)
+    this.answering = null
     if (instance !== undefined && note !== undefined && this.reads(note.path)) {
+      this.answering = { instance, version: note.version }
       this.tell({ topic: 'editor.command', command, instance, version: note.version, selection: selection.map(range => ({ ...range })) })
     } else {
       this.tell({ topic: 'editor.command', command, instance: null })
@@ -170,6 +174,11 @@ export class FakeDrawer {
   // Refuses the next call of verb with code
   refuseNext(verb: string, code: string): void {
     this.refusals.set(verb, code)
+  }
+
+  // Where the plugin's last edit with a selection put the cursor
+  selection(instance: string): { anchor: number, head: number } | undefined {
+    return this.notes.get(instance)?.selection
   }
 
   text(instance: string): string | null {
@@ -280,14 +289,26 @@ export class FakeDrawer {
       case 'editor.edit': {
         const held = note(call.args.instance)
         if (!holds(this.granted, { capability: 'ui.edit', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
+        const { selection } = call.args
+        const asked = this.answering
+        if (selection !== undefined) this.answering = null
+        if (selection !== undefined && (asked?.instance !== call.args.instance || asked.version !== call.args.version)) throw new Refusal('not-granted')
         if (call.args.version !== held.version) throw new Refusal('stale')
         let changes: ChangeSet
         try {
           changes = ChangeSet.fromJSON(call.args.changes)
-          held.text = changes.apply(held.text)
+          if (changes.length !== held.text.length) throw new Error('another length')
         } catch {
           throw new Refusal('invalid')
         }
+        // The cursor inside the range the edit changed or at its edges, as hetu's drawer takes it
+        const ends: number[] = []
+        changes.iterChangedRanges((_fromA, _toA, fromB, toB) => void ends.push(fromB, toB))
+        if (selection !== undefined && ![selection.anchor, selection.head].every(pos => pos >= Math.min(...ends) && pos <= Math.max(...ends))) {
+          throw new Refusal('invalid')
+        }
+        held.text = changes.apply(held.text)
+        if (selection !== undefined) held.selection = { anchor: selection.anchor, head: selection.head }
         held.version++
         this.tell({ topic: 'editor.changed', instance: call.args.instance, version: held.version, changes: changes.toJSON() })
         return { version: held.version }

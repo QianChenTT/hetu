@@ -5,7 +5,7 @@ import {
 import { Decoration, type DecorationSet, EditorView, type KeyBinding, keymap } from '@codemirror/view'
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
-import { hiddenRules, hiddenText } from './hidden-rules.ts'
+import { hiddenRules, hiddenText, placeCaret } from './hidden-rules.ts'
 import type { Rect } from './drag.ts'
 import { lay } from './layers.ts'
 import { markdownSupport } from './markdown.ts'
@@ -229,8 +229,11 @@ export class EditorViews implements Editors {
       // Line breaks as one character, as positions count them
       text: () => view.state.doc.toString(),
       selection: () => view.state.selection.ranges.map(range => ({ anchor: range.anchor, head: range.head })),
-      apply: (changes, plugin) => view.dispatch({
-        changes, annotations: [fromPlugin.of(plugin), isolateHistory.of('full')], userEvent: 'input.plugin',
+      apply: (changes, plugin, selection) => view.dispatch({
+        changes,
+        annotations: [fromPlugin.of(plugin), isolateHistory.of('full')],
+        userEvent: 'input.plugin',
+        ...selection === undefined ? {} : { selection, effects: placeCaret.of(selection.head) },
       }),
       setMarks: (owner, set, marks) => view.dispatch({ effects: setMarks.of({ owner, set, marks }) }),
       clearMarks: owner => view.dispatch({ effects: clearMarks.of(owner) }),

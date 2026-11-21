@@ -1,5 +1,7 @@
 import { deleteGroupBackward, deleteGroupForward } from '@codemirror/commands'
-import { EditorSelection, type EditorState, type Extension, Facet, findClusterBreak, Prec, type TransactionSpec } from '@codemirror/state'
+import {
+  EditorSelection, type EditorState, type Extension, Facet, findClusterBreak, Prec, StateEffect, StateField, type TransactionSpec,
+} from '@codemirror/state'
 import { type DecorationSet, type EditorView, type KeyBinding, keymap, ViewPlugin } from '@codemirror/view'
 
 // The drawer's rules for text a plugin hid, the same for every plugin: the caret never rests inside it, arrows step over
@@ -91,9 +93,22 @@ function trim(state: EditorState, sets: Sets, from: number, to: number): { from:
   return { from: inFrom, to: inTo }
 }
 
-// The selection the rules allow in place of the one there, or null when it already holds
+// Where a plugin's edit placed the caret in answer to the human's key, kept until the human types or moves
+export const placeCaret = StateEffect.define<number>()
+const placed = StateField.define<number | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const effect of tr.effects) if (effect.is(placeCaret)) return effect.value
+    return tr.docChanged || tr.selection !== undefined ? null : value
+  },
+})
+
+// The selection the rules allow in place of the one there, or null when it already holds. A caret placed just after a
+// closing marker stays, so typing there goes past the run
 export function settle(state: EditorState, sets: Sets): EditorSelection | null {
   const range = state.selection.main
+  const kept = state.field(placed, false)
+  if (range.empty && kept === range.head && near(sets, kept, kept).some(piece => piece.to === kept && piece.edge === 'close')) return null
   let next = EditorSelection.cursor(restAt(state, sets, range.head))
   if (!range.empty) {
     const { from, to } = trim(state, sets, range.from, range.to)
@@ -267,6 +282,7 @@ export const hiddenKeys: readonly KeyBinding[] = [
 ]
 
 export const hiddenRules: Extension = [
+  placed,
   Prec.highest(keymap.of([{ key: 'Enter', run: breakHere, shift: breakHere }, { mac: 'Ctrl-o', run: breakHere }])),
   Prec.high(keymap.of(hiddenKeys)),
   settler,

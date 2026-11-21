@@ -90,7 +90,14 @@ export const bridgeCall = z.discriminatedUnion('verb', [
     // set names the plugin's own group of marks on the instance, which a new decorate of the same set replaces
     args: z.strictObject({ instance, version, set: localName, marks: z.array(mark).max(MAX_MARKS) }),
   }),
-  z.strictObject({ ...head, verb: z.literal('editor.edit'), args: z.strictObject({ instance, version, changes: changeJson }) }),
+  z.strictObject({
+    ...head,
+    verb: z.literal('editor.edit'),
+    // selection places the cursor after the edit. The drawer takes it only in answer to a command the human just invoked
+    // through the plugin's binding, on that note at the version the command named and inside the range the edit changed
+    // or at its edges. It came within API version 3 as an addition
+    args: z.strictObject({ instance, version, changes: changeJson, selection: z.strictObject({ anchor: position, head: position }).optional() }),
+  }),
   z.strictObject({
     ...head,
     verb: z.literal('editor.bind'),

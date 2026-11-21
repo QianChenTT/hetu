@@ -27,8 +27,9 @@ export type Instance = {
   readonly versions: Versions
   text(): string
   selection(): { anchor: number, head: number }[]
-  // A plugin's edit as one transaction, kept apart in undo. The page's update then pushes it to versions
-  apply(changes: ChangeSet, plugin: string): void
+  // A plugin's edit as one transaction, kept apart in undo, with the cursor it places. The page's update then pushes it
+  // to versions
+  apply(changes: ChangeSet, plugin: string, selection?: { anchor: number, head: number }): void
   // Replaces the owner's set of that name
   setMarks(owner: string, set: string, marks: Mark[]): void
   clearMarks(owner: string): void
@@ -78,6 +79,9 @@ type Connection = {
   readonly told: Set<string>
   // What it had the drawer do in the second that started at start
   spent: { start: number, marks: number, chars: number, nodes: number }
+  // The note and version of the last command the human invoked through its binding, which one edit may place the
+  // cursor in answer to
+  answering: { instance: string, version: number } | null
 }
 
 class Refusal {
@@ -143,7 +147,7 @@ export class Drawer {
     }
     if (held !== undefined) this.drop(held)
     const conn: Connection = {
-      plugin, incarnation, port, bindings: new Map(), keys: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
+      plugin, incarnation, port, bindings: new Map(), answering: null, keys: false, viewports: false, ranges: new Map(), marked: new Set(), sets: new Map(), told: new Set(),
       spent: { start: this.clock(), marks: 0, chars: 0, nodes: 0 },
     }
     this.connections.set(plugin, conn)
@@ -229,6 +233,7 @@ export class Drawer {
       const command = conn.bindings.get(key) as string
       // Where the human was when the key came, sent once the core says the plugin reads the note
       const at = open === undefined ? undefined : { version: open.versions.version, selection: open.selection() }
+      conn.answering = open === undefined || at === undefined ? null : { instance: open.id, version: at.version }
       const told = open === undefined ? Promise.resolve(none) : this.reachOf(conn.plugin, open.path)
       void told.then(reach => {
         if (!this.live(conn)) return
@@ -476,10 +481,18 @@ export class Drawer {
         } catch {
           throw new Refusal('invalid')
         }
+        const { selection } = call.args
+        if (selection !== undefined) {
+          const asked = conn.answering
+          conn.answering = null
+          if (asked?.instance !== instance.id || asked.version !== call.args.version) throw new Refusal('not-granted')
+          if (instance.versions.version !== call.args.version) throw new Refusal('stale')
+        }
         const rebased = instance.versions.rebase(changes, call.args.version)
         if (rebased === 'stale') throw new Refusal('stale')
+        if (selection !== undefined && !within(rebased, selection)) throw new Refusal('invalid')
         if (!this.live(conn)) throw new Refusal('stopped')
-        instance.apply(rebased, plugin)
+        instance.apply(rebased, plugin, selection)
         this.edited(instance.id, plugin)
         return { version: instance.versions.version }
       }
@@ -523,6 +536,15 @@ export class Drawer {
     if (this.find(id) !== instance) throw new Refusal('not-found')
     return instance
   }
+}
+
+// Whether a selection lies inside the range an edit changed or at its edges, in the text after the edit
+function within(changes: ChangeSet, selection: { anchor: number, head: number }): boolean {
+  let [from, to] = [Infinity, -Infinity]
+  changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+    ;[from, to] = [Math.min(from, fromB), Math.max(to, toB)]
+  })
+  return [selection.anchor, selection.head].every(pos => pos >= from && pos <= to)
 }
 
 type EventBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
