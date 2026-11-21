@@ -289,22 +289,32 @@ export function rejudge(c: Context): void {
   if (c.policyJob('gate') === 'off') return
   for (const pending of withPower(c)) {
     const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
-    if (refused !== null) revoke(c, pending, refused.code === 'policy-down' ? 'policy-down' : 'stale')
+    if (refused !== null) revoke(c, pending, revokedAs(refused.code))
   }
+}
+
+// What a call judged again is revoked as: policy-down when the gate can't judge it, stale for every other refusal
+function revokedAs(code: RefusalCode): RefusalCode {
+  return code === 'policy-down' ? 'policy-down' : 'stale'
 }
 
 // When the plugins manager's change threw, no open call was judged again on its grants snapshot. So every open call
 // with power a plugin holds is revoked as policy-down and every live subscription of a plugin the gate holds ends,
-// whether or not its own grant changed, as a control that crashed in use refuses all (D-646). A window's calls and
-// subscriptions run on, as does anything with no power. With the gate off by the human nothing is judged, so nothing ends.
-// A call whose end throws is recorded and the rest still end, the subscriptions included
+// whether or not its own grant changed, as a control that crashed in use refuses all (D-646). A window's grants are
+// fixed, so its calls end only when the gate isn't on, answered as rejudge answers them then (D-649). A window's
+// subscriptions are left to the bus's next sync, as rejudge leaves them, and anything with no power runs on. With the
+// gate off by the human nothing is judged, so nothing ends. A call whose end throws is recorded and the rest still end,
+// the subscriptions included
 export function revokeAll(c: Context): void {
-  if (c.policyJob('gate') === 'off') return
+  const open = gateOpen(c)
+  if (open === 'pass') return
+  const windows = open === 'decide' ? null : revokedAs(open)
   try {
     for (const pending of withPower(c)) {
-      if (pending.caller.kind !== 'plugin') continue
+      const code = pending.caller.kind === 'plugin' ? c.down('policy-down') : windows
+      if (code === null) continue
       try {
-        revoke(c, pending, c.down('policy-down'))
+        revoke(c, pending, code)
       } catch {
         c.fault('router', 'revokeAll')
       }

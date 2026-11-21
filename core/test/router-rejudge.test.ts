@@ -437,3 +437,58 @@ describe('every open call a plugin holds with power ended when the router could 
     expect((await search.reply(id)).ok).toBe(true)
   })
 })
+
+// A window's grants are fixed, so only the gate's own state can end its calls. When the gate isn't on revokeAll ends
+// them as rejudge would on a new grants snapshot (D-649)
+describe('a window\'s open call with power when the router could not judge it again', () => {
+  // The editor's write held in perform, as it waits on the disk
+  async function saving(over: HarnessOptions = {}) {
+    const parts = made(over)
+    let open!: () => void
+    parts.luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const editor = windowWay(parts.router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const reply = editor.ask('editor', 'luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    expect(parts.luoshu.performed).toHaveLength(1)
+    return { ...parts, open, reply, signal: () => parts.luoshu.performed[0].call.signal?.aborted }
+  }
+
+  it.each([
+    ['failed', 'policy-down'],
+    ['absent', 'policy-down'],
+    ['starting', 'stale'],
+  ] as const)('ends it with the gate %s, answered %s as rejudge answers it', async (state, answer) => {
+    const ended = await saving()
+    ended.pluginsManager.policyJobs.gate = state
+    ended.router.revokeAll()
+    expect(ended.signal()).toBe(true)
+    ended.open()
+    expect(code(await ended.reply)).toBe(answer)
+
+    const judged = await saving()
+    judged.pluginsManager.policyJobs.gate = state
+    judged.snapshot()
+    expect(judged.signal()).toBe(true)
+    judged.open()
+    expect(code(await judged.reply)).toBe(answer)
+  })
+
+  it('leaves it running with the gate on, since its grants can\'t be revoked', async () => {
+    const { router, open, reply, signal } = await saving()
+    router.revokeAll()
+    await tick(10)
+    expect(signal()).toBe(false)
+    open()
+    expect((await reply).ok).toBe(true)
+  })
+
+  it('ends nothing once the human switched the gate off while it ran', async () => {
+    const { router, pluginsManager, open, reply, signal } = await saving()
+    pluginsManager.policyJobs.gate = 'off'
+    router.revokeAll()
+    await tick(10)
+    expect(signal()).toBe(false)
+    open()
+    expect((await reply).ok).toBe(true)
+  })
+})
