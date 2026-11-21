@@ -3,10 +3,10 @@ import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
 import { grantKeyOf, type Caller, type Refusal, type RefusalCode } from '../../api/envelope.ts'
 import { type LimitName, defaultLimits } from '../../api/limits.ts'
-import { utilityIds } from '../../api/ids.ts'
+import { LOCK_GUARD, utilityIds } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
 import { API_VERSION, folderManifest, installManifest, supportsApi, type ViewSpec } from '../../api/manifest.ts'
-import type { Call, PluginState, PolicyJobState } from '../../api/policy-jobs.ts'
+import type { Call, Guard, PluginState, PolicyJobState, Provider } from '../../api/policy-jobs.ts'
 import { VERSION } from '../../api/version.ts'
 import { Router } from '../../backend/router/router.ts'
 import { Limits } from '../../backend/router/limits.ts'
@@ -21,7 +21,7 @@ import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
 import { FakeDrawer } from './drawer.ts'
 import { type FakeMode, holds, ModeGate, pairKey } from './gate.ts'
-import { MemoryHistory, MemoryStorage, MemoryLuoshu } from './providers.ts'
+import { memoryLock, MemoryHistory, MemoryStorage, MemoryLuoshu } from './providers.ts'
 
 export { FakeDrawer, holds }
 export type { FakeMode }
@@ -50,10 +50,11 @@ export type CoreCall = { action: string, args: unknown, caller: Caller }
 // latencyMs is how long the luoshu, storage, cache and history take to answer each call, so a plugin meets a save or a
 // read that takes time. limits are the human's values for all, read each time, so a test may change them while the
 // plugin runs
-// drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs
+// drawer is an editor page's drawer in memory, which the plugin's ctx.editor and ctx.ui reach once it runs. clock is
+// the lock's, performance.now() unless named, so a test moves a lock past its end
 export type FakeCoreOptions = {
   manifest: unknown, mode?: FakeMode, notes?: Record<string, string>, readyMs?: number, latencyMs?: number,
-  limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer,
+  limits?: Partial<Record<LimitName, number>>, drawer?: FakeDrawer, clock?: () => number,
 }
 
 type Manifest = {
@@ -134,11 +135,11 @@ class FakePluginsManager implements PluginTable {
     this.all = all
   }
 
-  // The grant risk classifier policy job and the lock read off, as with the human's switch, so no write here waits on
-  // a lock module the fake core doesn't hold
+  // The grant risk classifier policy job read off, as with the human's switch, and the lock on
   policyJob(id: string): PolicyJobState {
     if (id === 'gate') return this.gateState
-    return id === 'grant-risk-classifier' || id === 'lock' ? 'off' : 'absent'
+    if (id === LOCK_GUARD) return 'on'
+    return id === 'grant-risk-classifier' ? 'off' : 'absent'
   }
 
   view(): number {
@@ -211,9 +212,9 @@ function transportOf(router: Router, caller: Caller): Transport {
 }
 
 // A core for a plugin's tests: the real router with its eleven steps, a gate as the mode says, the luoshu, storage,
-// cache and history in memory, test callers with the grants each test names and stand-ins for other plugins. One plugin
-// runs on it at a time, placed as the plugins manager would place it: mcp-http-handler's host entry in a utility process
-// on a port
+// cache and history in memory, the lock module's own table and guard, test callers with the grants each test names and
+// stand-ins for other plugins. One plugin runs on it at a time, placed as the plugins manager would place it:
+// mcp-http-handler's host entry in a utility process on a port
 export class FakeCore {
   readonly mode: FakeMode
   readonly coreRecords: { event: string, fields: Record<string, Field> }[] = []
@@ -241,6 +242,7 @@ export class FakeCore {
   private readonly memory: MemoryLuoshu
   private readonly storage: MemoryStorage
   private readonly history: MemoryHistory
+  private readonly lock: { provider: Provider, guard: Guard }
   private readonly luoshuWay: Way
   private readonly testers = new Map<string, Way>()
   private readonly readyMs: number
@@ -272,6 +274,7 @@ export class FakeCore {
     this.memory = new MemoryLuoshu(path => this.publish('luoshu.changed', path), options.latencyMs ?? 0)
     this.storage = new MemoryStorage(options.latencyMs ?? 0)
     this.history = new MemoryHistory(this.memory.notes, options.latencyMs ?? 0)
+    this.lock = memoryLock({ clock: options.clock ?? (() => performance.now()) })
     for (const [path, text] of Object.entries(options.notes ?? {})) this.memory.notes.set(path, text)
     // Flood control counts by the limits the fake core was given, as the core's does by the human's
     const limits = new Limits(() => this.pluginsManager.limits())
@@ -302,8 +305,9 @@ export class FakeCore {
       gateTime: gateActions.time,
       floodControl: () => floodControl,
       gate: () => this.gate,
-      guards: () => null,
-      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : id === 'history' ? this.history : null),
+      guards: id => (id === LOCK_GUARD ? this.lock.guard : null),
+      providers: id => (id === 'luoshu' ? this.memory : id === 'storage' ? this.storage : id === 'lock' ? this.lock.provider
+        : id === 'history' ? this.history : null),
       recording: this.recording,
     })
     this.router.read(this.pluginsManager)

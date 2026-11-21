@@ -14,7 +14,7 @@ export function holds(granted: readonly Capability[], access: Pick<Access, 'capa
   const covered = (grants: readonly string[]) => (access.scope.paths ?? []).every(path => grants.some(grant => scopeMatches(grant, path, { foldCase: false })))
   return granted.some(item => {
     if (item.type !== access.capability) return false
-    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list' || item.type === 'ui.edit' || item.type === 'ui.read') {
+    if (item.type === 'luoshu.read' || item.type === 'luoshu.write' || item.type === 'luoshu.list' || item.type === 'ui.edit' || item.type === 'ui.read' || item.type === 'lock.set') {
       return covered(item.paths)
     }
     // A history item counts only for the access it names, so a read item never covers a commit
