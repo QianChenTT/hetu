@@ -34,6 +34,23 @@ describe('a mark', () => {
     expect(mark.safeParse({ kind: 'line', from: 0, style: 'h1' }).success).toBe(true)
   })
 
+  it("takes a hidden range's element as a group and its edge as open or close", () => {
+    const given = { kind: 'hide', from: 0, to: 2, group: 'bold0', edge: 'open' }
+    expect(mark.safeParse(given).data).toEqual(given)
+    expect(mark.safeParse({ kind: 'hide', from: 5, to: 7, edge: 'close' }).success).toBe(true)
+    expect(mark.safeParse({ kind: 'hide', from: 0, to: 2, group: 'g' }).success).toBe(true)
+  })
+
+  it.each([
+    ['an edge other than open or close', { kind: 'hide', from: 0, to: 2, edge: 'middle' }],
+    ['a group that is no name', { kind: 'hide', from: 0, to: 2, group: 'a b' }],
+    ['a group past 64 characters', { kind: 'hide', from: 0, to: 2, group: 'g'.repeat(65) }],
+    ['a group on a styled range', { kind: 'mark', from: 0, to: 2, style: 'em', group: 'g' }],
+    ['an edge on a widget', { kind: 'widget', from: 0, to: 1, text: '•', edge: 'open' }],
+  ])('refuses %s', (_name, given) => {
+    expect(mark.safeParse(given).success).toBe(false)
+  })
+
   it('knows a fixed list of styles and no class or CSS of its own', () => {
     expect(markStyles).toEqual(['strong', 'em', 'strike', 'highlight', 'code', 'link', 'muted', 'error', 'warning', 'info'])
     expect(lineStyles).toEqual(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'quote', 'codeblock', 'rule'])
