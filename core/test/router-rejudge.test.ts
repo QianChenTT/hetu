@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Call, Prepared, Provider } from '../api/policy-jobs.ts'
-import { cleanup, code, harness, tick, worker, type HarnessOptions } from './router-fakes.ts'
+import { cleanup, code, harness, tick, windowWay, worker, type HarnessOptions } from './router-fakes.ts'
 
 afterEach(cleanup)
 
@@ -354,5 +354,51 @@ describe('the calls under a call a new grants snapshot no longer covers', () => 
     open()
     await tick(20)
     expect([luoshu.performed, luoshu.files.has('notes/a.md')]).toEqual([[], false])
+  })
+})
+
+// The plugins manager's change threw, so no open call was judged again on its grants snapshot (D-646)
+describe('every open call a plugin holds with power ended when the router could not judge them again', () => {
+  it('ends each one policy-down whatever its grant, its callee told cancel, while a call with no power and a window\'s call run on', async () => {
+    const { exec, luoshu, search, pluginsManager, gate, connect, router } = made()
+    pluginsManager.sandboxed('word-count', { count: {}, tally: {} })
+    gate.grants.scribe = [{ type: 'plugin.call', targets: ['word-count'] }]
+    const scribe = connect(worker('scribe'))
+    const counter = connect(worker('word-count'))
+    const run = search.call('exec.run', { command: build })
+    const count = scribe.call('word-count.count', {})
+    const delivered = await counter.delivered('word-count.count')
+    // word-count's call to its own action holds no power
+    const tally = counter.call('word-count.tally', {})
+    const own = await counter.delivered('word-count.tally')
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const editor = windowWay(router, { editor: { kind: 'window', role: 'editor', n: 1 } })
+    const saving = editor.ask('editor', 'luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await tick(20)
+    expect([exec.signals.length, luoshu.performed.length]).toEqual([1, 1])
+    router.revokeAll()
+    expect(code(await search.reply(run))).toBe('policy-down')
+    expect(exec.signals[0].aborted).toBe(true)
+    expect(code(await scribe.reply(count))).toBe('policy-down')
+    await counter.waitFor(message => message.kind === 'cancel' && message.callId === delivered.callId)
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(false)
+    open()
+    expect((await saving).ok).toBe(true)
+    expect(counter.inbox.some(message => message.kind === 'cancel' && message.callId === own.callId)).toBe(false)
+    counter.answer(own.callId, 3)
+    expect((await counter.reply(tally)).result).toBe(3)
+  })
+
+  it('ends nothing while the human has the gate off', async () => {
+    const { exec, search, pluginsManager, router } = made()
+    pluginsManager.policyJobs.gate = 'off'
+    const id = search.call('exec.run', { command: build })
+    await tick(20)
+    router.revokeAll()
+    await tick(10)
+    expect(exec.signals[0].aborted).toBe(false)
+    exec.finish()
+    expect((await search.reply(id)).ok).toBe(true)
   })
 })

@@ -6,7 +6,7 @@ import { Bus } from './bus.ts'
 import type { PluginTable } from '../../api/policy-jobs.ts'
 import type { Asks, RouterDoor, RouterOptions, Heard, Port, Served, WayClosed } from './header.ts'
 import { topicsOf, whoOf, Context } from './context.ts'
-import { busState, listable, recheck, rejudge } from './provide.ts'
+import { busState, listable, recheck, rejudge, revokeAll } from './provide.ts'
 import { register, handle, window, end, send, limit, close } from './door.ts'
 
 // The one path every call and reply takes, with the floor rules in it. The caller always comes from the way in.
@@ -81,6 +81,12 @@ export class Router implements RouterDoor {
     if (first) return
     rejudge(this.c)
     this.c.bus.emit(coreTopic.security)
+  }
+
+  // For the plugins manager, when changed() threw: no open call with power was judged again, so each one a plugin holds
+  // ends policy-down and each subscription of a plugin the gate holds ends (D-646)
+  revokeAll(): void {
+    if (!this.c.closed) revokeAll(this.c)
   }
 
   // The door's pipes, each in door.ts

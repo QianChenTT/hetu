@@ -123,6 +123,32 @@ describe('a crash', () => {
     expect(stateOf(made.pluginsManager, 'outline')).toBe('ready')
   })
 
+  // The router judged no open call again on this change, so it ends every one with power (D-646)
+  it.each([
+    ['', false, [{ plugin: 'router', step: 'changed' }]],
+    [', and goes on when ending them throws too,', true, [{ plugin: 'router', step: 'changed' }, { plugin: 'router', step: 'revokeAll' }]],
+  ])('records a link.changed that throws and has the router end every open call with power%s still sending deps', async (_name, throws, faults) => {
+    const made = await harness({
+      folder: { mapper: worker('mapper'), outline: worker('outline') },
+      entries: { mapper: signed(), outline: signed({ granted: [{ type: 'plugin.call', targets: ['mapper'] }] }) },
+    })
+    await made.pluginsManager.start()
+    await until(() => stateOf(made.pluginsManager, 'mapper') === 'ready' && stateOf(made.pluginsManager, 'outline') === 'ready')
+    const before = made.runtime.half('outline').got('deps').length
+    made.link.changed = () => { throw new Error('a change the router could not take') }
+    let revoked = 0
+    made.link.revokeAll = () => {
+      revoked++
+      if (throws) throw new Error('nor could it end them')
+    }
+    made.runtime.half('mapper').crash()
+    await until(() => made.runtime.half('outline').got('deps').length > before)
+    expect(made.runtime.half('outline').got('deps').at(-1)).toEqual({ v: 1, kind: 'deps', deps: { mapper: 'unavailable' } })
+    expect(revoked).toBeGreaterThan(0)
+    expect(made.link.events('fault')).toEqual(expect.arrayContaining(faults))
+    if (!throws) expect(made.link.events('fault')).not.toContainEqual({ plugin: 'router', step: 'revokeAll' })
+  })
+
   it('closes a flooding way as crashed with flood', async () => {
     const made = await harness({ folder: { mapper: worker('mapper') }, entries: { mapper: signed() } })
     await made.pluginsManager.start()

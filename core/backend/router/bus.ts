@@ -222,15 +222,27 @@ export class Bus {
           }
         }
       }
-      for (const topic of ended) this.remove(subscriber, topic)
-      if (ended.length > 0) {
-        this.signal(subscriber, 'events.ended', ended)
-        this.parts.changed(subscriber.caller, 'ended', ended)
-      }
+      this.end(subscriber, ended)
       if (waiting.length > 0) this.parts.changed(subscriber.caller, 'waiting', waiting)
       if (started.length > 0) this.parts.changed(subscriber.caller, 'started', started)
       if (again.length > 0) this.resync(subscriber, again)
     }
+  }
+
+  // Ends every live subscription the gate holds of each subscriber whose caller is named, with events.ended, since the
+  // gate couldn't be asked about them again (D-646). A free one and one that stands run on
+  endGated(named: (caller: Caller) => boolean): void {
+    for (const subscriber of [...this.subscribers.values()]) {
+      if (!named(subscriber.caller)) continue
+      this.end(subscriber, [...subscriber.topics].filter(([, held]) => held.live && !held.free).map(([topic]) => topic))
+    }
+  }
+
+  private end(subscriber: Subscriber, topics: string[]): void {
+    if (topics.length === 0) return
+    for (const topic of topics) this.remove(subscriber, topic)
+    this.signal(subscriber, 'events.ended', topics)
+    this.parts.changed(subscriber.caller, 'ended', topics)
   }
 
   // Each event takes one of the subscriber's credits. Past them it is dropped and counted, like every event after it

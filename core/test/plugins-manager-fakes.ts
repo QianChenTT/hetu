@@ -103,6 +103,9 @@ export class FakeLink implements RouterDoor, PluginsRecording {
     this.changes++
   }
 
+  // A test that needs the router's answer sets its own
+  revokeAll(): void {}
+
   stopping(): void {
     this.stopped++
     this.timeline.push('stopping')

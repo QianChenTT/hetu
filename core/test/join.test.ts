@@ -636,6 +636,43 @@ describe('the gate module on the joined core', () => {
     expect(parts.modules.reason('gate')).toBe('state-changed')
     expect(code((await parts.runtime.half('alpha').ask('luoshu.read', { path: 'notes/a.md' }))!)).toBe('policy-down')
   })
+
+  // D-646: the human switches alpha's read off while alpha writes, the router can't take the change, so the write its
+  // grant still covers ends and alpha's call to its own action holds no power and runs on
+  it('ends a plugin\'s open call with power policy-down with a fault when the router can\'t take a change, a call with no power running on', async () => {
+    const luoshu = new FakeLuoshu()
+    const subscribe = { type: 'events.subscribe' as const, topics: ['luoshu.changed'] }
+    const parts = await joined({
+      folder: { alpha: filesFor(workerManifest('alpha', { capabilities: [read, write, subscribe], provides: { actions: { hello: {} }, topics: ['changed'] } })) },
+      entries: { alpha: { granted: [read, write, subscribe] } },
+      modules: { gate: createGate(), luoshu: luoshuModule(luoshu) },
+    })
+    await parts.pluginsManager.start()
+    await parts.pluginsManager.settled()
+    const alpha = parts.runtime.half('alpha')
+    expect((await alpha.ask('events.subscribe', { topics: ['luoshu.changed', 'alpha.changed'] }))?.result).toEqual({ standing: [] })
+    let open!: () => void
+    luoshu.hold.perform = new Promise<void>(resolve => { open = resolve })
+    const writing = alpha.ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    await until(() => luoshu.performed.length === 1)
+    const own = alpha.ask('alpha.hello', {})
+    await until(() => alpha.inbox.some(message => message.kind === 'call' && message.action === 'alpha.hello'))
+    parts.router.changed = () => { throw new Error('a change the router could not take') }
+    await parts.pluginsManager.apply({ kind: 'item.off', plugin: 'alpha', capability: read })
+    expect(luoshu.performed[0].call.signal?.aborted).toBe(true)
+    open()
+    expect(code((await writing)!)).toBe('policy-down')
+    const ended = alpha.inbox.filter(message => message.kind === 'event' && message.topic === 'events.ended')
+    expect(ended.map(message => message.topics)).toEqual([['luoshu.changed']])
+    const delivered = alpha.inbox.find(message => message.kind === 'call' && message.action === 'alpha.hello')!
+    expect(alpha.got('cancel')).toEqual([])
+    alpha.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: 'hello' })
+    expect((await own)?.result).toBe('hello')
+    await parts.recording.flush()
+    expect((await coreRecords(parts.dataDir)).filter(record => record.event === 'fault')).toEqual([
+      expect.objectContaining({ plugin: 'router', step: 'changed' }),
+    ])
+  })
 })
 
 // The real luoshu on a folder Obsidian and GitHub would also open, a plugin granted every dot folder by name

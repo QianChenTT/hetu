@@ -234,7 +234,14 @@ export abstract class PluginsLifecycle extends PluginsBase {
     try {
       this.link.changed()
     } catch {
-      // The router hears of this change only with the next one, open calls with power aren't judged again before it
+      // No open call with power was judged again on this change, so the router ends each one rather than keep a grant
+      // that may be gone (D-646)
+      this.note('fault', { plugin: 'router', step: 'changed' })
+      try {
+        this.link.revokeAll()
+      } catch {
+        this.note('fault', { plugin: 'router', step: 'revokeAll' })
+      }
     }
     this.sendDeps()
     this.checkIdle()

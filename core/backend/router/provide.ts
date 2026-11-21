@@ -287,11 +287,27 @@ function judgeAgain(c: Context, pending: Pending, kind: Extract<Kind, { kind: 'p
 // so every open call runs to its end
 export function rejudge(c: Context): void {
   if (c.policyJob('gate') === 'off') return
+  for (const pending of withPower(c)) {
+    const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
+    if (refused !== null) revoke(c, pending, refused.code === 'policy-down' ? 'policy-down' : 'stale')
+  }
+}
+
+// When the plugins manager's change threw, no open call was judged again on its grants snapshot. So every open call
+// with power a plugin holds is revoked as policy-down and every live subscription of a plugin the gate holds ends,
+// whether or not its own grant changed, as a control that crashed in use refuses all (D-646). A window's calls and
+// subscriptions run on, as does anything with no power. With the gate off by the human nothing is judged, so nothing ends
+export function revokeAll(c: Context): void {
+  if (c.policyJob('gate') === 'off') return
+  for (const pending of withPower(c)) if (pending.caller.kind === 'plugin') revoke(c, pending, c.down('policy-down'))
+  c.bus.endGated(caller => caller.kind === 'plugin')
+}
+
+// Every open call with power the gate let on, read as it goes, so one a revoke before it ended is passed by
+function* withPower(c: Context): Generator<Pending & { readonly judged: NonNullable<Pending['judged']> }> {
   for (const way of [...c.ways.values()]) {
     for (const pending of [...way.made.values()]) {
-      if (pending.done || pending.judged === null) continue
-      const refused = judgeAll(c, pending, 'canonical', pending.judged.kind, pending.judged.scope, false)
-      if (refused !== null) revoke(c, pending, refused.code === 'policy-down' ? 'policy-down' : 'stale')
+      if (!pending.done && pending.judged !== null) yield pending as Pending & { readonly judged: NonNullable<Pending['judged']> }
     }
   }
 }

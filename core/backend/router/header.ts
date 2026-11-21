@@ -51,6 +51,9 @@ export type RouterDoor = {
   // A policy job state, a plugin state or the grants snapshot changed, so the router asks the gate about live
   // subscriptions again. On a new grants snapshot it also has the gate judge every open call with power again
   changed(): void
+  // changed() threw, so no open call was judged again: every open call with power a plugin holds answers policy-down
+  // and every subscription of a plugin the gate holds ends
+  revokeAll(): void
   // Shutdown has begun. From this call on a policy job, guard or provider that is down answers stopped
   stopping(): void
   // A limit as the router enforces it for one plugin, so the start and stop deadlines follow the same values

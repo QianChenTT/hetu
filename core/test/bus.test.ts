@@ -296,6 +296,22 @@ describe('asking again', () => {
     expect(signals(scribe.events(), 'events.ended')).toEqual([])
   })
 
+  // The plugins manager's change threw, so no subscription was asked about again on its grants snapshot (D-646)
+  it('ends every live subscription of a plugin the gate holds when the router could not judge them again, a free one and a window\'s running on', async () => {
+    const { router, search, scribe, way, edited, indexed } = setup()
+    await search.ask('events.subscribe', { topics: ['luoshu.changed', 'search.indexed'] })
+    await scribe.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    await way.ask('editor-1', 'events.subscribe', { topics: ['luoshu.changed'] })
+    router.revokeAll()
+    await edited('notes/a.md')
+    await indexed()
+    await until(() => paths(way.events()).length === 1 && heard(search.events(), 'search.indexed').length === 1)
+    await settle()
+    expect(signals(search.events(), 'events.ended')).toEqual([['luoshu.changed']])
+    expect(signals(scribe.events(), 'events.ended')).toEqual([['luoshu.changed']])
+    expect([paths(search.events()), paths(scribe.events())]).toEqual([[], []])
+  })
+
   it('asks the gate nothing again while neither its state nor the grants snapshot moved', async () => {
     const { router, gate, search } = setup()
     await search.ask('events.subscribe', { topics: ['luoshu.changed'] })
