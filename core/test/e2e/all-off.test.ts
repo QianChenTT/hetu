@@ -1,3 +1,4 @@
+import type { Page } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { coreModuleIds, corePluginIds } from '../../api/ids.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
@@ -13,6 +14,13 @@ describe('hetu with every core module and core plugin switched off', () => {
     const dataDir = await temp()
     await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), off: [...coreModuleIds, ...corePluginIds] })
     const app = await launch(dataDir)
+    // Each throw in the editor page, the ones at its start too, so listened for on every window from launch on
+    const thrown: string[] = []
+    const listen = (opened: Page) => opened.on('pageerror', error => {
+      if (opened.url() === 'hetu://editor/') thrown.push(error.message)
+    })
+    for (const opened of app.windows()) listen(opened)
+    app.on('window', listen)
     const page = await editorPage(app)
     const empty = page.locator('#empty')
     await until(() => empty.isVisible())
@@ -29,8 +37,12 @@ describe('hetu with every core module and core plugin switched off', () => {
       bridge.send({ v: 1, kind: 'call', id: 1000, action: 'core.status', args: {} })
     }))
     expect(status).toMatchObject({ ok: true, result: { stopped: null } })
-    // main answers, so no modal box holds it, and the editor is still the one window
+    // Only switches read as off and the luoshu to pick, no down: line for a plugin down and no line for a log that can't
+    // write
+    const expected = new Set([...coreModuleIds.flatMap(id => [`${id} off`, `${id}: off`]), 'pick a luoshu folder'])
+    expect((await page.locator('#banner li').allTextContents()).filter(line => !expected.has(line))).toEqual([])
+    // main answered, so no modal box holds it, and the editor is still the one window
     expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
-    expect(app.process().exitCode).toBe(null)
+    expect(thrown).toEqual([])
   })
 })

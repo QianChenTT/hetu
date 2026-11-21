@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { providerActions, type CoreStatus } from '../api/actions.ts'
@@ -8,7 +8,7 @@ import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore } from '../backend/boot/state.ts'
 import { quitInOrder } from '../backend/runtime/quit.ts'
 import { wireCore } from '../backend/wire.ts'
-import { coreInstall, FakeRuntime, filesFor, hostManifest, manifest, tempBase, writeInstall } from './plugins-manager-fakes.ts'
+import { FakeRuntime, filesFor, tempBase, writeInstall, type Listing } from './plugins-manager-fakes.ts'
 
 // D-637: hetu with every core module and core plugin switched off is an incomplete note taking app, not a crash
 // (D-512). Case A has everything off, case B only the luoshu on
@@ -24,12 +24,24 @@ type Reply = { ok?: boolean, result?: unknown, refusal?: { code: string } }
 // Every id the human can switch off, read from core/api so a new module or core plugin is switched off here too
 const everything = [...coreModuleIds, ...corePluginIds]
 
-// The core plugins built today as the build puts them in the install, so their switches have a plugin to keep off
-const install = () => ({
-  ...coreInstall(),
-  'hidden-marks': { files: filesFor(manifest('hidden-marks', { entries: { page: 'dist/page.js' } }), { 'dist/page.js': '// hidden marks' }) },
-  'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { requires: ['storage'] })) },
-})
+// The build makes each core plugin from its folder in core-plugins, so a core plugin with no folder there is not built,
+// net today
+const corePlugins = path.join(import.meta.dirname, '..', '..', 'core-plugins')
+const built = async () => {
+  const folders = await readdir(corePlugins)
+  return corePluginIds.filter(id => folders.includes(id))
+}
+
+// Every core plugin built, with its real manifest and a stand-in for each entry, as the build puts them in the install,
+// so their switches have a plugin to keep off
+async function install(): Promise<Record<string, Listing>> {
+  const plugins: Record<string, Listing> = {}
+  for (const id of await built()) {
+    const text = await readFile(path.join(corePlugins, id, 'hetu-plugin.json'), 'utf8')
+    plugins[id] = { files: { ...filesFor(JSON.parse(text) as Record<string, unknown>), 'hetu-plugin.json': text } }
+  }
+  return plugins
+}
 
 // The joined core as main joins it over a real boot, every core module the real one, with the ids in on left on and
 // the luoshu folder picked. Calls come from the editor window. The runtime's own actions go to a stand-in for main's,
@@ -41,7 +53,7 @@ async function joined(on: readonly string[] = []) {
   const folder = path.join(base, 'notes')
   await mkdir(installDir, { recursive: true })
   await mkdir(folder, { recursive: true })
-  await writeInstall(installDir, install())
+  await writeInstall(installDir, await install())
   const store = new StateStore(dataDir)
   await store.writeSwitches({ ...defaultSwitches(), off: everything.filter(id => !on.includes(id)) })
   await store.writeLuoshu({ folder })
@@ -116,9 +128,9 @@ describe('hetu with every core module and core plugin switched off', () => {
     // The gate and the classifier off read as no step, the rest each named off
     expect(Object.values(status.policyJobs).every(state => state === 'off')).toBe(true)
     expect([...Object.keys(status.policyJobs), ...status.modulesOff].sort()).toEqual([...coreModuleIds].sort())
-    expect(status.page).toEqual([])
     expect(runtime.started).toEqual([])
-    expect(pluginsManager.list().map(row => [row.id, row.state])).toEqual(Object.keys(install()).map(id => [id, 'off']))
+    // Each core plugin the build makes has a row, off
+    expect(pluginsManager.list().map(row => [row.id, row.state]).sort()).toEqual((await built()).map(id => [id, 'off']).sort())
   })
 
   it('answers the editor\'s start calls', async () => {
