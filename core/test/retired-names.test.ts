@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { shippedFiles } from './shipped-files.ts'
 import { retiredNames, type RetiredName } from './retired-names.ts'
 
 // no retired name in shipped code outside the places retired-names.ts lists for it
@@ -96,6 +97,10 @@ describe('retired names', () => {
         expect(hits.length, `${name}: ${text} in ${place}`).toBeGreaterThan(0)
       }
     }
+  })
+  // The proof the later move of this walk to shipped-files.ts leans on
+  it('walks the files shippedFiles lists', () => {
+    expect(shipped()).toEqual(shippedFiles({ kinds: ['ts', 'js', 'css', 'html', 'md', 'json'], plugins: 'src' }))
   })
 })
 
