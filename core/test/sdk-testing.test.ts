@@ -170,6 +170,21 @@ describe('the fake core', () => {
     expect(reply).toEqual({ ok: true, result: ['public/a.md'] })
   })
 
+  // A test caller that names onBehalf roots a chain for that pair, so what the plugin does under its call is judged on
+  // the pair's items too, keyed by the field up to its first #
+  it('judges a call under a test caller\'s call for a pair on the pair\'s grants as well', async () => {
+    const fake = core(undefined, { capabilities: [{ type: 'luoshu.read', paths: ['**'] }] })
+    await fake.start(reader().plugin)
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-1#1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.list', {}, { onBehalf: 'client-1#1' })).toEqual({ ok: true, result: [] })
+    const pairGrants: Capability[] = [{ type: 'luoshu.read', paths: ['notes/**', 'public/**'] }]
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-1#1', pairGrants })).toEqual({ ok: true, result: 'a' })
+    expect(await fake.call('reader.list', {}, { onBehalf: 'client-1#2' })).toEqual({ ok: true, result: ['public/a.md'] })
+    expect(await fake.call('reader.read', { path: 'secret/b.md' }, { onBehalf: 'client-1#2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.read', { path: 'notes/a.md' }, { onBehalf: 'client-2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.read', { path: 'secret/b.md' })).toEqual({ ok: true, result: 'b' })
+  })
+
   it('reports crashed with start-timeout when ready never comes', async () => {
     const fake = core(undefined, {}, { readyMs: 100 })
     expect(await fake.start(definePlugin({ start: () => new Promise(() => {}) }))).toEqual({ state: 'crashed', reason: 'start-timeout' })
@@ -851,8 +866,8 @@ describe('the fake core playing another plugin', () => {
 })
 
 describe('the fake core\'s history', () => {
-  const commitGrant = { type: 'history', access: 'commit', paths: ['notes/**'] }
-  const readGrant = { type: 'history', access: 'read', paths: ['notes/**'] }
+  const commitGrant: Capability = { type: 'history', access: 'commit', paths: ['notes/**'] }
+  const readGrant: Capability = { type: 'history', access: 'read', paths: ['notes/**'] }
   async function historian(capabilities: object[]) {
     const fake = core(undefined, { capabilities })
     const { plugin, box } = reader()
@@ -886,10 +901,44 @@ describe('the fake core\'s history', () => {
     expect((await ctx.history.log({ path: 'notes/a.md' })).commits.map(entry => entry.commit)).toEqual([commit])
   })
 
+  // Commits notes/a.md under each call to save, so a test caller's onBehalf makes it a call for a pair
+  async function saver(capabilities: object[]) {
+    const fake = core(undefined, { capabilities, provides: { actions: { save: {} } } })
+    const box: { ctx: PluginContext | null } = { ctx: null }
+    await fake.start(definePlugin({
+      start: ctx => {
+        box.ctx = ctx
+        ctx.provide('save', async call => (await call.ctx.history.commit({ paths: ['notes/a.md'], message: 'for a client' })).commit)
+      },
+    }))
+    return { fake, ctx: box.ctx! }
+  }
+
+  // The plugin's own call carries no pair, so its own grant holds it. A call under a test caller's call for a client
+  // needs the pair's commit grant too and names that caller as the committer
   it('names the caller as the committer and the onBehalf it set as the author', async () => {
-    const { ctx } = await historian([commitGrant, readGrant])
+    const { fake, ctx } = await saver([commitGrant, readGrant])
     await ctx.history.commit({ paths: ['notes/a.md'], message: 'for an agent' }, { onBehalf: 'agent <x@example.com>' })
-    expect((await ctx.history.log({ path: 'notes/a.md' })).commits.map(entry => [entry.author, entry.committer])).toEqual([['agent x@example.com', 'reader']])
+    await fake.luoshu.write('notes/a.md', 'a, edited')
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1', pairGrants: [commitGrant] })).toMatchObject({ ok: true })
+    expect((await ctx.history.log({ path: 'notes/a.md' })).commits.map(entry => [entry.author, entry.committer])).toEqual([
+      ['client-1', 'tester'],
+      ['agent x@example.com', 'reader'],
+    ])
+  })
+
+  it('refuses a commit under a call for a pair that holds no commit grant and writes nothing', async () => {
+    const { fake, ctx } = await saver([commitGrant, readGrant])
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-1', pairGrants: [readGrant] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(await ctx.history.log({ path: 'notes/a.md' })).toEqual({ commits: [] })
+  })
+
+  it('commits under a call for a pair once the test names the pair\'s commit grant', async () => {
+    const { fake } = await saver([commitGrant, readGrant])
+    const reply = await fake.call('reader.save', {}, { onBehalf: 'client-1#1', pairGrants: [commitGrant] })
+    expect(reply).toEqual({ ok: true, result: expect.stringMatching(/^[0-9a-f]{40}$/) })
+    expect(await fake.call('reader.save', {}, { onBehalf: 'client-2' })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
   })
 
   it('refuses a commit of a path outside the commit grant and writes nothing', async () => {

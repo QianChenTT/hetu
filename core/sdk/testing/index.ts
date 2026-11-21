@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { MessageChannel, type MessagePort } from 'node:worker_threads'
 import type { Capability } from '../../api/capabilities.ts'
-import type { Caller, Refusal, RefusalCode } from '../../api/envelope.ts'
+import { grantKeyOf, type Caller, type Refusal, type RefusalCode } from '../../api/envelope.ts'
 import { type LimitName, defaultLimits } from '../../api/limits.ts'
 import { utilityIds } from '../../api/ids.ts'
 import { dependencyReason, type DepState } from '../../api/lifecycle.ts'
@@ -20,7 +20,7 @@ import { parseStrict } from '../../lib/hashed-file.ts'
 import { type Plugin, run } from '../plugin.ts'
 import type { Transport } from '../transport.ts'
 import { FakeDrawer } from './drawer.ts'
-import { type FakeMode, holds, ModeGate } from './gate.ts'
+import { type FakeMode, holds, ModeGate, pairKey } from './gate.ts'
 import { MemoryHistory, MemoryStorage, MemoryLuoshu } from './providers.ts'
 
 export { FakeDrawer, holds }
@@ -105,7 +105,7 @@ class Way {
     this.post = handle.post
   }
 
-  ask(action: string, args: unknown, ms: number): Promise<FakeReply> {
+  ask(action: string, args: unknown, ms: number, onBehalf?: string): Promise<FakeReply> {
     const id = this.next++
     return new Promise(resolve => {
       const timer = setTimeout(() => {
@@ -116,7 +116,7 @@ class Way {
         clearTimeout(timer)
         resolve(reply.ok === true ? { ok: true, result: reply.result } : { ok: false, refusal: reply.refusal as Refusal })
       })
-      this.post({ v: VERSION, kind: 'call', id, action, args })
+      this.post({ v: VERSION, kind: 'call', id, action, args, ...(onBehalf === undefined ? {} : { onBehalf }) })
     })
   }
 }
@@ -368,8 +368,9 @@ export class FakeCore {
   }
 
   // A call from another plugin. as names it, tester by default, granted plugin.call on the plugin and luoshu.read
-  // on ** unless grants names its grants
-  call(action: string, args: unknown = {}, options: { as?: string, grants?: Capability[] } = {}): Promise<FakeReply> {
+  // on ** unless grants names its grants. onBehalf makes it the root of a chain for that pair, whose calls under it
+  // need the pair's grants too: none until pairGrants names them for the field up to its first #
+  call(action: string, args: unknown = {}, options: { as?: string, grants?: Capability[], onBehalf?: string, pairGrants?: Capability[] } = {}): Promise<FakeReply> {
     const id = options.as ?? TESTER
     if (id === this.manifest.id || id in providers) throw new Error(`${id} is a plugin the fake core runs itself`)
     let way = this.testers.get(id)
@@ -384,7 +385,11 @@ export class FakeCore {
         { type: 'luoshu.read', paths: ['**'] },
       ])
     }
-    return way.ask(action, args, defaultLimits.callDeadlineMs + 1000)
+    if (options.pairGrants !== undefined) {
+      if (options.onBehalf === undefined) throw new Error('pairGrants needs onBehalf, which names the pair')
+      this.gate.pairs.set(pairKey({ plugin: id, field: grantKeyOf(options.onBehalf) }), options.pairGrants)
+    }
+    return way.ask(action, args, defaultLimits.callDeadlineMs + 1000, options.onBehalf)
   }
 
   // Plays another plugin on its worker half: the plugin under test calls it through the real router, which checks
