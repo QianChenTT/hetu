@@ -35,7 +35,9 @@ export function handle(c: Context, caller: Caller, hear: Send): { post: Send } {
         const result: unknown = hear(copy)
         // An async receive fails later and an unhandled rejection would take main down
         if (result instanceof Promise) result.catch(() => {})
-      } catch {}
+      } catch {
+        // A host half's receive that throws is its own fault and thrown in this microtask it would take main down
+      }
     })
   }, null)
   return {
@@ -43,7 +45,10 @@ export function handle(c: Context, caller: Caller, hear: Send): { post: Send } {
       let copy: unknown
       try {
         copy = structuredClone(message)
-      } catch {}
+      } catch {
+        // A message that can't be copied goes on as undefined, which counts against the rate and is dropped unread like
+        // a port's messageerror
+      }
       queueMicrotask(() => receive(c, way, copy, way.send!))
     },
   }
@@ -67,7 +72,9 @@ export function window<S>(c: Context, check: (sender: S) => Caller | null): (sen
     receive(c, way, message, reply => {
       try {
         answer(reply)
-      } catch {}
+      } catch {
+        // A window that can't take its reply is closing or gone, so no one is left to answer
+      }
     })
   }
 }
@@ -127,7 +134,10 @@ function addWay(c: Context, caller: Caller, via: Way['via'], send: Send | null, 
     send: send === null ? null : message => {
       try {
         send(message)
-      } catch {}
+      } catch {
+        // The message is lost to this half alone. A closed port tells the router through its close event and a lost
+        // reply ends at the caller's deadline
+      }
     },
     close,
     open: true,
@@ -165,7 +175,10 @@ function receive(c: Context, way: Way, message: unknown, answer: Send): void {
       c.tell(c.heard, way.caller, kind)
     }
     // Anything else, another v and the kinds only the router sends included, is dropped unread
-  } catch {}
+  } catch {
+    // The message already counted against the rate, so one that throws while it is read is dropped like one that can't
+    // be read
+  }
 }
 
 // Flood control's verdict on one message, pass while it is off. A throw or an answer outside the list drops that one
@@ -193,7 +206,9 @@ function shut(way: Way): void {
   way.open = false
   try {
     way.close?.()
-  } catch {}
+  } catch {
+    // The way is marked closed above, so a port whose close throws is neither heard nor sent to again
+  }
 }
 
 // Its subscriptions and credits go first, so nothing the plugins manager changes on hearing of the crash is sent to the dead

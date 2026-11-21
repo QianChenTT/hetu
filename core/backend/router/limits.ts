@@ -29,7 +29,9 @@ export class Limits {
     let human: HumanLimits | null = null
     try {
       human = this.human()
-    } catch {}
+    } catch {
+      // The human's values that can't be read leave the defaults hetu ships with
+    }
     const mine = plugin === null ? undefined : positive(own(own(human?.plugins, plugin), name))
     const all = positive(own(human?.all, name))
     if (plugin === null && !coreWide.has(name)) return Math.max(all ?? 0, defaultLimits[name])

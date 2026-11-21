@@ -263,7 +263,9 @@ export class Bus {
     if (!subscriber.alive()) return
     try {
       subscriber.push(message)
-    } catch {}
+    } catch {
+      // This event is lost to this subscriber alone and the publish goes on to the rest
+    }
   }
 
   private subscriberOf(holder: Holder): Subscriber {

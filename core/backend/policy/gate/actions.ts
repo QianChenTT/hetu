@@ -75,7 +75,9 @@ export function createGateActions(options: GateActionsOptions): GateActions {
   const fault = (step: string) => {
     try {
       options.fault(step)
-    } catch {}
+    } catch {
+      // The gate's answer stands without its fault record, recording that throws can't change a verdict
+    }
   }
   const secondOf = (principal: string) => {
     const now = options.clock()

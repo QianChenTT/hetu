@@ -228,7 +228,9 @@ export class Context {
     if (this.recording === null) return
     try {
       take(this.recording)
-    } catch {}
+    } catch {
+      // This call's audit record is lost and the reply goes out without it, a record never holds up or fails a call
+    }
   }
 
   coalesced(event: string, fields: Record<string, Field>, keyed?: Parameters<Recording['coalesced']>[2], weight?: number): void {
@@ -244,7 +246,9 @@ export class Context {
     try {
       const text = err instanceof Error ? err.message : String(err)
       this.options.debug?.({ plugin, caller: asker.caller, action: asker.action, text })
-    } catch {}
+    } catch {
+      // Only the debug text is lost, the caller's answer is failed either way
+    }
   }
 
   // The seams are later parts of the core and a throw there must not open anything: a policy job that can't be read is
@@ -259,7 +263,9 @@ export class Context {
     for (const listener of listeners) {
       try {
         listener(...args)
-      } catch {}
+      } catch {
+        // A listener that throws can't keep the ones after it from hearing
+      }
     }
   }
 
@@ -305,7 +311,10 @@ export class Context {
       charge: (principal, ms) => {
         try {
           time.charge(principal, ms)
-        } catch {}
+        } catch {
+          // This call's gate time goes uncounted. The throttle only spreads the gate's time and the gate already judged
+          // the call
+        }
       },
     }
   }

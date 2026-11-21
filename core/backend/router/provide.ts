@@ -203,7 +203,10 @@ export async function provide(c: Context, pending: Pending, id: string, args: un
     if (prepared === null) return
     try {
       provider.release?.(call, prepared)
-    } catch {}
+    } catch {
+      // What prepare set aside stays the provider's to clean up. The call won't perform and its answer doesn't wait on
+      // release
+    }
   }
   if (pending.done) return release()
   if (prepared === null) return finish(c, pending, { ok: false, ...(refusalIn(given) ?? { code: 'failed' }) })
