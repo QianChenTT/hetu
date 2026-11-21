@@ -117,7 +117,7 @@ describe('the start order', () => {
 })
 
 describe('core plugins', () => {
-  it('refuses one whose bytes fail the install list, which reads tampered, and stops nothing else', async () => {
+  it('refuses one whose bytes fail the install list, which reads tampered and stops nothing else', async () => {
     const { pluginsManager, runtime, link } = await harness({ install: { ...withHttp(), [HTTP]: { ...http(), hash: wrongHash } } })
     await pluginsManager.start()
     expect(stateOf(pluginsManager, HTTP)).toBe('refused')
