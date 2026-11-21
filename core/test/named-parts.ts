@@ -15,7 +15,7 @@ const isApi = (module: string) => /^core\/api\/[^/]+\.ts$/.test(module)
 // A relative source from the file's folder, any other as written
 const resolve = (file: string, source: string) => (source.startsWith('.') ? path.posix.join(path.posix.dirname(file), source) : source)
 // Strip mode blanks the types and keeps every line where it was, so the parser's lines are the file's
-const parsed = (source: string) => parse(stripTypeScriptTypes(source, { mode: 'strip' }), { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+export const parsed = (source: string) => parse(stripTypeScriptTypes(source, { mode: 'strip' }), { ecmaVersion: 'latest', sourceType: 'module', locations: true })
 
 export type Named = { file: string, line: number, part: string, text: string }
 // The part a name stands for, undefined when it stands for none

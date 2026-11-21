@@ -5,12 +5,13 @@ import { coreActions, eventActions, providerActions } from '../api/actions.ts'
 import { capabilityTypes } from '../api/capabilities.ts'
 import { corePluginIds, firstPartyIds, utilityIds } from '../api/ids.ts'
 import { layoutTopics, uiNeeds } from '../api/ui.ts'
+import { placeProblems, type Place } from './listed-places.ts'
 import { apiConstants, namedIn, relaysOf, type Known, type Named, type Relays } from './named-parts.ts'
 import { shippedFiles } from './shipped-files.ts'
 
 // A plugin gets no trust and reaches anything through the router, so the core names no part hetu doesn't run in main
 // (D-569, D-633). An id counts as named-parts.ts counts a name: a string or a constant of core/api holding one id. A
-// use of the same spelling with another meaning is listed by file and the text on its line, with why
+// use of the same spelling with another meaning is listed as listed-places.ts lists a place, with why
 
 // Shipped code of core/, ts and js, not its READMEs, and not ids.ts, which holds the lists
 const repo = path.join(import.meta.dirname, '..', '..')
@@ -38,10 +39,6 @@ export function partsOf(ids: ReadonlyMap<string, string>, held: ReadonlySet<stri
 export const named: Known = partsOf(outside, contract)
 export const constants: ReadonlyMap<string, string> = await apiConstants(named)
 
-// A place is a file of core/, the text on the line its id stands in and how many ids it covers in that file, so one
-// more on the line or on another line holding the text fails
-export type Place = { place: string, text: string, hits: number, why: string }
-
 export const listed: readonly Place[] = [
   { place: 'lib/canonical.ts', text: "hidden: reached.some(isGitName) ? 'git'", hits: 1, why: 'the kind of hidden name a .git folder on the path is, not the git plugin' },
   { place: 'lib/canonical.ts', text: "refuse('git')", hits: 1, why: 'the refusal of a path inside a .git folder, not the git plugin' },
@@ -57,22 +54,10 @@ export const listed: readonly Place[] = [
   },
 ]
 
-// What fails: an id named outside the places listed, a place covering more or fewer ids than it lists, a place that no
-// longer names one and a why under 10 characters
+// What fails: an id named outside the places listed and what listed-places.ts fails in a place
 export function partProblems(found: readonly Named[], lineOf: (hit: Named) => string, places: readonly Place[]): string[] {
-  const at = (hit: Named, place: Place) => hit.file === `core/${place.place}` && lineOf(hit).includes(place.text)
-  const problems = found.filter(hit => !places.some(place => at(hit, place)))
-    .map(hit => `${hit.file}:${hit.line} ${hit.text} names ${hit.part}, a part hetu doesn't run in main`)
-  for (const place of places) {
-    const covered = found.filter(hit => at(hit, place))
-    if (covered.length === 0) problems.push(`${place.place} holds no "${place.text}" naming a part: remove the entry`)
-    else if (covered.length !== place.hits) {
-      const hits = covered.map(hit => `line ${hit.line} ${hit.text}`).join(', ')
-      problems.push(`${place.place} "${place.text}" covers ${covered.length} hit${covered.length === 1 ? '' : 's'} and lists ${place.hits}: ${hits}`)
-    }
-    if (place.why.length < 10) problems.push(`${place.place} "${place.text}" has a why under 10 characters`)
-  }
-  return problems
+  const { unlisted, problems } = placeProblems(found, lineOf, places, 'naming a part')
+  return [...unlisted.map(hit => `${hit.file}:${hit.line} ${hit.text} names ${hit.part}, a part hetu doesn't run in main`), ...problems]
 }
 
 const sources = new Map(files.map(file => [file, readFileSync(path.join(repo, file), 'utf8')]))
