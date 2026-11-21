@@ -1,8 +1,8 @@
 import { syntaxTreeAvailable } from '@codemirror/language'
 import { ChangeSet, EditorState } from '@codemirror/state'
-import { definePlugin, type PluginContext } from '@hetu/sdk'
+import { definePlugin, type PluginContext, type UiNode } from '@hetu/sdk'
 import { emptied, type Format, formatKeys, toggle } from './format.ts'
-import { hiddenMarks, keepNearest, markdownSupport, type Named } from './marks.ts'
+import { type ElementKind, elementKinds, hiddenMarks, keepNearest, markdownSupport, type Named } from './marks.ts'
 
 // Hidden marks as a worker behind the editor bridge. It keeps a copy of each open note's text from editor.read, in
 // step with each change list editor.changed brings and read again when a version is missed. It marks the range the
@@ -17,6 +17,12 @@ const SET = 'marks'
 export const MAX_HEARD = 1000
 // The characters of an element's start that tell it from others with its node and length, after a read again
 const SIGNED = 32
+// Where its storage keeps the elements the human chose to show
+const SHOWN = 'shown'
+const labels: Readonly<Record<ElementKind, string>> = Object.freeze({
+  bold: 'Bold', italic: 'Italic', strike: 'Strikethrough', code: 'Inline code', highlight: 'Highlight', heading: 'Headings',
+  bullet: 'Bullets', quote: 'Quotes', rule: 'Horizontal rules', link: "Links' targets", fence: 'Code fences',
+})
 
 // The notes the latest run holds, which its tests count
 let held: ReadonlyMap<string, unknown> = new Map()
@@ -47,6 +53,10 @@ export default definePlugin({
   async start(ctx: PluginContext) {
     const notes = new Map<string, Note>()
     held = notes
+    // The elements the human chose to show, taken from storage only as this plugin writes them
+    const saved = await ctx.try(ctx.storage.get({ key: SHOWN }))
+    const stored: unknown[] = saved.ok && Array.isArray(saved.value) ? saved.value : []
+    const shown = new Set(elementKinds.filter(kind => stored.includes(kind)))
 
     const fresh = (instance: string, viewport: Range = { from: 0, to: 0 }): Note => {
       const note: Note = {
@@ -128,7 +138,7 @@ export default definePlugin({
         const group = known.get(keyOf(named.name, named.from, sign))?.shift() ?? `g${++note.named}`
         groups.push({ name: named.name, from: named.from, sign, group })
         return group
-      })
+      }, shown)
       note.groups = groups
       // Text not parsed yet is marked on a later pass
       note.again ||= !syntaxTreeAvailable(state, range.to)
@@ -176,6 +186,35 @@ export default definePlugin({
       if (note === undefined || note.state === null || note.version !== event.version || range === undefined) return
       const changes = toggle(note.state, event.command as Format, range)
       if (changes !== null) void ctx.try(ctx.editor.edit(event.instance, event.version, changes.toJSON()))
+    })
+    // The settings view: a box for each element, ticked while it hides. A change is stored, then every note marked again
+    const views = new Set<string>()
+    const settings = (): UiNode => ({
+      kind: 'box',
+      id: 'root',
+      children: [
+        { kind: 'text', id: 'about', text: 'Markdown hidden while you type' },
+        ...elementKinds.map(kind => ({ kind: 'checkbox' as const, id: `hide-${kind}`, checked: !shown.has(kind), label: labels[kind] })),
+      ],
+    })
+    let saving: Promise<unknown> = Promise.resolve()
+    ctx.onStop(async () => {
+      await saving
+    })
+    ctx.ui.on('view.opened', event => {
+      if (event.view !== 'settings') return
+      views.add(event.instance)
+      void ctx.try(ctx.ui.views.draw(event.instance, settings()))
+    })
+    ctx.ui.on('view.closed', event => views.delete(event.instance))
+    ctx.ui.on('view.event', event => {
+      const kind = elementKinds.find(one => `hide-${one}` === event.node)
+      if (!views.has(event.instance) || event.type !== 'change' || kind === undefined || typeof event.value !== 'boolean') return
+      if (event.value) shown.delete(kind)
+      else shown.add(kind)
+      saving = ctx.try(ctx.storage.set({ key: SHOWN, value: elementKinds.filter(one => shown.has(one)) }))
+      for (const instance of views) void ctx.try(ctx.ui.views.draw(instance, settings()))
+      for (const [instance, note] of notes) draw(instance, note)
     })
     await ctx.try(ctx.editor.bind(Object.entries(formatKeys).map(([command, key]) => ({ key, command }))))
     await ctx.try(ctx.editor.viewports(true))

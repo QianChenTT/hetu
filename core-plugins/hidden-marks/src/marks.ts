@@ -64,8 +64,20 @@ function quoteOf(node: SyntaxNode): SyntaxNode {
   return node
 }
 
-// The elements in the ranges given, each element's hidden markers in the group groupOf names
-export function hiddenMarks(state: EditorState, ranges: readonly { from: number, to: number }[], groupOf: (element: Named) => string): Element[] {
+// The elements whose markdown the human may choose to show in the plugin's settings, by the node each is
+const kindOf: Readonly<Record<string, string>> = Object.freeze({
+  StrongEmphasis: 'bold', Emphasis: 'italic', Strikethrough: 'strike', InlineCode: 'code', Highlight: 'highlight', ListItem: 'bullet',
+  Blockquote: 'quote', HorizontalRule: 'rule', Link: 'link', Image: 'link', FencedCode: 'fence',
+})
+export const elementKinds = Object.freeze(['bold', 'italic', 'strike', 'code', 'highlight', 'heading', 'bullet', 'quote', 'rule', 'link', 'fence'] as const)
+export type ElementKind = typeof elementKinds[number]
+
+// The elements in the ranges given, each element's hidden markers in the group groupOf names. An element of a kind in
+// shown keeps its style and hides nothing
+export function hiddenMarks(
+  state: EditorState, ranges: readonly { from: number, to: number }[], groupOf: (element: Named) => string, shown: ReadonlySet<ElementKind> = new Set(),
+): Element[] {
+  const showing = (owner: SyntaxNode) => shown.has((/Heading\d$/.test(owner.name) ? 'heading' : kindOf[owner.name]) as ElementKind)
   const elements = new Map<string, Element>()
   const groups = new Map<string, string>()
   const elementOf = (node: SyntaxNode) => {
@@ -81,7 +93,7 @@ export function hiddenMarks(state: EditorState, ranges: readonly { from: number,
     return group
   }
   const hide = (owner: SyntaxNode, from: number, to: number, edge?: 'open' | 'close') => {
-    if (to <= from) return
+    if (to <= from || showing(owner)) return
     const group = groupFor(owner)
     elementOf(owner).marks.push(edge === undefined ? { kind: 'hide', from, to, group } : { kind: 'hide', from, to, group, edge })
   }
@@ -137,7 +149,7 @@ export function hiddenMarks(state: EditorState, ranges: readonly { from: number,
             line(quoteOf(node), node.from, 'quote')
             break
           case 'ListMark':
-            if (parent.parent?.name === 'BulletList') elementOf(node).marks.push({ kind: 'widget', from: node.from, to: node.to, text: '•', group: groupFor(parent) })
+            if (parent.parent?.name === 'BulletList' && !showing(parent)) elementOf(node).marks.push({ kind: 'widget', from: node.from, to: node.to, text: '•', group: groupFor(parent) })
             break
           case 'HorizontalRule':
             hide(node, node.from, node.to)

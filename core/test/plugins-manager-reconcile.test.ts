@@ -61,7 +61,8 @@ describe('the first-party reconcile', () => {
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'hidden-marks')).toBe('ready')
     expect((await new StateStore(made.dataDir).load()).state.plugins['hidden-marks'].granted).toEqual([
-      { type: 'ui.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }, { type: 'ui.decoration' }, { type: 'ui.command' },
+      { type: 'ui.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }, { type: 'ui.decoration' }, { type: 'ui.command' }, { type: 'ui.view' },
+      { type: 'storage' },
     ])
     expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'hidden-marks', version: '0.1.0' }])
     expect(made.link.events('plugin.updated')).toEqual([])

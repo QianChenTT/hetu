@@ -2,7 +2,7 @@ import path from 'node:path'
 import { type FakeCore, fakeCore, FakeDrawer } from '@hetu/sdk/testing'
 import { MAX_MARKS as BRIDGE_MAX_MARKS } from 'hetu-core/api/editor.ts'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { Mark } from '../src/marks.ts'
+import { elementKinds, type Mark } from '../src/marks.ts'
 import hiddenMarks, { heldNotes, MARGIN, MAX_HEARD, MAX_MARKS } from '../src/worker.ts'
 
 const manifest = path.join(import.meta.dirname, '..', 'hetu-plugin.json')
@@ -271,5 +271,41 @@ describe('a run the human empties', () => {
     await until(() => settled(drawer, instance, 1))
     await tick(20)
     expect(drawer.calls).not.toContain('editor.edit')
+  })
+})
+
+describe('the settings for which elements hide', () => {
+  const settingsView = (drawer: FakeDrawer) => drawer.instances().find(one => one.view === 'settings')?.instance ?? ''
+  const boxes = (drawer: FakeDrawer) => ((drawer.tree(settingsView(drawer)) as { children?: { kind: string, id: string, checked?: boolean }[] } | null)?.children ?? [])
+    .filter(child => child.kind === 'checkbox').map(child => [child.id, child.checked])
+  const hiddenAt = (drawer: FakeDrawer, instance: string, from: number) => marksOn(drawer, instance).some(mark => mark.kind === 'hide' && mark.from === from)
+
+  it('draws a box for each element answer 7 names, each ticked as hidden at first', async () => {
+    const drawer = await started()
+    await until(() => boxes(drawer).length > 0)
+    expect(boxes(drawer)).toEqual(elementKinds.map(kind => [`hide-${kind}`, true]))
+    expect(elementKinds).toEqual(['bold', 'italic', 'strike', 'code', 'highlight', 'heading', 'bullet', 'quote', 'rule', 'link', 'fence'])
+  })
+
+  it("shows an element's markdown once the human unticks it, keeps the choice in its storage and holds it in the next run", async () => {
+    const drawer = new FakeDrawer()
+    const core = fakeCore({ manifest, drawer })
+    cores.push(core)
+    expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
+    const instance = drawer.openNote('notes/a.md', '**a** *b*')
+    await until(() => hiddenAt(drawer, instance, 0) && hiddenAt(drawer, instance, 6))
+    drawer.emit({ topic: 'view.event', instance: settingsView(drawer), node: 'hide-bold', type: 'change', value: false })
+    await until(() => !hiddenAt(drawer, instance, 0))
+    expect(hiddenAt(drawer, instance, 6)).toBe(true)
+    expect(has(drawer, instance, strong(0, 5))).toBe(true)
+    expect(boxes(drawer)[0]).toEqual(['hide-bold', false])
+    expect(core.stored('storage', 'shown')).toEqual(['bold'])
+    await core.stop()
+    expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
+    await until(() => boxes(drawer).length > 0)
+    expect(boxes(drawer)[0]).toEqual(['hide-bold', false])
+    const again = drawer.openNote('notes/b.md', '**a** *b*')
+    await until(() => hiddenAt(drawer, again, 6))
+    expect(hiddenAt(drawer, again, 0)).toBe(false)
   })
 })
