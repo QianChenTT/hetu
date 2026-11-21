@@ -3,9 +3,9 @@ import { EditorSelection, type EditorState, type Extension, Facet, findClusterBr
 import { type DecorationSet, type EditorView, type KeyBinding, keymap, ViewPlugin } from '@codemirror/view'
 
 // The drawer's rules for text a plugin hid, the same for every plugin: the caret never rests inside it, arrows step over
-// it to the next character the human sees, Backspace and Delete take only characters the human sees and a selection
-// takes hidden text at its edges only with the whole element it belongs to. A widget is one character the human sees.
-// Nothing here runs during an IME composition
+// it to the next character the human sees, the keys that delete take only characters the human sees, Enter never splits
+// an element from its markers and a selection takes hidden text at its edges only with the whole element it belongs to.
+// A widget is one character the human sees. Nothing here runs during an IME composition
 
 // The hidden ranges and widgets of each source, as the drawer draws them
 export const hiddenText = Facet.define<(view: EditorView) => DecorationSet>()

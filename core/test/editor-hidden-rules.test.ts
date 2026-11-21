@@ -69,7 +69,8 @@ describe("the caret's rest beside hidden text", () => {
   })
 
   it('leaves a caret in visible text where it is and settles each place once', () => {
-    expect(settle(note(bold, boldMarks, 6), sets(note(bold, boldMarks)))).toBe(null)
+    const inText = note(bold, boldMarks, 6)
+    expect(settle(inText, sets(inText))).toBe(null)
     for (let at = 0; at <= bold.length; at++) {
       const once = settled(note(bold, boldMarks, at))
       expect(settle(once, sets(once))).toBe(null)

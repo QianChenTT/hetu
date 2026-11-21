@@ -58,6 +58,12 @@ describe('drawing marks', () => {
     const [inline, across] = ranges(hidden)
     expect(inline.spec).toEqual({ class: 'cm-hetu-hidden' })
     expect(across.spec).toEqual({ group: 'fence0' })
+    // A replaced range is a point to CodeMirror, a styled one is not
+    const points: boolean[] = []
+    hidden.between(0, doc.length, (_from, _to, value) => {
+      points.push(value.point)
+    })
+    expect(points).toEqual([false, true])
   })
 
   it('leaves out what reaches past the end of the text', () => {
