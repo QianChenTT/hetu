@@ -18,17 +18,20 @@ const resolve = (file: string, source: string) => (source.startsWith('.') ? path
 const parsed = (source: string) => parse(stripTypeScriptTypes(source, { mode: 'strip' }), { ecmaVersion: 'latest', sourceType: 'module', locations: true })
 
 export type Named = { file: string, line: number, part: string, text: string }
+// The part a name stands for, undefined when it stands for none
+export type Known = Pick<ReadonlyMap<string, string>, 'get'>
 // Each file that hands on constants of core/api, by the name it exports them under
 export type Relays = ReadonlyMap<string, ReadonlyMap<string, string>>
 
 // The exported constants of every core/api module that hold exactly one name, with its part
-export async function apiConstants(known: ReadonlyMap<string, string>): Promise<Map<string, string>> {
+export async function apiConstants(known: Known): Promise<Map<string, string>> {
   const dir = path.join(repo, 'core', 'api')
   const held = new Map<string, string>()
   for (const name of readdirSync(dir).filter(name => name.endsWith('.ts') && !/\.(test|d)\.ts$/.test(name)).sort()) {
     const module = await import(pathToFileURL(path.join(dir, name)).href) as Record<string, unknown>
     for (const [key, value] of Object.entries(module)) {
-      if (typeof value === 'string' && known.has(value)) held.set(key, known.get(value)!)
+      const part = typeof value === 'string' ? known.get(value) : undefined
+      if (part !== undefined) held.set(key, part)
     }
   }
   return held
@@ -36,7 +39,7 @@ export async function apiConstants(known: ReadonlyMap<string, string>): Promise<
 
 type Scan = { found: Named[], exports: Map<string, string> }
 
-function scan(file: string, program: Program, known: ReadonlyMap<string, string>, held: ReadonlyMap<string, string>, relays: Relays): Scan {
+function scan(file: string, program: Program, known: Known, held: ReadonlyMap<string, string>, relays: Relays): Scan {
   const found: Named[] = []
   const exports = new Map<string, string>()
   const add = (node: Node, text: string, part: string | undefined) => {
@@ -137,7 +140,7 @@ function scan(file: string, program: Program, known: ReadonlyMap<string, string>
 }
 
 // Each place a file names a part
-export function namedIn(file: string, source: string, known: ReadonlyMap<string, string>, held: ReadonlyMap<string, string>, relays: Relays = new Map()): Named[] {
+export function namedIn(file: string, source: string, known: Known, held: ReadonlyMap<string, string>, relays: Relays = new Map()): Named[] {
   return scan(file, parsed(source), known, held, relays).found
 }
 

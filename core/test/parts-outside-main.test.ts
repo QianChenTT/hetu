@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { coreActions, eventActions, providerActions } from '../api/actions.ts'
+import { capabilityTypes } from '../api/capabilities.ts'
 import { corePluginIds, firstPartyIds, utilityIds } from '../api/ids.ts'
-import { apiConstants, namedIn, relaysOf, type Named, type Relays } from './named-parts.ts'
+import { layoutTopics, uiNeeds } from '../api/ui.ts'
+import { apiConstants, namedIn, relaysOf, type Known, type Named, type Relays } from './named-parts.ts'
 import { shippedFiles } from './shipped-files.ts'
 
 // A plugin gets no trust and reaches anything through the router, so the core names no part hetu doesn't run in main
@@ -18,7 +21,22 @@ const files = shippedFiles({ kinds: ['ts', 'js'] }).filter(file => file !== 'cor
 // the namespaces are the core's, so neither counts
 const retired = ['leases']
 export const outside: ReadonlyMap<string, string> = new Map([...corePluginIds, ...utilityIds, ...firstPartyIds, ...retired].map(id => [id, id]))
-export const constants: ReadonlyMap<string, string> = await apiConstants(outside)
+
+// The names core's own contract tables hold, read from core/api: the capability types, the drawer's verbs, its event
+// topics to the layout and the actions. Core defines these, so net.fetch or layout.draw is not core knowing a plugin
+// (D-639, D-643)
+export const contract: ReadonlySet<string> = new Set([
+  ...capabilityTypes, ...Object.keys(uiNeeds), ...layoutTopics,
+  ...Object.keys(coreActions), ...Object.keys(eventActions), ...Object.keys(providerActions),
+])
+
+// An id names its part, and so does an action or verb name starting with the id and a dot that no table holds, such as
+// notify.show, an action of the notify plugin
+export function partsOf(ids: ReadonlyMap<string, string>, held: ReadonlySet<string>): Known {
+  return { get: name => ids.get(name) ?? (held.has(name) ? undefined : ids.get(/^([^.]+)\../.exec(name)?.[1] ?? '')) }
+}
+export const named: Known = partsOf(outside, contract)
+export const constants: ReadonlyMap<string, string> = await apiConstants(named)
 
 // A place is a file of core/, the text on the line its id stands in and how many ids it covers in that file, so one
 // more on the line or on another line holding the text fails
@@ -32,11 +50,7 @@ export const listed: readonly Place[] = [
   { place: 'frontend/editor/ui-port.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on' },
   { place: 'sdk/ui.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on, as the SDK names it' },
   { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
-  { place: 'backend/boot/state.ts', text: "id !== 'leases'", hits: 1, why: 'a reader dropping a retired id from an old switches file (D-631)' },
-  {
-    place: 'frontend/editor/page.ts', text: "status.page.includes('hidden-marks')", hits: 1,
-    why: 'core knowing a plugin, which the marks stack (marks-switch, #198) removes as hidden marks becomes a first-party worker',
-  },
+  { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
   {
     place: 'frontend/editor/ui-port.ts', text: "OWN_LAYOUT = 'layout'", hits: 1,
     why: 'core picking the layout plugin when the human picked none, parked for Han: no fix leaves what a user sees the same',
@@ -63,7 +77,7 @@ export function partProblems(found: readonly Named[], lineOf: (hit: Named) => st
 
 const sources = new Map(files.map(file => [file, readFileSync(path.join(repo, file), 'utf8')]))
 const relays = relaysOf(sources, constants)
-const found = [...sources].flatMap(([file, source]) => namedIn(file, source, outside, constants, relays))
+const found = [...sources].flatMap(([file, source]) => namedIn(file, source, named, constants, relays))
 const lineOf = (hit: Named) => sources.get(hit.file)!.split('\n')[hit.line - 1]
 
 describe('the parts outside main the core names', () => {
@@ -85,12 +99,12 @@ describe('the parts outside main check itself', () => {
   const at = 'core/backend/planted.ts'
   const problems = (source: string, places: readonly Place[] = [], held = constants, file = at, relays: Relays = new Map()) => {
     const lines = source.split('\n')
-    return partProblems(namedIn(file, source, outside, held, relays), hit => lines[hit.line - 1], places)
+    return partProblems(namedIn(file, source, named, held, relays), hit => lines[hit.line - 1], places)
   }
   const git: Place = { place: 'backend/planted.ts', text: "findProgram('git')", hits: 1, why: 'the git program, not the plugin' }
 
   it.each([
-    ["if (id === 'file-explorer') {}", `${at}:1 'file-explorer' names file-explorer, a part hetu doesn't run in main`],
+    ["if (id === 'notify') {}", `${at}:1 'notify' names notify, a part hetu doesn't run in main`],
     ["if (call.from === `mcp-http-handler`) {}", `${at}:1 'mcp-http-handler' names mcp-http-handler, a part hetu doesn't run in main`],
     ["const order = { 'hidden-marks': 1 }", `${at}:1 'hidden-marks' names hidden-marks, a part hetu doesn't run in main`],
     ["off.filter(id => id !== 'leases')", `${at}:1 'leases' names leases, a part hetu doesn't run in main`],
@@ -138,8 +152,8 @@ describe('the parts outside main check itself', () => {
       `backend/planted.ts "hidden: reached.some(isGitName) ? 'git'" covers 3 hits and lists 1: line 1 'git', line 1 'git', line 1 'git'`,
     ],
     [
-      "const found = { real, hidden: reached.some(isGitName) ? 'git' : (id === 'search' ? 'x' : 'dot') }", hidden,
-      `backend/planted.ts "hidden: reached.some(isGitName) ? 'git'" covers 2 hits and lists 1: line 1 'git', line 1 'search'`,
+      "const found = { real, hidden: reached.some(isGitName) ? 'git' : (id === 'notify' ? 'x' : 'dot') }", hidden,
+      `backend/planted.ts "hidden: reached.some(isGitName) ? 'git'" covers 2 hits and lists 1: line 1 'git', line 1 'notify'`,
     ],
     [
       "if (names.some(isGitName)) f(refuse('git'))\nconst z = refuse('git')", refused,
@@ -162,12 +176,41 @@ describe('the parts outside main check itself', () => {
     expect(problems("findProgram('git')", [{ ...git, why: 'program' }])).toEqual([`backend/planted.ts "findProgram('git')" has a why under 10 characters`])
   })
 
+  // A plugin's own action or verb names its plugin, a name of core's contract does not (D-639)
+  it.each([
+    ["if (action === 'notify.show') {}", `${at}:1 'notify.show' names notify, a part hetu doesn't run in main`],
+    ["if (call.verb === 'layout.secret') {}", `${at}:1 'layout.secret' names layout, a part hetu doesn't run in main`],
+    ["send(owner, { topic: 'layout.secret', instance })", `${at}:1 'layout.secret' names layout, a part hetu doesn't run in main`],
+  ])('fails %j, a name no table of core holds', (source, problem) => {
+    expect(problems(source)).toEqual([problem])
+  })
+
+  it.each([
+    ["if (granted.type === 'net.fetch') {}", 'net.fetch'],
+    ["if (call.verb === 'layout.draw') {}", 'layout.draw'],
+    ["if (topic === 'layout.state') {}", 'layout.state'],
+  ])('passes %j, a name the tables of core/api hold', (source, name) => {
+    expect(contract.has(name)).toBe(true)
+    expect(problems(source)).toEqual([])
+  })
+
+  it('reads the tables from core/api and counts a constant holding a name no table holds', () => {
+    for (const name of ['net.fetch', 'layout.draw', 'layout.close', 'events.subscribe', 'luoshu.read', 'core.status']) expect(contract.has(name), name).toBe(true)
+    expect(named.get('notify.show')).toBe('notify')
+    expect(named.get('net.fetch')).toBe(undefined)
+    expect(named.get('layout')).toBe('layout')
+    expect(named.get('.git')).toBe(undefined)
+    expect(problems("import { QUERY } from '../api/search.ts'\nf(QUERY)", [], new Map([['QUERY', 'search']]))).toEqual([
+      `${at}:1 QUERY names search, a part hetu doesn't run in main`,
+      `${at}:2 QUERY names search, a part hetu doesn't run in main`,
+    ])
+  })
+
   it.each([
     "if (caller.kind === 'plugin') {}",
     "const dir = path.join(root, '.git')",
     "// the layout plugin draws here\nconst x = 1",
     "import net from 'net'",
-    "if (topic === 'layout.state') {}",
   ])('counts nothing in %j', source => {
     expect(problems(source)).toEqual([])
   })
