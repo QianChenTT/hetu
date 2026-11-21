@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "api": "^3",
   "entries": { "worker": "dist/worker.js" },
-  "views": { "settings": { "title": "Hidden marks", "kind": "view" } },
+  "views": { "settings": { "title": "Hidden marks", "kind": "item" } },
   "capabilities": [
     { "type": "ui.read", "paths": ["**"] },
     { "type": "ui.edit", "paths": ["**"] },

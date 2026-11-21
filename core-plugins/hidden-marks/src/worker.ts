@@ -187,16 +187,27 @@ export default definePlugin({
       const changes = toggle(note.state, event.command as Format, range)
       if (changes !== null) void ctx.try(ctx.editor.edit(event.instance, event.version, changes.toJSON()))
     })
-    // The settings view: a box for each element, ticked while it hides. A change is stored, then every note marked again
+    // The settings: an item in the status row whose button opens a popover with a box for each element, ticked while
+    // it hides, so they take no place a view would. A change is stored, then every note marked again
     const views = new Set<string>()
+    let open = false
     const settings = (): UiNode => ({
       kind: 'box',
       id: 'root',
       children: [
-        { kind: 'text', id: 'about', text: 'Markdown hidden while you type' },
-        ...elementKinds.map(kind => ({ kind: 'checkbox' as const, id: `hide-${kind}`, checked: !shown.has(kind), label: labels[kind] })),
+        { kind: 'button', id: 'marks', text: 'Marks' },
+        ...open ? [{
+          kind: 'popover' as const,
+          id: 'choices',
+          anchor: 'marks',
+          side: 'above' as const,
+          children: elementKinds.map(kind => ({ kind: 'checkbox' as const, id: `hide-${kind}`, checked: !shown.has(kind), label: labels[kind] })),
+        }] : [],
       ],
     })
+    const redraw = () => {
+      for (const instance of views) void ctx.try(ctx.ui.views.draw(instance, settings()))
+    }
     let saving: Promise<unknown> = Promise.resolve()
     ctx.onStop(async () => {
       await saving
@@ -208,12 +219,16 @@ export default definePlugin({
     })
     ctx.ui.on('view.closed', event => views.delete(event.instance))
     ctx.ui.on('view.event', event => {
+      if (views.has(event.instance) && event.node === 'marks' && event.type === 'click') {
+        open = !open
+        return redraw()
+      }
       const kind = elementKinds.find(one => `hide-${one}` === event.node)
       if (!views.has(event.instance) || event.type !== 'change' || kind === undefined || typeof event.value !== 'boolean') return
       if (event.value) shown.delete(kind)
       else shown.add(kind)
       saving = ctx.try(ctx.storage.set({ key: SHOWN, value: elementKinds.filter(one => shown.has(one)) }))
-      for (const instance of views) void ctx.try(ctx.ui.views.draw(instance, settings()))
+      redraw()
       for (const [instance, note] of notes) draw(instance, note)
     })
     await ctx.try(ctx.editor.bind(Object.entries(formatKeys).map(([command, key]) => ({ key, command }))))

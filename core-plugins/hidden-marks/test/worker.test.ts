@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { type FakeCore, fakeCore, FakeDrawer } from '@hetu/sdk/testing'
 import { MAX_MARKS as BRIDGE_MAX_MARKS } from 'hetu-core/api/editor.ts'
@@ -276,14 +277,29 @@ describe('a run the human empties', () => {
 
 describe('the settings for which elements hide', () => {
   const settingsView = (drawer: FakeDrawer) => drawer.instances().find(one => one.view === 'settings')?.instance ?? ''
-  const boxes = (drawer: FakeDrawer) => ((drawer.tree(settingsView(drawer)) as { children?: { kind: string, id: string, checked?: boolean }[] } | null)?.children ?? [])
+  type Node = { kind: string, id: string, checked?: boolean, children?: Node[] }
+  const root = (drawer: FakeDrawer) => (drawer.tree(settingsView(drawer)) as Node | null)?.children ?? []
+  // The boxes in the popover the item's button opens, none while it is shut
+  const boxes = (drawer: FakeDrawer) => (root(drawer).find(child => child.kind === 'popover')?.children ?? [])
     .filter(child => child.kind === 'checkbox').map(child => [child.id, child.checked])
+  const press = (drawer: FakeDrawer) => drawer.emit({ topic: 'view.event', instance: settingsView(drawer), node: 'marks', type: 'click' })
   const hiddenAt = (drawer: FakeDrawer, instance: string, from: number) => marksOn(drawer, instance).some(mark => mark.kind === 'hide' && mark.from === from)
 
-  it('draws a box for each element answer 7 names, each ticked as hidden at first', async () => {
+  it('is a small item with a button, so it takes no place a view would in the layout', async () => {
+    expect(JSON.parse(await readFile(manifest, 'utf8')).views).toEqual({ settings: { title: 'Hidden marks', kind: 'item' } })
     const drawer = await started()
+    await until(() => root(drawer).length > 0)
+    expect(root(drawer).map(child => child.kind)).toEqual(['button'])
+  })
+
+  it('opens a popover from its button with a box for each element answer 7 names, each ticked as hidden at first, and shuts it again', async () => {
+    const drawer = await started()
+    await until(() => root(drawer).length > 0)
+    press(drawer)
     await until(() => boxes(drawer).length > 0)
     expect(boxes(drawer)).toEqual(elementKinds.map(kind => [`hide-${kind}`, true]))
+    press(drawer)
+    await until(() => boxes(drawer).length === 0)
     expect(elementKinds).toEqual(['bold', 'italic', 'strike', 'code', 'highlight', 'heading', 'bullet', 'quote', 'rule', 'link', 'fence'])
   })
 
@@ -294,6 +310,8 @@ describe('the settings for which elements hide', () => {
     expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
     const instance = drawer.openNote('notes/a.md', '**a** *b*')
     await until(() => hiddenAt(drawer, instance, 0) && hiddenAt(drawer, instance, 6))
+    press(drawer)
+    await until(() => boxes(drawer).length > 0)
     drawer.emit({ topic: 'view.event', instance: settingsView(drawer), node: 'hide-bold', type: 'change', value: false })
     await until(() => !hiddenAt(drawer, instance, 0))
     expect(hiddenAt(drawer, instance, 6)).toBe(true)
@@ -302,6 +320,8 @@ describe('the settings for which elements hide', () => {
     expect(core.stored('storage', 'shown')).toEqual(['bold'])
     await core.stop()
     expect(await core.start(hiddenMarks)).toEqual({ state: 'ready' })
+    await until(() => root(drawer).length > 0)
+    press(drawer)
     await until(() => boxes(drawer).length > 0)
     expect(boxes(drawer)[0]).toEqual(['hide-bold', false])
     const again = drawer.openNote('notes/b.md', '**a** *b*')
