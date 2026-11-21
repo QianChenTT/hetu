@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { consentAsk, type ConsentAsk } from '../../api/changes.ts'
+import { grantKeyOf } from '../../api/envelope.ts'
 
 // A client's connect a utility half asks for: the change the core raises for it and the connect's state until the
 // same plugin collects the human's answer. The hosts are taken here with the URL parser the utility process uses, so
@@ -8,9 +9,10 @@ import { consentAsk, type ConsentAsk } from '../../api/changes.ts'
 // A pair as the plugins manager reads it: the root plugin's id and the field
 export type PairOf = { readonly root: string, readonly field: string }
 
-// What a utility half sends for a connect: the client id, the name the client's document gives or null, the redirect
-// and the field the plugin's calls for the client will carry
-export type ConnectAsked = { client: string, name: string | null, redirect: string, field: string }
+// What a utility half sends for a connect: the client id, the name the client's document gives or null, the redirect or
+// null for a client on this computer reaching the plugin over its local pipe and the field the plugin's calls for the
+// client will carry
+export type ConnectAsked = { client: string, name: string | null, redirect: string | null, field: string }
 
 // An address's host with its port where one is named, null for text that is no URL or a URL with no host. user says it
 // names a user or a password before the host, which can make it read as another host
@@ -20,15 +22,15 @@ function hostOf(address: string): { host: string, user: boolean } | null {
   return url.host === '' ? null : { host: url.host, user: url.username !== '' || url.password !== '' }
 }
 
-// The connect as the human is shown it, or null for one the core refuses: a redirect with no host, a client id or a
-// redirect with user info, or values out of the kind's form
+// The connect as the human is shown it, or null for one the core refuses: a redirect given with no host, a client id or
+// a redirect with user info, or values out of the kind's form. No redirect has no redirect host
 export function connectChange(asked: ConnectAsked, plugin: string): ConsentAsk | null {
-  const to = hostOf(asked.redirect)
+  const to = asked.redirect === null ? null : hostOf(asked.redirect)
   const from = hostOf(asked.client)
-  if (to === null || to.user || from?.user === true) return null
+  if ((asked.redirect !== null && to === null) || to?.user === true || from?.user === true) return null
   const change = {
     kind: 'consent.ask' as const, plugin, client: asked.client, clientHost: from?.host ?? null, name: asked.name,
-    redirect: asked.redirect, redirectHost: to.host, field: asked.field,
+    redirect: asked.redirect, redirectHost: to?.host ?? null, field: asked.field,
   }
   return consentAsk.safeParse(change).success ? change : null
 }
@@ -66,14 +68,14 @@ export class Connects {
 
   // Raises a connect for the plugin and gives back its handle, random so no other caller can guess it. One waits in
   // all, a client id the human cancelled a connect of waits CONSENT_PAUSE_MS for that plugin and a pair the core holds
-  // already is refused
+  // already is refused, the pair of the field's grant key, so another session of a client the core holds is too
   ask(asked: ConnectAsked, plugin: string): string {
     const change = connectChange(asked, plugin)
     if (change === null) throw { code: 'invalid' }
     const until = this.paused.get(pausedKey(change))
     if (until !== undefined && this.host.clock() < until) throw { code: 'throttled' }
     if (this.waits()) throw { code: 'throttled' }
-    if (this.host.inUse({ root: plugin, field: change.field })) throw { code: 'not-granted' }
+    if (this.host.inUse({ root: plugin, field: grantKeyOf(change.field) })) throw { code: 'not-granted' }
     if (!this.host.raise(change)) throw { code: 'throttled' }
     const handle = randomBytes(24).toString('base64url')
     this.waiting = { handle, change }
@@ -95,7 +97,7 @@ export class Connects {
   // the connect waited fails it
   confirmed(change: ConsentAsk): void {
     if (this.waiting?.change !== change) throw new Error('no connect waits for this Confirm')
-    if (this.host.inUse({ root: change.plugin, field: change.field })) throw new Error('the pair is held already')
+    if (this.host.inUse({ root: change.plugin, field: grantKeyOf(change.field) })) throw new Error('the pair is held already')
     this.answered('yes')
   }
 

@@ -54,6 +54,16 @@ describe('search with the grants its manifest asks for', () => {
     expect(await query(fake, 'fox', narrow)).toEqual(['public/a.md'])
   })
 
+  // A plugin may call search with no read of its own and learns no note's name from it
+  it('answers nothing to a caller with no read at all', async () => {
+    const fake = core()
+    await fake.start(search)
+    await fake.luoshu.write('notes/a.md', 'fox')
+    await finds(fake, 'fox', ['notes/a.md'])
+    const none = { grants: [{ type: 'plugin.call' as const, targets: ['search'] }] }
+    expect(await query(fake, 'fox', none)).toEqual([])
+  })
+
   it('forgets a note that is gone', async () => {
     const fake = core()
     await fake.start(search)
@@ -81,6 +91,8 @@ describe('search with the grants its manifest asks for', () => {
     } })
     expect(await fake.start(older)).toEqual({ state: 'ready' })
     await fake.stop()
+    // The note is still in the luoshu, so the listing at start keeps it
+    await fake.luoshu.write('notes/a.md', 'fox')
     expect(await fake.start(search)).toEqual({ state: 'ready' })
     expect(await query(fake, 'fox')).toEqual(['notes/a.md'])
     expect(await query(fake, 'hunter2')).toEqual([])
@@ -120,10 +132,11 @@ describe('search with the grants its manifest asks for', () => {
   })
 
   it('reads a resync a batch at a time, so its other calls never wait behind it', async () => {
-    const fake = fakeCore({ manifest, latencyMs: 5 })
+    // Found by the listing at start, so no event waits to be handled when the burst comes
+    const notes = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`notes/${i}.md`, `fox ${i}`]))
+    const fake = fakeCore({ manifest, latencyMs: 5, notes })
     cores.push(fake)
     await fake.start(search)
-    for (let i = 0; i < 100; i++) await fake.luoshu.write(`notes/${i}.md`, `fox ${i}`)
     await until(async () => (await query(fake, 'fox')).length === 100, 10_000)
     fake.luoshu.busiest()
     // One event at a time, so a burst drops some and a resync of every note search knows follows

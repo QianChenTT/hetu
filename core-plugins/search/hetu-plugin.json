@@ -2,12 +2,14 @@
   "id": "search",
   "name": "Search",
   "version": "0.1.0",
-  "api": "^2",
+  "api": "^3",
   "entries": { "worker": "dist/worker.js" },
   "requires": ["luoshu"],
+  "views": { "search": { "title": "Search", "kind": "view" } },
   "provides": { "actions": { "query": {} }, "topics": ["indexed"] },
   "capabilities": [
     { "type": "luoshu.read", "paths": ["**"] },
-    { "type": "events.subscribe", "topics": ["luoshu.changed", "luoshu.outside"] }
+    { "type": "events.subscribe", "topics": ["luoshu.changed", "luoshu.outside"] },
+    { "type": "ui.view" }
   ]
 }
