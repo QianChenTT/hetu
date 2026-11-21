@@ -3,9 +3,8 @@ import { LIST_PAGE, type HistoryCommit, type ResultOf } from '../../api/actions.
 import type { RefusalCode } from '../../api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE } from '../../api/exec.ts'
 import { isDotName } from '../../api/names.ts'
-import type { Call, Prepared, Provider, ProviderRefusal } from '../../api/policy-jobs.ts'
+import { signatureOf, type Call, type Prepared, type Provider, type ProviderRefusal } from '../../api/policy-jobs.ts'
 import { quotas, spaceOf } from '../../api/storage.ts'
-import { signatureOf } from '../../backend/providers/history/history.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
@@ -202,7 +201,7 @@ function changed(now: ReadonlyMap<string, string>, before: ReadonlyMap<string, s
 const isoDate = (at: Date) => at.toISOString().replace(/\.\d{3}Z$/, '+00:00')
 
 // history.* in memory over the luoshu's notes, answering as the history module does. commit records the notes at its
-// paths as one commit, a path with no note as removed, named by the module's own signatureOf, and answers
+// paths as one commit, a path with no note as removed, named by signatureOf as the module's are, and answers
 // { commit: null } when nothing changed. log lists the commits that changed a note or anything under a folder, newest
 // first. read gives a note's text at a commit or not-found. The gate judges commit and read apart, by path
 export class MemoryHistory implements Provider {

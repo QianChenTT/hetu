@@ -3,10 +3,9 @@ import { constants } from 'node:fs'
 import { mkdir, open, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { HistoryCommit } from '../../../api/actions.ts'
-import type { Caller } from '../../../api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE, MAX_COMMIT_MESSAGE, MAX_COMMIT_PATHS, MAX_LOG_PAGE } from '../../../api/exec.ts'
 import { isDotName, MAX_SCOPE_LENGTH } from '../../../api/scope.ts'
-import type { Call, CallHead, HistoryRole, Opening, Prepared, Provider, ProviderRefusal } from '../../../api/policy-jobs.ts'
+import { signatureOf, type Call, type HistoryRole, type Opening, type Prepared, type Provider, type ProviderRefusal } from '../../../api/policy-jobs.ts'
 import { canonical, folderState, lastNamed, looked, named, type Canonical } from '../../../lib/canonical.ts'
 import { baseEnv, type Env, findProgram, inside, nullDevice, runClean, setVariable } from '../../../lib/clean-env.ts'
 
@@ -50,20 +49,6 @@ const RECORD = '\x1e'
 type Folder = Opening & { folder: string }
 // One notes folder's repo with the git that serves it
 type Repo = { dir: string, git: string, env: Env }
-
-// What git takes for a name: no angle brackets, no line breaks and nothing but space at the ends
-const nameOf = (text: string) => text.replace(/[<>\r\n\0]/g, ' ').replace(/\s+/g, ' ').trim()
-const callerName = (caller: Caller) => (caller.kind === 'plugin' ? caller.id : caller.kind === 'window' ? `window.${caller.role}` : `content.${caller.plugin}`)
-
-// The names a commit carries. On a chain that carries a pair the committer is the root plugin and the author the field.
-// Any other chain names its caller as the committer, with a window's onBehalf, attribution alone, as the author. The
-// SDK's fake core names its commits by this too
-export function signatureOf(call: CallHead): { author: string, committer: string } {
-  const pair = call.root.kind === 'plugin' && call.onBehalf !== undefined
-  const committer = nameOf(callerName(pair ? call.root : call.caller)) || 'hetu'
-  const author = (call.onBehalf === undefined ? '' : nameOf(call.onBehalf)) || committer
-  return { author, committer }
-}
 
 // history.commit, history.log and history.read over a repo hetu owns, one per notes folder, under the data folder.
 // git never sees the notes folder: it runs with --git-dir alone from an empty folder of history's own, takes each

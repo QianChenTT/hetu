@@ -30,6 +30,20 @@ export type CallHead = {
   readonly onBehalf?: string
 }
 
+// What git takes for a name: no angle brackets, no line breaks and nothing but space at the ends
+const nameOf = (text: string) => text.replace(/[<>\r\n\0]/g, ' ').replace(/\s+/g, ' ').trim()
+const callerName = (caller: Caller) => (caller.kind === 'plugin' ? caller.id : caller.kind === 'window' ? `window.${caller.role}` : `content.${caller.plugin}`)
+
+// The names a commit carries. On a chain that carries a pair the committer is the root plugin and the author the field.
+// Any other chain names its caller as the committer, with a window's onBehalf, attribution alone, as the author. The
+// history module and the SDK's fake core both name their commits by this
+export function signatureOf(call: CallHead): { author: string, committer: string } {
+  const pair = call.root.kind === 'plugin' && call.onBehalf !== undefined
+  const committer = nameOf(callerName(pair ? call.root : call.caller)) || 'hetu'
+  const author = (call.onBehalf === undefined ? '' : nameOf(call.onBehalf)) || committer
+  return { author, committer }
+}
+
 // A call as the router hands it to a provider, a callee or a core action. deadline is in ms since the epoch, never
 // later than the parent's
 export type Call = CallHead & {
