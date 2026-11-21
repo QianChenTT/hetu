@@ -54,8 +54,8 @@ const PARSE_MS = 50
 
 // An element's span and the marks drawn for it, which are kept or dropped together
 export type Element = { from: number, to: number, marks: Mark[] }
-// What names an element's group: the node it is and where it starts
-export type Named = { name: string, from: number }
+// What names an element's group: the node it is and its span
+export type Named = { name: string, from: number, to: number }
 
 // The quote a quote marker belongs to, which on a line after the first is its paragraph's parent
 function quoteOf(node: SyntaxNode): SyntaxNode {
@@ -77,7 +77,7 @@ export function hiddenMarks(state: EditorState, ranges: readonly { from: number,
     if (to <= from) return
     const element = elementOf(owner)
     let group = groups.get(element)
-    if (group === undefined) groups.set(element, group = groupOf({ name: owner.name, from: owner.from }))
+    if (group === undefined) groups.set(element, group = groupOf({ name: owner.name, from: owner.from, to: owner.to }))
     element.marks.push(edge === undefined ? { kind: 'hide', from, to, group } : { kind: 'hide', from, to, group, edge })
   }
   // A marker at its element's start opens it and any other closes it
@@ -150,12 +150,13 @@ export function hiddenMarks(state: EditorState, ranges: readonly { from: number,
   return [...elements.values()]
 }
 
-// The marks of the elements nearest around, each element whole, up to max. Those farthest from it are dropped first
+// The marks of the elements nearest around, each element whole, up to max. Those farthest from it are dropped first and
+// one too big for what is left is passed over for smaller ones past it
 export function keepNearest(elements: readonly Element[], around: { from: number, to: number }, max: number): Mark[] {
   const distance = (element: Element) => Math.max(0, around.from - element.to, element.from - around.to)
   const kept: Mark[] = []
   for (const element of [...elements].sort((a, b) => distance(a) - distance(b))) {
-    if (kept.length + element.marks.length > max) break
+    if (kept.length + element.marks.length > max) continue
     kept.push(...element.marks)
   }
   return kept

@@ -177,4 +177,15 @@ describe('the marks kept under a cap', () => {
     for (const line of lines) perLine.set(line, (perLine.get(line) ?? 0) + 1)
     expect([...perLine.values()].every(count => count === 3)).toBe(true)
   })
+
+  it('passes over an element too big for the cap and keeps the smaller ones past it', () => {
+    // A quote whose markers and line styles pass the cap alone, a bold on each of its lines
+    const state = stateOf(Array.from({ length: 60 }, () => '> **b**').join('\n'))
+    const middle = state.doc.line(30)
+    const elements = hiddenMarks(state, [{ from: 0, to: state.doc.length }], byStart)
+    const kept = keepNearest(elements, { from: middle.from, to: middle.to }, 100)
+    expect(kept.length).toBeGreaterThan(90)
+    expect(kept).toContainEqual({ kind: 'mark', from: middle.from + 2, to: middle.to, style: 'strong' })
+    expect(kept.some(mark => mark.kind === 'line')).toBe(false)
+  })
 })

@@ -3,7 +3,7 @@ import { type FakeCore, fakeCore, FakeDrawer } from '@hetu/sdk/testing'
 import { MAX_MARKS as BRIDGE_MAX_MARKS } from 'hetu-core/api/editor.ts'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Mark } from '../src/marks.ts'
-import hiddenMarks, { MARGIN, MAX_MARKS } from '../src/worker.ts'
+import hiddenMarks, { heldNotes, MARGIN, MAX_HEARD, MAX_MARKS } from '../src/worker.ts'
 
 const manifest = path.join(import.meta.dirname, '..', 'hetu-plugin.json')
 const cores: FakeCore[] = []
@@ -111,5 +111,109 @@ describe('hidden marks behind the bridge', () => {
     const marks = marksOn(drawer, instance)
     expect(marks.length).toBeLessThanOrEqual(MAX_MARKS)
     expect(marks.filter(mark => mark.kind === 'hide').length).toBe(2 * marks.filter(mark => mark.kind === 'mark').length)
+  })
+})
+
+describe('hidden marks as notes open, close and the drawer refuses or lags', () => {
+  const reads = (drawer: FakeDrawer) => drawer.calls.filter(verb => verb === 'editor.read').length
+
+  it('sends its marks for the version of its copy', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', '**a**')
+    await until(() => has(drawer, instance, strong(0, 5)))
+    drawer.type(instance, { from: 0, insert: 'x ' })
+    drawer.type(instance, { from: 0, insert: 'y ' })
+    await until(() => has(drawer, instance, strong(4, 9)))
+    expect(drawer.versions.get(`${instance} marks`)).toBe(2)
+  })
+
+  it('reads the note again when the drawer refuses its marks as stale', async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', '**a**')
+    await until(() => has(drawer, instance, strong(0, 5)))
+    drawer.refuseNext('editor.decorate', 'stale')
+    drawer.type(instance, { from: 0, insert: 'x ' })
+    await until(() => reads(drawer) === 2 && has(drawer, instance, strong(2, 7)))
+  })
+
+  it('forgets a note once closed and marks the note opened after it', async () => {
+    const drawer = await started()
+    const first = drawer.openNote('notes/a.md', '**a**')
+    await until(() => has(drawer, first, strong(0, 5)))
+    drawer.closeNote(first)
+    await until(() => heldNotes() === 0)
+    const second = drawer.openNote('notes/a.md', '**b**')
+    await until(() => has(drawer, second, strong(0, 5)))
+    expect(heldNotes()).toBe(1)
+  })
+
+  it('forgets a note closed before its first marks landed, which the drawer never tells closed', async () => {
+    const drawer = await started()
+    const release = drawer.delay('editor.read')
+    const instance = drawer.openNote('notes/a.md', '**a**')
+    await until(() => reads(drawer) === 1)
+    drawer.closeNote(instance)
+    release()
+    await until(() => drawer.calls.includes('editor.decorate'))
+    await until(() => heldNotes() === 0)
+  })
+
+  it('keeps marks apart on two notes open, a change in one leaving the other', async () => {
+    const drawer = await started()
+    const a = drawer.openNote('notes/a.md', '**a**')
+    const b = drawer.openNote('notes/b.md', '*b*')
+    await until(() => has(drawer, a, strong(0, 5)) && has(drawer, b, { kind: 'mark', from: 0, to: 3, style: 'em' }))
+    drawer.type(a, { from: 0, insert: 'x ' })
+    await until(() => has(drawer, a, strong(2, 7)))
+    expect(drawer.versions.get(`${b} marks`)).toBe(0)
+    expect(marksOn(drawer, b)).toContainEqual({ kind: 'mark', from: 0, to: 3, style: 'em' })
+  })
+
+  it('reads again for a change missed while its read was out and marks the text as it is', async () => {
+    const drawer = await started()
+    const release = drawer.delay('editor.read')
+    const instance = drawer.openNote('notes/a.md', '**a**')
+    await until(() => reads(drawer) === 1)
+    drawer.type(instance, { from: 5, insert: ' **b**' })
+    drawer.type(instance, { from: 0, insert: '# ' }, false)
+    drawer.type(instance, { from: 13, insert: '!' })
+    release()
+    await until(() => has(drawer, instance, strong(8, 13)))
+    expect(marksOn(drawer, instance)).toContainEqual({ kind: 'line', from: 0, style: 'h1' })
+  })
+
+  it('holds no more changes than its bound while a read is out and reads again for those past it', async () => {
+    const drawer = await started()
+    const release = drawer.delay('editor.read')
+    const instance = drawer.openNote('notes/a.md', '**a**')
+    await until(() => reads(drawer) === 1)
+    for (let n = 0; n <= MAX_HEARD; n++) drawer.type(instance, { from: 0, insert: 'x' })
+    await tick(20)
+    release()
+    await until(() => reads(drawer) === 2 && has(drawer, instance, strong(MAX_HEARD + 1, MAX_HEARD + 6)))
+  })
+
+  it("keeps the range the editor draws through a failed read, so the next change marks there and not the note's start", async () => {
+    const drawer = await started()
+    const text = Array.from({ length: 2000 }, () => '**b**').join('\n')
+    const middle = 1000 * 6
+    drawer.refuseNext('editor.read', 'unavailable')
+    const instance = drawer.openNote('notes/a.md', text, { from: middle, to: middle + 30 })
+    await until(() => reads(drawer) === 1)
+    await tick(20)
+    drawer.type(instance, { from: text.length, insert: '!' })
+    await until(() => has(drawer, instance, strong(middle, middle + 5)))
+    expect(has(drawer, instance, strong(0, 5))).toBe(false)
+  })
+
+  it("names an element's group as before once the note is read again after a missed change", async () => {
+    const drawer = await started()
+    const instance = drawer.openNote('notes/a.md', '**a**\n\n**b**')
+    await until(() => has(drawer, instance, strong(7, 12)))
+    const named = { a: groupAt(drawer, instance, 0), b: groupAt(drawer, instance, 7) }
+    drawer.type(instance, { from: 0, insert: '123' }, false)
+    drawer.type(instance, { from: 15, insert: '!' })
+    await until(() => has(drawer, instance, strong(10, 15)))
+    expect({ a: groupAt(drawer, instance, 3), b: groupAt(drawer, instance, 10) }).toEqual(named)
   })
 })
