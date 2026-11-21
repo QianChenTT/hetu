@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { coreKeyOf } from '../api/keys.ts'
+import { editorKeys } from '../frontend/editor/editor.ts'
 import { keyName, normalKey } from '../frontend/editor/keys.ts'
 
 const press = (key: string, mods: { ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean } = {}) =>
@@ -60,5 +61,12 @@ describe('the core keys', () => {
     expect(coreKeyOf(at('s', 'KeyS', { ctrlKey: true, altKey: true }), false)).toBe(null)
     expect(coreKeyOf(at('s', 'KeyS'), false)).toBe(null)
     expect(coreKeyOf(at('s', 'KeyS', { ctrlKey: true }), true)).toBe(null)
+  })
+})
+
+describe("the editor's own keys", () => {
+  it('leave the format keys to the plugin that binds them', () => {
+    const taken = editorKeys.flatMap(binding => [binding.key, binding.mac, binding.win, binding.linux])
+    for (const key of ['Mod-b', 'Mod-i', 'Mod-e', 'Mod-Shift-s', 'Mod-Shift-h']) expect(taken).not.toContain(key)
   })
 })

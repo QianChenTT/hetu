@@ -2,7 +2,7 @@ import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirr
 import {
   Annotation, type ChangeSet, EditorState, type Extension, Prec, StateEffect, StateField, type Text, Transaction, type TransactionSpec,
 } from '@codemirror/state'
-import { Decoration, type DecorationSet, EditorView, keymap } from '@codemirror/view'
+import { Decoration, type DecorationSet, EditorView, type KeyBinding, keymap } from '@codemirror/view'
 import type { Mark } from '../../api/editor.ts'
 import type { Instance } from './bridge.ts'
 import { hiddenRules, hiddenText } from './hidden-rules.ts'
@@ -143,6 +143,10 @@ function hiddenBy(owned: Owned, changes: ChangeSet): string[] {
   return owners
 }
 
+// CodeMirror's own keys, less Mod-i, which selects the syntax node around the cursor and would keep italic's key from
+// reaching a plugin's binding
+export const editorKeys: readonly KeyBinding[] = [...defaultKeymap.filter(binding => binding.key !== 'Mod-i'), ...historyKeymap]
+
 type Open = { view: EditorView, element: HTMLElement, instance: Instance }
 
 export class EditorViews implements Editors {
@@ -178,7 +182,7 @@ export class EditorViews implements Editors {
           markdownSupport(),
           hiddenRules,
           EditorView.lineWrapping,
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of(editorKeys),
           Prec.lowest(EditorView.domEventHandlers({ keydown: event => this.hooks.key(id, event) })),
           // A click into a note another slot shows makes it the current one
           EditorView.domEventHandlers({
