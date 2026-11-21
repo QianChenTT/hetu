@@ -117,9 +117,10 @@ describe('a manifest', () => {
       expect(supportsApi('^3', ['ui.edit', 'ui.read'])).toBe(true)
     })
 
-    // The lock actions came with lock.set. leases.* had no provider, so an older plugin calling one met a refusal before
-    it('keeps version 3 under version 4, which only added lock.set, unless the manifest names it', () => {
-      expect(apiChanges[4]).toEqual({ added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false })
+    // The lock actions came with lock.set. leases.* had no provider, so an older plugin calling one met a refusal before.
+    // A note write, remove or move may answer locked, which an older plugin meets as a refusal and never a wider reach
+    it('keeps version 3 under version 4, which added lock.set and the locked refusal, unless the manifest names lock.set', () => {
+      expect(apiChanges[4]).toEqual({ added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false, refusals: ['locked'] })
       expect(supportsApi('^3', ['luoshu.write', 'ui.edit'])).toBe(true)
       expect(supportsApi('^3', ['lock.set'])).toBe(false)
       expect(supportsApi('^4', ['lock.set'])).toBe(true)

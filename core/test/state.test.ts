@@ -980,16 +980,18 @@ describe('the retired recordNothing', () => {
   })
 })
 
-// The watchdog, a core plugin before it was dropped, may still be switched off in a file: read with the id dropped
-describe('the dropped watchdog', () => {
-  it('reads a file naming it in off with the id dropped and the rest of off kept, then writes the switches back without it', async () => {
+// The watchdog and leases, core plugins before they were dropped, may still be switched off in a file: read with the id
+// dropped. leases is a community plugin's id now, whose switch lives in its own entry
+describe('the dropped core plugins', () => {
+  it.each(['watchdog', 'leases'])('reads a file naming %s in off with the id dropped and the rest of off kept, then writes the switches back without it', async id => {
     await store.writeSwitches(noSwitches)
-    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, off: ['gate', 'watchdog', 'net'] }))
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, devMode: ['alpha'], off: ['gate', id, 'net'] }))
     const loaded = await store.load()
     expect(loaded.suspect).toBe(false)
     expect(loaded.state.switches.off).toEqual(['gate', 'net'])
+    expect(loaded.state.switches.devMode).toEqual(['alpha'])
     await store.writeSwitches(loaded.state.switches)
-    expect(await readFile(switchesPath(), 'utf8')).not.toContain('watchdog')
+    expect(await readFile(switchesPath(), 'utf8')).not.toContain(id)
   })
 })
 

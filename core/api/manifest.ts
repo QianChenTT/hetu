@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { capabilities, folderCapabilities, screenText, text } from './capabilities.ts'
+import type { RefusalCode } from './envelope.ts'
 import { guardableActions, localName, MAX_NAME_LENGTH, pluginId } from './ids.ts'
 import { plain, table } from './plain.ts'
 import { pathProblem } from './scope.ts'
@@ -12,12 +13,14 @@ export const API_VERSION = 4
 
 // What each major did to the one before it: the capability types it added, removed and reshaped, and whether a core
 // action, a bridge verb or an event lost or changed a field. A narrower rule on who may call what is no change here,
-// since an older plugin then meets a refusal and never a wider reach. A new major gets its record here
+// since an older plugin then meets a refusal and never a wider reach. refusals names the codes an action may answer
+// that the major before never gave, which an older plugin meets the same way. A new major gets its record here
 export type ApiChange = {
   readonly added: readonly string[]
   readonly removed: readonly string[]
   readonly reshaped: readonly string[]
   readonly actionsChanged: boolean
+  readonly refusals?: readonly RefusalCode[]
 }
 
 export const apiChanges: Readonly<Record<number, ApiChange>> = table({
@@ -25,8 +28,9 @@ export const apiChanges: Readonly<Record<number, ApiChange>> = table({
   // editor.edit takes ui.edit in place of luoshu.write and editor.open needs a read, which an older plugin meets as a
   // refusal. gate.reach changed, which only windows call
   3: { added: ['ui.edit', 'ui.read'], removed: [], reshaped: [], actionsChanged: false },
-  // leases.* had no provider, so an older plugin calling one met a refusal before
-  4: { added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false },
+  // leases.* had no provider, so an older plugin calling one met a refusal before. A note write, remove or move may
+  // answer locked
+  4: { added: ['lock.set'], removed: [], reshaped: [], actionsChanged: false, refusals: ['locked'] },
 })
 // hetu-plugin.json is refused unread past this size. The schema holds the parsed value to the same cap
 export const MAX_MANIFEST_BYTES = 64 * 1024
