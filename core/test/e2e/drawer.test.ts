@@ -379,7 +379,7 @@ describe('the drawer', () => {
     await until(async () => (await shown(next).innerText()) === 'base typed last')
   })
 
-  it("lets a Backspace beside a plugin's hidden text take one character, and names the plugin on the save", async () => {
+  it("lets a Backspace beside a plugin's hidden text take only the visible character before it, naming no plugin on the save", async () => {
     const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
     const text = 'Keep: do NOT pay Bob until the audit ends. Then sign.'
     const { app, editor, dataDir, folder } = await started({ notes: { 'a.md': text }, plugins: { painter: granted }, off: ['hidden-marks'] })
@@ -397,8 +397,11 @@ describe('the drawer', () => {
     await editor.keyboard.press('Backspace')
     await editor.keyboard.press('ControlOrMeta+s')
     await until(async () => (await readFile(path.join(folder, 'a.md'), 'utf8')) !== text)
-    expect((await readFile(path.join(folder, 'a.md'), 'utf8')).length).toBe(text.length - 1)
-    await until(async () => (await records(dataDir)).some(record => record.event === 'audit.call' && record.action === 'luoshu.write' && record.onBehalf === 'painter'))
+    // The arrows rest the caret before the hidden text, so Backspace takes the space after "Keep:"
+    expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe(`Keep:${text.slice(6)}`)
+    const writes = async () => (await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'luoshu.write')
+    await until(async () => (await writes()).length > 0)
+    expect((await writes()).some(record => record.onBehalf === 'painter')).toBe(false)
   })
 
   it('gives a plugin a new port after the editor renderer crashed and the page loaded again', async () => {
