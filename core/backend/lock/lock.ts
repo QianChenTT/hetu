@@ -54,10 +54,12 @@ export function createLock(options: LockOptions): Lock {
     return { ms }
   }
 
-  // A plugin clears only its own chain's locks. A window is the human, who may take any note over
+  // A plugin clears only its own chain's locks and hears the same whatever else holds the paths, since the clear needs
+  // no grant. A window is the human, who may take any note over
   function clear(call: Call, keys: readonly string[]): null {
-    if (call.caller.kind !== 'window' && others(keys, holderOf(call), options.clock())) throw refused('locked')
-    for (const key of keys) table.delete(key)
+    const holder = call.caller.kind === 'window' ? null : holderOf(call)
+    const now = options.clock()
+    for (const key of keys) if (holder === null || live(key, now)?.holder === holder) table.delete(key)
     return null
   }
 

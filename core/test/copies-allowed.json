@@ -227,7 +227,7 @@
         "core/backend/lock/lock.ts:9-14",
         "core/backend/providers/exec/exec.ts:24-30"
       ],
-      "judged": "the same meaning: the refusal helper every provider writes, one definition in lib for all five providers is its own change"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -239,7 +239,7 @@
         "core/backend/lock/lock.ts:90-94",
         "core/backend/providers/exec/exec.ts:174-177"
       ],
-      "judged": "the shape of Provider.perform as the contract types it, not one meaning"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -251,7 +251,7 @@
         "core/backend/lock/lock.ts:75-79",
         "core/backend/providers/history/history.ts:364-368"
       ],
-      "judged": "the shape of Provider.prepare as the contract types it, not one meaning"
+      "judged": "not yet"
     },
     {
       "files": [
@@ -263,7 +263,7 @@
         "core/backend/lock/lock.ts:76-81",
         "core/backend/providers/luoshu/luoshu.ts:623-628"
       ],
-      "judged": "the shape of Provider.prepare as the contract types it, not one meaning"
+      "judged": "not yet"
     },
     {
       "files": [

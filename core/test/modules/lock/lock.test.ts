@@ -155,7 +155,8 @@ describe('lock.set', () => {
     expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, { root: leases })).toEqual({ ms: 1000 })
     pass(1000)
     expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#new'))).toEqual({ ms: 1000 })
-  })
+  // A thousand paths each turned canonical on the disk, past five seconds on a busy Windows machine
+  }, 60_000)
 })
 
 describe('the canonical paths', () => {
@@ -204,14 +205,16 @@ describe('lock.clear', () => {
     expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('allow')
   })
 
-  it('refuses a plugin clearing another holder\'s lock with locked and nothing else, clearing none of the paths', async () => {
+  // The clear needs no grant, so its answer must not tell a plugin whether another holder locks a path
+  it('leaves another holder\'s lock where a plugin clears, answering as for a path no one locks', async () => {
     const { lock } = made()
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 600000 }, agent('claude-code#1'))
     await ask(lock, 'lock.set', { paths: ['mine.md'], ms: 600000 }, agent('claude-code#2'))
-    expect(await ask(lock, 'lock.clear', { paths: ['mine.md', 'projects/plan.md'] }, agent('claude-code#2'))).toEqual({ refused: { code: 'locked' } })
-    expect(await ask(lock, 'lock.clear', { paths: ['projects/plan.md'] }, { root: editor, caller: leases })).toEqual({ refused: { code: 'locked' } })
+    const free = await ask(lock, 'lock.clear', { paths: ['free.md'] }, agent('claude-code#2'))
+    expect(await ask(lock, 'lock.clear', { paths: ['mine.md', 'projects/plan.md'] }, agent('claude-code#2'))).toEqual(free)
+    expect(await ask(lock, 'lock.clear', { paths: ['projects/plan.md'] }, { root: editor, caller: leases })).toEqual(free)
     expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('deny')
-    expect(check(lock, ['mine.md'], { root: editor })).toBe('deny')
+    expect(check(lock, ['mine.md'], { root: editor })).toBe('allow')
   })
 
   // The human taking a note over
