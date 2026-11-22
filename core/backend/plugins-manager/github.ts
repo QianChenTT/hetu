@@ -78,11 +78,11 @@ const CLIENT_NAME = 'hetu-installer'
 const REDIRECTS: readonly number[] = Object.freeze([301, 302, 303, 307, 308])
 const MOST_REDIRECTS = 5
 
-// A wait on the fetch or on a body read. A rejection is the connection's, unless the request was stopped, which the
-// caller tells apart
-async function connected<T>(work: Promise<T>, signal: AbortSignal, stopped: Promise<never>): Promise<T> {
+// A wait on the fetch or on a body read, started inside so a fetch that throws at once counts as one that rejects. A
+// rejection is the connection's, unless the request was stopped, which the caller tells apart
+async function connected<T>(work: () => Promise<T>, signal: AbortSignal, stopped: Promise<never>): Promise<T> {
   try {
-    return await Promise.race([work, stopped])
+    return await Promise.race([work(), stopped])
   } catch (err) {
     if (signal.aborted) throw err
     throw new FetchRefused('offline')
@@ -105,7 +105,7 @@ async function bodyOf(response: Response, cap: number, signal: AbortSignal, stop
   let count = 0
   try {
     for (;;) {
-      const { done, value } = await connected(reader.read(), signal, stopped)
+      const { done, value } = await connected(() => reader.read(), signal, stopped)
       if (done) return Buffer.concat(chunks)
       count += value.byteLength
       if (count > cap) throw new FetchRefused('too-big')
@@ -166,7 +166,7 @@ async function throughRedirects(url: string, wanted: Wanted, signal: AbortSignal
   const init: RequestInit = { method: 'GET', headers: { ...wanted, 'user-agent': CLIENT_NAME }, redirect: 'manual', credentials: 'omit', signal }
   let at = url
   for (let hops = 0; ; hops++) {
-    const response = await connected(fetcher(at, init), signal, stopped)
+    const response = await connected(() => fetcher(at, init), signal, stopped)
     if (!REDIRECTS.includes(response.status)) return response
     void unread(response)
     if (hops === MOST_REDIRECTS) throw new FetchRefused('bad-answer')

@@ -242,6 +242,10 @@ describe('a failed fetch', () => {
       throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND api.github.com'), { code: 'ENOTFOUND' }) })
     }
     expect(await releaseZips('https://github.com/o/r', { fetch: refused })).toEqual({ problem: 'offline' })
+    const throwing: Fetch = () => {
+      throw new TypeError('fetch failed')
+    }
+    expect(await releaseZips('https://github.com/o/r', { fetch: throwing })).toEqual({ problem: 'offline' })
     expect(await downloadZip(zip, { fetch: refused })).toEqual({ problem: 'offline' })
     const broken = () => new Response(new ReadableStream<Uint8Array>({
       start(controller) {
