@@ -140,7 +140,7 @@ describe('reserved ids', () => {
     'core', 'security', 'events', 'ui', 'plugin', 'storage', 'cache', 'editor', 'app',
     'gate', 'grant-risk-classifier', 'log', 'flood-control', 'heartbeat', 'recording', 'security-view',
     'luoshu', 'lock', 'history', 'exec', 'net', 'mcp-http-handler',
-    'mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks',
+    'git', 'artifacts', 'notify', 'layout', 'hidden-marks',
   ]
 
   it('holds exactly the reserved ids', () => {
@@ -148,7 +148,7 @@ describe('reserved ids', () => {
   })
 
   it('keeps the first-party ids apart, the only reserved ids a folder plugin may hold', () => {
-    expect(firstPartyIds).toEqual(['mcp', 'git', 'artifacts', 'notify', 'layout', 'hidden-marks'])
+    expect(firstPartyIds).toEqual(['git', 'artifacts', 'notify', 'layout', 'hidden-marks'])
   })
 
   it.each(expected)('reserves %j', id => {
@@ -160,7 +160,7 @@ describe('reserved ids', () => {
     expect(pluginId.safeParse(id).success).toBe(true)
   })
 
-  it.each(['leases', 'searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer', 'search'])(
+  it.each(['leases', 'searchx', 'my-notes', 'leases2', 'gates', 'core-tools', 'git-lfs', 'notify-me', 'editor-core', 'trusted', 'hetunotes', 'file-explorer', 'search', 'mcp'])(
     'leaves %j free',
     id => {
       expect(isReservedId(id)).toBe(false)

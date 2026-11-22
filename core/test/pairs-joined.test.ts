@@ -10,7 +10,7 @@ import { createGate } from '../backend/policy/gate/gate.ts'
 import { createLuoshu } from '../backend/providers/luoshu/luoshu.ts'
 import { luoshuModule } from './modules-fakes.ts'
 import {
-  coreInstall, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
+  coreInstall, entryFor, FakeRuntime, filesFor, firstPartyEntry, hashOf, hostManifest, tempBase, tick, workerManifest, writeFolder, writeInstall,
   type Half, type Message,
 } from './plugins-manager-fakes.ts'
 
@@ -23,8 +23,8 @@ afterEach(async () => {
 const everything: Capability = { type: 'luoshu.read', paths: ['**'] }
 
 // The joined core over a real boot with the real gate and luoshu. mcp-http-handler is the core plugin whose utility
-// half the test drives as the root of each chain, naming a field on its calls. mcp is the install's own copy, a worker
-// the test answers for, holding read on everything. With the gate on, the pair of the handler and client-1 is given
+// half the test drives as the root of each chain, naming a field on its calls. mcp is a plugin-folder plugin approved
+// unsigned by its hash, a worker the test answers for, holding read on everything. With the gate on, the pair of the handler and client-1 is given
 // read on inbox through mcp's ask and the human's Confirm, as is client-3 on inbox. client-2 holds nothing
 async function joined(gate: 'on' | 'off') {
   const base = await tempBase()
@@ -43,15 +43,15 @@ async function joined(gate: 'on' | 'off') {
   await writeInstall(installDir, {
     ...coreInstall(),
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
-    mcp: { files: mcp, firstParty: true },
     artifacts: { files: artifacts, firstParty: true },
   })
   const store = new StateStore(dataDir)
-  await store.writeSwitches(gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
-  await store.writeLuoshu({ folder })
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
-  await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: mcpGrant, class: 1 }))
+  const allowUnsigned = [await hashOf(root)]
+  await store.writeSwitches(gate === 'off' ? { ...defaultSwitches(), off: ['gate'], allowUnsigned } : { ...defaultSwitches(), allowUnsigned })
+  await store.writeLuoshu({ folder })
+  await store.writePlugin('mcp', await entryFor(root, { signer: null, granted: mcpGrant, class: 1 }))
   const artifactsRoot = path.join(dataDir, 'plugins', 'artifacts')
   await writeFolder(artifactsRoot, artifacts)
   await store.writePlugin('artifacts', firstPartyEntry(await hashOf(artifactsRoot), { granted: [everything], class: 1 }))

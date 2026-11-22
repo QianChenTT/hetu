@@ -9,7 +9,7 @@ import { pipeName } from '../../api/pipe.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { hashFiles, readFiles } from '../../lib/hash-files.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { appCommand, cleanup, editorPage, env, launch, logged, pageAt, repo, sandboxArgs, temp, tick, until, visibleWindows } from './helpers.ts'
 
 // The shim's proof: hetu.exe --mcp-stdio twice against a running hetu with the shipped http and a fake mcp in the
@@ -29,8 +29,8 @@ const PIPE = pipeName(process.platform, userInfo().username)
 const PAST_DELAY = 1300
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
-// A first-party id, so it ships in this install as a first-party copy. Its handle answers a request with its id and
-// the label it was called on behalf of and a notification with nothing
+// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash. Its handle answers a request with its id
+// and the label it was called on behalf of and a notification with nothing
 const mcp = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({
@@ -44,20 +44,29 @@ export default definePlugin({
 })
 `
 
-// The shipped install with the fake mcp beside it
+// The shipped install as built, which holds http and never mcp
 async function install(): Promise<string> {
   const dir = await temp()
   const dist = path.join(repo, 'core', 'dist')
   await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
   const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { format: number, plugins: Record<string, unknown> }
+  expect(Object.keys(list.plugins)).not.toContain('mcp')
+  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
+  return dir
+}
+
+// A data folder with the fake mcp in the plugin folder, approved unsigned by its hash
+async function data(): Promise<string> {
+  const dataDir = await temp()
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': mcp })
   const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
-  const root = path.join(dir, 'plugins', 'mcp')
+  const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': built!.text }))
-  list.plugins.mcp = { path: 'plugins/mcp', version: '1.0.0', hash: hashFiles(await readFiles(root)), firstParty: true }
-  await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
-  return dir
+  const store = new StateStore(dataDir)
+  await store.writePlugin('mcp', await entryFor(root, { signer: null }))
+  await store.writeSwitches({ ...defaultSwitches(), allowUnsigned: [hashFiles(await readFiles(root))] })
+  return dataDir
 }
 
 const pipeAnswers = () => new Promise<boolean>(resolve => {
@@ -107,8 +116,7 @@ const label = (line: unknown) => (line as { result: { onBehalf: string } }).resu
 describe('hetu --mcp-stdio', () => {
   it('relays two claude-code sessions to mcp.handle, each on a label of its own, after one Confirm', async () => {
     expect(await pipeAnswers()).toBe(false)
-    const dataDir = await temp()
-    await new StateStore(dataDir).writeSwitches(defaultSwitches())
+    const dataDir = await data()
     const installDir = await install()
     const app = await launch(dataDir, { HETU_INSTALL_DIR: installDir })
     const editor = await editorPage(app)
