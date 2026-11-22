@@ -92,6 +92,14 @@ describe("the fake drawer's select", () => {
     expect(await code(ctx.editor.select(again, 0, { anchor: 2, head: 2 }))).toBe('ok')
   })
 
+  it('refuses a select at open after a key in the note the plugin did not bind, as hetu does', async () => {
+    const drawer = new FakeDrawer()
+    const ctx = await started(drawer)
+    const note = drawer.openNote('notes/a.md', 'hello')
+    expect(drawer.command('unbound', note)).toBe(false)
+    expect(await code(ctx.editor.select(note, 0, { anchor: 1, head: 1 }))).toBe('not-granted')
+  })
+
   it('refuses a plugin without ui.edit on the note', async () => {
     const drawer = new FakeDrawer()
     const ctx = await started(drawer, [{ type: 'luoshu.read', paths: ['notes/**'] }])

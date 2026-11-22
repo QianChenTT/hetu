@@ -49,9 +49,12 @@ type Reach = { read: boolean, edit: boolean, verbs: string[] }
 // A drawer whose core gives each plugin the reach named, read, edit and ui.command by default, on a.md
 async function drawerWith(reaches: Record<string, Reach> = {}) {
   const open = new Map<string, ReturnType<typeof opened>>()
+  // While held, the core answers gate.reach only once let go
+  let held: Promise<void> | null = null
   const core = fakeCore({
     'events.subscribe': () => ({ ok: true, result: { standing: [] } }),
-    'gate.reach': args => {
+    'gate.reach': async args => {
+      if (held !== null) await held
       const { read, edit, verbs } = reaches[(args as { plugin: string }).plugin] ?? { read: true, edit: true, verbs: ['ui.command'] }
       return { ok: true, result: { read, write: false, edit, uiRead: false, list: false, verbs } }
     },
@@ -66,11 +69,27 @@ async function drawerWith(reaches: Record<string, Reach> = {}) {
     const port: PortLike = { onmessage: null, postMessage: message => void sent.push(JSON.parse(message as string)), close() {} }
     drawer.connect(name, 1, port)
     let id = 0
-    return async (verb: string, args: unknown) => {
+    // Sends the call and hands back a read of its reply, for a call the core answers late
+    const post = (verb: string, args: unknown) => {
       const n = ++id
       port.onmessage?.({ data: JSON.stringify({ v: 1, kind: 'call', id: n, verb, args }) })
+      return () => sent.find(message => message.kind === 'reply' && message.id === n)
+    }
+    return Object.assign(async (verb: string, args: unknown) => {
+      const replied = post(verb, args)
       for (let i = 0; i < 3; i++) await settle()
-      return sent.find(message => message.kind === 'reply' && message.id === n)
+      return replied()
+    }, { post })
+  }
+  const hold = () => {
+    let release = () => {}
+    held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return async () => {
+      held = null
+      release()
+      for (let i = 0; i < 5; i++) await settle()
     }
   }
   const openNote = (id: string, text = 'hello world') => {
@@ -91,7 +110,7 @@ async function drawerWith(reaches: Record<string, Reach> = {}) {
   const wait = (ms: number) => {
     now += ms
   }
-  return { drawer, plugin, openNote, closeNote, press, wait }
+  return { drawer, plugin, openNote, closeNote, press, wait, hold }
 }
 
 const select = (instance: string, version: number, anchor: number, head = anchor) => ['editor.select', { instance, version, selection: { anchor, head } }] as const
@@ -254,5 +273,42 @@ describe("a select in answer to the human's key", () => {
     await press('n1')
     drawer.touched('n1')
     expect(await call(...select('n1', 0, 3))).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+  })
+
+  it('is refused when the human clicks or presses another key while the core answers', async () => {
+    const { drawer, call, press, hold, note } = await keyed()
+    for (const human of [() => drawer.touched('n1'), () => drawer.key('n1', 'Mod-k'), () => drawer.key('n1', 'Shift')]) {
+      drawer.forget()
+      const release = hold()
+      await press('n1')
+      const replied = call.post(...select('n1', 0, 3))
+      human()
+      await release()
+      expect(replied()).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    }
+    expect(note.selected).toEqual([])
+  })
+
+  it("is refused for an edit's cursor too when the human clicks while the core answers", async () => {
+    const { drawer, call, press, hold, note } = await keyed()
+    drawer.forget()
+    const release = hold()
+    await press('n1')
+    const replied = call.post('editor.edit', { instance: 'n1', version: 0, changes: [11, [0, '!']], selection: { anchor: 12, head: 12 } })
+    drawer.touched('n1')
+    await release()
+    expect(replied()).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(note.text()).toBe('hello world')
+  })
+
+  it('is taken when nothing of the human came while the core answers', async () => {
+    const { drawer, call, press, hold, note } = await keyed()
+    drawer.forget()
+    const release = hold()
+    await press('n1')
+    const replied = call.post(...select('n1', 0, 3))
+    await release()
+    expect(replied()).toMatchObject({ ok: true })
+    expect(note.selected).toEqual([{ anchor: 3, head: 3 }])
   })
 })

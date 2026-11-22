@@ -499,6 +499,39 @@ describe('the drawer', () => {
     await until(async () => (await shown(editor).innerText()) === 'abc XYdef')
   })
 
+  it('refuses a select at open once the human put text in the note with no key or click, as a menu paste or dictation does', async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }]
+    const { app, editor } = await started({ notes: { 'a.md': 'abc def' }, plugins: { jumper: granted } })
+    await open(editor, 'a.md')
+    const worker = await pluginWorker(app, 'jumper')
+    await until(async () => (await drive(worker, async scope => (await scope.editor.instances() as unknown[]).length)) === 1)
+    await editor.evaluate(() => document.execCommand('insertText', false, 'Z'))
+    await until(async () => (await shown(editor).innerText()) === 'Zabc def')
+    const moved = await drive(worker, async scope => {
+      const [open] = await scope.editor.instances() as { instance: string, version: number }[]
+      return scope.editor.select(open.instance, open.version, { anchor: 4, head: 4 }).then(() => 'moved', (err: { code?: string }) => err.code)
+    })
+    expect(moved).toBe('not-granted')
+  })
+
+  it('refuses a select at open once input other than a key or click reached the note, before it changed the text', async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }]
+    const { app, editor } = await started({ notes: { 'a.md': 'abc def' }, plugins: { jumper: granted } })
+    await open(editor, 'a.md')
+    const worker = await pluginWorker(app, 'jumper')
+    await until(async () => (await drive(worker, async scope => (await scope.editor.instances() as unknown[]).length)) === 1)
+    await editor.evaluate(() => {
+      const content = document.querySelector('.editor:not([hidden]) .cm-content') as HTMLElement
+      content.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }))
+    })
+    const moved = await drive(worker, async scope => {
+      const [open] = await scope.editor.instances() as { instance: string, version: number }[]
+      return scope.editor.select(open.instance, open.version, { anchor: 4, head: 4 }).then(() => 'moved', (err: { code?: string }) => err.code)
+    })
+    expect(moved).toBe('not-granted')
+    expect(await shown(editor).innerText()).toBe('abc def')
+  })
+
   it('sends the range the editor draws to a plugin that asked for it and reads the note and to no other, again as it moves', async () => {
     const plugins: Record<string, Capability[]> = {
       reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
