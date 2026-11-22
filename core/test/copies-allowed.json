@@ -340,18 +340,6 @@
     },
     {
       "files": [
-        "core/backend/plugins-manager/changes.ts",
-        "core/backend/plugins-manager/requests.ts"
-      ],
-      "hash": "2c2066769d83be6a",
-      "at": [
-        "core/backend/plugins-manager/changes.ts:29-34",
-        "core/backend/plugins-manager/requests.ts:202-209"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/backend/plugins-manager/requests.ts",
         "core/backend/plugins-manager/requests.ts"
       ],
@@ -583,10 +571,22 @@
         "core/backend/runtime/workers.ts",
         "core/frontend/trusted/view.ts"
       ],
-      "hash": "edbf48ffce081b66",
+      "hash": "2e63bf7db37062aa",
       "at": [
-        "core/backend/runtime/workers.ts:149-154",
-        "core/frontend/trusted/view.ts:338-343"
+        "core/backend/runtime/workers.ts:148-153",
+        "core/frontend/trusted/view.ts:369-374"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
+        "core/backend/runtime/workers.ts",
+        "core/sdk/editor.ts"
+      ],
+      "hash": "2981d94d33dbe4d6",
+      "at": [
+        "core/backend/runtime/workers.ts:148-153",
+        "core/sdk/editor.ts:153-158"
       ],
       "judged": "not yet"
     },
@@ -719,18 +719,6 @@
       "at": [
         "core/frontend/editor/views.ts:95-99",
         "core/frontend/editor/views.ts:103-107"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
-        "core/frontend/trusted/view.ts",
-        "core/sdk/editor.ts"
-      ],
-      "hash": "2981d94d33dbe4d6",
-      "at": [
-        "core/frontend/trusted/view.ts:338-343",
-        "core/sdk/editor.ts:153-158"
       ],
       "judged": "not yet"
     },
