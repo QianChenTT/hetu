@@ -73,6 +73,23 @@ describe('the window\'s settings', () => {
     expect(none.space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
   })
 
+  // A layout whose port ended before the settings loaded is gone, so the next that came and is still there is picked
+  it('picks no layout that came before the settings loaded and left before they did', async () => {
+    const { settings, space } = made()
+    let here = true
+    await settings.firstLayout('gone', () => false)
+    await settings.firstLayout('tiles', () => here)
+    here = false
+    await settings.load()
+    expect(settings.value).toMatchObject({ layout: null, plain: false })
+    expect(space.get('settings')).toBe(undefined)
+    const other = made()
+    await other.settings.firstLayout('gone', () => false)
+    await other.settings.firstLayout('tiles', () => true)
+    await other.settings.load()
+    expect(other.settings.value).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
   it('keeps each change under settings in the window\'s storage and reads it back', async () => {
     const { settings, space, core } = made()
     await settings.load()

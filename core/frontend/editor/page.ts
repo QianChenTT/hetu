@@ -125,7 +125,7 @@ function start(bridge: Bridge): void {
           layers?.changed()
           drawMenuSoon()
         },
-        layoutCame: owner => void settings.firstLayout(owner),
+        layoutCame: owner => void settings.firstLayout(owner, () => drawer?.ui.layoutChoices().includes(owner) ?? false),
         // A post that lands answers null, so a missing Frames has to be told apart from it
         post: (owner, instance, data) => (frames === null ? 'unavailable' : frames.post(owner, instance, data)),
         // A plugin's open adds the note without taking the human's focus or the current note from them

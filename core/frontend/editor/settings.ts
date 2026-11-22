@@ -30,8 +30,8 @@ export class Settings {
   private readonly link: CoreLink
   private held: SettingsValue = defaults()
   private loaded = false
-  // The first layout that came before the settings loaded
-  private early: string | null = null
+  // The layouts that came before the settings loaded, in the order they came, each with whether it is still connected
+  private early: { id: string, connected: () => boolean }[] = []
   onChange: (() => void) | null = null
 
   constructor(link: CoreLink) {
@@ -48,18 +48,19 @@ export class Settings {
     this.held = parsed?.success === true ? { ...parsed.data, keys: { ...parsed.data.keys } } : defaults()
     this.loaded = true
     this.onChange?.()
-    if (this.early !== null) await this.firstLayout(this.early)
+    const first = this.early.find(one => one.connected())
+    this.early = []
+    if (first !== undefined) await this.firstLayout(first.id)
   }
 
   // A layout plugin that came: with no layout picked the first picks itself, so the first layout installed draws. The
   // human's pick and the plain layout picked stay, and a layout coming later changes no pick. One that came before the
-  // settings loaded waits for them
-  async firstLayout(id: string): Promise<void> {
+  // settings loaded waits for them and is picked only while connected says it is still there
+  async firstLayout(id: string, connected: () => boolean = () => true): Promise<void> {
     if (!this.loaded) {
-      this.early ??= id
+      this.early.push({ id, connected })
       return
     }
-    this.early = null
     if (this.held.layout === null && !this.held.plain) await this.pickLayout(id)
   }
 
