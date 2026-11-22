@@ -122,10 +122,10 @@ const format = z.literal(FORMAT)
 // recordNothing is how a file from before recording was a core module says recording is off. It is read once as
 // recording in off and never written again. watchdog and leases in off are core plugins that are gone and hidden-marks
 // one that became a first-party plugin, each read with the id dropped and written back without it once, the drop recorded
-// by boot. file-explorer and search in removed are first-party plugins that became community plugins, read with the ids
-// dropped too
+// by boot. file-explorer, search and mcp in removed are first-party plugins that became community plugins, read with the
+// ids dropped too
 const droppedOff = ['watchdog', 'leases', 'hidden-marks'] as const
-const retiredFirstParty: readonly unknown[] = ['file-explorer', 'search']
+const retiredFirstParty: readonly unknown[] = ['file-explorer', 'search', 'mcp']
 const switchesFields = {
   ...switches.shape, recordNothing: z.boolean().optional(), off: list(z.enum([...coreModuleIds, ...corePluginIds, ...droppedOff])),
   removed: z.preprocess(value => (Array.isArray(value) ? value.filter(id => !retiredFirstParty.includes(id)) : value), switches.shape.removed),
