@@ -1,86 +1,40 @@
-import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { buildHost, buildPlugin } from '../../sdk/build/esbuild.ts'
-import { filesFor, workerManifest, writeDoor, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, pageAt, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
+import { command, fakeDoor, installDoor, outcome, reports, startedWith, writeHolder } from './door-driver.ts'
+import { cleanup, logged, pageAt, temp, tick, until, visibleWindows } from './helpers.ts'
 
-// A client's connect in the built app: a fake http in its utility process asks the core for the connect and collects
-// the answer, which a folder plugin's worker drives. The trusted window draws the request in the core's words
+// A client's connect in the built app: a fake door in its utility process asks the core for the connect and collects
+// the answer, each on a command a folder plugin holding door.handle hands it. The trusted window draws the request in
+// the core's words
 
 afterEach(cleanup)
 
 // The input delay and a little more, so a click after it lands
 const PAST_DELAY = 1300
-const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
-// The fake http: connect asks the core for a connect and collect asks for the answer to a handle, each giving back the
-// result or the refusal's code. A short deadline, since the SDK tries a throttled call again until its deadline
-const http = `
-import { definePlugin } from '${sdk}'
-const settled = work => work.then(result => ({ result }), err => ({ refused: err.code ?? String(err) }))
-export default definePlugin({
-  start(ctx) {
-    ctx.provide('connect', (_call, args) => settled(ctx.call('core', 'consentAsk', args, { timeoutMs: 500 })))
-    ctx.provide('collect', (_call, args) => settled(ctx.call('core', 'consentAnswer', args, { timeoutMs: 500 })))
-  },
-})
-`
+// The fake door's commands: connect asks the core for a connect and collect asks for the answer to a handle. A short
+// deadline, since the SDK tries a throttled call again until its deadline
+const commands = `{
+  connect: (ctx, args) => ctx.call('core', 'consentAsk', args, { timeoutMs: 500 }),
+  collect: (ctx, args) => ctx.call('core', 'consentAnswer', args, { timeoutMs: 500 }),
+}`
 
-// A folder plugin whose worker hands its context to the test
-const caller = `
-import { definePlugin } from '${sdk}'
-export default definePlugin({
-  start(ctx) {
-    ;(globalThis as Record<string, unknown>).ctx = ctx
-  },
-})
-`
-
-// An install folder holding the fake http as the door in place of the shipped one
-async function install(): Promise<string> {
-  const dir = await temp()
-  const source = await temp()
-  await writeFolder(source, { 'src/host.ts': http })
-  const built = await buildHost(source, 'src/host.ts', [])
-  await writeDoor(dir, built.text)
-  return dir
-}
-
-// A data folder with the caller approved to call http
+// A data folder with the holder approved
 async function data(): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
   await store.writeSwitches(defaultSwitches())
-  const source = await temp()
-  await writeFolder(source, { 'src/worker.ts': caller })
-  const [built] = await buildPlugin(source, { entries: { 'worker.js': 'src/worker.ts' }, workers: ['worker.js'], write: false })
-  const root = path.join(dataDir, 'plugins', 'caller')
-  const granted = [{ type: 'plugin.call' as const, targets: ['mcp-http-handler'] }]
-  await writeFolder(root, filesFor(workerManifest('caller', { requires: ['mcp-http-handler'], capabilities: granted }), { 'worker.js': built!.text }))
-  await writeApproved(store, 'caller', root, { granted })
+  await writeHolder(store, dataDir)
   return dataDir
 }
 
-type Settled = { result?: unknown, refused?: string }
-
-async function started(): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, worker: Worker }> {
-  const dataDir = await data()
-  const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
-  const editor = await editorPage(app)
-  await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
-  const page = await workersPage(app, 'caller')
-  await until(() => page.workers().length === 1)
-  return { app, editor, dataDir, worker: page.workers()[0] as Worker }
-}
+const started = async () => startedWith(await data(), await installDoor(fakeDoor(commands)))
 
 const CLAUDE = 'https://claude.ai/oauth/claude-code-client-metadata'
 const asked = (number: number, client = CLAUDE) => ({ client, name: 'Claude Code', redirect: 'http://localhost:33418/callback', field: `${client}#${number}` })
-const through = (worker: Worker, action: string, args: unknown) =>
-  worker.evaluate(([action, args]) => (globalThis as unknown as { ctx: { call(t: string, a: string, x: unknown): Promise<unknown> } }).ctx.call('mcp-http-handler', action, args), [action, args] as const) as Promise<Settled>
-const connect = async (worker: Worker, args: unknown) => through(worker, 'connect', args)
-const collect = async (worker: Worker, handle: string) => (await through(worker, 'collect', { handle })).result
+const connect = async (worker: Worker, args: unknown) => outcome(await command(worker, 'connect', args))
+const collect = async (worker: Worker, handle: string) => (await command(worker, 'collect', { handle })).result
 
 async function trustedPage(app: ElectronApplication, editor: Page): Promise<Page> {
   const notice = editor.getByRole('button', { name: 'A security change is waiting: consent.ask "mcp-http-handler"' })
@@ -140,7 +94,7 @@ describe('a connect in the trusted window', () => {
     expect(await collect(worker, handle)).toEqual({ answer: 'gone' })
   })
 
-  it('hands a Cancel as no once, then a connect waiting when http restarts is gone and can\'t be confirmed', async () => {
+  it('hands a Cancel as no once, then a connect waiting when the door restarts is gone and can\'t be confirmed', async () => {
     const { app, editor, worker } = await started()
     const first = ((await connect(worker, asked(4))).result as { handle: string }).handle
     const page = await trustedPage(app, editor)
@@ -158,19 +112,15 @@ describe('a connect in the trusted window', () => {
     await until(async () => (await page.locator('section.request h1').innerText().catch(() => '')).includes('"other-client#1"'))
     expect(await page.getByRole('button', { name: 'Confirm' }).isDisabled()).toBe(true)
 
-    // The human restarts http from the trusted window: the waiting connect is withdrawn with it
+    // The human restarts the door from the trusted window: the waiting connect is withdrawn with it
     expect((await ask(page, 'core.restart', { plugin: 'mcp-http-handler' })).ok).toBe(true)
     await until(async () => ((await ask(editor, 'core.status')).result as { pending: unknown[] }).pending.length === 0)
     await tick(PAST_DELAY)
     expect((await ask(page, 'security.confirm', { requestId: id })).refusal?.code).toBe('not-found')
-    // The caller needs http, so it starts again with it, then asks the new http about the old handle
-    const workers = await workersPage(app, 'caller')
-    const again: { worker: Worker | null } = { worker: null }
-    await until(async () => {
-      again.worker = workers.workers().find(one => one !== worker) ?? null
-      if (again.worker === null) return false
-      return ((await through(again.worker, 'collect', { handle: second }).catch(() => ({}))) as Settled).result !== undefined
-    }, 20_000)
-    expect(await collect(again.worker!, second)).toEqual({ answer: 'gone' })
+    // The door started again reaches the holder as its second incarnation, which asks about the old handle
+    await until(async () => (await reports(worker)).some(report => report.incarnation === 2), 20_000)
+    const after = await command(worker, 'collect', { handle: second })
+    expect(after.incarnation).toBe(2)
+    expect(after.result).toEqual({ answer: 'gone' })
   })
 })
