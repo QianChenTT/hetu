@@ -315,7 +315,7 @@ ${capabilityKey(change.capability)}`)
   }
 
   // The one plugin serving a role: its grants hold the role's item, switched on, and it isn't refused or off, gate on or
-  // off. null for none, and for two, which the checks never leave
+  // off. null for none
   role(action: string): string | null {
     const spec = Object.hasOwn(roleActions, action) ? roleActions[action] : undefined
     if (spec === undefined) return null
@@ -325,6 +325,8 @@ ${capabilityKey(change.capability)}`)
       const verdict = this.verdictOf(k).kind
       return held.some(item => !off.has(capabilityKey(item))) && verdict !== 'refused' && verdict !== 'off'
     })
+    // The checks never leave two: a second plugin asking for a held role is refused role-taken and two entries holding
+    // one are both refused. Were two to serve, neither is named, so no plugin takes the role because it came first
     return serving.length === 1 ? serving[0].id : null
   }
 
