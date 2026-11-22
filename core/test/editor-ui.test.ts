@@ -210,8 +210,8 @@ describe('views on the drawer port', () => {
 describe('the layout on the drawer port', () => {
   const skeleton: UiNode = { kind: 'box', id: 'root', children: [{ kind: 'editor', id: 'e', instance: 'current' }, { kind: 'slot', id: 's', instance: 'v1' }] }
 
-  it('takes a skeleton only from the layout the human picked, else hetu\'s own', async () => {
-    const { drawer, drawn, value } = started({ layout: layouter, other: layouter, kanban: viewer })
+  it('takes a skeleton only from the layout the human picked', async () => {
+    const { drawer, drawn, value } = started({ layout: layouter, other: layouter, kanban: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     const other = await connected(drawer, 'other')
     expect(drawer.ui.layout()).toBe('layout')
@@ -224,8 +224,23 @@ describe('the layout on the drawer port', () => {
     expect(await other.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: true })
   })
 
+  // hetu has no layout of its own, so a layout plugin draws only once the human picked it, one called layout included
+  it('draws the plain layout with no layout picked, whatever layouts are connected', async () => {
+    const { drawer, drawn, value } = started({ layout: layouter, other: layouter })
+    const own = await connected(drawer, 'layout')
+    await connected(drawer, 'other')
+    expect(drawer.ui.layout()).toBe(null)
+    expect(drawer.ui.layoutChoices()).toEqual(['layout', 'other'])
+    expect(await own.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
+    expect(drawn).toEqual([])
+    expect(drawer.ui.drawing()).toBe(null)
+    value.layout = 'layout'
+    drawer.ui.settingsChanged()
+    expect(drawer.ui.layout()).toBe('layout')
+  })
+
   it('counts the picked layout as drawing only once it sent a skeleton, so the plain layout shows until then', async () => {
-    const { drawer } = started({ layout: layouter })
+    const { drawer } = started({ layout: layouter }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     expect(drawer.ui.layout()).toBe('layout')
     expect(drawer.ui.drawing()).toBe(null)
@@ -234,8 +249,9 @@ describe('the layout on the drawer port', () => {
   })
 
   it('draws the plain layout when the human picked it, whatever layouts are connected', async () => {
-    const { drawer, value } = started({ layout: layouter })
+    const { drawer, value } = started({ layout: layouter }, { layout: 'layout' })
     await connected(drawer, 'layout')
+    expect(drawer.ui.layout()).toBe('layout')
     value.plain = true
     drawer.ui.settingsChanged()
     expect(drawer.ui.layout()).toBe(null)
@@ -243,7 +259,7 @@ describe('the layout on the drawer port', () => {
   })
 
   it('tells the layout when an owner opens another instance, so it can place it', async () => {
-    const { drawer } = started({ layout: layouter, kanban: viewer })
+    const { drawer } = started({ layout: layouter, kanban: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     await board.call('view.open', { view: 'board' })
@@ -251,15 +267,16 @@ describe('the layout on the drawer port', () => {
   })
 
   it('refuses a skeleton from a plugin without ui.layout and a view placing slots', async () => {
-    const { drawer } = started({ layout: viewer })
+    const { drawer } = started({ layout: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     expect(drawer.ui.layout()).toBe(null)
     expect(await own.call('layout.draw', { ops: [{ op: 'tree', root: skeleton }] })).toMatchObject({ ok: false, refusal: { code: 'not-granted' } })
   })
 
   it('draws the plain layout once the picked layout\'s port ends, and tells the page', async () => {
-    const { drawer, changes } = started({ layout: layouter })
+    const { drawer, changes } = started({ layout: layouter }, { layout: 'layout' })
     await connected(drawer, 'layout')
+    expect(drawer.ui.layout()).toBe('layout')
     const before = changes()
     drawer.end('layout', 1)
     expect(drawer.ui.layout()).toBe(null)
@@ -267,7 +284,7 @@ describe('the layout on the drawer port', () => {
   })
 
   it('sends the layout its state when it changes and only to the layout', async () => {
-    const { drawer } = started({ layout: layouter, kanban: viewer })
+    const { drawer } = started({ layout: layouter, kanban: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     const state = { width: 800, height: 600, views: drawer.ui.views.list([]), editors: ['n1'], current: 'n1', slots: {} }
@@ -280,7 +297,7 @@ describe('the layout on the drawer port', () => {
 
 describe('events from the human, by owner', () => {
   it('sends a node\'s event to the owner of its surface only', async () => {
-    const { drawer } = started({ layout: layouter, kanban: viewer, files: viewer })
+    const { drawer } = started({ layout: layouter, kanban: viewer, files: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     const tree = await connected(drawer, 'files')
@@ -298,7 +315,7 @@ describe('events from the human, by owner', () => {
   })
 
   it('hands a dropped payload to the target\'s owner and a dropped view to the layout', async () => {
-    const { drawer } = started({ layout: layouter, kanban: viewer })
+    const { drawer } = started({ layout: layouter, kanban: viewer }, { layout: 'layout' })
     const own = await connected(drawer, 'layout')
     const board = await connected(drawer, 'kanban')
     drawer.ui.nodeEvent('kanban', 'v1', 'lane', 'drop', undefined, { type: 'note', value: 'a.md' })

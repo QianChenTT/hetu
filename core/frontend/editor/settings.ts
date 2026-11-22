@@ -6,7 +6,7 @@ import type { CoreLink } from './link.ts'
 // the favorite views and which plugin owns a key two plugins bind. Picking a layout or a theme is a normal setting
 // with no Confirm, since neither gains any reach. Favorites are the drawer's, so they survive a change of layout
 
-// layout is the layout the human picked, null for hetu's own. plain says the human picked the drawer's plain layout
+// layout is the layout the human picked, null for none, which draws the plain layout. plain says the human picked it
 export type SettingsValue = { layout: string | null, plain: boolean, theme: string | null, favorites: string[], keys: Record<string, string> }
 
 const KEY = 'settings'

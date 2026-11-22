@@ -49,10 +49,6 @@ export const listed: readonly Place[] = [
   { place: 'sdk/ui.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on, as the SDK names it' },
   { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
   { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
-  {
-    place: 'frontend/editor/ui-port.ts', text: "OWN_LAYOUT = 'layout'", hits: 1,
-    why: 'core picking the layout plugin when the human picked none, parked for Han: no fix leaves what a user sees the same',
-  },
 ]
 
 // What fails: an id named outside the places listed and what listed-places.ts fails in a place

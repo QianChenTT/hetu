@@ -31,8 +31,6 @@ export type UiHooks = {
 
 export type UiReach = { read: boolean, list: boolean, verbs: readonly string[] }
 
-// The id hetu's own layout has, picked when the human picked none
-export const OWN_LAYOUT = 'layout'
 // The surface a layout draws its skeleton on
 export const SKELETON = 'layout'
 
@@ -106,11 +104,12 @@ export class UiPort {
     this.settingsChanged()
   }
 
-  // The human picked another layout, or none
+  // The human picked another layout, or none. hetu has no layout of its own, so with none picked the drawer draws its
+  // plain layout
   settingsChanged(): void {
     const settings = this.options.settings()
-    const wanted = settings.layout ?? OWN_LAYOUT
-    const next = !settings.plain && this.layouts.has(wanted) ? wanted : null
+    const wanted = settings.layout
+    const next = !settings.plain && wanted !== null && this.layouts.has(wanted) ? wanted : null
     if (next === this.current) return
     this.current = next
     this.lastState = ''

@@ -17,7 +17,7 @@ import { RawSource } from './raw.ts'
 import { Settings } from './settings.ts'
 import { type Notice, Shell } from './shell.ts'
 import { themeStyle } from './theme.ts'
-import { OWN_LAYOUT, SKELETON } from './ui-port.ts'
+import { SKELETON } from './ui-port.ts'
 
 // The editor window's page, the drawer: the banner, the notes in CodeMirror, the quick-open palette, the raw view, the
 // views menu, the layout's skeleton with the views in it and each plugin's port. Everything here is drawn as text,
@@ -348,8 +348,8 @@ function start(bridge: Bridge): void {
     const shown = theLayers.shownViews()
     return {
       layouts: ui.layoutChoices().map(id => ({ id, name: `${name(id)} (${id})` })),
-      // Plain is the empty choice. No pick at all is hetu's own
-      layout: settings.value.plain ? null : settings.value.layout ?? OWN_LAYOUT,
+      // Plain is the empty choice, which no pick at all draws too
+      layout: settings.value.plain ? null : settings.value.layout,
       themes: declared.filter(plugin => plugin.theme !== null).map(plugin => ({ id: plugin.plugin, name: plugin.name })),
       theme: settings.value.theme,
       themeFallback,
