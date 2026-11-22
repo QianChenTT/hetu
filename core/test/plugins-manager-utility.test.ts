@@ -29,6 +29,8 @@ describe('a utility half', () => {
       { id: 'mcp-http-handler', incarnation: 1, half: 'utility', code: '// mcp-http-handler host.js 1.0.0\n' },
     ])
     expect(made.link.registered).toContainEqual(utilityCaller())
+    // Recorded as the port of the utility process the core started, which the router's floor reads
+    expect(made.link.utilities).toEqual([utilityCaller()])
     // Main counts the bytes on its port, since no relay page sits in front of it. A worker's it leaves to the relay
     expect(made.runtime.channels).toEqual([{ id: 'mcp-http-handler', counted: true }])
     // Storage, the core module it requires, serves before it starts. No plugin holds door.handle, the role it calls
@@ -274,6 +276,9 @@ describe('a utility half whose bind failed', () => {
     const made = await harness({ install: install(), ...dependent })
     await made.pluginsManager.start()
     expect(stateOf(made.pluginsManager, 'tool')).toBe('ready')
+    // The folder plugin's worker is registered on a port, never as a utility process
+    expect(made.link.registered).toContainEqual({ kind: 'plugin', id: 'tool', half: 'worker', incarnation: 1 })
+    expect(made.link.utilities).toEqual([utilityCaller()])
     await made.pluginsManager.serve(bindFailed('port-taken'))
     expect(stateOf(made.pluginsManager, 'tool')).toBe('waiting')
     expect(reasonOf(made.pluginsManager, 'tool')).toBe('dependency:mcp-http-handler:failed')

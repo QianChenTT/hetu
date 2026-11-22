@@ -88,6 +88,15 @@ describe('door.handle', () => {
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
+  // Only the way the core recorded as the utility process it started, so another host half on a port is refused though
+  // the table places it in a utility process
+  it('refuses a host half on a port the core never recorded as its utility process', async () => {
+    const { connect, pluginsManager, mcp } = door()
+    pluginsManager.utility('other')
+    expect(code(await connect(host('other'), 'port').ask('door.handle', request))).toBe('not-granted')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
   it('refuses arguments outside the contract as invalid before anything is asked', async () => {
     const { http, gate, mcp } = door()
     expect(code(await http.ask('door.handle', { body: 1, headers: {} }, as))).toBe('invalid')

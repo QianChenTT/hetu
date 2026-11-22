@@ -24,7 +24,8 @@ export type Way = {
   key: string
   principal: string
   plugin: string | null
-  via: 'port' | 'handle' | 'window'
+  // utility is the port of a utility process the core started, recorded as the plugins manager registered it
+  via: 'port' | 'utility' | 'handle' | 'window'
   send: Send | null
   close: (() => void) | null
   open: boolean

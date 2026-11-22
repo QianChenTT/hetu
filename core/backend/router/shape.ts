@@ -86,7 +86,7 @@ export function floorOf(c: Context, way: Way, target: Target, args: unknown, par
   const { caller } = way
   const trusted = caller.kind === 'window' && caller.role === 'trusted'
   if (target.kind === 'action' || target.kind === 'role') {
-    if (!admits(c, way, target.spec.from, parent)) return { code: 'not-granted' }
+    if (!admits(way, target.spec.from, parent)) return { code: 'not-granted' }
     // Anything the trusted window sends inside its input delay counts for nothing, whatever the page did: a Confirm, and
     // with confirmOff on a request that applies at once. The reads the contract marks answer
     const reads = target.kind === 'action' && target.spec.reads === true
@@ -118,23 +118,20 @@ export function floorOf(c: Context, way: Way, target: Target, args: unknown, par
 }
 
 // Whether the caller is one the action's from names. A from with no rule here refuses every caller
-function admits(c: Context, way: Way, from: CoreFrom, parent: Pending | null): boolean {
+function admits(way: Way, from: CoreFrom, parent: Pending | null): boolean {
   const { caller } = way
   return from === 'any'
     || (from === 'windows' && caller.kind === 'window')
     || (from === 'trusted' && caller.kind === 'window' && caller.role === 'trusted')
-    || (from === 'utility' && isUtility(c, way))
+    || (from === 'utility' && isUtility(way))
     || (from === 'pair' && rootCalled(parent))
 }
 
-// A plugin's host half in its utility process: a way register made, so a port the plugins manager minted, bound to a
-// plugin's host half, with that plugin placed utility as the plugins manager reads it now. A worker of the same plugin
-// matches the id, the way and the place, so the half is named too. The incarnation is not compared: the plugins
-// manager ends every way of an incarnation in release before it mints the next, so no way of an older one is left to
-// call
-function isUtility(c: Context, way: Way): boolean {
-  const { caller } = way
-  return way.via === 'port' && caller.kind === 'plugin' && caller.half === 'host' && c.info(caller.id)?.place === 'utility'
+// The port of the utility process the core started, as the plugins manager recorded it when it registered the port. No
+// id, place or half the caller names counts. The incarnation is not compared: the plugins manager ends every way of an
+// incarnation in release before it mints the next, so no way of an older one is left to call
+function isUtility(way: Way): boolean {
+  return way.via === 'utility'
 }
 
 // The plugin the root of a chain called, under that call, with the chain carrying a pair: the parent was delivered on

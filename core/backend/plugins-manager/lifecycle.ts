@@ -393,7 +393,7 @@ export abstract class PluginsLifecycle extends PluginsBase {
       // to main, so it holds no role
       const run: Run = { caller: caller('host'), ready: false, stopped: false }
       const { core, plugin } = this.runtime.channel(k.id, true)
-      this.link.register(core, run.caller)
+      this.link.register(core, run.caller, 'utility')
       live.halves.set('host', run)
       const code = k.read.files.find(file => file.path === host)!.bytes
       this.runtime.startUtility({ id: k.id, incarnation: live.n, code, port: plugin, exited: how => this.exited(k, live, how.killed) })

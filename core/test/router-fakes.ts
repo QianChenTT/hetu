@@ -459,11 +459,14 @@ export function harness(given: HarnessOptions = {}) {
   parts.router = router
   const ports: MessagePort[] = []
   live.push({ router, ports })
-  // A plugin half on a real MessageChannel, the router holding the other end
-  const connect = (caller: Caller): Side => {
+  // A plugin half on a real MessageChannel, the router holding the other end. A host half the table places in a utility
+  // process is registered as the port of the utility process the core started, as the plugins manager registers it,
+  // unless the test names the way
+  const connect = (caller: Caller, via?: 'port' | 'utility'): Side => {
     const { port1, port2 } = new MessageChannel()
     ports.push(port1, port2)
-    router.register(port1, caller)
+    const placed = caller.kind === 'plugin' && caller.half === 'host' && pluginsManager.plugins[caller.id]?.place === 'utility'
+    router.register(port1, caller, via ?? (placed ? 'utility' : 'port'))
     return new Side(port2)
   }
   // recording is the one the router was handed, a test's own included, serving the log's reads as wire.ts hands it

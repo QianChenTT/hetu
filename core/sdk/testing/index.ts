@@ -196,7 +196,7 @@ function sameCaller(one: Caller, two: Caller): boolean {
 function portTransportOf(router: Router, caller: Caller, ports: MessagePort[]): Transport {
   const { port1, port2 } = new MessageChannel()
   ports.push(port1, port2)
-  router.register(port1, caller)
+  router.register(port1, caller, 'utility')
   return {
     post: message => port2.postMessage(message),
     listen: next => { port2.on('message', next) },

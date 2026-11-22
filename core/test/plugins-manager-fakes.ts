@@ -56,6 +56,8 @@ export class FakeLink implements RouterDoor, PluginsRecording {
   readonly sent: { caller: Caller, message: Message }[] = []
   readonly ended: { caller: Caller, code: string }[] = []
   readonly registered: Caller[] = []
+  // The callers registered as the port of a utility process the core started
+  readonly utilities: Caller[] = []
   // What the plugins manager asked of the router, in order: stopping, each record and each lifecycle message by plugin
   readonly timeline: string[] = []
   // How each record lands. A test holds one back by answering a promise it settles itself
@@ -67,9 +69,10 @@ export class FakeLink implements RouterDoor, PluginsRecording {
   limits: Partial<Record<LimitName, number>> = {}
   private readonly ports = new Map<string, Port>()
 
-  register(port: Port, caller: Caller): void {
-    this.router!.register(port, caller)
+  register(port: Port, caller: Caller, via: 'port' | 'utility' = 'port'): void {
+    this.router!.register(port, caller, via)
     this.registered.push(caller)
+    if (via === 'utility') this.utilities.push(caller)
     this.ports.set(keyOf(caller), port)
   }
 
