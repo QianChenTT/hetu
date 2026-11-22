@@ -130,13 +130,14 @@ export class FakeDrawer {
     this.sendRange(instance, note)
   }
 
-  // The human pressed the key the plugin bound to the command, in the note when one is named. False when the plugin
-  // bound no key to it, so nothing is sent
+  // The human pressed the key the plugin bound to the command, in the note when one is named, which ends the note's
+  // window at open either way. False when the plugin bound no key to it, so nothing is sent
   command(command: string, instance?: string, selection: Selection = [{ anchor: 0, head: 0 }]): boolean {
-    if (!this.commands.has(command)) return false
     const note = instance === undefined ? undefined : this.notes.get(instance)
-    this.answering = null
+    // The key reached the note's editor whether or not a plugin bound it
     if (note !== undefined) note.opening = false
+    if (!this.commands.has(command)) return false
+    this.answering = null
     if (instance !== undefined && note !== undefined && this.reads(note.path)) {
       this.answering = { instance, version: note.version }
       this.tell({ topic: 'editor.command', command, instance, version: note.version, selection: selection.map(range => ({ ...range })) })

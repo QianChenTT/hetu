@@ -17,6 +17,7 @@
   - paths are never made canonical: no refusal for a dot name or a path outside the notes folder and no case folding
   - history never answers `not-text`, `timeout` or `unavailable`
   - history's commit ids are SHA-1 hashes of its own, its dates are in UTC and `too-large` counts a note in UTF-8 bytes
+  - the fake has no caret of the human's and no clock for a key: an edit's cursor or a select answering a command is never refused for a caret moved since the key or for coming past `ANSWER_MS`, and `editor.read` always answers the selection at 0, so read a select's cursor with `selection`
 - `build/esbuild.ts`: `@hetu/sdk/esbuild`, one classic script per worker and view, each output named in `workers` wrapped in `runInWorker` so a plugin only exports `definePlugin(...)`, refusing a Node built-in anywhere in the import graph and a bundle holding `eval`, `Function` or a timer given a string. `checkHostImports` holds a host half to its manifest's `node` list
 - `build/check-manifest.ts`: `@hetu/sdk/check-manifest`, the problems the plugins manager would refuse a manifest for, also a command: `node core/sdk/build/check-manifest.ts <dir> [--install] [--built]`
 
