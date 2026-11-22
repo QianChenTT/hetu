@@ -215,7 +215,7 @@ describe('a renderer per community plugin', () => {
 
   it('gives each community plugin a renderer of its own and the first-party plugins one between them', () => {
     const { router, made } = routed()
-    for (const id of ['search', 'git', 'hello', 'notes']) router.start(start(id).start)
+    for (const id of ['layout', 'git', 'hello', 'notes']) router.start(start(id).start)
     expect(made.map(group => group.group)).toEqual(['first-party', 'hello', 'notes'])
     expect(made.map(group => group.renderers.length)).toEqual([1, 1, 1])
   })
@@ -223,10 +223,10 @@ describe('a renderer per community plugin', () => {
   it('closes a community plugin\'s renderer a moment after it holds nothing, and keeps the first-party one', async () => {
     const { router, made } = routed()
     router.start(start('hello').start)
-    router.start(start('search').start)
+    router.start(start('layout').start)
     for (const group of made) group.renderers[0].says({ kind: 'ready' })
     router.terminate('hello', 1)
-    router.terminate('search', 1)
+    router.terminate('layout', 1)
     expect(made.map(group => group.renderers[0].destroyed)).toEqual([false, false])
     await later(40)
     expect(made.map(group => group.renderers[0].destroyed)).toEqual([true, false])
