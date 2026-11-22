@@ -117,6 +117,19 @@ describe('names', () => {
     }
   })
 
+  it('caps a segment at 255 characters, a name at 1,024 and the depth at 32 segments', () => {
+    const segment = (length: number) => 'a'.repeat(length)
+    expect(nameProblem(segment(255))).toBeNull()
+    expect(nameProblem(`x/${segment(256)}`)).toBe('a segment longer than 255 characters')
+    // Ten segments of 100 and their slashes are 1,010 characters
+    const long = (length: number) => [...Array.from({ length: 10 }, () => segment(100)), segment(length - 1010)].join('/')
+    expect(nameProblem(long(1024))).toBeNull()
+    expect(nameProblem(long(1025))).toBe('longer than 1,024 characters')
+    const deep = (depth: number) => Array.from({ length: depth }, () => 'a').join('/')
+    expect(nameProblem(deep(32))).toBeNull()
+    expect(nameProblem(deep(33))).toBe('deeper than 32 segments')
+  })
+
   it('refuses a zip with a bad name and writes nothing of it', async () => {
     for (const name of ['a/./b.js', 'a//b.js', 'a.js:x', 'dist/con.js', 'a.js.', 'a\u200cb.js']) {
       const { problem, files } = await unpacked([{ name: 'first.js', data: 'x' }, { name, data: 'x' }])
@@ -209,6 +222,17 @@ describe('the caps', () => {
     const entries = [{ name: 'a/' }, { name: 'b/' }, { name: 'c.txt' }]
     expect((await unpacked(entries, { entries: 3, bytes: 100 })).problem).toBeNull()
     expect((await unpacked(entries, { entries: 2, bytes: 100 })).problem).toBe('too-many')
+  })
+
+  it('counts each folder a name implies as an entry, once', async () => {
+    const deep = [{ name: 'a/b/c/d/e/f/g/h/i/j/k.txt', data: 'x' }]
+    expect((await unpacked(deep, { entries: 11, bytes: 100 })).problem).toBeNull()
+    const { problem, files } = await unpacked(deep, { entries: 10, bytes: 100 })
+    expect(problem).toBe('too-many')
+    expect(files).toEqual([])
+    const shared = [{ name: 'a/b/x.txt' }, { name: 'a/b/y.txt' }, { name: 'a/' }, { name: 'A/B/' }]
+    expect((await unpacked(shared, { entries: 4, bytes: 100 })).problem).toBeNull()
+    expect((await unpacked(shared, { entries: 3, bytes: 100 })).problem).toBe('too-many')
   })
 
   it('takes bytes up to the cap and refuses one past it, across entries', async () => {

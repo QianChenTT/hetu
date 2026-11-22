@@ -5,9 +5,15 @@ import { fromBufferPromise, type Entry, type ZipFile } from 'yauzl'
 import { withoutIgnorable } from '../../api/names.ts'
 import { clear } from './folders.ts'
 
-// The most one plugin zip may unpack to: entries, folders among them, and bytes as written to disk
+// The most one plugin zip may unpack to: entries, every folder a name implies among them, and bytes as written to disk
 export type UnpackLimits = { entries: number, bytes: number }
 export const unpackLimits: UnpackLimits = Object.freeze({ entries: 2000, bytes: 64 * 1024 * 1024 })
+
+// What one name may hold. NTFS and most volumes take 255 UTF-16 units a segment. The depth and the length keep every
+// path one that Windows tools can still delete
+const NAME_CAP = 1024
+const SEGMENT_CAP = 255
+const DEPTH_CAP = 32
 
 // Why a zip was refused. invalid: no zip the reader takes, a name the reader refuses, data that won't inflate or a size
 // it declares that its data doesn't have. special: a link, a device, a pipe or a socket, or a type that disagrees with
@@ -45,9 +51,13 @@ const device = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout
 // would land as another
 export function nameProblem(name: string): string | null {
   if (name === '') return 'empty'
+  if (name.length > NAME_CAP) return 'longer than 1,024 characters'
+  const segments = name.split('/')
+  if (segments.length > DEPTH_CAP) return 'deeper than 32 segments'
   if (notInName.test(name)) return 'a character no plugin file name holds'
   if (withoutIgnorable(name) !== name) return 'a character some volumes skip when they compare names'
-  for (const segment of name.split('/')) {
+  for (const segment of segments) {
+    if (segment.length > SEGMENT_CAP) return 'a segment longer than 255 characters'
     if (segment === '..') return 'a .. segment'
     if (segment === '' || segment === '.') return 'an empty or . segment'
     if (segment.endsWith('.') || segment.endsWith(' ')) return 'a trailing dot or space'
@@ -62,16 +72,18 @@ class Taken {
   readonly #files = new Set<string>()
   readonly #folders = new Set<string>()
 
-  claim(name: string, folder: boolean): boolean {
+  // How many names the entry adds, every folder its name implies counted, or null when it is taken
+  claim(name: string, folder: boolean): number | null {
     const segments = name.normalize('NFC').toLowerCase().split('/')
     const parents = segments.slice(0, -1).map((_, i) => segments.slice(0, i + 1).join('/'))
     const key = segments.join('/')
-    if (parents.some(parent => this.#files.has(parent)) || this.#files.has(key)) return false
-    if (!folder && this.#folders.has(key)) return false
+    if (parents.some(parent => this.#files.has(parent)) || this.#files.has(key)) return null
+    if (!folder && this.#folders.has(key)) return null
+    const before = this.#files.size + this.#folders.size
     for (const parent of parents) this.#folders.add(parent)
     if (folder) this.#folders.add(key)
     else this.#files.add(key)
-    return true
+    return this.#files.size + this.#folders.size - before
   }
 }
 
@@ -121,6 +133,7 @@ async function unpack(zip: Buffer, into: string, limits: UnpackLimits): Promise<
     // The reader reads exactly the count the zip declares
     if (zipfile.entryCount > limits.entries) throw new Refused('too-many')
     const taken = new Taken()
+    let count = 0
     let written = 0
     for (;;) {
       const next = await fromZip(entries.next())
@@ -131,7 +144,10 @@ async function unpack(zip: Buffer, into: string, limits: UnpackLimits): Promise<
       if (nameProblem(name) !== null) throw new Refused('name')
       if (special(entry, folder)) throw new Refused('special')
       if ((entry.generalPurposeBitFlag & ENCRYPTED) !== 0) throw new Refused('encrypted')
-      if (!taken.claim(name, folder)) throw new Refused('duplicate')
+      const added = taken.claim(name, folder)
+      if (added === null) throw new Refused('duplicate')
+      count += added
+      if (count > limits.entries) throw new Refused('too-many')
       const target = path.join(into, ...name.split('/'))
       if (folder) {
         await mkdir(target, { recursive: true })
