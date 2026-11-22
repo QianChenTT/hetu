@@ -1,12 +1,12 @@
-import type { Caller } from '../../api/envelope.ts'
+import { grantKeyOf, type Caller } from '../../api/envelope.ts'
 import type { Call, CallHead, GuardCall, Opening, Prepared, Provider, ProviderRefusal } from '../../api/policy-jobs.ts'
 import { canonical, keyOf, type Canonical, type NotCanonical } from '../../lib/canonical.ts'
-import { MAX_LOCK_MS, MAX_LOCKS_PER_ROOT, type Lock, type LockOptions } from './header.ts'
+import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT, type Lock, type LockOptions } from './header.ts'
 
 export type { Lock } from './header.ts'
 
-// One note's lock: its holder, the root whose count it takes and when it ends on the module's clock
-type Held = { readonly holder: string, readonly root: string, readonly until: number }
+// One note's lock: its holder, the root and the client whose counts it takes and when it ends on the module's clock
+type Held = { readonly holder: string, readonly root: string, readonly client: string, readonly until: number }
 
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
 
@@ -20,6 +20,13 @@ function rootOf(root: Caller): string {
 // the arguments. A window's onBehalf names whose edits a save carries and makes no pair, so a window holds as itself
 function holderOf(call: CallHead): string {
   return call.root.kind === 'plugin' ? JSON.stringify({ plugin: call.root.id, onBehalf: call.onBehalf ?? null }) : rootOf(call.root)
+}
+
+// Whose count a lock takes: the root plugin with the field up to its first #, as a pair's grants are keyed, so every
+// session of one client counts together. With no field the root plugin is a client of its own, a window itself
+function clientOf(call: CallHead): string {
+  if (call.root.kind !== 'plugin') return rootOf(call.root)
+  return JSON.stringify({ plugin: call.root.id, client: call.onBehalf === undefined ? null : grantKeyOf(call.onBehalf) })
 }
 
 // Paths, expiry and holders in memory for the run, so a restart frees every lock. Expired locks go as they are read and
@@ -46,11 +53,18 @@ export function createLock(options: LockOptions): Lock {
     const holder = holderOf(call)
     if (others(keys, holder, now)) throw refused('locked')
     const root = rootOf(call.root)
-    let count = new Set(keys.filter(key => live(key, now) === undefined)).size
-    for (const [key, held] of [...table]) if (held.root === root && live(key, now) !== undefined) count++
-    if (count > MAX_LOCKS_PER_ROOT) throw refused('failed', 'quota')
+    const client = clientOf(call)
+    const fresh = new Set(keys.filter(key => live(key, now) === undefined)).size
+    let ofRoot = fresh
+    let ofClient = fresh
+    for (const [key, held] of [...table]) {
+      if (held.root !== root || live(key, now) === undefined) continue
+      ofRoot++
+      if (held.client === client) ofClient++
+    }
+    if (ofRoot > MAX_LOCKS_PER_ROOT || ofClient > MAX_LOCKS_PER_CLIENT) throw refused('failed', 'quota')
     const ms = Math.min(asked, MAX_LOCK_MS)
-    for (const key of keys) table.set(key, { holder, root, until: now + ms })
+    for (const key of keys) table.set(key, { holder, root, client, until: now + ms })
     return { ms }
   }
 
