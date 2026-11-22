@@ -256,10 +256,17 @@ describe('a failed fetch', () => {
     expect(await downloadZip({ ...zip, size: 8 }, { fetch: failing(broken) })).toEqual({ problem: 'offline' })
   })
 
-  it('has plain words for every problem the trusted window shows', () => {
+  it('has a sentence for every problem, each one of its own, starting with a capital and ending with no period', () => {
     expect(Object.keys(fetchProblemWords).sort()).toEqual([...fetchProblems].sort())
     for (const problem of fetchProblems) {
+      expect(fetchProblemWords[problem].trim(), problem).not.toBe('')
       expect(fetchProblemWords[problem], problem).toMatch(/^[A-Z][^\n]{9,}[^.]$/)
     }
+    expect(new Set(Object.values(fetchProblemWords)).size).toBe(fetchProblems.length)
+  })
+
+  it('says a download sent elsewhere may be on the old download host and how to install a prerelease', () => {
+    expect(fetchProblemWords['off-github']).toMatch(/old download host/)
+    expect(fetchProblemWords['no-release']).toMatch(/prerelease.*tag link|tag link.*prerelease/)
   })
 })
