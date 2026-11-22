@@ -310,15 +310,45 @@ describe('lock.clear', () => {
 })
 
 describe('lock.held', () => {
-  it('names the paths asked about that any holder locks, as the caller spelled them, each with its end and no holder named', async () => {
+  it('answers one entry per lock asked about, its path as the caller spelled it with its end and no holder named', async () => {
     const { lock, pass } = made()
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
     await ask(lock, 'lock.set', { paths: ['b.md'], ms: 5000 }, { root: leases })
     const asked = { paths: ['Projects/Plan.md', 'b.md', 'free.md'] }
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') }))
-      .toEqual({ paths: ['Projects/Plan.md', 'b.md'], until: [WALL + 1_001_000, WALL + 1_005_000] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toStrictEqual({
+      locks: [{ path: 'Projects/Plan.md', until: WALL + 1_001_000 }, { path: 'b.md', until: WALL + 1_005_000 }],
+    })
     pass(1000)
-    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toEqual({ paths: ['b.md'], until: [WALL + 1_005_000] })
+    expect(await ask(lock, 'lock.held', asked, { root: plugin('git') })).toStrictEqual({ locks: [{ path: 'b.md', until: WALL + 1_005_000 }] })
+  })
+
+  it('leaves out a path no lock holds and an expired lock, answering an empty list when none is held', async () => {
+    const { lock, pass } = made()
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, { root: leases })
+    expect(await ask(lock, 'lock.held', { paths: ['free.md', 'a.md'] }, { root: plugin('git') }))
+      .toStrictEqual({ locks: [{ path: 'a.md', until: WALL + 1_001_000 }] })
+    pass(1000)
+    expect(await ask(lock, 'lock.held', { paths: ['free.md', 'a.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [] })
+  })
+
+  it('answers in the order the call names the paths, each spelling of one note an entry of its own', async () => {
+    const { lock } = made()
+    await ask(lock, 'lock.set', { paths: ['b.md'], ms: 2000 }, { root: leases })
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
+    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'free.md', 'b.md', 'A.md'] }, { root: plugin('git') })).toStrictEqual({
+      locks: [{ path: 'a.md', until: WALL + 1_001_000 }, { path: 'b.md', until: WALL + 1_002_000 }, { path: 'A.md', until: WALL + 1_001_000 }],
+    })
+  })
+
+  it('reads each end off the wall clock when asked, not the end told when the lock was set', async () => {
+    let now = 0
+    let wall = WALL
+    const lock = createLock({ clock: () => now, wall: () => wall })
+    lock.role.open({ folder, dataDir: path.join(base, 'data'), installDir: path.join(base, 'install') })
+    await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, { root: leases })
+    now = 400
+    wall = WALL + 60_000
+    expect(await ask(lock, 'lock.held', { paths: ['a.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [{ path: 'a.md', until: WALL + 60_600 }] })
   })
 })
 
@@ -473,7 +503,7 @@ describe('the lock released', () => {
     await flushed()
     expect(told).toHaveLength(2)
     expect(check(lock, ['b.md'], agent('claude-code#1'))).toBe('allow')
-    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'b.md'] }, { root: plugin('git') })).toMatchObject({ paths: [] })
+    expect(await ask(lock, 'lock.held', { paths: ['a.md', 'b.md'] }, { root: plugin('git') })).toStrictEqual({ locks: [] })
     lock.role.release()
     await flushed()
     expect(told).toHaveLength(2)

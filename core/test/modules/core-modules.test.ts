@@ -341,7 +341,7 @@ describe('the core modules', () => {
     await modules.apply([])
     await new Promise(resolve => { setImmediate(resolve) })
     expect(published).toHaveLength(2)
-    expect(await ask(modules.provider('lock')!, 'lock.held', { paths: ['a.md', 'b.md'] })).toMatchObject({ paths: [] })
+    expect(await ask(modules.provider('lock')!, 'lock.held', { paths: ['a.md', 'b.md'] })).toStrictEqual({ locks: [] })
     modules.close()
   })
 
