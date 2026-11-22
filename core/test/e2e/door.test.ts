@@ -145,7 +145,7 @@ describe('the door', () => {
     expect(await logged(dataDir, 'plugin.started', { plugin: 'mcp' })).toBe(false)
   })
 
-  it('opens once the folder mcp approved unsigned by its hash is up', async () => {
+  it('opens once the folder mcp approved unsigned by its hash is up and answers a bad token 401', async () => {
     expect(await canConnect()).toBe(false)
     const { dataDir } = await started('approved')
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp' }))
