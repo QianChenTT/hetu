@@ -26,5 +26,5 @@ The contract every part of hetu shares: data, schemas and pure functions with no
 - `plain.ts`: the plain data check for values the core passes on unread
 - `frozen.ts`: the frozen tables with no prototype that the core looks keys up in, apart from zod so the limits load without it
 - `pipe.ts`: `pipeName`, the local pipe the door serves and the shim connects to, one a user: a named pipe on Windows and elsewhere a socket in a folder of the user's own under `/tmp`
-- `install.ts`: the manifest's version grammar (`pluginVersion`) and the version order (`isNewer`)
+- `plugin-version.ts`: the manifest's version grammar (`pluginVersion`) and the version order (`isNewer`)
 - `lifecycle.ts`: the lifecycle messages on a port, `init`, `deps`, `ready`, `stop` and `stopped`, with the fixed reasons a plugin hears as `lastStop`

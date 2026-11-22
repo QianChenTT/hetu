@@ -64,12 +64,12 @@
     },
     {
       "files": [
-        "core/api/install.ts",
+        "core/api/plugin-version.ts",
         "core/api/manifest.ts"
       ],
       "hash": "5d9d206721bbfe46",
       "at": [
-        "core/api/install.ts:5-10",
+        "core/api/plugin-version.ts:5-10",
         "core/api/manifest.ts:79-80"
       ],
       "judged": "not yet"

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { isNewer, pluginVersion } from '../api/install.ts'
+import { isNewer, pluginVersion } from '../api/plugin-version.ts'
 import { bindFailures, dependencyReason, depsMessage, init, reason, ready, stop, stopped, stopReasons } from '../api/lifecycle.ts'
 
 describe('plugin versions', () => {
