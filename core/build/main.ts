@@ -1,15 +1,13 @@
-import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type BuildOptions, type Metafile } from 'esbuild'
 import { INSTALL_LIST, INSTALL_LIST_FORMAT } from '../api/install.ts'
 import { hashFiles, readFiles } from '../lib/hash-files.ts'
 import { buildHost, buildPlugin } from '../sdk/build/esbuild.ts'
-import { communitySource } from './community.ts'
 import { checkModuleImports } from './module-imports.ts'
 
-// The first-party plugins built, each a worker from src/worker.ts with where its source is: hetu's own plugins folder
-// or the community package npm installed at the commit package.json pins
-const FIRST_PARTY = { search: 'hetu', layout: 'hetu', 'file-explorer': 'community' } as const
+// The first-party plugins built, each a worker from src/worker.ts
+const FIRST_PARTY = ['layout']
 // The core plugins built, each a host half from src/host.ts with the Node built-ins its manifest names, which runs in a
 // utility process. The core modules are no plugins: main.ts imports them through wire.ts, so they are bundled into
 // main.js
@@ -20,7 +18,6 @@ const INSTALL = ['mcp-http-handler']
 const PAGE = { 'hidden-marks': 'hidden-marks.ts' }
 
 const core = path.join(import.meta.dirname, '..')
-const repo = path.join(core, '..')
 const frontend = path.join(core, 'frontend')
 // Electron 45's Node and Chromium
 const NODE = 'node24.22'
@@ -53,41 +50,10 @@ export type Built = {
 // source has neither
 export type BuildKind = { packaged?: boolean, locked?: boolean }
 
-// What a plugin from the community package may take into its bundle besides its own folder: hetu's SDK and API, which
-// its imports of @hetu/sdk reach
-const COMMUNITY_READS = [path.join(core, 'sdk'), path.join(core, 'api')]
-// How esbuild names the module the SDK's build wraps a worker in: the namespace, then the path of the plugin's entry,
-// absolute or relative to the plugin's folder
-const WORKER_INPUT = 'hetu-worker:'
-
-// The files a community plugin's bundle took in outside its own folder and hetu's SDK and API, each by its real path,
-// and any input with no file behind it as esbuild names it. The pinned hash covers the plugin's folder and the
-// package's package.json only, so a module esbuild resolves from anywhere else, a node_modules folder inside the
-// package or hetu's own among them, is no file the pin holds
-async function outsideReads(source: string, inputs: readonly string[]): Promise<string[]> {
-  const allowed = await Promise.all([source, ...COMMUNITY_READS].map(folder => realpath(folder)))
-  const outside: string[] = []
-  for (const input of new Set(inputs)) {
-    const file = path.resolve(source, input.startsWith(WORKER_INPUT) ? input.slice(WORKER_INPUT.length) : input)
-    const real = await realpath(file).catch(() => undefined)
-    if (real === undefined) outside.push(input)
-    else if (!allowed.some(folder => real.startsWith(folder + path.sep))) outside.push(real)
-  }
-  return outside.sort()
-}
-
-// One first-party plugin written into root: its manifest copied and src/worker.ts bundled into dist/worker.js. A plugin
-// from the community package is refused before anything of it is written when its bundle took in a file outside its
-// own folder and hetu's SDK and API
-export async function writeFirstParty(source: string, root: string, from: 'hetu' | 'community'): Promise<{ version: string }> {
+// One first-party plugin written into root: its manifest copied and src/worker.ts bundled into dist/worker.js
+async function writeFirstParty(source: string, root: string): Promise<{ version: string }> {
   await rm(root, { recursive: true, force: true })
   const outputs = await buildPlugin(source, { entries: { 'dist/worker.js': 'src/worker.ts' }, workers: ['dist/worker.js'], write: false })
-  if (from === 'community') {
-    const outside = await outsideReads(source, outputs.flatMap(output => output.inputs))
-    if (outside.length > 0) {
-      throw new Error(`${path.basename(source)}'s bundle takes in files outside its folder and hetu's SDK and API:\n${outside.join('\n')}`)
-    }
-  }
   await mkdir(path.join(root, 'dist'), { recursive: true })
   const manifest = await readFile(path.join(source, 'hetu-plugin.json'))
   await writeFile(path.join(root, 'hetu-plugin.json'), manifest)
@@ -137,12 +103,10 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)) }
   }
   // The first-party plugins the install carries, each built the same way and listed as first-party, which the plugins manager
-  // copies into the plugin folder. A community plugin's manifest is copied and its source bundled with hetu's own SDK.
-  // Nothing of the package is run and its hash is of what this build wrote, as every other plugin's is
-  for (const [id, from] of Object.entries(FIRST_PARTY)) {
-    const source = from === 'hetu' ? path.join(repo, 'core-plugins', id) : await communitySource(repo, id)
+  // copies into the plugin folder
+  for (const id of FIRST_PARTY) {
     const root = path.join(outDir, 'plugins', id)
-    const { version } = await writeFirstParty(source, root, from)
+    const { version } = await writeFirstParty(path.join(core, '..', 'core-plugins', id), root)
     plugins[id] = { path: `plugins/${id}`, version, hash: hashFiles(await readFiles(root)), firstParty: true }
   }
   for (const [id, module] of Object.entries(PAGE)) {

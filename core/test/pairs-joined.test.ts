@@ -37,14 +37,14 @@ async function joined(gate: 'on' | 'off') {
   await writeFile(path.join(folder, 'private', 'b.md'), 'SECRET')
   // A link in inbox that leads into private. A junction, which Windows makes with no admin rights
   await symlink(path.join(folder, 'private'), path.join(folder, 'inbox', 'link'), 'junction')
-  const mcpGrant: Capability[] = [everything, { type: 'plugin.call', targets: ['search'] }]
+  const mcpGrant: Capability[] = [everything, { type: 'plugin.call', targets: ['artifacts'] }]
   const mcp = filesFor(workerManifest('mcp', { capabilities: mcpGrant, provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }))
-  const search = filesFor(workerManifest('search', { capabilities: [everything], provides: { actions: { query: {} } } }))
+  const artifacts = filesFor(workerManifest('artifacts', { capabilities: [everything], provides: { actions: { query: {} } } }))
   await writeInstall(installDir, {
     ...coreInstall(),
     'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [{ type: 'plugin.call', targets: ['mcp'] }] })) },
     mcp: { files: mcp, firstParty: true },
-    search: { files: search, firstParty: true },
+    artifacts: { files: artifacts, firstParty: true },
   })
   const store = new StateStore(dataDir)
   await store.writeSwitches(gate === 'off' ? { ...defaultSwitches(), off: ['gate'] } : defaultSwitches())
@@ -52,9 +52,9 @@ async function joined(gate: 'on' | 'off') {
   const root = path.join(dataDir, 'plugins', 'mcp')
   await writeFolder(root, mcp)
   await store.writePlugin('mcp', firstPartyEntry(await hashOf(root), { granted: mcpGrant, class: 1 }))
-  const searchRoot = path.join(dataDir, 'plugins', 'search')
-  await writeFolder(searchRoot, search)
-  await store.writePlugin('search', firstPartyEntry(await hashOf(searchRoot), { granted: [everything], class: 1 }))
+  const artifactsRoot = path.join(dataDir, 'plugins', 'artifacts')
+  await writeFolder(artifactsRoot, artifacts)
+  await store.writePlugin('artifacts', firstPartyEntry(await hashOf(artifactsRoot), { granted: [everything], class: 1 }))
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()
   // Runs once before the next perform, as another program acting on the folder between prepare and perform
@@ -93,7 +93,7 @@ async function joined(gate: 'on' | 'off') {
       await pluginsManager.confirm(pluginsManager.pending()[0].id, {})
     }
   }
-  return { pluginsManager, runtime, folder, hooks, door, mcp: mcpHalf, search: runtime.half('search') }
+  return { pluginsManager, runtime, folder, hooks, door, mcp: mcpHalf, artifacts: runtime.half('artifacts') }
 }
 
 // A folder renamed under the luoshu's watch, which can hold it open for a moment on Windows
@@ -162,11 +162,11 @@ describe('pairs through the joined core', () => {
     expect(outcome(await ask(mcp, 'luoshu.read', { path: 'inbox/a.md' }))).toBe('inbox text')
   })
 
-  it('refuses search under client-1\'s call since no pair holds plugin.call, search hearing nothing', async () => {
-    const { door, mcp, search } = await joined('on')
+  it('refuses artifacts under client-1\'s call since no pair holds plugin.call, artifacts hearing nothing', async () => {
+    const { door, mcp, artifacts } = await joined('on')
     const { parent } = await request(door, mcp, 'client-1')
-    expect(outcome(await ask(mcp, 'search.query', { text: 'SECRET' }, { parent }))).toBe('not-granted')
-    expect(search.inbox.filter(message => message.kind === 'call')).toEqual([])
+    expect(outcome(await ask(mcp, 'artifacts.query', { text: 'SECRET' }, { parent }))).toBe('not-granted')
+    expect(artifacts.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('lets client-2 read inside the items its ask was confirmed for from its next call on and nothing before', async () => {
