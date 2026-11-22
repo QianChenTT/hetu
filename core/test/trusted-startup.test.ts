@@ -28,6 +28,8 @@ describe('the startup screen', () => {
       ['Pick the notes folder', null], ['Install the plugins you want', null], ['Approve them', null], ['What a grant is', null],
     ])
     expect(startup?.steps.map(step => step.offers)).toEqual(['folder', 'install', null, null])
+    // hetu's own reach, not a plugin's, which its grants say
+    expect(startup?.steps[0].lines).toEqual(['hetu works on the notes in one folder you pick, and hetu itself reaches nothing outside it'])
     expect(startup?.suggested).toBe('https://github.com/QianChenTT/hetu-plugins')
     expect(SUGGESTED_LINK).toBe(startup?.suggested)
   })
@@ -35,6 +37,8 @@ describe('the startup screen', () => {
   it('says what each step has done so far', () => {
     const startup = screen(calm({ luoshu: '/Users/someone/notes', plugins: [found('tags'), plugin({ id: 'search' }), plugin({ id: 'gate', from: 'core', place: 'core', class: null })] })).startup
     expect(startup?.steps.map(step => step.done)).toEqual(['Notes folder: /Users/someone/notes', '2 plugins in the plugin folder', '1 approved', null])
+    const refused = screen(calm({ plugins: [plugin({ id: 'a', state: 'refused', reason: 'api' }), plugin({ id: 'b', state: 'failed', reason: 'start-failed' }), plugin({ id: 'c' })] })).startup
+    expect(refused?.steps[2].done).toBe('1 approved')
     const one = screen(calm({ plugins: [found('tags')] })).startup
     expect(one?.steps.map(step => step.done)).toEqual([null, '1 plugin in the plugin folder', null, null])
   })
@@ -45,6 +49,9 @@ describe('the startup screen', () => {
     expect(layoutApproved(calm({ plugins: [layout({ state: 'found', reason: 'new', on: false })] }))).toBe(false)
     expect(layoutApproved(calm({ plugins: [layout({ from: 'core', place: 'core' })] }))).toBe(false)
     expect(layoutApproved(calm({ plugins: [plugin({})] }))).toBe(false)
+    // Refused or failed, it draws nothing, so the screen stays
+    expect(layoutApproved(calm({ plugins: [layout({ state: 'refused', reason: 'api' })] }))).toBe(false)
+    expect(layoutApproved(calm({ plugins: [layout({ state: 'failed', reason: 'start-failed' })] }))).toBe(false)
     // Approved and switched off or its item off still counts as approved
     expect(layoutApproved(calm({ plugins: [layout({ on: false, state: 'off', items: [{ capability: { type: 'ui.layout' }, off: true, firstUse: false }] })] }))).toBe(true)
   })

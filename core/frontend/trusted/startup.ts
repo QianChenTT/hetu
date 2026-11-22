@@ -13,12 +13,14 @@ export type StartupShown = 'auto' | 'shown' | 'closed'
 export type StartupStep = { title: string, lines: string[], done: string | null, offers: 'folder' | 'install' | null }
 export type Startup = { steps: StartupStep[], suggested: string }
 
-// A plugin-folder plugin with an entry: found and new is one waiting for its approval
-const approved = (plugin: ListedPlugin) => plugin.from === 'folder' && !(plugin.state === 'found' && plugin.reason === 'new')
+// A plugin-folder plugin with an entry that hetu didn't refuse and that didn't fail: found and new is one waiting for
+// its approval. Switched off still counts
+const approvedNotRefused = (plugin: ListedPlugin) => plugin.from === 'folder' && !(plugin.state === 'found' && plugin.reason === 'new')
+  && plugin.state !== 'refused' && plugin.state !== 'failed'
 
 // Its items are what was granted, switched off or not
 export function layoutApproved(list: SecurityList): boolean {
-  return list.plugins.some(plugin => approved(plugin) && plugin.items.some(item => item.capability.type === 'ui.layout'))
+  return list.plugins.some(plugin => approvedNotRefused(plugin) && plugin.items.some(item => item.capability.type === 'ui.layout'))
 }
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
@@ -26,13 +28,13 @@ const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one 
 export function startupScreen(list: SecurityList, shown: StartupShown): Startup | null {
   if (list.stopped !== null || shown === 'closed' || (shown === 'auto' && layoutApproved(list))) return null
   const inFolder = list.plugins.filter(plugin => plugin.from === 'folder').length
-  const approvedCount = list.plugins.filter(approved).length
+  const approvedCount = list.plugins.filter(approvedNotRefused).length
   return {
     suggested: SUGGESTED_LINK,
     steps: [
       {
         title: 'Pick the notes folder',
-        lines: ['hetu works on the notes in one folder you pick and reaches nothing outside it'],
+        lines: ['hetu works on the notes in one folder you pick, and hetu itself reaches nothing outside it'],
         done: list.luoshu === null ? null : `Notes folder: ${list.luoshu}`,
         offers: 'folder',
       },
