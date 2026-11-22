@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../api/capabilities.ts'
 import type { Call, ProviderRefusal } from '../api/policy-jobs.ts'
-import { MAX_LOCK_MS, MAX_LOCKS_PER_ROOT } from '../backend/lock/header.ts'
+import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT } from '../backend/lock/header.ts'
 import { createLock } from '../backend/lock/lock.ts'
 import { definePlugin, type PluginContext } from '../sdk/plugin.ts'
 import { Refused } from '../sdk/refused.ts'
@@ -118,6 +118,19 @@ describe('the fake core\'s lock', () => {
     expect(await byOther(fake, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })).toEqual({ ok: true, result: { ms: 60_000 } })
   })
 
+  it('holds one client\'s sessions together to MAX_LOCKS_PER_CLIENT live locks, another client and the plugin itself still taking', async () => {
+    const { fake, ctx } = await started()
+    const all = names(MAX_LOCKS_PER_CLIENT)
+    for (const [i, paths] of chunks(all).entries()) {
+      expect(await by(ctx, 'lock.set', { paths, ms: 60_000 }, `client#${i}`)).toMatchObject({ ok: true })
+    }
+    expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 }, 'client#new')).toEqual({ ok: false, code: 'failed', reason: 'quota' })
+    expect(await by(ctx, 'lock.set', { paths: all.slice(0, 64), ms: 60_000 }, 'client#0')).toEqual({ ok: true, result: { ms: 60_000 } })
+    expect(await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 }, 'another#1')).toEqual({ ok: true, result: { ms: 60_000 } })
+    expect(await by(ctx, 'lock.set', { paths: ['notes/b.md'], ms: 60_000 })).toEqual({ ok: true, result: { ms: 60_000 } })
+    expect(await byOther(fake, 'lock.set', { paths: ['notes/c.md'], ms: 60_000 })).toEqual({ ok: true, result: { ms: 60_000 } })
+  })
+
   it('refuses another holder\'s write onto a locked note locked, as the router answers the lock guard', async () => {
     const { fake, ctx } = await started()
     await by(ctx, 'lock.set', { paths: ['notes/a.md'], ms: 60_000 })
@@ -154,10 +167,10 @@ type Step = { at?: number, who: Who, action: Action, args: object }
 const keeper = (onBehalf?: string): Who => (onBehalf === undefined ? { plugin: 'keeper' } : { plugin: 'keeper', onBehalf })
 const other: Who = { plugin: 'other' }
 
-// Two pairs and another root through set, renewal, refusals, writes, clears, expiry and the per-root cap
+// Two pairs and another root through set, renewal, refusals, writes, clears, expiry and the per-client cap
 function script(): Step[] {
   const [a, b, c] = ['notes/a.md', 'notes/b.md', 'notes/c.md']
-  const filler = chunks(names(MAX_LOCKS_PER_ROOT - 1))
+  const filler = chunks(names(MAX_LOCKS_PER_CLIENT - 1))
   return [
     { who: keeper('A'), action: 'lock.set', args: { paths: [a, b], ms: 1000 } },
     { who: keeper('B'), action: 'lock.set', args: { paths: [b, c], ms: 1000 } },
@@ -222,5 +235,6 @@ describe('the fake core\'s lock against the lock module', () => {
     }
     // The script meets each kind of answer, so it can't pass on a lock that answers one kind for all
     expect([...seen].sort()).toEqual(['failed quota', 'lock.clear ok', 'lock.held ok', 'lock.set ok', 'locked', 'luoshu.write ok'])
-  })
+  // Each of the module's paths turned canonical on the disk, past five seconds on a busy Windows machine
+  }, 60_000)
 })

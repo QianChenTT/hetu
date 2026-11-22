@@ -106,13 +106,13 @@ async function start(): Promise<void> {
     const menu = appMenu(process.platform)
     Menu.setApplicationMenu(menu === null ? null : Menu.buildFromTemplate(menu))
     app.on('web-contents-created', (_event, contents) => guardContents(contents))
-    lockDown(session.defaultSession, null, pages)
+    await lockDown(session.defaultSession, null, pages)
     // Each running plugin's frames and icons, served on the editor session's views host from the bytes it started with
     const views = new ViewFiles()
     const sessions = {} as Record<Role, Session>
     for (const role of Object.keys(ROLES) as Role[]) {
       sessions[role] = session.fromPartition(partition(role))
-      lockDown(sessions[role], role, pages, views)
+      await lockDown(sessions[role], role, pages, views)
     }
 
     // The router and the plugins manager exist once the core is wired, before any worker starts
