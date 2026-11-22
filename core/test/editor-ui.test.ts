@@ -57,6 +57,8 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
   // What the plugin's reach answered for each path the page resolved a note to
   const resolved: Record<string, boolean> = {}
   const posted: unknown[] = []
+  // The layout plugins the page was told of as each came
+  const came: string[] = []
   let changed = 0
   const drawer = new Drawer(link, () => [], () => {}, {
     clock,
@@ -65,6 +67,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
       hooks: {
         drawn: (owner, surface) => void drawn.push(`${owner} ${surface}`),
         changed: () => void changed++,
+        layoutCame: owner => void came.push(owner),
         post: (owner, instance, data) => {
           posted.push([owner, instance, data])
           return null
@@ -80,7 +83,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
   })
   drawer.start()
   drawer.ui.views.declared([kanban, files])
-  return { core, drawer, drawn, opened, resolved, posted, value, changes: () => changed }
+  return { core, drawer, drawn, opened, resolved, posted, value, came, changes: () => changed }
 }
 
 const text = (id: string, value: string): UiNode => ({ kind: 'text', id, text: value })
@@ -237,6 +240,26 @@ describe('the layout on the drawer port', () => {
     value.layout = 'layout'
     drawer.ui.settingsChanged()
     expect(drawer.ui.layout()).toBe('layout')
+  })
+
+  // The page picks the first one with none picked, so a first layout installed draws with it
+  it('tells the page of each plugin holding ui.layout as it comes, once, and of no viewer', async () => {
+    const reach: Record<string, Reach> = { layout: layouter, other: layouter, kanban: viewer }
+    const { drawer, core, came } = started(reach)
+    await connected(drawer, 'layout')
+    await connected(drawer, 'kanban')
+    await connected(drawer, 'other')
+    expect(came).toEqual(['layout', 'other'])
+    core.event('core.security')
+    for (let i = 0; i < 4; i++) await settle()
+    expect(came).toEqual(['layout', 'other'])
+    reach.other = viewer
+    core.event('core.security')
+    for (let i = 0; i < 4; i++) await settle()
+    reach.other = layouter
+    core.event('core.security')
+    for (let i = 0; i < 4; i++) await settle()
+    expect(came).toEqual(['layout', 'other', 'other'])
   })
 
   it('counts the picked layout as drawing only once it sent a skeleton, so the plain layout shows until then', async () => {

@@ -35,6 +35,44 @@ describe('the window\'s settings', () => {
     expect(space.get('settings')).toMatchObject({ layout: 'layout', plain: false })
   })
 
+  // Installing a first layout draws with it. A later layout, the human's own pick and the plain layout picked stay
+  it('picks the first layout that comes while none is picked, and no later one', async () => {
+    const { settings, space } = made()
+    await settings.load()
+    await settings.firstLayout('tiles')
+    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
+    expect(space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
+    await settings.firstLayout('columns')
+    expect(settings.value).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
+  it('leaves the layout the human picked and the plain layout picked as they are', async () => {
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keys: {} })
+    await picked.settings.load()
+    await picked.settings.firstLayout('tiles')
+    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
+    const plain = made()
+    await plain.settings.load()
+    await plain.settings.pickLayout(null)
+    await plain.settings.firstLayout('tiles')
+    expect(plain.settings.value).toMatchObject({ layout: null, plain: true })
+  })
+
+  it('holds a layout that came before the settings loaded until they show whether one is picked', async () => {
+    const picked = made({ layout: 'other', plain: false, theme: null, favorites: [], keys: {} })
+    await picked.settings.firstLayout('tiles')
+    await picked.settings.load()
+    expect(picked.settings.value).toMatchObject({ layout: 'other', plain: false })
+    expect(picked.space.get('settings')).toMatchObject({ layout: 'other' })
+    const none = made()
+    await none.settings.firstLayout('tiles')
+    await none.settings.firstLayout('columns')
+    expect(none.space.get('settings')).toBe(undefined)
+    await none.settings.load()
+    expect(none.settings.value).toMatchObject({ layout: 'tiles', plain: false })
+    expect(none.space.get('settings')).toMatchObject({ layout: 'tiles', plain: false })
+  })
+
   it('keeps each change under settings in the window\'s storage and reads it back', async () => {
     const { settings, space, core } = made()
     await settings.load()

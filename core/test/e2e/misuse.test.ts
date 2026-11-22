@@ -132,6 +132,19 @@ async function inColumns(setup: { notes?: Record<string, string>, plugins?: Reco
   return made
 }
 
+// The page picks the first layout plugin that comes while none is picked, so a first layout installed draws with no
+// pick of the human's
+describe('the first layout', () => {
+  it('draws once it starts with no layout picked', async () => {
+    const { app, editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { tiles: { granted: layoutGrants } } })
+    const layout = await pluginWorker(app, 'tiles')
+    await until(async () => (await heard(layout)).some(event => event.topic === 'layout.state'))
+    await editor.locator('#views').click()
+    await until(async () => editor.locator('#menu').isVisible())
+    expect(await editor.locator('#menu select').first().inputValue()).toBe('tiles')
+  })
+})
+
 describe('a popover', () => {
   it('keeps its owner strip on top of it and its size within the drawer\'s cap, whatever style the plugin gives it', async () => {
     const { app, editor } = await inColumns({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
