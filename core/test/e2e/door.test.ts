@@ -24,13 +24,13 @@ afterEach(async () => {
 const PORT = 4747
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
-// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash. Its handle takes calls from http alone and
+// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash, holding door.handle. It serves the role and
 // echoes who called it
 const mcp = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({
   start(ctx) {
-    ctx.provide('handle', call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null }) }))
+    ctx.provide('door.handle', call => ({ status: 200, body: JSON.stringify({ caller: call.caller, onBehalf: call.onBehalf ?? null }) }))
   },
 })
 `
@@ -68,6 +68,8 @@ async function install(): Promise<string> {
 // hash, or not there
 type Mcp = 'approved' | 'unsigned' | 'none'
 
+const role = { type: 'door.handle' as const }
+
 // A data folder with a folder plugin that holds plugin.call on mcp and the fake mcp beside it as asked
 async function data(mcpAs: Mcp): Promise<string> {
   const dataDir = await temp()
@@ -79,9 +81,9 @@ async function data(mcpAs: Mcp): Promise<string> {
   const allowUnsigned: string[] = [hashFiles(await readFiles(root))]
   if (mcpAs !== 'none') {
     const mcpRoot = path.join(dataDir, 'plugins', 'mcp')
-    await writeFolder(mcpRoot, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': await builtWorker(mcp) }))
+    await writeFolder(mcpRoot, filesFor(workerManifest('mcp', { capabilities: [role] }), { 'worker.js': await builtWorker(mcp) }))
     if (mcpAs === 'approved') allowUnsigned.push(hashFiles(await readFiles(mcpRoot)))
-    await store.writePlugin('mcp', await entryFor(mcpRoot))
+    await store.writePlugin('mcp', await entryFor(mcpRoot, { granted: [role] }))
   }
   await store.writeSwitches({ ...defaultSwitches(), allowUnsigned })
   return dataDir
@@ -166,17 +168,18 @@ describe('the door', () => {
     await tick(1500)
     const refused = (await records(dataDir)).filter(record => record.event === 'mcp-http-handler.refused')
     expect(refused.map(record => [record.reason, record.count]).sort()).toEqual([['host', 2], ['origin', 1], ['token', 1]])
-    expect((await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'mcp.handle')).toEqual([])
+    expect((await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'door.handle')).toEqual([])
   })
 
-  it('refuses another plugin\'s worker that holds plugin.call on mcp at mcp.handle', async () => {
+  it('refuses another plugin\'s worker that holds plugin.call on mcp at door.handle and finds no mcp.handle', async () => {
     const { app, dataDir } = await started('approved')
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp' }))
     const page = await workersPage(app, 'caller')
     await until(() => page.workers().length === 1)
     const worker = page.workers()[0] as Worker
-    const answer = await worker.evaluate(`globalThis.ctx.call('mcp', 'handle', { body: '{}', headers: {} }).then(value => ({ value }), error => ({ refused: error.code }))`)
-    expect(answer).toEqual({ refused: 'not-granted' })
+    const ask = (target: string) => worker.evaluate(`globalThis.ctx.call('${target}', 'handle', { body: '{}', headers: {} }).then(value => ({ value }), error => ({ refused: error.code }))`)
+    expect(await ask('door')).toEqual({ refused: 'not-granted' })
+    expect(await ask('mcp')).toEqual({ refused: 'not-found' })
   })
 
   it('reads failed (port-taken) in the trusted window while another program holds 127.0.0.1:4747 and comes up on Restart once it is free', async () => {

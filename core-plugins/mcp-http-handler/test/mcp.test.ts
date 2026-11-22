@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Refused } from '@hetu/sdk'
 import { MAX_REFUSAL_COUNT } from 'hetu-core/api/actions.ts'
 import { refusalReasons, type RefusalReason } from '../src/checks.ts'
-import { type CallMcp, mcpServe } from '../src/mcp.ts'
+import { type CallHolder, mcpServe } from '../src/mcp.ts'
 import { refusalCounter } from '../src/report.ts'
 import type { Passed } from '../src/server.ts'
 
@@ -29,7 +29,7 @@ type Seen = { args: { body: string, headers: Record<string, string> }, options: 
 // An MCP that records each call and answers what answer gives
 function mcp(answer: (seen: Seen) => unknown = () => ({ status: 200, body: '{"jsonrpc":"2.0","id":1,"result":{}}' })) {
   const calls: Seen[] = []
-  const call: CallMcp = async (args, options) => {
+  const call: CallHolder = async (args, options) => {
     const seen = { args, options }
     calls.push(seen)
     return answer(seen)
@@ -37,7 +37,7 @@ function mcp(answer: (seen: Seen) => unknown = () => ({ status: 200, body: '{"js
   return { calls, serve: mcpServe(call) }
 }
 
-describe('a request on its way to mcp.handle', () => {
+describe('a request on its way to door.handle', () => {
   it('calls only for a label in the form <client id>#<n> and refuses any other with token, calling nothing', async () => {
     const { calls, serve } = mcp()
     for (const client of ['client', 'client#0', 'a b#1', 'cl\u0131ent#1', `${'x'.repeat(256)}#1`, '']) {
@@ -114,7 +114,7 @@ describe('a request on its way to mcp.handle', () => {
   })
 })
 
-describe('what mcp.handle answers', () => {
+describe('what door.handle answers', () => {
   it.each([
     [{ status: 200, body: '{"jsonrpc":"2.0"}' }],
     [{ status: 202, body: null }],
@@ -155,7 +155,7 @@ describe('what mcp.handle answers', () => {
     ['not-granted', 503], ['timeout', 504], ['throttled', 429], ['invalid', 413], ['not-found', 502], ['failed', 502],
     ['needs-confirm', 502], ['guard-refused', 502], ['guard-down', 502], ['stale', 502], ['tampered', 502],
   ] as const)('answers a call refused %s with %i and a fixed body that never names the code, keeping the connection', async (refusal, status) => {
-    const { serve } = mcp(() => { throw new Refused(refusal, 'mcp.handle') })
+    const { serve } = mcp(() => { throw new Refused(refusal, 'door.handle') })
     const answer = await serve(passed())
     expect(answer).toMatchObject({ status })
     expect('reason' in answer).toBe(false)
