@@ -47,10 +47,11 @@ describe('a grant as a plain sentence', () => {
     }
   })
 
-  it('says all your notes for **, quotes any other scope as data and says no notes for none', () => {
+  it('says all your notes for ** and **/*, quotes any other scope as data and says no notes for none', () => {
     expect(grantSentence({ type: 'luoshu.read', paths: ['**'] })).toBe('Read all your notes')
+    expect(grantSentence({ type: 'luoshu.read', paths: ['**/*'] })).toBe('Read all your notes')
     expect(grantSentence({ type: 'luoshu.write', paths: ['inbox/**', 'say "hi"/*.md'] }))
-      .toBe('Change, move and delete the notes at "inbox/**", "say \\"hi\\"/*.md"')
+      .toBe('Create, change, move and delete the notes at "inbox/**", "say \\"hi\\"/*.md"')
     expect(grantSentence({ type: 'luoshu.list', paths: [] })).toBe('See the names of no notes')
     expect(grantSentence({ type: 'ui.read', paths: ['**', 'a.md'] })).toBe('Read all your notes while you have them open')
   })
@@ -59,11 +60,21 @@ describe('a grant as a plain sentence', () => {
     expect(grantSentence({ type: 'history', access: 'read', paths: ['a.md'] })).toBe('Read the earlier versions of the notes at "a.md"')
     expect(grantSentence({ type: 'history', access: 'commit', paths: ['**'] })).toBe('Save versions of all your notes into hetu’s history')
     expect(grantSentence({ type: 'exec', commands: [['git', 'status'], ['git', 'log']], env: ['HOME'] }))
-      .toBe('Run the commands ["git","status"], ["git","log"] with "HOME" from your environment')
-    expect(grantSentence({ type: 'net.fetch', hosts: ['api.example.com'] })).toBe('Reach "api.example.com" over the network')
-    expect(grantSentence({ type: 'net.fetch', hosts: ['*'] })).toBe('Reach any site over the network')
+      .toBe('Run the commands ["git","status"], ["git","log"] outside the sandbox with your rights on this computer, with "HOME" from your environment')
+    expect(grantSentence({ type: 'exec', commands: [['node']], env: [] })).toBe('Run the command ["node"] outside the sandbox with your rights on this computer')
+    expect(grantSentence({ type: 'net.fetch', hosts: ['api.example.com'] })).toBe('Send data to and get data from "api.example.com" over the network')
+    expect(grantSentence({ type: 'net.fetch', hosts: ['*'] })).toBe('Send data to and get data from any site over the network')
     expect(grantSentence({ type: 'events.subscribe', topics: ['notes.saved'] })).toBe('Hear the events "notes.saved"')
     expect(grantSentence({ type: 'plugin.call', targets: ['notes', 'search'] })).toBe('Call the plugins "notes", "search"')
+  })
+
+  // The schema lets a list be empty, which grants nothing
+  it('says an empty list grants nothing rather than leaving a gap', () => {
+    expect(grantSentence({ type: 'net.fetch', hosts: [] })).toBe('Send data to and get data from no site')
+    expect(grantSentence({ type: 'events.subscribe', topics: [] })).toBe('Hear no events')
+    expect(grantSentence({ type: 'plugin.call', targets: [] })).toBe('Call no other plugin')
+    expect(grantSentence({ type: 'lock.set', paths: [] })).toBe('Lock no notes so nothing else changes them for a while')
+    expect(grantSentence({ type: 'history', access: 'commit', paths: ['**'] })).not.toContain('  ')
   })
 })
 
