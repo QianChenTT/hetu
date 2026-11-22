@@ -5,9 +5,12 @@ import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT, type Lock, type 
 
 export type { Lock } from './header.ts'
 
-// One note's lock: its holder, the root and the client whose counts it takes, when it ends on the module's clock and
-// the canonical path its first set named, which lock.changed tells
-type Held = { readonly holder: string, readonly root: string, readonly client: string, readonly endsAt: number, readonly path: string }
+// One note's lock: its holder, the root and the client whose counts it takes, when it ends on the module's clock
+// (endsAt), the end lock.changed last told in whole milliseconds of wall time (until) and the canonical path its first
+// set named, which lock.changed tells
+type Held = {
+  readonly holder: string, readonly root: string, readonly client: string, readonly endsAt: number, readonly until: number, readonly path: string
+}
 
 const refused = (code: ProviderRefusal['code'], reason?: ProviderRefusal['reason']): ProviderRefusal => (reason === undefined ? { code } : { code, reason })
 
@@ -53,7 +56,7 @@ export function createLock(options: LockOptions): Lock {
     else queueMicrotask(told)
   }
   // The end in wall time, read now, so it says when the lock ends whatever the wall clock does later
-  const tellLocked = (entry: Held, now: number) => tell(entry.path, { locked: true, until: Math.round(wall() + entry.endsAt - now) })
+  const tellLocked = (entry: Held) => tell(entry.path, { locked: true, until: entry.until })
   const tellUnlocked = (entry: Held, atOnce = false) => tell(entry.path, { locked: false, until: null }, atOnce)
 
   function live(key: string, now: number): Held | undefined {
@@ -89,13 +92,15 @@ export function createLock(options: LockOptions): Lock {
     if (ofRoot > MAX_LOCKS_PER_ROOT || ofClient > MAX_LOCKS_PER_CLIENT) throw refused('failed', 'quota')
     const ms = Math.min(asked, MAX_LOCK_MS)
     const endsAt = now + ms
+    // The end in wall time, read once, so the paths of one set tell one end whatever the wall clock does later
+    const until = Math.round(wall() + ms)
     for (const [i, key] of keys.entries()) {
-      // Every lock left is live and the caller's own, so one ending then is this set's or one that already did
+      // Every lock left is live and the caller's own. A renewal to the end already told, in whole milliseconds, moves
+      // the end on the module's clock and tells nothing, as does a second spelling of a note in one set
       const was = table.get(key)
-      if (was?.endsAt === endsAt) continue
-      const entry = { holder, root, client, endsAt, path: was?.path ?? paths[i] }
+      const entry = { holder, root, client, endsAt, until, path: was?.path ?? paths[i] }
       table.set(key, entry)
-      tellLocked(entry, now)
+      if (was?.until !== until) tellLocked(entry)
     }
     return { ms }
   }

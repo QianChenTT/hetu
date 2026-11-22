@@ -354,14 +354,20 @@ describe('lock.changed', () => {
     expect(JSON.stringify(told)).not.toMatch(/claude-code|mcp-http-handler|holder|onBehalf/)
   })
 
-  it('tells a renewal that moves the end and nothing for one that ends when the lock already did', async () => {
+  // A clock reads fractions of a millisecond, so two renewals a moment apart end at different readings that tell the
+  // same whole millisecond
+  it('tells a renewal that moves the end by a whole millisecond and nothing for one whose end rounds to the one told', async () => {
     const { lock, told, pass } = made()
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    pass(0.3)
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
-    pass(400)
+    await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 1000 }, agent('claude-code#1'))
+    // The renewal not told still moved the end past the first one
+    pass(999.9)
+    expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('deny')
     await ask(lock, 'lock.set', { paths: ['projects/plan.md'], ms: 5000 }, agent('claude-code#1'))
     await flushed()
-    expect(told).toEqual([locked('projects/plan.md', 1_001_000), locked('projects/plan.md', 1_005_400)])
+    expect(told).toEqual([locked('projects/plan.md', 1_001_000), locked('projects/plan.md', 1_006_000)])
   })
 
   it('tells nothing for a set refused locked, quota or invalid', async () => {
