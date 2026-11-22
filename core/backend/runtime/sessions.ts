@@ -119,9 +119,22 @@ export async function serve(role: Role, request: { url: string, method: string }
   return new Response(request.method === 'HEAD' ? null : new Uint8Array(bytes), { status: 200, headers })
 }
 
-// Denies every permission and device, every download and every request but the role's own hosts. The default session
-// gets role null, so nothing loads in it
-export function lockDown(ses: Session, role: Role | null, root: string, views?: ViewsHost): void {
+// A proxy that leads nowhere. Nothing in hetu loads over the network, and WebRTC, left only TCP through a proxy
+// (guardContents), reaches no TURN server at an IP address through this one. A server named by host is never looked up,
+// since Chromium resolves no host name (beforeReady). A single proxy with no direct:// means a request fails when
+// the proxy does, and <-loopback> takes away Chromium's implicit bypass for localhost. hetu's own pages come from
+// protocol.handle and never meet the proxy. Nothing listens on loopback port 1, and a program running as the user that
+// binds it is out of scope
+// https://www.electronjs.org/docs/latest/api/session#sessetproxyconfig
+// https://www.electronjs.org/docs/latest/api/structures/proxy-config
+// https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md
+const PROXY_TO_NOWHERE = Object.freeze({ mode: 'fixed_servers', proxyRules: 'socks5://127.0.0.1:1', proxyBypassRules: '<-loopback>' } as const)
+
+// Denies every permission and device, every download and every request but the role's own hosts, and puts the session
+// behind the proxy to nowhere. Done once the proxy is set, and fails when it can't be. The default session gets role
+// null, so nothing loads in it
+export async function lockDown(ses: Session, role: Role | null, root: string, views?: ViewsHost): Promise<void> {
+  const proxied = ses.setProxy({ ...PROXY_TO_NOWHERE })
   ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   ses.setPermissionCheckHandler(() => false)
   ses.setDevicePermissionHandler(() => false)
@@ -130,4 +143,5 @@ export function lockDown(ses: Session, role: Role | null, root: string, views?: 
   ses.on('will-download', event => event.preventDefault())
   ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: role === null || !allowed(role, details.url) }))
   if (role !== null) ses.protocol.handle(SCHEME, request => serve(role, request, root, role === 'editor' ? views : undefined))
+  await proxied
 }
