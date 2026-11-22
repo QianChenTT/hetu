@@ -60,10 +60,11 @@ export type UpdateOutcome =
   | { outcome: 'refused', reason: string }
   | { outcome: 'confirm', stops: readonly string[] }
 
-// One row of the plugin list. from is where the code came from: the core's own, the door, or the plugin folder
+// One row of the plugin list. from is where the code came from: install for the door, which ships with hetu apart from
+// the core modules, or the plugin folder, the names the trusted window's rows take
 export type Listing = {
   id: string
-  from: 'core' | 'folder'
+  from: 'install' | 'folder'
   place: PluginInfo['place']
   state: PluginState
   reason: string | null
