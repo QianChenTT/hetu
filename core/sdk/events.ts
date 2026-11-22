@@ -3,8 +3,9 @@ import { VERSION } from '../api/version.ts'
 import type { Request } from './client.ts'
 import { Refused } from './refused.ts'
 
-// A signal and maybe a path, never content. The path is one the gate says the plugin may list
-export type PathEvent = { readonly topic: string, readonly path?: string }
+// A signal and maybe a path, never content. luoshu.changed and luoshu.outside go to a plugin the gate lets list the
+// path, another plugin's topic as that plugin published it
+export type PathEvent<T extends string = string> = { readonly topic: T, readonly path?: string }
 // A note locked, its lock renewed with a new end, cleared or expired: whether it is locked now and when its lock ends in
 // milliseconds since the epoch, null once it isn't. Never who holds it. Only a plugin that reads the note hears it, and
 // an expiry only once the core noticed it, which may be late, so a plugin that must act at the end times it from until.
@@ -13,8 +14,10 @@ export type LockChangedEvent = { readonly topic: 'lock.changed', readonly path: 
   | { readonly locked: true, readonly until: number }
   | { readonly locked: false, readonly until: null }
 )
-// What a handler of the topics T hears: lock.changed with its lock state, any other topic as a PathEvent
-export type BusEvent<T extends string = string> = T extends 'lock.changed' ? LockChangedEvent : PathEvent
+// What a handler of the topics T hears: lock.changed with its lock state, any other topic as a PathEvent of that topic,
+// so a handler of a mixed list narrows by event.topic. Topics held in a string[] give PathEvent, so a handler that may
+// hear lock.changed then checks 'locked' in event
+export type BusEvent<T extends string = string> = T extends 'lock.changed' ? LockChangedEvent : PathEvent<T>
 export type EventHandler<T extends string = string> = (event: BusEvent<T>) => void | Promise<void>
 
 // onResync hears the topics the plugin may have missed events on, so it reads again. onEnded hears the topics whose
@@ -74,6 +77,8 @@ export class Events {
   private handled = 0
   private lastSeq = 0
   private ackedSeq = 0
+  // Whether a lock.changed with no lock state was reported, once per half
+  private malformed = false
   private ackTimer: ReturnType<typeof setTimeout> | null = null
   private resendTimer: ReturnType<typeof setTimeout> | null = null
   private resends = 0
@@ -166,6 +171,10 @@ export class Events {
     }
     if (typeof topic !== 'string' || typeof seq !== 'number') return
     const event = shaped(topic, message)
+    if (event === null && !this.malformed) {
+      this.malformed = true
+      console.error(`hetu: a ${topic} event came without its lock state and reached no handler`)
+    }
     for (const entry of [...this.entries]) {
       if (event === null || !entry.topics.has(topic)) continue
       try {
