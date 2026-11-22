@@ -21,7 +21,7 @@ const everything: Capability[] = [
   { type: 'ui.view' }, { type: 'ui.layout' }, { type: 'ui.decoration' }, { type: 'ui.command' }, { type: 'ui.keys' },
   { type: 'events.subscribe', topics: ['search.found'] }, { type: 'storage' }, { type: 'history', access: 'read', paths: ['**'] },
   { type: 'history', access: 'commit', paths: ['**'] }, { type: 'exec', commands: [['git', 'status']], env: [] },
-  { type: 'plugin.call', targets: ['search'] }, { type: 'guard.hook' }, { type: 'log.read' },
+  { type: 'plugin.call', targets: ['search'] }, { type: 'guard.hook' }, { type: 'log.read' }, { type: 'lock.set', paths: ['**'] },
 ]
 
 // What a call of each type reaches, judged at the canonical stage
@@ -54,8 +54,8 @@ function gateWith(more: Partial<GrantsSnapshot> = {}) {
 }
 
 describe('the types a pair\'s items may hold', () => {
-  it('lists reading, writing and listing notes and their history, as the gate holds them', () => {
-    expect(pairTypes).toEqual(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history'])
+  it('lists reading, writing, listing and locking notes and their history, as the gate holds them', () => {
+    expect(pairTypes).toEqual(['luoshu.read', 'luoshu.list', 'luoshu.write', 'history', 'lock.set'])
     expect(Object.isFrozen(pairTypes)).toBe(true)
     for (const type of pairTypes) expect(capabilityTypes).toContain(type)
   })

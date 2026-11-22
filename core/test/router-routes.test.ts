@@ -41,7 +41,7 @@ describe('the namespace table', () => {
     for (const action of Object.keys(coreActions)) expect([action, serverOf(namespaceOf(action))?.route]).toEqual([action, 'action'])
     for (const action of Object.keys(eventActions)) expect([action, serverOf(namespaceOf(action))?.route]).toEqual([action, 'bus'])
     for (const action of Object.keys(providerActions)) expect([action, serverOf(namespaceOf(action))?.route]).toEqual([action, 'provider'])
-    expect(providers).toEqual({ luoshu: 'luoshu', leases: 'leases', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net' })
+    expect(providers).toEqual({ luoshu: 'luoshu', lock: 'lock', history: 'history', exec: 'exec', storage: 'storage', cache: 'storage', net: 'net' })
   })
 
   it('leaves no action name, namespace or part as a string in the router', () => {

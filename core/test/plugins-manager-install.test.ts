@@ -79,7 +79,7 @@ describe('the start order', () => {
     })
     await pluginsManager.start()
     expect(runtime.half('outline').got('init')).toEqual([{
-      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 3, deps: { git: 'unavailable', luoshu: 'ready' },
+      v: 1, kind: 'init', id: 'outline', incarnation: 1, api: 4, deps: { git: 'unavailable', luoshu: 'ready' },
       lastStop: null, previousVersion: null,
     }])
   })
@@ -215,13 +215,13 @@ describe('core plugins', () => {
   // nothing holds stops hetu in the fail-safe at start, the provider nothing
   it('refuses a policy job, provider or guard id with place, whatever its entries', async () => {
     const { pluginsManager, runtime } = await harness({
-      install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, leases: host('leases') },
-      pluginsManager: { guardsFor: () => ['leases'] },
+      install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) }, 'hidden-marks': host('hidden-marks') },
+      pluginsManager: { guardsFor: () => ['hidden-marks'] },
     })
     await pluginsManager.start()
-    for (const id of ['net', 'leases']) expect(reasonOf(pluginsManager, id)).toBe('place')
-    expect(pluginsManager.policyJob('leases')).toBe('absent')
-    expect(pluginsManager.stopped()).toMatchObject({ control: 'leases', why: 'start-failed' })
+    for (const id of ['net', 'hidden-marks']) expect(reasonOf(pluginsManager, id)).toBe('place')
+    expect(pluginsManager.policyJob('hidden-marks')).toBe('absent')
+    expect(pluginsManager.stopped()).toMatchObject({ control: 'hidden-marks', why: 'start-failed' })
     expect(runtime.order()).toEqual([])
     const unguarded = await harness({ install: { ...coreInstall(), net: { files: filesFor(workerManifest('net')) } } })
     await unguarded.pluginsManager.start()

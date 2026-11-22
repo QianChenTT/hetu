@@ -29,13 +29,14 @@ const everyType = [
   { type: 'plugin.call', targets: ['search', 'file-explorer'] },
   { type: 'guard.hook' },
   { type: 'log.read' },
+  { type: 'lock.set', paths: ['projects/**'] },
 ]
 
 describe('the fixed list', () => {
   it('holds ui.view and ui.layout in place of ui.panel and ui.statusBar, core API version 2, and ui.edit', () => {
     expect(capabilityTypes).toEqual([
       'luoshu.read', 'luoshu.write', 'luoshu.list', 'net.fetch', 'ui.view', 'ui.layout', 'ui.decoration', 'ui.command', 'ui.keys',
-      'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read',
+      'ui.edit', 'ui.read', 'events.subscribe', 'storage', 'history', 'exec', 'plugin.call', 'guard.hook', 'log.read', 'lock.set',
     ])
   })
 
@@ -55,6 +56,13 @@ describe('the fixed list', () => {
     expect(capabilityText({ type: 'events.subscribe', topics: ['luoshu.changed'] })).toBe('events.subscribe to "luoshu.changed"')
     expect(capabilityText({ type: 'exec', commands: [['git', 'status']], env: ['HOME'] })).toBe('exec of ["git","status"] with "HOME" from your environment')
     expect(capabilityText({ type: 'net.fetch', hosts: ['example.com'] })).toBe('net.fetch to "example.com"')
+  })
+
+  // Locks only the notes it names, so it reads as a write does
+  it('takes lock.set only with paths and shows them', () => {
+    expect(capability.safeParse({ type: 'lock.set' }).success).toBe(false)
+    expect(capability.safeParse({ type: 'lock.set', paths: ['notes/../a.md'] }).success).toBe(false)
+    expect(capabilityText({ type: 'lock.set', paths: ['projects/**'] })).toBe('lock.set on "projects/**"')
   })
 
   it('takes ui.read only with paths and shows them', () => {

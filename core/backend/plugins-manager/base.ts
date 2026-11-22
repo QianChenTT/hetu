@@ -118,7 +118,7 @@ export type Known = {
 export type Staged = { dir: string, read: Read }
 
 // The order core plugins start in, each after the core modules. A requirement still starts before its dependent
-export const bootOrder = frozen(['net', 'leases', 'mcp-http-handler', 'hidden-marks'] as const)
+export const bootOrder = frozen(['net', 'mcp-http-handler', 'hidden-marks'] as const)
 
 export const FOLDER_RANK = 1000
 // What Finder and Explorer leave in a folder the user only looked at

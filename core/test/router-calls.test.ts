@@ -102,7 +102,7 @@ describe('plugin.call', () => {
     ['not-found', 'not-found'], ['invalid', 'invalid'], ['not-granted', 'not-granted'], ['unavailable', 'unavailable'],
     ['throttled', 'throttled'], ['timeout', 'timeout'], ['stale', 'stale'], ['failed', 'failed'],
     ['policy-down', 'failed'], ['switched-off', 'failed'], ['needs-confirm', 'failed'], ['guard-down', 'failed'],
-    ['guard-refused', 'failed'], ['starting', 'failed'], ['stopped', 'failed'], ['crashed', 'failed'], ['tampered', 'failed'],
+    ['guard-refused', 'failed'], ['locked', 'failed'], ['starting', 'failed'], ['stopped', 'failed'], ['crashed', 'failed'], ['tampered', 'failed'],
   ])('passes a callee\'s %s on as %s', async (sent, answered) => {
     const { scribe, search } = plugins()
     const id = scribe.call('search.query', { text: 'x' })
