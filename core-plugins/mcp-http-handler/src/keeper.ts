@@ -39,9 +39,10 @@ export function httpPlugin(options: HttpOptions): Plugin {
           } catch (error) {
             failed = true
             const reason = door === null && (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE' ? 'port-taken' : 'bind-failed'
-            // A rejection is this half's calls ending as the core ends it, or a reason the core never took, which
-            // leaves the half running with no door until it is restarted
-            void ctx.bindFailed(reason).catch(() => {})
+            // core.bindFailed, which the floor takes from this half in its utility process alone. A rejection is this
+            // half's calls ending as the core ends it, or a reason the core never took, which leaves the half running
+            // with no door until it is restarted
+            void ctx.call('core', 'bindFailed', { reason }).catch(() => {})
           }
         } else if (!wanted && door !== null) {
           const open = [door, pipe]
