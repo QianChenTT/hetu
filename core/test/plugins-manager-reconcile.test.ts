@@ -70,17 +70,17 @@ describe('the first-party reconcile', () => {
   })
 
   it('copies nothing the human removed, whose tombstone stands', async () => {
-    const made = await harness({ install: installWith({ git: gitFiles(), mcp: filesFor(workerManifest('mcp')) }), switches: { removed: ['git'] } })
+    const made = await harness({ install: installWith({ git: gitFiles(), notify: filesFor(workerManifest('notify')) }), switches: { removed: ['git'] } })
     await made.pluginsManager.start()
     expect(await exists(folderOf(made.dataDir, 'git'))).toBe(false)
     expect(made.pluginsManager.plugin('git')).toBe(null)
-    expect(stateOf(made.pluginsManager, 'mcp')).toBe('ready')
+    expect(stateOf(made.pluginsManager, 'notify')).toBe('ready')
   })
 
   it('in a boot that lost the tombstones, copies no plugin that has no entry and writes a tombstone for each instead', async () => {
     const made = await harness({
-      install: installWith({ git: gitFiles(), mcp: filesFor(workerManifest('mcp', { version: '2.0.0' })) }),
-      entries: { mcp: firstPartyEntry('e'.repeat(64)) },
+      install: installWith({ git: gitFiles(), notify: filesFor(workerManifest('notify', { version: '2.0.0' })) }),
+      entries: { notify: firstPartyEntry('e'.repeat(64)) },
       removedKnown: false,
     })
     await made.pluginsManager.start()
@@ -88,8 +88,8 @@ describe('the first-party reconcile', () => {
     expect((await new StateStore(made.dataDir).load()).state.switches.removed).toEqual(['git'])
     expect(made.link.events('plugin.tombstone')).toEqual([{ plugin: 'git' }])
     // A plugin that kept its entry is still brought up to the install's version
-    expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'mcp', version: '2.0.0' }])
-    expect(stateOf(made.pluginsManager, 'mcp')).toBe('ready')
+    expect(made.link.events('plugin.copied')).toEqual([{ plugin: 'notify', version: '2.0.0' }])
+    expect(stateOf(made.pluginsManager, 'notify')).toBe('ready')
   })
 
   it('holds a first-party plugin back after boot found the switches gone, until plugin.restore', async () => {

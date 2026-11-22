@@ -18,9 +18,10 @@ const repo = path.join(import.meta.dirname, '..', '..')
 const files = shippedFiles({ kinds: ['ts', 'js'] }).filter(file => file !== 'core/api/ids.ts')
 
 // The parts outside main: each core plugin, the utility process ones among them and each first-party plugin, read from
-// ids.ts. leases is a core plugin that is gone, which an old switches file still names. Core modules run in main and
-// the namespaces are the core's, so neither counts
-const retired = ['leases']
+// ids.ts. leases is a core plugin that is gone, which an old switches file still names. mcp is no first-party id any
+// more: hetu doesn't ship it and a user installs it in the plugin folder, so the core names it no more than any other
+// plugin. Core modules run in main and the namespaces are the core's, so neither counts
+const retired = ['leases', 'mcp']
 export const outside: ReadonlyMap<string, string> = new Map([...corePluginIds, ...utilityIds, ...firstPartyIds, ...retired].map(id => [id, id]))
 
 // The names core's own contract tables hold, read from core/api: the capability types, the drawer's verbs, its event
@@ -48,6 +49,10 @@ export const listed: readonly Place[] = [
   { place: 'sdk/ui.ts', text: "SKELETON = 'layout'", hits: 1, why: 'the surface layouts draw on, as the SDK names it' },
   { place: 'frontend/editor/bridge.ts', text: "? 'layout' :", hits: 1, why: 'the surface a layout.draw call draws on, the skeleton' },
   { place: 'backend/boot/state.ts', text: "droppedOff = ['watchdog', 'leases', 'hidden-marks']", hits: 2, why: 'a reader dropping retired ids from an old switches file (D-631)' },
+  {
+    place: 'backend/boot/state.ts', text: "retiredFirstParty: readonly unknown[] = ['file-explorer', 'search', 'mcp']", hits: 1,
+    why: 'a reader dropping a retired first-party id from an old switches file (D-668)',
+  },
   {
     place: 'frontend/editor/ui-port.ts', text: "OWN_LAYOUT = 'layout'", hits: 1,
     why: 'core picking the layout plugin when the human picked none, parked for Han: no fix leaves what a user sees the same',
@@ -93,6 +98,7 @@ describe('the parts outside main check itself', () => {
     ["if (call.from === `mcp-http-handler`) {}", `${at}:1 'mcp-http-handler' names mcp-http-handler, a part hetu doesn't run in main`],
     ["const order = { 'hidden-marks': 1 }", `${at}:1 'hidden-marks' names hidden-marks, a part hetu doesn't run in main`],
     ["off.filter(id => id !== 'leases')", `${at}:1 'leases' names leases, a part hetu doesn't run in main`],
+    ["if (caller.id === 'mcp') {}", `${at}:1 'mcp' names mcp, a part hetu doesn't run in main`],
   ])('fails %j', (source, problem) => {
     expect(problems(source)).toEqual([problem])
   })
