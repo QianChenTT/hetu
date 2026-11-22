@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Access } from '../api/policy-jobs.ts'
 import { boot, type Booted } from '../backend/boot/boot.ts'
+import { FIRST_PARTY_SIGNER } from '../api/install.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import type { RouterDoor } from '../backend/router/header.ts'
 import { wireCore, type WireOptions } from '../backend/wire.ts'
@@ -18,7 +19,7 @@ import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './router-fakes.ts'
 import { luoshuModule, storageModule } from './modules-fakes.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
+  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hashOf, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
   writeInstall, type Files, type Listing, type Message,
 } from './plugins-manager-fakes.ts'
 
@@ -888,8 +889,9 @@ describe('the off states', () => {
   }, JOIN_MS)
 })
 
-// The real http host runs through the SDK on the fake runtime's port, and mcp is a first-party worker the test answers
-// for. A request through a seam that names a client reaches mcp as http's host half on behalf of that client
+// The real http host runs through the SDK on the fake runtime's port and mcp is a plugin-folder worker the test answers
+// for, approved unsigned by its hash. A request through a seam that names a client reaches mcp as http's host half on
+// behalf of that client
 describe('the door through the joined core', () => {
   const callMcp = { type: 'plugin.call' as const, targets: ['mcp'] }
   const seam = (text: string | null) => (text === 'Bearer good-token' ? { client: 'https://client.example/metadata#1' } : null)
@@ -918,7 +920,17 @@ describe('the door through the joined core', () => {
     })
   }
 
-  async function door() {
+  const canConnect = (port: number) => new Promise<boolean>(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port })
+    socket.once('connect', () => { socket.destroy(); resolve(true) })
+    socket.once('error', () => resolve(false))
+  })
+
+  // How mcp sits in the plugin folder: approved unsigned by its hash, unsigned with no allowUnsigned naming its hash, or
+  // carrying the first-party signer with its hash approved
+  type McpAs = 'approved' | 'unsigned' | 'first-party-signer'
+
+  async function door(mcpAs: McpAs = 'approved') {
     const port = await freePort()
     // The gate's own decisions, so a test can tell a refusal at the gate from one at the action's from list
     const gate = createGate()
@@ -933,10 +945,17 @@ describe('the door through the joined core', () => {
       install: {
         ...coreInstall(),
         'mcp-http-handler': { files: filesFor(hostManifest('mcp-http-handler', { capabilities: [callMcp] })) },
-        mcp: { files: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })), firstParty: true },
       },
-      folder: { beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })) },
-      entries: { beta: { granted: [callMcp] } },
+      folder: {
+        beta: filesFor(workerManifest('beta', { capabilities: [callMcp] })),
+        mcp: filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } })),
+      },
+      entries: { beta: { granted: [callMcp] }, mcp: { signer: mcpAs === 'first-party-signer' ? FIRST_PARTY_SIGNER : null } },
+      prepare: async dataDir => {
+        if (mcpAs === 'unsigned') return
+        const allowUnsigned = [await hashOf(path.join(dataDir, 'plugins', 'mcp'))]
+        await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), allowUnsigned })
+      },
       modules: { gate },
       behave: {
         'mcp-http-handler': {
@@ -952,7 +971,7 @@ describe('the door through the joined core', () => {
     return { ...parts, port, decisions }
   }
 
-  it('hands a request that passed to the first-party mcp as http\'s host half on behalf of the seam\'s client', async () => {
+  it('hands a request that passed to the folder mcp as http\'s host half on behalf of the seam\'s client', async () => {
     const { pluginsManager, runtime, port } = await door()
     expect(pluginsManager.plugin('mcp-http-handler')).toMatchObject({ state: 'ready', place: 'utility' })
     expect(pluginsManager.plugin('mcp')).toMatchObject({ state: 'ready' })
@@ -965,6 +984,19 @@ describe('the door through the joined core', () => {
     expect(delivered.args).toEqual({ body: 'not json {', headers: { 'mcp-session-id': 's-1' } })
     mcp.send({ v: 1, kind: 'reply', callId: delivered.callId, ok: true, result: { status: 200, body: '{"jsonrpc":"2.0"}' } })
     expect(await asked).toEqual({ status: 200, body: '{"jsonrpc":"2.0"}' })
+  })
+
+  it.each([
+    ['unsigned', 'unsigned'],
+    ['first-party-signer', 'signer'],
+  ] as const)('keeps the door shut while the folder mcp held %s is refused %s', async (mcpAs, reason) => {
+    const { pluginsManager, runtime, port } = await door(mcpAs)
+    expect(pluginsManager.plugin('mcp-http-handler')).toMatchObject({ state: 'ready', place: 'utility' })
+    expect(reasonOf(pluginsManager, 'mcp')).toBe(reason)
+    expect(pluginsManager.plugin('mcp')).toMatchObject({ state: 'refused' })
+    await tick(200)
+    expect(await canConnect(port)).toBe(false)
+    expect(() => runtime.half('mcp')).toThrow()
   })
 
   it('refuses another plugin\'s worker holding plugin.call on mcp at mcp.handle\'s from list, after the gate allowed it', async () => {
