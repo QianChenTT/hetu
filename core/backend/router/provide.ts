@@ -145,29 +145,27 @@ export function askable(c: Context): boolean {
   return c.policyJob('gate') === 'on' && c.holder(() => c.options.gate()) !== null && c.view() !== null
 }
 
-// canList on every delivery of a path and on each name a listing found: only an exact true counts and a throw is a no
-// that is recorded
-export function listable(c: Context, caller: Caller, path: string): boolean {
+// The gate asked about one path: no gate is a no, only an exact true counts and a throw is a no recorded under the
+// method's name
+function gateSays(c: Context, method: 'canList' | 'canRead', caller: Caller, path: string): boolean {
   const gate = c.holder(() => c.options.gate())
   if (gate === null) return false
   try {
-    return gate.canList(caller, path) === true
+    return gate[method](caller, path) === true
   } catch {
-    c.fault('gate', 'canList')
+    c.fault('gate', method)
     return false
   }
 }
 
-// canRead on every delivery of a path only a reader hears, as listable asks canList
+// canList on every delivery of a path and on each name a listing found
+export function listable(c: Context, caller: Caller, path: string): boolean {
+  return gateSays(c, 'canList', caller, path)
+}
+
+// canRead on every delivery of a path only a reader hears
 export function readable(c: Context, caller: Caller, path: string): boolean {
-  const gate = c.holder(() => c.options.gate())
-  if (gate === null) return false
-  try {
-    return gate.canRead(caller, path) === true
-  } catch {
-    c.fault('gate', 'canRead')
-    return false
-  }
+  return gateSays(c, 'canRead', caller, path)
 }
 
 // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
