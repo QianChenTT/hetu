@@ -170,7 +170,7 @@ export class CoreModules implements Holder {
     }
   }
 
-  // Once, as the plugins manager starts, after the install list passed and before any plugin starts: every module that
+  // Once, as the plugins manager starts, after the door's code is read and before any plugin starts: every module that
   // is on started one at a time, each start given readyMs, then each handed what it needs. The fail-safe controls go
   // first and alone: one of them failed leaves every other module never begun and never handed anything, for the
   // plugins manager's fail-safe

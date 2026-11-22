@@ -26,8 +26,8 @@ import { appMenu, coreKeyOfInput, guardContents, openEditor, openTrusted, quietP
 import { openWorkersRenderer, WorkerRenderer, WorkerRenderers } from './runtime/workers.ts'
 import { wireCore } from './wire.ts'
 
-// The bundle sits in core/dist with the install list, the built pages and the workers preload beside it. A packaged
-// build keeps its core plugins beside app.asar
+// The bundle sits in core/dist with the utility bootstrap, the door, the built pages and the workers preload beside it.
+// A packaged build keeps all of them inside app.asar
 const here = import.meta.dirname
 const pages = path.join(here, 'frontend')
 const workersPreload = path.join(here, 'workers-preload.js')
@@ -295,7 +295,7 @@ async function start(): Promise<void> {
     freezeIntrinsics()
     await wired.pluginsManager.start()
     if (quitting !== null) return
-    // The install list didn't check out: only the trusted window opens, or the native box with the security view off
+    // A control failed at start: only the trusted window opens, or the native box with the security view off
     const stopped = wired.pluginsManager.stopped()
     if (stopped !== null) onFailure({ action: 'stopped', mode: stopped, box: wired.pluginsManager.stoppedBox() })
     else editor = show(editorWindow())

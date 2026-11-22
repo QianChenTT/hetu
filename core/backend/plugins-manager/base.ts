@@ -35,8 +35,6 @@ export type PluginsManagerOptions = {
   runtime: Runtime
   // The core's own modules, which the plugins manager starts, hands each change and switches as the human does
   modules: CoreModules
-  // The rules the install list's paths follow, the platform the install is on
-  platform?: string
   // The guards expected on an action. Defaults to core/api's list
   guardsFor?: (action: GuardableAction) => readonly string[]
   // Whether boot's event log takes appends, for the banner. The join passes the EventLog's health
@@ -148,7 +146,6 @@ export abstract class PluginsBase {
   protected readonly dataDir: string
   protected readonly installDir: string
   protected readonly doorFile: string | null
-  protected readonly platform: string
   protected readonly guardsFor: (action: GuardableAction) => readonly string[]
   protected readonly logWrites: () => boolean
   protected readonly entryChecks = new Map<string, FileResult>()
@@ -178,8 +175,8 @@ export abstract class PluginsBase {
   protected readonly onFailure: PluginsManagerOptions['onFailure']
   // The runtime's limited, which never throws here
   protected readonly limited: (plugin: string) => void
-  // starting until the install list is read and the core modules started, all from then on, stopped once the install
-  // list or the log failed
+  // starting until the door's code is read and the core modules started, all from then on, stopped once a control
+  // failed at start or the log failed
   protected phase: 'starting' | 'all' | 'stopped' = 'starting'
   protected stoppedMode: StoppedMode | null = null
   // What the run before restarted for, from the restart marker
@@ -206,7 +203,6 @@ export abstract class PluginsBase {
     this.dataDir = booted.dataDir
     this.installDir = options.installDir
     this.doorFile = options.doorFile ?? null
-    this.platform = options.platform ?? process.platform
     this.guardsFor = options.guardsFor ?? (action => expectedGuards[action])
     this.logWrites = options.logWrites ?? (() => true)
     this.onFailure = options.onFailure
