@@ -83,11 +83,15 @@ describe('the SDK\'s worker transport', () => {
     const transport = portTransport(port, { ...limits, messagesPerSecond: 10, bytesPerSecond: 1_000_000 }, () => now)
     for (let i = 0; i < 20; i++) transport.post({ n: i })
     expect(port.posted).toHaveLength(9)
-    now = 1000
-    vi.advanceTimersByTime(1000)
+    // The window the pacing counts in is 1.1 s, room for the relay to read late
+    now = 1099
+    vi.advanceTimersByTime(1099)
+    expect(port.posted).toHaveLength(9)
+    now = 1100
+    vi.advanceTimersByTime(1)
     expect(port.posted).toHaveLength(18)
-    now = 2000
-    vi.advanceTimersByTime(1000)
+    now = 2200
+    vi.advanceTimersByTime(1100)
     expect(port.posted.map(text => (JSON.parse(text as string) as { n: number }).n)).toEqual(Array.from({ length: 20 }, (_, i) => i))
   })
 

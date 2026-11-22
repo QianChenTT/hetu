@@ -10,10 +10,16 @@ export type Transport = {
 // What the pacing keeps back from the rate
 const SHARE = 0.9
 
-// Every message a half sends, in order, at most 90% of perSecond in any second, the rest held until there is room. The
-// router counts a way's messages in one-second windows from when they arrive and drops one over the rate unread, so
-// staying under the rate in every sliding second keeps each of those windows under it. A post that throws, as a port's
-// does for a value it can't copy, goes to that message's onFail and the rest keep their order
+// The window the pacing counts a second's messages in. The router counts a way's messages in one-second windows from
+// when it reads them, which is later than they left by however long main was busy. A message read late opens a window
+// that a message sent a second after it can still land in, so a slot is taken again only this long after it was last
+// used, room for main to read up to 100 ms late
+export const PACE_WINDOW_MS = 1100
+
+// Every message a half sends, in order, at most 90% of perSecond in any window of PACE_WINDOW_MS, the rest held until
+// there is room. The router drops a message over the rate unread. Paced this way each of its windows stays under the
+// rate while main reads every message within 100 ms of its send. A post that throws, as a port's does for a value it
+// can't copy, goes to that message's onFail and the rest keep their order
 export class Sender {
   private readonly post: (message: unknown) => void
   private readonly budget: number
@@ -38,9 +44,9 @@ export class Sender {
     this.timer = null
     while (this.held.length > 0) {
       const now = this.clock()
-      while (this.times.length > 0 && now - this.times[0] >= 1000) this.times.shift()
+      while (this.times.length > 0 && now - this.times[0] >= PACE_WINDOW_MS) this.times.shift()
       if (this.times.length >= this.budget) {
-        this.timer = setTimeout(() => this.flush(), Math.max(1, this.times[0] + 1000 - now))
+        this.timer = setTimeout(() => this.flush(), Math.max(1, this.times[0] + PACE_WINDOW_MS - now))
         return
       }
       this.times.push(now)

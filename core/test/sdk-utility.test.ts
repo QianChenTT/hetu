@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ENVELOPE_ROOM } from '../api/rate.ts'
+import { countMessage, ENVELOPE_ROOM, newRate } from '../api/rate.ts'
 import { definePlugin } from '../sdk/plugin.ts'
 import { runInUtility, utilityTransport, type UtilityPort } from '../sdk/utility.ts'
 import type { WorkerLimits } from '../sdk/worker.ts'
@@ -75,20 +75,44 @@ describe('the SDK\'s utility transport', () => {
     // 1000 a second, so ten go at once
     for (let i = 0; i < 10; i++) transport.post({ n: i })
     expect(port.posted).toHaveLength(10)
-    // Lowered to 10 a second, 9 kept for the plugin, and the last ten went within this second
+    // Lowered to 10 a second, 9 kept for the plugin in a window of 1.1 s, and the last ten went within this window
     transport.limit({ ...roomy, messagesPerSecond: 10 })
-    now = 1000
+    now = 1100
     for (let i = 10; i < 30; i++) transport.post({ n: i })
     expect(port.posted).toHaveLength(19)
     transport.post({ v: 1, kind: 'pong' })
     expect(port.posted.at(-1)).toBe('{"v":1,"kind":"pong"}')
-    now = 2000
-    vi.advanceTimersByTime(1000)
+    now = 2200
+    vi.advanceTimersByTime(1100)
     expect(port.posted).toHaveLength(29)
     // Raised again, the rest go at once
     transport.limit(roomy)
     vi.advanceTimersByTime(10)
     expect(port.posted).toHaveLength(31)
+  })
+
+  // Main counts a half's messages in windows of a second from when it reads them, in order and late by however long it
+  // was busy. A message read late opens a window that a slot taken again a second after that message left can still
+  // land in. Here main is busy 90 ms in every other second
+  it('stays within main\'s count when main reads messages up to 90 ms late, a pong every 2 s among them', () => {
+    vi.useFakeTimers({ now: 0 })
+    const port = new FakePortMain()
+    const sent: number[] = []
+    port.postMessage = () => void sent.push(Date.now())
+    const transport = utilityTransport(port, { ...limits, bytesPerSecond: 1_000_000, messagesPerSecond: 10 }, () => Date.now())
+    for (let i = 0; i < 100; i++) transport.post({ n: i })
+    for (let at = 0; at < 10_000; at += 50) {
+      if (at % 2000 === 1000) transport.post({ v: 1, kind: 'pong' })
+      vi.advanceTimersByTime(50)
+    }
+    let read = 0
+    const rate = newRate()
+    const verdicts = sent.map(at => {
+      read = Math.max(read, at + (Math.floor(at / 1000) % 2 === 1 ? 90 : 0))
+      return countMessage(rate, read, name => ({ messagesPerSecond: 10, floodFactor: 10, floodMs: 5000 })[name as string] ?? 0)
+    })
+    expect(sent.length).toBeGreaterThan(60)
+    expect(verdicts.filter(verdict => verdict !== 'pass')).toEqual([])
   })
 
   it('takes no limits from its channel, where only main\'s text arrives', () => {
