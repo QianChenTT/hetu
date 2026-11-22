@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { fetchProblems, fetchProblemWords, type Fetch } from '../backend/plugins-manager/github.ts'
-import { downloadZip, githubLink, releaseZips, type ReleaseZip } from '../backend/plugins-manager/release.ts'
+import { downloadZip, githubLink, releaseZips, zipLimits, type ReleaseZip } from '../backend/plugins-manager/release.ts'
 
 type Call = { url: string, init: RequestInit }
 
@@ -134,6 +134,16 @@ describe('a picked zip', () => {
     const { fetch, calls } = fake(() => new Response(new Uint8Array(6), { status: 200 }))
     expect(await downloadZip(zip, { fetch, limits: { bytes: 5 } })).toEqual({ problem: 'too-big' })
     expect(calls).toEqual([])
+  })
+
+  it('keeps the default cap and time limit for a limit given as undefined', async () => {
+    const { fetch, calls } = fake(() => new Response(new Uint8Array(6), { status: 200 }))
+    const past = { ...zip, size: zipLimits.bytes + 1 }
+    expect(await downloadZip(past, { fetch, limits: { bytes: undefined, ms: undefined } })).toEqual({ problem: 'too-big' })
+    expect(calls).toEqual([])
+    expect((await downloadZip(zip, { fetch, limits: { bytes: undefined, ms: undefined } })).problem).toBeNull()
+    const listed = fake(() => json(release([asset('a.zip')])))
+    expect((await releaseZips('https://github.com/o/r', { fetch: listed.fetch, limits: { ms: undefined } })).problem).toBeNull()
   })
 
   it('is refused past the cap by its Content-Length, and by the bytes counted when the length says less or nothing', async () => {

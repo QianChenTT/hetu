@@ -18,6 +18,12 @@ export const zipLimits: FetchLimits = Object.freeze({ bytes: 64 * MiB + 8 * MiB,
 
 export type FetchOptions = { fetch?: Fetch, signal?: AbortSignal, limits?: Partial<FetchLimits> }
 
+// The limits given over the defaults, a limit given as undefined keeping its default so no cap is ever lifted
+const limitsOf = (defaults: FetchLimits, given: Partial<FetchLimits> = {}): FetchLimits => ({
+  bytes: given.bytes ?? defaults.bytes,
+  ms: given.ms ?? defaults.ms,
+})
+
 // A repo on github.com and the tag of the release a link names, or null for the latest
 export type GitHubLink = { owner: string, repo: string, tag: string | null }
 
@@ -120,7 +126,7 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
   const which = link.tag === null ? 'latest' : `tags/${encodeURIComponent(link.tag)}`
   const url = `${API}/repos/${link.owner}/${link.repo}/releases/${which}`
   return answer(async () => {
-    const bytes = await getFromGitHub(url, RELEASE_WANTED, { ...releaseLimits, ...options.limits }, options).catch((err: unknown) => {
+    const bytes = await getFromGitHub(url, RELEASE_WANTED, limitsOf(releaseLimits, options.limits), options).catch((err: unknown) => {
       // The API's 404 is a repo or a release it doesn't have
       throw err instanceof FetchRefused && err.problem === 'not-found' ? new FetchRefused('no-release') : err
     })
@@ -142,7 +148,7 @@ export type Downloaded = { problem: null, bytes: Buffer, verified: boolean } | {
 // The bytes of a picked zip, refused before any request when the release says it is past the cap and after the
 // download when they don't hash to the sha256 the release gave
 export async function downloadZip(zip: ReleaseZip, options: FetchOptions = {}): Promise<Downloaded> {
-  const limits = { ...zipLimits, ...options.limits }
+  const limits = limitsOf(zipLimits, options.limits)
   if (zip.size > limits.bytes) return { problem: 'too-big' }
   return answer(async () => {
     const bytes = await getFromGitHub(zip.url, ZIP_WANTED, limits, options)
