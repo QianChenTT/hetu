@@ -16,7 +16,7 @@ hetu is a local notes app designed around that problem
 
 Many security decisions in hetu are still handed to the user: approving a plugin, giving it more power, switching a guard off. Most people are here for the features and can't be expected to know what each approval risks. So an approval made for convenience points to a gap in hetu's design, not a mistake by the user. Each confirmation says plainly what is being changed. The goal is fewer of these decisions left to the user and a safe choice that is also the easy one
 
-The Electron app runs the core today: boot, plugins-manager, carrier and runtime, the gate, grant-risk-classifier, storage, luoshu, history and exec as host plugins, the layout as a sandboxed plugin, the editor window with hidden marks, the trusted window and a Windows installer. Leases, MCP for agents and the commit per write still run only in the older daemon. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
+The Electron app runs the core today: boot, plugins-manager, carrier and runtime, the gate, grant-risk-classifier, storage, luoshu, history and exec as host plugins, the layout and hidden marks as sandboxed plugins, the editor window, the trusted window and a Windows installer. Leases, MCP for agents and the commit per write still run only in the older daemon. The core map shows the whole design, built or not: [core map](https://qianchentt.github.io/hetu/). An attack phase follows. Findings are published in [findings/](findings/)
 
 ## Names
 

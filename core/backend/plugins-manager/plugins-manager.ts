@@ -213,7 +213,6 @@ export class PluginsManager extends PluginsChanges implements PluginTable {
       modulesOff: coreModuleIds.filter(id => !Object.hasOwn(policyJobs, id) && this.modules.state(id) === 'off'),
       logWrites: this.logWrites(),
       luoshuPicked: this.state.luoshu !== null,
-      page: this.list().filter(row => row.place === 'page' && row.state === 'ready').map(row => row.id),
       pending: this.pending(),
       stopped: this.stoppedMode,
       suspect: [...this.suspect],

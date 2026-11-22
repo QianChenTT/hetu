@@ -69,17 +69,17 @@ type Manifest = {
 const providers = { luoshu: ['changed', 'outside'], storage: [] as string[] } as const
 const TESTER = 'tester'
 
-// A manifest with a host or page entry is a core plugin's, checked as one. An api range this core leaves out
-// throws, as the plugins manager refuses it with api
+// A manifest with a host entry is a core plugin's, checked as one. An api range this core leaves out throws, as the
+// plugins manager refuses it with api
 function manifestOf(input: unknown): Manifest {
   let parsed: Manifest
   if (typeof input === 'string') {
     const bytes = readFileSync(input)
-    const install = /"(host|page)"\s*:/.test(bytes.toString('utf8'))
+    const install = /"host"\s*:/.test(bytes.toString('utf8'))
     parsed = parseStrict(bytes, install ? installManifest : folderManifest) as Manifest
   } else {
     const entries = (input as { entries?: Record<string, unknown> } | null)?.entries ?? {}
-    const install = 'host' in entries || 'page' in entries
+    const install = 'host' in entries
     parsed = (install ? installManifest : folderManifest).parse(input) as Manifest
   }
   if (!supportsApi(parsed.api, (parsed.capabilities ?? []).map(granted => granted.type))) {

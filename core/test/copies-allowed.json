@@ -3,6 +3,18 @@
   "clones": [
     {
       "files": [
+        "core-plugins/hidden-marks/src/marks.ts",
+        "core/frontend/editor/markdown.ts"
+      ],
+      "hash": "78c62332412b7dd5",
+      "at": [
+        "core-plugins/hidden-marks/src/marks.ts:17-37",
+        "core/frontend/editor/markdown.ts:10-29"
+      ],
+      "judged": "not yet"
+    },
+    {
+      "files": [
         "core-plugins/layout/src/worker.ts",
         "core-plugins/layout/src/worker.ts"
       ],
@@ -56,7 +68,7 @@
       ],
       "hash": "71b052d622096ade",
       "at": [
-        "core/api/editor.ts:105-116",
+        "core/api/editor.ts:108-119",
         "core/api/ui.ts:491-506"
       ],
       "judged": "not yet"
@@ -680,7 +692,7 @@
       ],
       "hash": "2bd770ef0f36c627",
       "at": [
-        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/editor/page.ts:689-695",
         "core/frontend/workers/page.ts:19-25"
       ],
       "judged": "not yet"
@@ -692,7 +704,7 @@
       ],
       "hash": "5e1bc8266ba8a937",
       "at": [
-        "core/frontend/editor/page.ts:690-696",
+        "core/frontend/editor/page.ts:689-695",
         "core/frontend/workers/preload.ts:10-14"
       ],
       "judged": "not yet"

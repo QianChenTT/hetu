@@ -503,7 +503,7 @@ describe('the fake drawer', () => {
 // its version and the selection at the key
 describe("the fake drawer's ranges and commands", () => {
   type Heard = Record<string, unknown>
-  const capabilities = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.command' }]
+  const capabilities = [{ type: 'luoshu.read', paths: ['notes/**'] }, { type: 'ui.edit', paths: ['notes/**'] }, { type: 'ui.command' }, { type: 'ui.decoration' }]
   const range = (instance: string, version: number, from: number, to: number) => ({ v: 1, kind: 'event', topic: 'editor.viewport', instance, version, from, to })
   const opened = (instance: string) => ({ v: 1, kind: 'event', topic: 'editor.opened', instance })
   const ranges = (heard: Heard[]) => heard.filter(event => event.topic === 'editor.viewport')
@@ -517,7 +517,7 @@ describe("the fake drawer's ranges and commands", () => {
     await made.start(definePlugin({
       start(ctx) {
         given = ctx
-        for (const topic of ['opened', 'viewport', 'command'] as const) ctx.editor.on(topic, event => heard.push({ ...event }))
+        for (const topic of ['opened', 'viewport', 'command', 'changed', 'closed'] as const) ctx.editor.on(topic, event => heard.push({ ...event }))
       },
     }))
     return { heard, ctx: given as unknown as PluginContext }
@@ -578,6 +578,52 @@ describe("the fake drawer's ranges and commands", () => {
     await ctx.editor.viewports(true)
     await until(() => ranges(heard).length === 2)
     expect(ranges(heard)).toEqual([range(instance, 0, 0, 11), range(instance, 0, 3, 11)])
+  })
+
+  it("tells a plugin that reads the note each change the human makes, as CodeMirror's change list at the note's new version, unless the change is lost", async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const instance = drawer.openNote('notes/a.md', 'hello')
+    const secret = drawer.openNote('secret/a.md', 'hidden')
+    drawer.type(instance, { from: 5, insert: '!' })
+    drawer.type(instance, { from: 0, to: 1, insert: 'H' }, false)
+    drawer.type(instance, [{ from: 0, insert: '>' }, { from: 6, insert: '?' }])
+    drawer.type(secret, { from: 0, insert: 'x' })
+    await until(() => heard.filter(event => event.topic === 'editor.changed').length === 2)
+    await tick(5)
+    expect(heard.filter(event => event.topic === 'editor.changed')).toEqual([
+      { v: 1, kind: 'event', topic: 'editor.changed', instance, version: 1, changes: [5, [0, '!']] },
+      { v: 1, kind: 'event', topic: 'editor.changed', instance, version: 3, changes: [[0, '>'], 6, [0, '?']] },
+    ])
+    expect(drawer.text(instance)).toBe('>Hello!?')
+    expect(await ctx.editor.read(instance)).toEqual({ text: '>Hello!?', version: 3, selection: [{ anchor: 0, head: 0 }] })
+  })
+
+  it('holds the answers to a verb until let go, refuses the next call of one with the code given, keeps the version marks came for and tells a closed note only to a plugin that marked it', async () => {
+    const drawer = new FakeDrawer()
+    const { heard, ctx } = await listening(drawer)
+    const first = drawer.openNote('notes/a.md', 'hello')
+    const second = drawer.openNote('notes/b.md', 'two')
+    const release = drawer.delay('editor.read')
+    let read: unknown = null
+    void ctx.editor.read(first).then(got => (read = got))
+    drawer.type(first, { from: 5, insert: '!' })
+    await tick(5)
+    expect(read).toBeNull()
+    release()
+    await until(() => read !== null)
+    expect(read).toEqual({ text: 'hello', version: 0, selection: [{ anchor: 0, head: 0 }] })
+    drawer.refuseNext('editor.read', 'unavailable')
+    await expect(ctx.editor.read(first)).rejects.toMatchObject({ code: 'unavailable' })
+    expect((await ctx.editor.read(first)).text).toBe('hello!')
+    expect(drawer.calls.filter(verb => verb === 'editor.read')).toHaveLength(3)
+    drawer.closeNote(second)
+    await ctx.editor.decorate(first, 0, 'set', [])
+    expect(drawer.versions.get(`${first} set`)).toBe(0)
+    drawer.closeNote(first)
+    await until(() => heard.some(event => event.topic === 'editor.closed'))
+    expect(heard.filter(event => event.topic === 'editor.closed')).toEqual([{ v: 1, kind: 'event', topic: 'editor.closed', instance: first }])
+    expect(drawer.text(first)).toBeNull()
   })
 
   it('sends each range once to a plugin that asked twice', async () => {

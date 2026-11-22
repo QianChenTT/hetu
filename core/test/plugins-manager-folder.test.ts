@@ -49,7 +49,6 @@ describe('a plugin-folder plugin\'s bytes', () => {
 describe('where a plugin\'s code came from', () => {
   it.each([
     ['a host entry', { entries: { host: 'host.js' } }],
-    ['a page entry', { entries: { worker: 'worker.js', page: 'page.js' } }],
     ['guards', { entries: { worker: 'worker.js' }, capabilities: [{ type: 'guard.hook' }], guards: ['luoshu.write'] }],
     ['Node built-ins', { entries: { worker: 'worker.js' }, node: ['fs'] }],
     ['an install-only type', { entries: { worker: 'worker.js' }, capabilities: [{ type: 'guard.hook' }] }],
