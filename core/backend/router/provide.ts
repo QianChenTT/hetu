@@ -158,6 +158,18 @@ export function listable(c: Context, caller: Caller, path: string): boolean {
   }
 }
 
+// canRead on every delivery of a path only a reader hears, as listable asks canList
+export function readable(c: Context, caller: Caller, path: string): boolean {
+  const gate = c.holder(() => c.options.gate())
+  if (gate === null) return false
+  try {
+    return gate.canRead(caller, path) === true
+  } catch {
+    c.fault('gate', 'canRead')
+    return false
+  }
+}
+
 // A subscription asked about again, at both stages as a subscribe is. No answer, a throw or one on an older
 // grants snapshot included, is down, so the bus holds the subscription back and asks again rather than ending it on a fault.
 // An ask is the item's first use: the prompt holds a request for the human or can't for now, while the subscription

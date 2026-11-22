@@ -1751,6 +1751,7 @@ describe('a sync that threw midway', () => {
     const bus = new Bus({
       state: () => ({ key, paths: 'ask', view: 1 }),
       canList: () => true,
+      canRead: () => true,
       recheck: caller => {
         const id = caller.kind === 'plugin' ? caller.id : ''
         asked.push(id)
@@ -1775,5 +1776,100 @@ describe('a sync that threw midway', () => {
     bus.endGated(caller => caller.kind === 'plugin')
     bus.sync()
     expect(asked).toEqual(['scribe'])
+  })
+})
+
+// The lock module tells a note locked, renewed, cleared or expired through the router as the core wires it. Only a
+// subscriber the gate lets read the note hears it, since it says more than that a name changed
+describe('lock.changed', () => {
+  function locking() {
+    const parts = setup()
+    const { gate, pluginsManager, connect } = parts
+    pluginsManager.sandboxed('lister')
+    gate.grants.search = [{ type: 'events.subscribe', topics: ['lock.changed', 'luoshu.changed'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
+    gate.grants.lister = [{ type: 'events.subscribe', topics: ['lock.changed', 'luoshu.changed'] }, { type: 'luoshu.list', paths: ['**'] }]
+    gate.grants.git = [{ type: 'events.subscribe', topics: ['lock.changed'] }]
+    const lister = connect(worker('lister'))
+    const told = (path: string, change: Record<string, unknown>) => parts.router.publishCore('lock', 'changed', path, change)
+    return { ...parts, lister, told }
+  }
+
+  it('gives a subscriber that reads the note its path and lock state with no holder, in the contract\'s shape', async () => {
+    const { search, told } = locking()
+    await search.ask('events.subscribe', { topics: ['lock.changed'] })
+    told('notes/a.md', { locked: true, until: 1_700_000_060_000 })
+    told('notes/a.md', { locked: false, until: null })
+    await until(() => search.events().length === 2)
+    expect(search.events()).toStrictEqual([
+      { v: 1, kind: 'event', seq: 1, topic: 'lock.changed', path: 'notes/a.md', locked: true, until: 1_700_000_060_000 },
+      { v: 1, kind: 'event', seq: 2, topic: 'lock.changed', path: 'notes/a.md', locked: false, until: null },
+    ])
+    expect(search.events().every(message => eventShape.safeParse(message).success)).toBe(true)
+  })
+
+  it('gives nothing to a subscriber that may only list the note or reads others, where luoshu.changed reaches the lister', async () => {
+    const { search, lister, git, told, edited, gate } = locking()
+    for (const side of [search, lister, git]) expect(code(await side.ask('events.subscribe', { topics: ['lock.changed'] }))).toBeNull()
+    await lister.ask('events.subscribe', { topics: ['luoshu.changed'] })
+    told('secret/a.md', { locked: true, until: 5 })
+    told('notes/b.md', { locked: true, until: 5 })
+    await edited('secret/a.md')
+    await until(() => search.events().length === 1 && lister.events().length === 1)
+    await settle()
+    expect(search.events().map(message => message.path)).toEqual(['notes/b.md'])
+    expect(lister.events().map(message => `${message.topic} ${message.path}`)).toEqual(['luoshu.changed secret/a.md'])
+    expect(git.events()).toEqual([])
+    expect(gate.reads.filter(read => read.caller.kind === 'plugin' && read.caller.id === 'lister').map(read => read.path))
+      .toEqual(['secret/a.md', 'notes/b.md'])
+  })
+
+  it.each([
+    ['no fields', 'lock', 'changed', undefined],
+    ['a holder beside them', 'lock', 'changed', { locked: true, until: 5, holder: 'claude-code#1' }],
+    ['locked with no end', 'lock', 'changed', { locked: true, until: null }],
+    ['unlocked with an end', 'lock', 'changed', { locked: false, until: 5 }],
+    ['an end that is not a whole number', 'lock', 'changed', { locked: true, until: 1.5 }],
+    ['fields on a topic that has none', 'luoshu', 'changed', { locked: true, until: 5 }],
+    ['a topic no module publishes', 'lock', 'held', { locked: true, until: 5 }],
+  ])('sends nothing for a module\'s publish with %s', async (_name, owner, topic, fields) => {
+    const { router, search, gate } = locking()
+    gate.grants.search = [{ type: 'events.subscribe', topics: ['lock.changed', 'lock.held', 'luoshu.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
+    await search.ask('events.subscribe', { topics: ['lock.changed', 'lock.held', 'luoshu.changed'] })
+    router.publishCore(owner, topic, 'notes/a.md', fields as never)
+    router.publishCore('lock', 'changed', 'notes/z.md', { locked: false, until: null })
+    await until(() => search.events().some(message => message.path === 'notes/z.md'))
+    await settle()
+    expect(search.events().map(message => message.path)).toEqual(['notes/z.md'])
+  })
+
+  it('holds the event back while the gate is down and resyncs the subscriber once it is up', async () => {
+    const { router, pluginsManager, search, told } = locking()
+    await search.ask('events.subscribe', { topics: ['lock.changed'] })
+    pluginsManager.policyJobs.gate = 'failed'
+    router.changed()
+    told('notes/a.md', { locked: true, until: 5 })
+    pluginsManager.policyJobs.gate = 'on'
+    router.changed()
+    await until(() => search.events().length === 1)
+    await settle()
+    expect(search.events()).toStrictEqual([{ v: 1, kind: 'event', topic: 'events.dropped', topics: ['lock.changed'] }])
+  })
+
+  it('treats a canRead that throws as a no, records the fault and still serves the others', async () => {
+    const { router, search, scribe, told, gate, log } = locking()
+    gate.grants.scribe = [{ type: 'events.subscribe', topics: ['lock.changed'] }, { type: 'luoshu.read', paths: ['**'] }]
+    gate.readable = caller => {
+      if ((caller as { id: string }).id === 'search') throw new Error('matcher bug')
+      return true
+    }
+    await search.ask('events.subscribe', { topics: ['lock.changed'] })
+    await scribe.ask('events.subscribe', { topics: ['lock.changed'] })
+    told('notes/a.md', { locked: true, until: 5 })
+    await until(() => scribe.events().length === 1)
+    await settle()
+    expect(search.events()).toEqual([])
+    router.close()
+    await tick()
+    expect(log.events('fault').map(record => record.fields)).toEqual([{ plugin: 'gate', step: 'canRead', count: 1 }])
   })
 })

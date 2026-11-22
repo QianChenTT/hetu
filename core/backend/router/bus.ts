@@ -12,6 +12,7 @@ export type Paths = 'ask' | 'all' | 'none'
 export type BusParts = {
   state(): { key: string, paths: Paths, view: number | null }
   canList(caller: Caller, path: string): boolean
+  canRead(caller: Caller, path: string): boolean
   // The gate's answer on one subscription it holds: allow, refuse, which ends it, down when the gate gave no answer or
   // ask when its item asks at first use, which both hold it back until the gate allows it
   recheck(caller: Caller, topic: string): 'allow' | 'refuse' | 'down' | 'ask'
@@ -26,6 +27,10 @@ export type BusParts = {
 // credits with it and a new incarnation starts with none. plugin is whose limits apply, null for a window. A window's
 // events go back the way its newest subscribe came
 export type Holder = { owner: object, caller: Caller, plugin: string | null, push: Send, alive: () => boolean }
+
+// How a core module's path event goes out: hears says whether a subscriber the gate lets list the path hears it or only
+// one that reads it, fields what it carries beside the path, as the contract's moduleTopics gives them
+export type Told = { readonly hears: 'list' | 'read', readonly fields?: Readonly<Record<string, unknown>> }
 
 type Subscription = {
   // Needs no gate: a plugin's own topic, or a core topic a window hears
@@ -127,9 +132,10 @@ export class Bus {
     for (const topic of [...subscriber.topics.keys()]) this.remove(subscriber, topic)
   }
 
-  // An event a plugin published on its own topic, to every live subscription of the topic. A path goes only to the
-  // subscribers the gate says may read it and to none while the gate is down. Path-less events go out whatever the gate
-  publish(topic: string, path: string | undefined): void {
+  // An event a plugin published on its own topic, or a core module on one of its own as told says, to every live
+  // subscription of the topic. A path goes only to the subscribers the gate says may list it, or read it when told says
+  // so, and to none while the gate is down. Path-less events go out whatever the gate
+  publish(topic: string, path: string | undefined, told: Told = { hears: 'list' }): void {
     this.sync()
     for (const subscriber of [...this.byTopic.get(topic) ?? []]) {
       const held = subscriber.topics.get(topic)
@@ -140,9 +146,9 @@ export class Bus {
           this.parts.dropped(subscriber.caller, 'gate-down')
           continue
         }
-        if (this.paths === 'ask' && !this.parts.canList(subscriber.caller, path)) continue
+        if (this.paths === 'ask' && !this.may(subscriber.caller, path, told.hears)) continue
       }
-      this.deliver(subscriber, topic, path)
+      this.deliver(subscriber, topic, path, told.fields)
     }
   }
 
@@ -247,9 +253,13 @@ export class Bus {
     this.parts.changed(subscriber.caller, 'ended', topics)
   }
 
+  private may(caller: Caller, path: string, hears: Told['hears']): boolean {
+    return hears === 'read' ? this.parts.canRead(caller, path) : this.parts.canList(caller, path)
+  }
+
   // Each event takes one of the subscriber's credits. Past them it is dropped and counted, like every event after it
   // until the subscriber catches up
-  private deliver(subscriber: Subscriber, topic: string, path: string | undefined): void {
+  private deliver(subscriber: Subscriber, topic: string, path: string | undefined, fields?: Readonly<Record<string, unknown>>): void {
     if (subscriber.missed === null && subscriber.sent - subscriber.acked >= this.parts.limit(subscriber.plugin, 'eventCredits')) {
       subscriber.missed = new Set()
     }
@@ -259,7 +269,7 @@ export class Bus {
       return
     }
     subscriber.sent++
-    this.push(subscriber, { v: VERSION, kind: 'event', seq: subscriber.sent, topic, ...(path !== undefined ? { path } : {}) })
+    this.push(subscriber, { ...fields, v: VERSION, kind: 'event', seq: subscriber.sent, topic, ...(path !== undefined ? { path } : {}) })
   }
 
   // One events.dropped for these topics, or for a subscriber past its credits the one it gets once it catches up

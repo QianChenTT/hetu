@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { Caller } from '../api/envelope.ts'
+import type { Caller, LockChange } from '../api/envelope.ts'
 import { defaultLimits, type LimitName } from '../api/limits.ts'
 import type { GuardableAction } from '../api/ids.ts'
 import type { Booted } from './boot/header.ts'
@@ -50,10 +50,10 @@ export type WireOptions = {
 }
 
 // The core modules made and held: each the real one unless a test hands its own, the luoshu publishing through publish
-// for its two topics alone and flood control counting by limit, the fixed values unless one is handed. Flood control and
-// the lock time on a clock no change of the wall clock moves
+// for its two topics alone, the lock its lock.changed, and flood control counting by limit, the fixed values unless one
+// is handed. Flood control and the lock time on a clock no change of the wall clock moves
 export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'installDir' | 'trash'> & Partial<CoreModulesOptions> & {
-  publish: (topic: string, path: string) => void
+  publish: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockChange) => void
   limit?: (plugin: string | null, name: LimitName) => number
 }): CoreModules {
   const { publish, limit, ...given } = options
@@ -62,7 +62,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     gate: given.gate ?? createGate(),
     grantRiskClassifier: given.grantRiskClassifier ?? createGrantRiskClassifier(),
     storage: given.storage ?? createStorage(),
-    luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish(publish) }),
+    luoshu: given.luoshu ?? createLuoshu({ publish: luoshuPublish((topic, path) => publish('luoshu', topic, path)) }),
     history: given.history ?? createHistory(),
     exec: given.exec ?? createExec(),
     floodControl: given.floodControl ?? createFloodControl({
@@ -71,7 +71,7 @@ export function buildModules(options: Pick<CoreModulesOptions, 'dataDir' | 'inst
     }),
     heartbeat: given.heartbeat ?? createHeartbeat(),
     securityView: given.securityView ?? createSecurityView(),
-    lock: given.lock ?? createLock({ clock: () => performance.now() }),
+    lock: given.lock ?? createLock({ clock: () => performance.now(), publish: (path, change) => publish('lock', 'changed', path, change) }),
   })
 }
 
@@ -107,7 +107,7 @@ export function wireCore(options: WireOptions): { pluginsManager: PluginsManager
     installDir: options.installDir,
     ...(options.trash !== undefined ? { trash: options.trash } : {}),
     ...options.modules,
-    publish: (topic, path) => parts.router?.publishCore('luoshu', topic, path),
+    publish: (owner, topic, path, fields) => parts.router?.publishCore(owner, topic, path, fields),
     limit: (plugin, name) => limits.of(plugin, name),
   })
   // The log failing is told to the plugins manager, which quits hetu to start it again. Windows hear the log's health

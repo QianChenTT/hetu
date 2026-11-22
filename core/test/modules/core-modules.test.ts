@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Caller } from '../../api/envelope.ts'
+import type { Caller, LockChange } from '../../api/envelope.ts'
 import type { Call, ExecView, Gate, GrantsSnapshot, Opening, Provider } from '../../api/policy-jobs.ts'
 import { moduleRequires, type CoreModulesOptions, type Handed, type StorageModule } from '../../backend/modules/header.ts'
 import { realModules } from '../modules-fakes.ts'
@@ -97,7 +97,7 @@ function fakes() {
   return { options, seen, throws, gate, storage, luoshu, history, exec, lock }
 }
 
-function made(options: Partial<CoreModulesOptions> & { publish?: (topic: string, path: string) => void } = {}) {
+function made(options: Partial<CoreModulesOptions> & { publish?: (owner: 'luoshu' | 'lock', topic: string, path: string, fields?: LockChange) => void } = {}) {
   return realModules({ dataDir, installDir, ...options })
 }
 
@@ -641,12 +641,17 @@ describe('the core modules', () => {
     })
   })
 
-  it('pass on only luoshu\'s two topics', async () => {
+  it('pass on only luoshu\'s two topics and the lock\'s lock.changed, each under its owner', async () => {
     const published: string[] = []
-    const modules = made({ publish: (topic, at) => published.push(`${topic} ${at}`), history: fakes().options.history })
+    const modules = made({
+      publish: (owner, topic, at, fields) => published.push(`${owner}.${topic} ${at}${fields === undefined ? '' : ` ${fields.locked}`}`),
+      history: fakes().options.history,
+    })
     await modules.start([], handing(notes).handed)
     expect(await ask(modules.provider('luoshu')!, 'luoshu.write', { path: 'a.md', text: 'hi' })).toMatchObject({ version: expect.any(String) })
-    expect(published).toEqual(['changed a.md'])
+    expect(await ask(modules.provider('lock')!, 'lock.set', { paths: ['a.md'], ms: 1000 })).toEqual({ ms: 1000 })
+    await new Promise(resolve => { setImmediate(resolve) })
+    expect(published).toEqual(['luoshu.changed a.md', 'lock.changed a.md true'])
     modules.close()
   })
 })

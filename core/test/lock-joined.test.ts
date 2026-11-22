@@ -162,6 +162,31 @@ describe('the lock module through the joined core', () => {
     expect((await windowAsk(router, 'lock.held', { paths: ['a.md', 'b.md'] })).result).toEqual({ paths: ['b.md'] })
   })
 
+  // The module's own publish as wireCore wires it, the gate here letting every plugin read every note
+  it('tells a subscribed plugin each note locked, renewed and cleared with its end in wall time and no holder', async () => {
+    const { runtime, router } = await joined()
+    const alpha = runtime.half('alpha')
+    const beta = runtime.half('beta')
+    expect(refusal(await ask(alpha, 'events.subscribe', { topics: ['lock.changed'] }))).toBe('ok')
+    const before = Date.now()
+    expect(refusal(await ask(beta, 'lock.set', { paths: ['a.md', 'new.md'], ms: 60_000 }, { onBehalf: 'client#1' }))).toBe('ok')
+    expect(refusal(await ask(beta, 'lock.set', { paths: ['a.md'], ms: 120_000 }, { onBehalf: 'client#1' }))).toBe('ok')
+    expect(refusal(await windowAsk(router, 'lock.clear', { paths: ['a.md'] }))).toBe('ok')
+    const told = () => alpha.inbox.filter(message => message.kind === 'event' && message.topic === 'lock.changed')
+    for (let waited = 0; told().length < 4 && waited < 3000; waited += 5) await tick(5)
+    const after = Date.now()
+    const events = told()
+    expect(events.map(({ path, locked }) => [path, locked])).toEqual([['a.md', true], ['new.md', true], ['a.md', true], ['a.md', false]])
+    expect(events.map(event => Object.keys(event).sort())).toEqual(Array(4).fill(['kind', 'locked', 'path', 'seq', 'topic', 'until', 'v']))
+    const ends = events.map(event => event.until as number | null)
+    for (const [i, ms] of [[0, 60_000], [1, 60_000], [2, 120_000]]) {
+      expect(ends[i]).toBeGreaterThanOrEqual(before + ms - 1)
+      expect(ends[i]).toBeLessThanOrEqual(after + ms + 1)
+    }
+    expect(ends[3]).toBeNull()
+    expect(JSON.stringify(events)).not.toMatch(/client|beta/)
+  })
+
   it('lets every write past with the lock switched off, as if its step did not exist', async () => {
     const { runtime, pluginsManager, folder } = await joined({ off: ['lock'], lock: breaking() })
     expect(pluginsManager.stopped()).toBe(null)

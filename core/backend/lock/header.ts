@@ -1,3 +1,4 @@
+import type { LockChange } from '../../api/envelope.ts'
 import type { Guard, Opening, Provider } from '../../api/policy-jobs.ts'
 
 // What the lock module provides: note locks by path, holder and expiry, the provider serving lock.* and the guard that
@@ -22,5 +23,7 @@ export type LockRole = { open(opening: Opening): void }
 
 export type Lock = { readonly provider: Provider, readonly guard: Guard, readonly role: LockRole }
 
-// A clock no change of the wall clock moves
-export type LockOptions = { clock(): number }
+// clock is one no change of the wall clock moves, which every end is kept on. wall turns an end to the time a plugin
+// reads, Date.now() unless named. publish is the router's for lock.changed, told once the step that noticed the change
+// ended, so no bus work runs inside a lock action's step or the guard's
+export type LockOptions = { clock(): number, wall?(): number, publish?(path: string, change: LockChange): void }
