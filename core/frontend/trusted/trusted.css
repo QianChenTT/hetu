@@ -93,3 +93,39 @@ label {
 .installing p {
   overflow-wrap: anywhere;
 }
+
+.startup {
+  padding: 12px 16px;
+  border: 1px solid #b9c6d3;
+  background: #f1f5f9;
+}
+
+.startup h2 {
+  margin-top: 0;
+}
+
+.startup h3 {
+  margin: 12px 0 4px;
+  font-size: 15px;
+}
+
+.startup p {
+  margin: 4px 0;
+}
+
+.done {
+  color: #2d6a2d;
+}
+
+.menu {
+  margin-bottom: 12px;
+}
+
+.menu summary {
+  cursor: pointer;
+}
+
+.install-controls input {
+  width: 24em;
+  max-width: 100%;
+}

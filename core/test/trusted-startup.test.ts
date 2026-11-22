@@ -1,0 +1,91 @@
+import { describe, expect, it } from 'vitest'
+import type { ListedPlugin, SecurityList } from '../api/actions.ts'
+import { layoutApproved, SUGGESTED_LINK } from '../frontend/trusted/startup.ts'
+import { screen, TrustedPage, type Screen } from '../frontend/trusted/view.ts'
+
+const calm = (over: Partial<SecurityList> = {}): SecurityList => ({
+  plugins: [],
+  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
+  limits: { all: {}, plugins: {} },
+  luoshu: null,
+  requests: [],
+  identities: [],
+  stopped: null,
+  ...over,
+})
+
+const plugin = (over: Partial<ListedPlugin>): ListedPlugin => ({
+  id: 'search', from: 'folder', place: 'sandboxed', state: 'ready', reason: null, security: false, on: true, items: [], class: 1,
+  ...over,
+})
+const layout = (over: Partial<ListedPlugin> = {}) => plugin({ id: 'layout', items: [{ capability: { type: 'ui.layout' }, off: false, firstUse: false }], ...over })
+const found = (id: string) => plugin({ id, state: 'found', reason: 'new', on: false, class: null })
+
+describe('the startup screen', () => {
+  it('opens on four steps at first start, none done, with the release link as a suggestion', () => {
+    const startup = screen(calm()).startup
+    expect(startup?.steps.map(step => [step.title, step.done])).toEqual([
+      ['Pick the notes folder', null], ['Install the plugins you want', null], ['Approve them', null], ['What a grant is', null],
+    ])
+    expect(startup?.steps.map(step => step.offers)).toEqual(['folder', 'install', null, null])
+    expect(startup?.suggested).toBe('https://github.com/QianChenTT/hetu-plugins')
+    expect(SUGGESTED_LINK).toBe(startup?.suggested)
+  })
+
+  it('says what each step has done so far', () => {
+    const startup = screen(calm({ luoshu: '/Users/someone/notes', plugins: [found('tags'), plugin({ id: 'search' }), plugin({ id: 'gate', from: 'core', place: 'core', class: null })] })).startup
+    expect(startup?.steps.map(step => step.done)).toEqual(['Notes folder: /Users/someone/notes', '2 plugins in the plugin folder', '1 approved', null])
+    const one = screen(calm({ plugins: [found('tags')] })).startup
+    expect(one?.steps.map(step => step.done)).toEqual([null, '1 plugin in the plugin folder', null, null])
+  })
+
+  it('stays until an approved plugin holds ui.layout, a layout only found or one from the core not counting', () => {
+    expect(layoutApproved(calm({ plugins: [layout()] }))).toBe(true)
+    expect(screen(calm({ plugins: [layout()] })).startup).toBeNull()
+    expect(layoutApproved(calm({ plugins: [layout({ state: 'found', reason: 'new', on: false })] }))).toBe(false)
+    expect(layoutApproved(calm({ plugins: [layout({ from: 'core', place: 'core' })] }))).toBe(false)
+    expect(layoutApproved(calm({ plugins: [plugin({})] }))).toBe(false)
+    // Approved and switched off or its item off still counts as approved
+    expect(layoutApproved(calm({ plugins: [layout({ on: false, state: 'off', items: [{ capability: { type: 'ui.layout' }, off: true, firstUse: false }] })] }))).toBe(true)
+  })
+
+  it('draws nothing of itself while hetu is stopped', () => {
+    expect(screen(calm({ stopped: { control: 'log', why: 'failed', reason: 'log-failing', again: false } })).startup).toBeNull()
+  })
+
+  it('shows as asked or closed for now whatever a layout says', () => {
+    expect(screen(calm({ plugins: [layout()] }), null, 'shown').startup).not.toBeNull()
+    expect(screen(calm(), null, 'closed').startup).toBeNull()
+    expect(screen(calm(), null, 'auto').startup).not.toBeNull()
+  })
+})
+
+describe('the startup screen on the page', () => {
+  function started(list: SecurityList) {
+    const sent: Record<string, unknown>[] = []
+    let listener: ((message: unknown) => void) | null = null
+    const drawn: Screen[] = []
+    const page = new TrustedPage({ send: message => sent.push(message as Record<string, unknown>), listen: next => { listener = next } }, shown => drawn.push(shown))
+    page.start()
+    listener!({ v: 1, kind: 'reply', id: sent[1].id, ok: true, result: list })
+    return { page, drawn, sent }
+  }
+
+  it('closes for now and shows again from the menu, asking the core for nothing', () => {
+    const { page, drawn, sent } = started(calm())
+    expect(drawn.at(-1)?.startup).not.toBeNull()
+    const before = sent.length
+    page.closeStartup()
+    expect(drawn.at(-1)?.startup).toBeNull()
+    page.showStartup()
+    expect(drawn.at(-1)?.startup).not.toBeNull()
+    expect(sent.length).toBe(before)
+  })
+
+  it('shows again from the menu once a layout is approved', () => {
+    const { page, drawn } = started(calm({ plugins: [layout()] }))
+    expect(drawn.at(-1)?.startup).toBeNull()
+    page.showStartup()
+    expect(drawn.at(-1)?.startup).not.toBeNull()
+  })
+})

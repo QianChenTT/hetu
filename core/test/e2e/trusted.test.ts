@@ -488,3 +488,29 @@ describe('a plugin', () => {
     expect(await visibleWindows(app)).toEqual(['hetu://editor/'])
   })
 })
+
+// hetu ships no plugin, so the trusted window opens on its four steps until a layout is approved
+describe('the startup screen', () => {
+  it('shows its four steps above the rest with the release link to edit, closes for now and shows again from the menu', async () => {
+    const app = await start(await data(), await install())
+    const editor = await editorPage(app)
+    await tick(PAST_DELAY)
+    await editor.getByRole('button', { name: 'Plugins and security' }).click()
+    const page = await trustedPage(app)
+    const startup = page.getByRole('region', { name: 'Start with hetu in four steps' })
+    await until(async () => await startup.count() === 1)
+    expect(await startup.getByRole('heading', { level: 3 }).allInnerTexts()).toEqual([
+      'Pick the notes folder', 'Install the plugins you want', 'Approve them', 'What a grant is',
+    ])
+    expect(await startup.getByLabel('or from a GitHub link, a suggestion to edit or replace').inputValue()).toBe('https://github.com/QianChenTT/hetu-plugins')
+    // Above the plugin list, not over it
+    expect(await page.locator('#root > section').first().getAttribute('class')).toBe('startup')
+    expect(await page.getByRole('heading', { name: 'Plugins', exact: true }).count()).toBe(1)
+    await tick(PAST_DELAY)
+    await startup.getByRole('button', { name: 'Close for now' }).click()
+    await until(async () => await startup.count() === 0)
+    await page.getByText('Menu', { exact: true }).click()
+    await page.getByRole('button', { name: 'Show the startup screen again' }).click()
+    await until(async () => await startup.count() === 1)
+  })
+})

@@ -1,6 +1,7 @@
 import type { Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import type { InstallBox } from './install.ts'
+import type { Startup } from './startup.ts'
 import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
 
 // The preload's bridge, there only in the window's top frame
@@ -126,11 +127,46 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
   return section
 }
 
+// The page's own menu, which shows the startup screen again
+function menu(page: TrustedPage): HTMLDetailsElement {
+  const made = element('details')
+  made.className = 'menu'
+  made.append(element('summary', 'Menu'), button('Show the startup screen again', () => page.showStartup()))
+  return made
+}
+
+// The four steps above the rest, each with what it has done and the control it offers, then Close for now
+function startupSection(page: TrustedPage, startup: Startup): HTMLElement {
+  const section = element('section')
+  section.className = 'startup'
+  const heading = element('h2', 'Start with hetu in four steps')
+  heading.id = 'startup-heading'
+  section.setAttribute('aria-labelledby', heading.id)
+  const steps = element('ol')
+  for (const step of startup.steps) {
+    const item = element('li')
+    item.append(element('h3', step.title), ...step.lines.map(line => element('p', line)))
+    if (step.done !== null) {
+      const done = element('p', step.done)
+      done.className = 'done'
+      item.append(done)
+    }
+    if (step.offers === 'folder') item.append(button('Pick a folder', () => page.pickFolder()))
+    if (step.offers === 'install') item.append(installControls(page, 'startup', 'or from a GitHub link, a suggestion to edit or replace', startup.suggested))
+    steps.append(item)
+  }
+  section.append(heading, steps, button('Close for now', () => page.closeStartup()))
+  return section
+}
+
 function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   const root = document.getElementById('root')
   if (root === null) return
   confirms.clear()
   const parts: HTMLElement[] = []
+
+  if (shown.stopped === null) parts.push(menu(page))
+  if (shown.startup !== null) parts.push(startupSection(page, shown.startup))
 
   if (shown.stopped !== null) {
     const section = element('section')
