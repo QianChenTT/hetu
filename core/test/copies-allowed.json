@@ -331,10 +331,10 @@
         "core/backend/modules/header.ts",
         "core/backend/modules/modules.ts"
       ],
-      "hash": "beac8d99d4a56024",
+      "hash": "bbdf56a48e977bca",
       "at": [
-        "core/backend/modules/header.ts:5-9",
-        "core/backend/modules/modules.ts:6-10"
+        "core/backend/modules/header.ts:5-10",
+        "core/backend/modules/modules.ts:6-11"
       ],
       "judged": "not yet"
     },
@@ -345,8 +345,8 @@
       ],
       "hash": "86eab647647beac4",
       "at": [
-        "core/backend/plugins-manager/base.ts:393-400",
-        "core/backend/plugins-manager/base.ts:428-432"
+        "core/backend/plugins-manager/base.ts:395-402",
+        "core/backend/plugins-manager/base.ts:430-434"
       ],
       "judged": "not yet"
     },

@@ -187,6 +187,7 @@ describe('each core module\'s Node built-ins', () => {
       heartbeat: [],
       recording: [],
       'security-view': [],
+      lock: ['node:crypto', 'node:fs/promises', 'node:path'],
     })
     expect(Object.keys(moduleFolders).sort()).toEqual([...coreModuleIds].sort())
   })
