@@ -253,12 +253,13 @@ export class CoreModules implements Holder {
     return this.tell(before, null, ['gate', 'exec'])
   }
 
-  // A new notes folder: the luoshu, history and the lock are handed it. Answers whether a module's state changed with it
+  // A new notes folder: the lock, the luoshu and history are handed it, the lock first so it tells the old folder's
+  // locks unlocked before any module takes the new one. Answers whether a module's state changed with it
   picked(): boolean {
     const before = this.states()
+    this.push('lock')
     this.push('luoshu')
     this.push('history')
-    this.push('lock')
     return this.tell(before, null, ['luoshu', 'history', 'lock'])
   }
 

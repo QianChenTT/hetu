@@ -423,7 +423,8 @@ describe('lock.changed', () => {
   })
 
   // Every lock it held named a note of the folder before, so each is told unlocked, expired ones not yet told included
-  it('tells every lock another folder frees unlocked and nothing when the same folder opens again', async () => {
+  // At once, while the grants that applied to the old folder's notes still stand
+  it('tells every lock another folder frees unlocked at once and nothing when the same folder opens again', async () => {
     const { lock, told, pass } = made()
     await ask(lock, 'lock.set', { paths: ['a.md'], ms: 1000 }, agent('claude-code#1'))
     await ask(lock, 'lock.set', { paths: ['b.md'], ms: 60_000 }, { root: editor })
@@ -435,8 +436,9 @@ describe('lock.changed', () => {
     await flushed()
     expect(told).toEqual([])
     lock.role.open({ ...opening, folder: path.join(base, 'data') })
-    await flushed()
     expect(told).toEqual([unlocked('a.md'), unlocked('b.md')])
+    await flushed()
+    expect(told).toHaveLength(2)
   })
 
   it('answers every lock action as before when its publish throws', async () => {

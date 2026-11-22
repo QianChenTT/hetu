@@ -277,6 +277,16 @@ describe('the core modules', () => {
     expect(moduleRequires.lock).toEqual(['luoshu'])
   })
 
+  // The lock tells the old folder's locks unlocked before any module takes the new folder
+  it('hand the lock a folder picked before the luoshu and history take it', async () => {
+    const { options, seen } = fakes()
+    const modules = made(options)
+    await modules.start([], handing(notes).handed)
+    seen.length = 0
+    modules.picked()
+    expect(seen).toEqual(['lock.open', 'luoshu.open', 'history.open'])
+  })
+
   it('hand the lock the notes folder at start and with each folder picked', async () => {
     const { options } = fakes()
     const opened: Opening[] = []

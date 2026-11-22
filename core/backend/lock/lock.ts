@@ -181,11 +181,11 @@ export function createLock(options: LockOptions): Lock {
       },
     },
     role: {
-      // Another folder or none frees every lock, since its paths name other notes. Each is told unlocked, an expired one
-      // not yet told included, since nothing in the folder opened is locked
+      // Another folder or none frees every lock, since its paths name other notes. Each is told unlocked at once, an
+      // expired one not yet told included, while the grants that applied to the old folder's notes still stand
       open(next: Opening): void {
         if (opening?.folder !== next.folder) {
-          for (const entry of table.values()) tellUnlocked(entry)
+          for (const entry of table.values()) tellUnlocked(entry, true)
           table.clear()
         }
         opening = next.folder === null ? null : { ...next, folder: next.folder }
