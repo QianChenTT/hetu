@@ -57,9 +57,10 @@ function fakes(options: { switches?: string[], lock?: boolean } = {}) {
 }
 
 describe('before ready', () => {
-  it('refuses the debugging switches, the sandbox off and the switches that weaken the renderers', () => {
+  it('refuses the debugging switches, the sandbox off, the switches that weaken the renderers and those that undo the proxy or the resolver rule', () => {
     expect([...REFUSED_SWITCHES].sort()).toEqual([
-      'disable-web-security', 'gpu-launcher', 'js-flags', 'no-sandbox', 'remote-debugging-pipe', 'remote-debugging-port', 'renderer-cmd-prefix',
+      'disable-web-security', 'gpu-launcher', 'host-resolver-rules', 'js-flags', 'no-proxy-server', 'no-sandbox', 'proxy-auto-detect',
+      'proxy-bypass-list', 'proxy-pac-url', 'proxy-server', 'remote-debugging-pipe', 'remote-debugging-port', 'renderer-cmd-prefix',
     ])
   })
 

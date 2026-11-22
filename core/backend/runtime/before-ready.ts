@@ -6,10 +6,13 @@ import { shimArgv } from './shim.ts'
 
 // No fuse turns these off. The two debugging switches open the DevTools handler once main has run, no-sandbox turns the
 // renderers' sandbox off and ELECTRON_DISABLE_SANDBOX sets it with no argument at all, and the rest weaken what the
-// renderers hold to or run something of the caller's. A locked build refuses every argument besides, so these are a
-// second line through Chromium's own parse, which finds a switch however it was spelled
+// renderers hold to or run something of the caller's. The proxy switches and host-resolver-rules would undo the
+// sessions' proxy to nowhere or the rule that resolves no host name. A locked build refuses every argument besides, so
+// these are a second line through Chromium's own parse, which finds a switch however it was spelled
+// https://www.electronjs.org/docs/latest/api/command-line-switches
 export const REFUSED_SWITCHES = Object.freeze([
   'remote-debugging-port', 'remote-debugging-pipe', 'no-sandbox', 'disable-web-security', 'js-flags', 'renderer-cmd-prefix', 'gpu-launcher',
+  'no-proxy-server', 'proxy-server', 'proxy-pac-url', 'proxy-auto-detect', 'proxy-bypass-list', 'host-resolver-rules',
 ])
 
 export const SCHEME = 'hetu'
