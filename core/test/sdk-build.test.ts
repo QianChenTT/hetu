@@ -1,5 +1,6 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -59,6 +60,33 @@ export default definePlugin({ start() { (globalThis as { started?: boolean }).st
     port.onmessage?.({ data: JSON.stringify({ v: 1, kind: 'init', id: 'sample', incarnation: 1, api: 1, deps: {}, lastStop: null, previousVersion: null }) })
     await vi.waitFor(() => expect(posted).toContain('{"v":1,"kind":"ready"}'))
     expect(context.started).toBe(true)
+  })
+
+  it('writes no part of the folder\'s absolute path into any file it emits', async () => {
+    const sdk = path.join(import.meta.dirname, '..', 'sdk', 'index.ts').split(path.sep).join('/')
+    const base = await folder({})
+    const segments = [`builder-folder-${randomUUID()}`, `plugin-source-${randomUUID()}`]
+    const dir = path.join(base, ...segments)
+    const files = {
+      'src/worker.ts': `import { definePlugin } from '${sdk}'\nimport { twice } from './twice.ts'\nexport default definePlugin({ start() { twice(1) } })\n`,
+      'src/twice.ts': 'export const twice = (n: number): number => n * 2\n',
+      'src/view.ts': "import { twice } from './twice.ts'\nconsole.log(twice(2))\n",
+    }
+    for (const [name, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(dir, name)), { recursive: true })
+      await writeFile(path.join(dir, name), text)
+    }
+    const outputs = await buildPlugin(dir, {
+      entries: { 'dist/worker.js': 'src/worker.ts', 'dist/view.js': 'src/view.ts' },
+      workers: ['dist/worker.js'],
+    })
+    const emitted = await readdir(path.join(dir, 'dist'), { recursive: true, withFileTypes: true })
+    const written = await Promise.all(emitted.filter(entry => entry.isFile()).map(entry => readFile(path.join(entry.parentPath, entry.name), 'utf8')))
+    expect(written).toHaveLength(2)
+    const parts = [dir, base, tmpdir(), homedir()].flatMap(full => [full, full.split(path.sep).join('/'), full.split(path.sep).join('\\\\')])
+    for (const text of [...outputs.map(output => output.text), ...outputs.flatMap(output => output.inputs), ...written]) {
+      for (const part of [...parts, ...segments, path.basename(base)]) expect(text).not.toContain(part)
+    }
   })
 
   it('refuses a worker that imports a Node built-in, through a dependency too', async () => {

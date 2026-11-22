@@ -28,16 +28,17 @@ const WORKER = 'hetu-worker:'
 const sdkWorker = path.join(import.meta.dirname, '..', 'worker.ts')
 
 // A worker entry is the plugin's own module with runInWorker around it, so the bundle starts itself on the port the
-// worker host page hands it and the plugin's code only exports definePlugin
+// worker host page hands it and the plugin's code only exports definePlugin. The wrapper's path is the source's,
+// relative to the plugin's folder with / between parts, since esbuild writes it into the bundle's comments and metafile
 const runsInWorker = (root: string): Plugin => ({
   name: 'hetu-runs-in-worker',
   setup(builder) {
     builder.onResolve({ filter: /^hetu-worker:/ }, args => ({
-      path: path.resolve(root, args.path.slice(WORKER.length)),
+      path: path.relative(root, path.resolve(root, args.path.slice(WORKER.length))).split(path.sep).join('/'),
       namespace: 'hetu-worker',
     }))
     builder.onLoad({ filter: /.*/, namespace: 'hetu-worker' }, args => ({
-      contents: `import plugin from ${JSON.stringify(args.path)}\nimport { runInWorker } from ${JSON.stringify(sdkWorker)}\nrunInWorker(plugin)\n`,
+      contents: `import plugin from ${JSON.stringify(path.resolve(root, args.path))}\nimport { runInWorker } from ${JSON.stringify(sdkWorker)}\nrunInWorker(plugin)\n`,
       resolveDir: root,
       loader: 'ts',
     }))
