@@ -1,5 +1,6 @@
 import type { Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
+import type { InstallBox } from './install.ts'
 import { type Bridge, choiceChange, type Choice, limitChange, type PluginAction, type Screen, type Switch, TrustedPage } from './view.ts'
 
 // The preload's bridge, there only in the window's top frame
@@ -52,6 +53,78 @@ window.addEventListener('focus', () => {
 })
 // A new request drawn under Confirm waits the delay too, as the core does, so a click aimed at the one before can't land
 let drawnRequest: string | null = null
+let drawnStaging: string | null = null
+
+// What was typed in each link field, kept across draws
+const typedLinks = new Map<string, string>()
+
+// The Install button's controls: main's dialog for a zip or a folder, or a link whose release the core looks up
+function installControls(page: TrustedPage, field: string, words: string, suggested: string): HTMLDivElement {
+  const controls = element('div')
+  controls.className = 'install-controls'
+  const label = element('label', `${words} `)
+  const link = element('input')
+  link.type = 'url'
+  link.autocomplete = 'off'
+  link.spellcheck = false
+  link.value = typedLinks.get(field) ?? suggested
+  link.addEventListener('input', () => typedLinks.set(field, link.value))
+  label.append(link)
+  controls.append(
+    button('Install from a zip', () => page.installer.pick('zip')), button('Install from a folder', () => page.installer.pick('folder')),
+    label, button('Find its release', () => page.installer.find(link.value)),
+  )
+  return controls
+}
+
+// A release's zips to pick from, or the plugins found with a box to tick each and its grants as sentences, under one
+// Confirm that waits the delay like a request's
+function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
+  const section = element('section')
+  section.className = 'request installing'
+  const heading = element('h1', box.step === 'assets' ? box.heading : 'Install these plugins')
+  heading.id = 'installing-heading'
+  section.setAttribute('aria-labelledby', heading.id)
+  section.append(heading)
+  if (box.step === 'assets') {
+    for (const asset of box.assets) section.append(button(asset.line, () => page.installer.asset(asset.name)))
+    section.append(button('Cancel', () => page.installer.cancel()))
+    return section
+  }
+  if (box.staged !== drawnStaging) armedAt = Math.max(armedAt, performance.now() + INPUT_DELAY_MS)
+  drawnStaging = box.staged
+  const unsigned = element('p', box.unsigned)
+  unsigned.className = 'unsigned'
+  section.append(element('p', box.source), unsigned)
+  for (const row of box.plugins) {
+    const group = element('fieldset')
+    const legend = element('legend')
+    const label = element('label')
+    const tick = element('input')
+    tick.type = 'checkbox'
+    tick.checked = row.picked
+    tick.disabled = row.problem !== null
+    tick.addEventListener('change', () => page.installer.tick(row.id, tick.checked))
+    label.append(tick, document.createTextNode(` ${row.label}`))
+    legend.append(label)
+    const grants = element('ul')
+    grants.setAttribute('aria-label', `What ${row.id} may do`)
+    for (const grant of row.grants) grants.append(element('li', grant))
+    group.append(legend, element('p', row.line), grants)
+    if (row.problem !== null) {
+      const why = element('p', row.problem)
+      why.className = 'note'
+      group.append(why)
+    }
+    section.append(group)
+  }
+  section.append(element('p', 'Install copies each plugin ticked into the plugin folder and approves it with what it asks for'))
+  const confirm = button('Install', () => page.installer.install())
+  confirms.add(confirm)
+  typedOk.set(confirm, () => box.ready)
+  section.append(confirm, button('Cancel', () => page.installer.cancel()))
+  return section
+}
 
 function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   const root = document.getElementById('root')
@@ -109,6 +182,9 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
     parts.push(section)
   }
 
+  if (shown.installing !== null) parts.push(installSection(page, shown.installing))
+  else drawnStaging = null
+
   if (note !== null) {
     const shownNote = element('p', note)
     shownNote.className = 'note'
@@ -118,7 +194,7 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
   if (shown.stopped === null) {
     const list = element('section')
     list.className = 'plugins'
-    list.append(element('h2', 'Plugins'))
+    list.append(element('h2', 'Plugins'), installControls(page, 'list', 'or from a GitHub link', ''))
     for (const plugin of shown.plugins) {
       const row = element('div')
       row.className = 'plugin'

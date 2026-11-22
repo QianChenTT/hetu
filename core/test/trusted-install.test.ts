@@ -1,0 +1,277 @@
+import { describe, expect, it } from 'vitest'
+import type { SecurityList, Staged, StagedPlugin } from '../api/actions.ts'
+import { capabilityTypes, type Capability } from '../api/capabilities.ts'
+import { grantSentence } from '../api/trusted.ts'
+import { installBox } from '../frontend/trusted/install.ts'
+import { TrustedPage, type Screen } from '../frontend/trusted/view.ts'
+
+const calm = (): SecurityList => ({
+  plugins: [],
+  switches: { devMode: [], execAnyCommand: [], skipVerification: false, allowUnsigned: [], confirmOff: false },
+  limits: { all: {}, plugins: {} },
+  luoshu: null,
+  requests: [],
+  identities: [],
+  stopped: null,
+})
+
+// One capability of each type, scoped where the type takes a scope
+const one: Record<Capability['type'], Capability> = {
+  'luoshu.read': { type: 'luoshu.read', paths: ['**'] },
+  'luoshu.write': { type: 'luoshu.write', paths: ['inbox/**'] },
+  'luoshu.list': { type: 'luoshu.list', paths: ['**'] },
+  'net.fetch': { type: 'net.fetch', hosts: ['api.example.com'] },
+  'ui.view': { type: 'ui.view' },
+  'ui.layout': { type: 'ui.layout' },
+  'ui.decoration': { type: 'ui.decoration' },
+  'ui.command': { type: 'ui.command' },
+  'ui.keys': { type: 'ui.keys' },
+  'ui.edit': { type: 'ui.edit', paths: ['**'] },
+  'ui.read': { type: 'ui.read', paths: ['**'] },
+  'events.subscribe': { type: 'events.subscribe', topics: ['notes.saved'] },
+  storage: { type: 'storage' },
+  history: { type: 'history', access: 'read', paths: ['**'] },
+  exec: { type: 'exec', commands: [['git', 'status']], env: [] },
+  'plugin.call': { type: 'plugin.call', targets: ['notes'] },
+  'guard.hook': { type: 'guard.hook' },
+  'log.read': { type: 'log.read' },
+  'lock.set': { type: 'lock.set', paths: ['**'] },
+}
+
+describe('a grant as a plain sentence', () => {
+  it('has a sentence for every capability type, none of which names the type', () => {
+    for (const type of capabilityTypes) {
+      const sentence = grantSentence(one[type])
+      expect(sentence, type).toMatch(/^[A-Z]/)
+      expect(sentence, type).not.toContain(type)
+    }
+  })
+
+  it('says all your notes for **, quotes any other scope as data and says no notes for none', () => {
+    expect(grantSentence({ type: 'luoshu.read', paths: ['**'] })).toBe('Read all your notes')
+    expect(grantSentence({ type: 'luoshu.write', paths: ['inbox/**', 'say "hi"/*.md'] }))
+      .toBe('Change, move and delete the notes at "inbox/**", "say \\"hi\\"/*.md"')
+    expect(grantSentence({ type: 'luoshu.list', paths: [] })).toBe('See the names of no notes')
+    expect(grantSentence({ type: 'ui.read', paths: ['**', 'a.md'] })).toBe('Read all your notes while you have them open')
+  })
+
+  it('tells history\'s reading from its saving and names each command, host, topic and plugin in quotes', () => {
+    expect(grantSentence({ type: 'history', access: 'read', paths: ['a.md'] })).toBe('Read the earlier versions of the notes at "a.md"')
+    expect(grantSentence({ type: 'history', access: 'commit', paths: ['**'] })).toBe('Save versions of all your notes into hetu’s history')
+    expect(grantSentence({ type: 'exec', commands: [['git', 'status'], ['git', 'log']], env: ['HOME'] }))
+      .toBe('Run the commands ["git","status"], ["git","log"] with "HOME" from your environment')
+    expect(grantSentence({ type: 'net.fetch', hosts: ['api.example.com'] })).toBe('Reach "api.example.com" over the network')
+    expect(grantSentence({ type: 'net.fetch', hosts: ['*'] })).toBe('Reach any site over the network')
+    expect(grantSentence({ type: 'events.subscribe', topics: ['notes.saved'] })).toBe('Hear the events "notes.saved"')
+    expect(grantSentence({ type: 'plugin.call', targets: ['notes', 'search'] })).toBe('Call the plugins "notes", "search"')
+  })
+})
+
+const found = (over: Partial<StagedPlugin>): StagedPlugin => ({
+  id: 'search', name: 'Search', version: '1.2.0', capabilities: [{ type: 'luoshu.read', paths: ['**'] }], class: 1, installed: null, problem: null,
+  ...over,
+})
+
+describe('what the install box draws', () => {
+  const staging = (plugins: StagedPlugin[]) => ({ step: 'found' as const, staged: 's1', tag: null, picked: new Set(['search']), plugins, source: { kind: 'zip' as const, path: 'C:\\plugins.zip' } })
+
+  it('draws nothing while nothing is being installed', () => {
+    expect(installBox(null)).toBeNull()
+  })
+
+  it('names the source and that the plugins are unsigned, then each plugin with its grants as sentences', () => {
+    const box = installBox(staging([found({}), found({ id: 'layout', name: 'Layout', version: '0.3.0', capabilities: [{ type: 'ui.layout' }], class: 0 })]))
+    expect(box).toMatchObject({
+      step: 'found',
+      source: 'From the zip "C:\\\\plugins.zip"',
+      unsigned: 'Unsigned: nothing proves who made these plugins. Install only what comes from a source you trust',
+      ready: true,
+    })
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins).toEqual([
+      { id: 'search', label: '"Search" (search), version 1.2.0', line: 'class 1, Reader', grants: ['Read all your notes'], problem: null, picked: true },
+      {
+        id: 'layout', label: '"Layout" (layout), version 0.3.0', line: 'class 0, Contained',
+        grants: ['Lay out the whole editor window once you pick it as the layout'], problem: null, picked: false,
+      },
+    ])
+  })
+
+  it('says what a plugin replaces, a class it couldn’t give, a plugin that asks for nothing and why one can’t be installed', () => {
+    const box = installBox(staging([
+      found({ installed: '1.0.0', class: null, capabilities: [] }),
+      found({ id: 'odd', name: null, version: null, capabilities: [], class: null, problem: 'api' }),
+    ]))
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins[0]).toMatchObject({ line: 'class unknown, counted as 4 · replaces version 1.0.0', grants: ['It asks for nothing'] })
+    expect(box.plugins[1]).toMatchObject({ label: 'odd', problem: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed', picked: false })
+  })
+
+  it('isn’t ready with nothing ticked and names a link’s asset with its release', () => {
+    const box = installBox({ ...staging([found({})]), picked: new Set(), tag: 'v1.0.0', source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } })
+    expect(box).toMatchObject({ ready: false, source: 'From "plugins.zip" in the release "v1.0.0" of "https://github.com/someone/plugins"' })
+  })
+
+  it('lists a release\'s zip assets with their sizes', () => {
+    expect(installBox({ step: 'assets', link: 'https://github.com/someone/plugins', tag: 'v2', assets: [{ name: 'a.zip', bytes: 2048 }, { name: 'b.zip', bytes: 3 * 1024 * 1024 }] })).toEqual({
+      step: 'assets',
+      heading: 'Pick a zip from the release "v2" of "https://github.com/someone/plugins"',
+      assets: [{ name: 'a.zip', line: '"a.zip", 2 KB' }, { name: 'b.zip', line: '"b.zip", 3.0 MB' }],
+    })
+  })
+})
+
+// The bridge the preload gives the page, as trusted-view.test.ts has it
+function bridge() {
+  const sent: Record<string, unknown>[] = []
+  let listener: ((message: unknown) => void) | null = null
+  return {
+    sent,
+    bridge: { send: (message: unknown) => sent.push(message as Record<string, unknown>), listen: (next: (message: unknown) => void) => { listener = next } },
+    hears: (message: unknown) => listener?.(message),
+  }
+}
+
+const replyTo = (message: Record<string, unknown>, result: unknown) => ({ v: 1, kind: 'reply', id: message.id, ok: true, result })
+const refuse = (message: Record<string, unknown>, code: string) => ({ v: 1, kind: 'reply', id: message.id, ok: false, refusal: { code, action: message.action } })
+
+describe('the install flow against a fake main', () => {
+  function started() {
+    const made = bridge()
+    const drawn: { screen: Screen, note: string | null }[] = []
+    const page = new TrustedPage(made.bridge, (shown, note) => drawn.push({ screen: shown, note }))
+    page.start()
+    made.hears(replyTo(made.sent[1], calm()))
+    // Answers the last call sent, then the list the page reads after it if it reads one
+    const answer = (result: unknown) => {
+      made.hears(replyTo(made.sent.at(-1)!, result))
+      if (made.sent.at(-1)?.action === 'security.list') made.hears(replyTo(made.sent.at(-1)!, calm()))
+    }
+    const last = () => drawn.at(-1)!
+    return { ...made, page, drawn, answer, last }
+  }
+  const staged = (plugins: StagedPlugin[]): Staged => ({ staged: 's1', source: { kind: 'zip', path: '/tmp/p.zip' }, plugins })
+
+  it('picks a zip in main\'s dialog, stages it and draws what was found with the plugins that can install ticked', () => {
+    const { sent, page, answer, last } = started()
+    page.installer.pick('zip')
+    expect(sent.at(-1)).toMatchObject({ action: 'app.pickPlugins', args: { source: 'zip' } })
+    answer('/tmp/p.zip')
+    expect(sent.at(-1)).toMatchObject({ action: 'core.stage', args: { source: { kind: 'zip', path: '/tmp/p.zip' } } })
+    answer(staged([found({}), found({ id: 'bad', problem: 'invalid' })]))
+    const box = last().screen.installing
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins.map(row => [row.id, row.picked])).toEqual([['search', true], ['bad', false]])
+  })
+
+  it('asks for nothing more when the dialog was cancelled', () => {
+    const { sent, page, answer } = started()
+    page.installer.pick('folder')
+    answer(null)
+    expect(sent.at(-1)).toMatchObject({ action: 'app.pickPlugins', args: { source: 'folder' } })
+  })
+
+  it('stages a link\'s one zip at once and lists several for the human to pick', () => {
+    const one = started()
+    one.page.installer.find('  https://github.com/someone/plugins ')
+    expect(one.sent.at(-1)).toMatchObject({ action: 'core.findRelease', args: { link: 'https://github.com/someone/plugins' } })
+    one.answer({ tag: 'v1', assets: [{ name: 'plugins.zip', bytes: 10 }] })
+    expect(one.sent.at(-1)).toMatchObject({ action: 'core.stage', args: { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } } })
+
+    const two = started()
+    two.page.installer.find('https://github.com/someone/plugins')
+    two.answer({ tag: 'v1', assets: [{ name: 'a.zip', bytes: 10 }, { name: 'b.zip', bytes: 10 }] })
+    expect(two.last().screen.installing).toMatchObject({ step: 'assets' })
+    two.page.installer.asset('b.zip')
+    expect(two.sent.at(-1)).toMatchObject({ action: 'core.stage', args: { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'b.zip' } } })
+    two.answer({ staged: 's2', source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'b.zip' }, plugins: [found({})] })
+    expect(two.last().screen.installing).toMatchObject({ source: 'From "b.zip" in the release "v1" of "https://github.com/someone/plugins"' })
+  })
+
+  it('says in plain words why a link or a source gave nothing, and why an empty link asks for nothing', () => {
+    const { sent, page, answer, last } = started()
+    page.installer.find('https://example.com/x')
+    answer({ problem: 'not-github' })
+    expect(last()).toMatchObject({ note: 'That isn’t a link to a GitHub repository or release', screen: { installing: null } })
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer({ problem: 'same-id' })
+    expect(last().note).toBe('It holds two plugins with one id, so nothing was taken')
+    const before = sent.length
+    page.installer.find('   ')
+    expect(sent.slice(before).map(message => message.action)).toEqual(['security.list'])
+    answer(calm())
+    expect(last().note).toBe('Paste a link to a GitHub repository or release')
+  })
+
+  it('installs the ticked plugins in the order found with one Confirm, then says which', () => {
+    const { sent, page, answer, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({ id: 'search' }), found({ id: 'layout' }), found({ id: 'tags' })]))
+    page.installer.tick('search', false)
+    page.installer.tick('tags', true)
+    page.installer.tick('layout', true)
+    page.installer.install()
+    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { staged: 's1', plugins: ['layout', 'tags'] } })
+    answer({ installed: ['layout', 'tags'] })
+    expect(last()).toMatchObject({ note: 'Installed layout, tags', screen: { installing: null } })
+  })
+
+  it('never ticks or sends a plugin that can’t be installed', () => {
+    const { sent, page, answer, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({}), found({ id: 'bad', problem: 'reserved' })]))
+    page.installer.tick('bad', true)
+    const box = last().screen.installing
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins.map(row => row.picked)).toEqual([true, false])
+    page.installer.install()
+    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { plugins: ['search'] } })
+  })
+
+  it('sends no Confirm with nothing ticked and keeps the box when the Confirm came too soon', () => {
+    const { sent, page, answer, hears, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({})]))
+    page.installer.tick('search', false)
+    const before = sent.length
+    page.installer.install()
+    expect(sent.length).toBe(before)
+    page.installer.tick('search', true)
+    page.installer.install()
+    hears(refuse(sent.at(-1)!, 'throttled'))
+    answer(calm())
+    expect(last().note).toBe('Too soon after the window showed. Read the change, then confirm')
+    expect(last().screen.installing).toMatchObject({ step: 'found' })
+  })
+
+  it('drops the box when its staging is gone', () => {
+    const { sent, page, answer, hears, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({})]))
+    page.installer.install()
+    hears(refuse(sent.at(-1)!, 'not-found'))
+    answer(calm())
+    expect(last().screen.installing).toBeNull()
+  })
+
+  it('drops the staging on Cancel and before staging another source', () => {
+    const { sent, page, answer, last } = started()
+    page.installer.pick('zip')
+    answer('/tmp/p.zip')
+    answer(staged([found({})]))
+    page.installer.pick('folder')
+    answer('/tmp/plugins')
+    expect(sent.slice(-2).map(message => [message.action, message.args])).toEqual([
+      ['core.unstage', { staged: 's1' }], ['core.stage', { source: { kind: 'folder', path: '/tmp/plugins' } }],
+    ])
+    answer({ ...staged([found({})]), staged: 's2' })
+    page.installer.cancel()
+    expect(sent.find(message => message.action === 'core.unstage' && (message.args as { staged: string }).staged === 's2')).toBeDefined()
+    expect(last().screen.installing).toBeNull()
+  })
+})

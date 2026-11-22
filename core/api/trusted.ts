@@ -35,3 +35,41 @@ export function capabilityText(granted: Capability): string {
       return granted.type
   }
 }
+
+const list = (values: readonly string[]) => values.map(quoted).join(', ')
+
+// Notes by their scopes: ** reaches every note, any other scope is quoted as data
+function notes(paths: readonly string[]): string {
+  if (paths.includes('**')) return 'all your notes'
+  return paths.length === 0 ? 'no notes' : `the notes at ${list(paths)}`
+}
+
+type Sentences = { readonly [T in Capability['type']]: (granted: Extract<Capability, { type: T }>) => string }
+
+// What each capability type lets a plugin do, as a plain sentence for a Confirm, one row a type. Each scope, host,
+// topic, command, variable and plugin a plugin named is quoted as data
+const sentences: Sentences = {
+  'luoshu.read': ({ paths }) => `Read ${notes(paths)}`,
+  'luoshu.write': ({ paths }) => `Change, move and delete ${notes(paths)}`,
+  'luoshu.list': ({ paths }) => `See the names of ${notes(paths)}`,
+  'ui.read': ({ paths }) => `Read ${notes(paths)} while you have them open`,
+  'ui.edit': ({ paths }) => `Edit ${notes(paths)} while you have them open, for you to save`,
+  'lock.set': ({ paths }) => `Lock ${notes(paths)} so nothing else changes them for a while`,
+  history: ({ access, paths }) => (access === 'read' ? `Read the earlier versions of ${notes(paths)}` : `Save versions of ${notes(paths)} into hetu’s history`),
+  'net.fetch': ({ hosts }) => `Reach ${hosts.includes('*') ? 'any site' : list(hosts)} over the network`,
+  'ui.view': () => 'Show panes and items of its own in the editor window',
+  'ui.layout': () => 'Lay out the whole editor window once you pick it as the layout',
+  'ui.decoration': () => 'Mark up how the text of an open note looks',
+  'ui.command': () => 'Add commands and keyboard shortcuts',
+  'ui.keys': () => 'See each key you press in an open note',
+  'events.subscribe': ({ topics }) => `Hear the events ${list(topics)}`,
+  storage: () => 'Keep data of its own',
+  exec: ({ commands, env }) => `Run the command${commands.length === 1 ? '' : 's'} ${commands.map(command => JSON.stringify(command)).join(', ')}${env.length > 0 ? ` with ${list(env)} from your environment` : ''}`,
+  'plugin.call': ({ targets }) => `Call the plugin${targets.length === 1 ? '' : 's'} ${list(targets)}`,
+  'guard.hook': () => 'Check each change to a note before it is written',
+  'log.read': () => 'Read hetu’s event log',
+}
+
+export function grantSentence(granted: Capability): string {
+  return (sentences[granted.type] as (granted: Capability) => string)(granted)
+}
