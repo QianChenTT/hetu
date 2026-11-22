@@ -58,6 +58,11 @@ export function createLock(options: LockOptions): Lock {
   // The end in wall time, read now, so it says when the lock ends whatever the wall clock does later
   const tellLocked = (entry: Held) => tell(entry.path, { locked: true, until: entry.until })
   const tellUnlocked = (entry: Held, atOnce = false) => tell(entry.path, { locked: false, until: null }, atOnce)
+  // Each lock told unlocked at once, an expired one not yet told included, then none is held
+  function unlockAll(): void {
+    for (const entry of table.values()) tellUnlocked(entry, true)
+    table.clear()
+  }
 
   function live(key: string, now: number): Held | undefined {
     const entry = table.get(key)
@@ -187,16 +192,11 @@ export function createLock(options: LockOptions): Lock {
       // Another folder or none frees every lock, since its paths name other notes. Each is told unlocked at once, an
       // expired one not yet told included, while the grants that applied to the old folder's notes still stand
       open(next: Opening): void {
-        if (opening?.folder !== next.folder) {
-          for (const entry of table.values()) tellUnlocked(entry, true)
-          table.clear()
-        }
+        if (opening?.folder !== next.folder) unlockAll()
         opening = next.folder === null ? null : { ...next, folder: next.folder }
       },
-      // Each lock told unlocked at once, an expired one not yet told included, then none is held
       release(): void {
-        for (const entry of table.values()) tellUnlocked(entry, true)
-        table.clear()
+        unlockAll()
       },
     },
   }
