@@ -19,6 +19,8 @@ export type ZipEntry = {
   declaredSize?: number
   // The index of an earlier entry whose local header and data this record points at, written with no data of its own
   sameDataAs?: number
+  // The name the local header gives, in place of the central directory's
+  localName?: string
 }
 
 const UTF8 = 0x800
@@ -41,6 +43,7 @@ export function makeZip(entries: readonly ZipEntry[], options: { declaredCount?:
       const body = entry.stored ? raw : deflateRawSync(raw)
       const flags = UTF8 | (entry.flags ?? 0)
       at = { offset, method: entry.stored ? 0 : 8, crc: crc32(raw), compressed: body.length, size: entry.declaredSize ?? raw.length, flags }
+      const localName = Buffer.from(entry.localName ?? entry.name, 'utf8')
       const local = Buffer.alloc(30)
       local.writeUInt32LE(0x04034b50, 0)
       local.writeUInt16LE(20, 4)
@@ -49,9 +52,9 @@ export function makeZip(entries: readonly ZipEntry[], options: { declaredCount?:
       local.writeUInt32LE(at.crc, 14)
       local.writeUInt32LE(at.compressed, 18)
       local.writeUInt32LE(at.size, 22)
-      local.writeUInt16LE(name.length, 26)
-      locals.push(local, name, body)
-      offset += local.length + name.length + body.length
+      local.writeUInt16LE(localName.length, 26)
+      locals.push(local, localName, body)
+      offset += local.length + localName.length + body.length
     }
     written.push(at)
     const record = Buffer.alloc(46)
