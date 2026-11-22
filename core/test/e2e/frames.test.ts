@@ -84,19 +84,34 @@ window.addEventListener('message', function (event) {
 })
 `
 // A frame's script that, sent ICE servers, opens a peer connection to each and offers, as an artifact sending a note
-// out through WebRTC would. It reports each connection's gathering state 3 s later
+// out through WebRTC would. Sent an mDNS name as well, it hands a second connection a remote candidate on <name>.local.
+// It reports each connection's gathering state 3 s later, once for each time it is sent servers
 const rtc = `
+function offered(server) {
+  var connection = new RTCPeerConnection({ iceServers: [server] })
+  connection.createDataChannel('out')
+  return connection.createOffer().then(function (offer) { return connection.setLocalDescription(offer) }).then(function () { return connection })
+}
+function remote(name) {
+  var offerer = new RTCPeerConnection()
+  offerer.createDataChannel('out')
+  var answerer = new RTCPeerConnection()
+  return offerer.createOffer().then(function (offer) { return answerer.setRemoteDescription(offer) }).then(function () {
+    return answerer.addIceCandidate({ candidate: 'candidate:1 1 udp 2122260223 ' + name + '.local 54321 typ host', sdpMid: '0', sdpMLineIndex: 0 })
+  }).then(function () {
+    offerer.close()
+    return answerer
+  })
+}
 window.addEventListener('message', function (event) {
   if (event.source !== parent || !event.ports[0]) return
   var port = event.ports[0]
   port.onmessage = function (message) {
     var data = JSON.parse(message.data)
     if (!data || !Array.isArray(data.servers)) return
-    Promise.all(data.servers.map(function (server) {
-      var connection = new RTCPeerConnection({ iceServers: [server] })
-      connection.createDataChannel('out')
-      return connection.createOffer().then(function (offer) { return connection.setLocalDescription(offer) }).then(function () { return connection })
-    })).then(function (opened) {
+    var opening = data.servers.map(offered)
+    if (typeof data.mdns === 'string') opening.push(remote(data.mdns))
+    Promise.all(opening).then(function (opened) {
       setTimeout(function () {
         port.postMessage(JSON.stringify({ tried: opened.map(function (connection) { return connection.iceGatheringState }) }))
         opened.forEach(function (connection) { connection.close() })
@@ -236,17 +251,20 @@ describe('view frames', () => {
   })
 })
 
-// What the frame reported after its peer connections tried to reach the ICE servers it was sent
-async function rtcReport(worker: Worker, servers: object[]): Promise<{ tried?: string[], failed?: string }> {
-  await until(async () => (await messages(worker)).length === 1)
-  await post(worker, { servers })
-  const report = (data: unknown) => (data as { tried?: unknown }).tried !== undefined || (data as { failed?: unknown }).failed !== undefined
-  await until(async () => (await messages(worker)).some(report))
-  return (await messages(worker)).find(report) as { tried?: string[], failed?: string }
+type RtcReport = { tried?: string[], failed?: string }
+const isReport = (data: unknown) => (data as RtcReport).tried !== undefined || (data as RtcReport).failed !== undefined
+
+// What the frame reported after its peer connections tried to reach the ICE servers it was sent this time
+async function rtcReport(worker: Worker, servers: object[], mdns?: string): Promise<RtcReport> {
+  await until(async () => (await messages(worker)).length >= 1)
+  const before = (await messages(worker)).filter(isReport).length
+  await post(worker, mdns === undefined ? { servers } : { servers, mdns })
+  await until(async () => (await messages(worker)).filter(isReport).length > before)
+  return (await messages(worker)).filter(isReport)[before] as RtcReport
 }
 
 describe('WebRTC from a view frame', () => {
-  it('sends no STUN packet over UDP to a server on loopback, with every web contents sending no UDP outside a proxy', async () => {
+  it('sends no STUN packet over UDP to a server on loopback, with the policy set on every web contents', async () => {
     const stun = createSocket('udp4')
     let packets = 0
     stun.on('message', () => packets++)
@@ -259,6 +277,12 @@ describe('WebRTC from a view frame', () => {
       const policies = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map(contents => contents.getWebRTCIPHandlingPolicy()))
       expect(policies.length).toBeGreaterThanOrEqual(2)
       expect(new Set(policies)).toEqual(new Set(['disable_non_proxied_udp']))
+      // The control: with the editor's policy back to Chromium's default, the same frame's STUN reaches the listener
+      await app.evaluate(({ webContents }) => {
+        for (const contents of webContents.getAllWebContents()) if (contents.getURL() === 'hetu://editor/') contents.setWebRTCIPHandlingPolicy('default')
+      })
+      await rtcReport(worker, [{ urls: `stun:127.0.0.1:${stun.address().port}` }])
+      await until(() => packets > 0, 5000)
     } finally {
       stun.close()
     }
@@ -282,6 +306,10 @@ describe('WebRTC from a view frame', () => {
         .flatMap(each => ['http://127.0.0.1/', 'https://example.com/'].map(url => each.resolveProxy(url)))), partitions)
       expect(proxies).toHaveLength(8)
       expect(new Set(proxies)).toEqual(new Set(['SOCKS5 127.0.0.1:1']))
+      // The control: with the editor session going direct, the same frame's TURN reaches the listener
+      await app.evaluate(({ session }, name) => session.fromPartition(name).setProxy({ mode: 'direct' }), partition('editor'))
+      await rtcReport(worker, [{ urls: `turn:127.0.0.1:${port}?transport=tcp`, username: 'note text', credential: 'x' }])
+      await until(() => connections > 0, 5000)
     } finally {
       turn.close()
     }
