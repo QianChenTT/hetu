@@ -481,6 +481,24 @@ describe('the drawer', () => {
     expect(await commands(outsider)).toEqual([{ v: 1, kind: 'event', topic: 'editor.command', command: 'there', instance: null }])
   })
 
+  it("moves the cursor on a plugin's select as the note opens and refuses one after the human's key", async () => {
+    const granted: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.edit', paths: ['**'] }]
+    const { app, editor } = await started({ notes: { 'a.md': 'abc def' }, plugins: { jumper: granted } })
+    await open(editor, 'a.md')
+    const worker = await pluginWorker(app, 'jumper')
+    await until(async () => (await drive(worker, async scope => (await scope.editor.instances() as unknown[]).length)) === 1)
+    const select = () => drive(worker, async scope => {
+      const [open] = await scope.editor.instances() as { instance: string, version: number }[]
+      return scope.editor.select(open.instance, open.version, { anchor: 4, head: 4 }).then(() => 'moved', (err: { code?: string }) => err.code)
+    })
+    expect(await select()).toBe('moved')
+    await editor.keyboard.type('X')
+    await until(async () => (await shown(editor).innerText()) === 'abc Xdef')
+    expect(await select()).toBe('not-granted')
+    await editor.keyboard.type('Y')
+    await until(async () => (await shown(editor).innerText()) === 'abc XYdef')
+  })
+
   it('sends the range the editor draws to a plugin that asked for it and reads the note and to no other, again as it moves', async () => {
     const plugins: Record<string, Capability[]> = {
       reader: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.command' }],
