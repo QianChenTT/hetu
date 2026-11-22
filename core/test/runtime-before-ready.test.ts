@@ -22,7 +22,12 @@ function fakes(options: { switches?: string[], lock?: boolean } = {}) {
   const calls: string[] = []
   const seen: { userData?: string, userDataExisted?: boolean, schemes?: unknown } = {}
   const app: EarlyApp = {
-    commandLine: { hasSwitch: name => (options.switches ?? []).includes(name) },
+    commandLine: {
+      hasSwitch: name => (options.switches ?? []).includes(name),
+      appendSwitch(name, value) {
+        calls.push(`appendSwitch ${name} ${value}`)
+      },
+    },
     setPath(name, value) {
       calls.push(`setPath ${name}`)
       seen.userData = value
@@ -97,11 +102,11 @@ describe('before ready', () => {
     expect(calls).not.toContain('exit 1')
   })
 
-  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on and registers hetu', async () => {
+  it('makes <dataDir>/electron, points userData at it, then takes the lock, turns the sandbox on, maps every host name to not found and registers hetu', async () => {
     const dataDir = await temp()
     const { app, protocol, calls, seen } = fakes()
     beforeReady(app, protocol, { env: { HETU_DATA_DIR: dataDir }, platform: process.platform, locked: false, argv: ['electron'] })
-    expect(calls).toEqual(['setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'registerSchemesAsPrivileged'])
+    expect(calls).toEqual(['setPath userData', 'requestSingleInstanceLock', 'enableSandbox', 'appendSwitch host-resolver-rules MAP * ~NOTFOUND', 'registerSchemesAsPrivileged'])
     expect(seen.userData).toBe(path.join(dataDir, 'electron'))
     expect(seen.userDataExisted).toBe(true)
   })

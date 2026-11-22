@@ -1,6 +1,7 @@
+import { randomBytes } from 'node:crypto'
 import { createSocket } from 'node:dgram'
-import { appendFile, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { connect, createServer } from 'node:net'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,7 +10,7 @@ import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { partition, ROLES, type Role } from '../../backend/runtime/sessions.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
+import { cleanup, counting, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
 
@@ -306,12 +307,57 @@ describe('WebRTC from a view frame', () => {
         .flatMap(each => ['http://127.0.0.1/', 'https://example.com/'].map(url => each.resolveProxy(url)))), partitions)
       expect(proxies).toHaveLength(8)
       expect(new Set(proxies)).toEqual(new Set(['SOCKS5 127.0.0.1:1']))
-      // The control: with the editor session going direct, the same frame's TURN reaches the listener
+      // With the editor session going direct the frame still reaches nothing, since Chromium resolves no host, an IP
+      // literal included. The listener itself hears a connection from here
       await app.evaluate(({ session }, name) => session.fromPartition(name).setProxy({ mode: 'direct' }), partition('editor'))
       await rtcReport(worker, [{ urls: `turn:127.0.0.1:${port}?transport=tcp`, username: 'note text', credential: 'x' }])
-      await until(() => connections > 0, 5000)
+      expect(connections).toBe(0)
+      await new Promise<void>(resolve => connect(port, '127.0.0.1').on('close', () => resolve()).on('error', () => resolve()))
+      expect(connections).toBe(1)
     } finally {
       turn.close()
+    }
+  })
+
+  it('resolves no host name in Chromium for any session, while main\'s own fetch still resolves localhost through Node', async () => {
+    const server = await counting()
+    const { app } = await started({ html: page('rtc.js'), files: { 'rtc.js': rtc } })
+    const fetched = await app.evaluate(async (_electron, url) => (await fetch(url)).text(), server.url.replace('127.0.0.1', 'localhost'))
+    expect(fetched).toBe('reached')
+    expect(server.hits()).toBe(1)
+    const partitions = (Object.keys(ROLES) as Role[]).map(partition)
+    const answers = await app.evaluate(({ session }, names) => Promise.all([session.defaultSession, ...names.map(name => session.fromPartition(name))]
+      .flatMap(each => [each.resolveHost('localhost'), each.resolveHost('127.0.0.1'), each.resolveHost('hetu-probe.invalid'), each.resolveHost('hetu-probe.local', { source: 'mdns' })])
+      .map(lookup => lookup.then(found => `resolved ${JSON.stringify(found)}`, (err: Error) => err.message))), partitions)
+    expect(answers).toHaveLength(16)
+    for (const answer of answers) expect(answer).toMatch(/ERR_NAME_NOT_RESOLVED/)
+  })
+
+  it('looks up no name a frame gives as a TURN or STUN server or an mDNS candidate, by the net log and a listener on loopback', async () => {
+    const label = `hetu${randomBytes(6).toString('hex')}`
+    const mdns = createSocket({ type: 'udp4', reuseAddr: true })
+    let queries = 0
+    mdns.on('message', message => {
+      if (message.includes(label)) queries++
+    })
+    await new Promise<void>(resolve => mdns.bind(5353, '127.0.0.1', resolve))
+    mdns.addMembership('224.0.0.251', '127.0.0.1')
+    try {
+      const { app, worker } = await started({ html: page('rtc.js'), files: { 'rtc.js': rtc } })
+      const log = path.join(await temp(), 'net.json')
+      await app.evaluate(({ netLog }, file) => netLog.startLogging(file, { captureMode: 'everything' }), log)
+      const report = await rtcReport(worker, [
+        { urls: `turn:${label}t.hetu-probe.invalid:3478?transport=tcp`, username: 'note text', credential: 'x' },
+        { urls: `stun:${label}s.hetu-probe.invalid:3478` },
+      ], `${label}m`)
+      expect(report).toEqual({ tried: [expect.any(String), expect.any(String), expect.any(String)] })
+      await app.evaluate(({ netLog }) => netLog.stopLogging())
+      const text = await readFile(log, 'utf8')
+      expect(text).toContain('"constants"')
+      const seen = { turn: text.includes(`${label}t`), stun: text.includes(`${label}s`), mdns: text.includes(`${label}m`), multicast: queries }
+      expect(seen).toEqual({ turn: false, stun: false, mdns: false, multicast: 0 })
+    } finally {
+      mdns.close()
     }
   })
 })

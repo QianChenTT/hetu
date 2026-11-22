@@ -17,7 +17,7 @@ export const SCHEME = 'hetu'
 // What before ready needs from Electron's app, faked in the tests. commandLine is Chromium's own parse of the
 // arguments, so a switch spelled with another prefix or case is found as Chromium would find it
 export type EarlyApp = {
-  readonly commandLine: { hasSwitch(name: string): boolean }
+  readonly commandLine: { hasSwitch(name: string): boolean, appendSwitch(name: string, value: string): void }
   setPath(name: 'userData', value: string): void
   requestSingleInstanceLock(): boolean
   enableSandbox(): void
@@ -61,6 +61,12 @@ export function beforeReady(
     return null
   }
   app.enableSandbox()
+  // Chromium resolves no host name: hetu loads nothing by name, and a frame's STUN or TURN server named by host, or a
+  // remote mDNS candidate, would otherwise be looked up outside the sessions' proxy, carrying whatever the frame put in
+  // the name. Node's own lookups in main, fetch's among them, don't pass through Chromium's resolver. Appended here and
+  // not on the command line, so app.relaunch, which starts the first argv again, doesn't hand it to a locked build
+  // https://www.electronjs.org/docs/latest/api/command-line-switches#--host-resolver-rulesrules
+  app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND')
   // A second call replaces the first list rather than failing, so this is the only one
   protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true } }])
   return found

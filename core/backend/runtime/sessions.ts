@@ -120,7 +120,8 @@ export async function serve(role: Role, request: { url: string, method: string }
 }
 
 // A proxy that leads nowhere. Nothing in hetu loads over the network, and WebRTC, left only TCP through a proxy
-// (guardContents), reaches no TURN server through this one. A single proxy with no direct:// means a request fails when
+// (guardContents), reaches no TURN server at an IP address through this one. A server named by host is never looked up,
+// since Chromium resolves no host name (beforeReady). A single proxy with no direct:// means a request fails when
 // the proxy does, and <-loopback> takes away Chromium's implicit bypass for localhost. hetu's own pages come from
 // protocol.handle and never meet the proxy. Nothing listens on loopback port 1, and a program running as the user that
 // binds it is out of scope
