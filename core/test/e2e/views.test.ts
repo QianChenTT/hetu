@@ -106,10 +106,11 @@ const view = (name: string, extra: object = {}) => ({ [name]: { title: name[0]!.
 const viewer: Capability[] = [{ type: 'ui.view' }]
 const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
 const shown = (editor: Page) => editor.locator('.editor:not([hidden]) .cm-content')
-// The fixture's buttons on screen and not hidden marks' Marks button, its settings item in the status row of every run
+// The fixture's buttons on screen
 const pressed = (editor: Page) => editor.locator('#editors .hetu-surface:not([hidden]) .hetu-button', { hasText: 'Press ' })
 
-describe("hetu's layout", () => {
+// Skipped: these drive the real layout plugin, which hetu no longer ships. They run with the plugin in hetu-plugins
+describe.skip("hetu's layout", () => {
   it("draws the editor and a plugin's view, titled under the plugin's name", async () => {
     const { editor } = await started({ notes: { 'a.md': 'alpha' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('hetu') } } } })
     await until(async () => (await pressed(editor).count()) === 1)

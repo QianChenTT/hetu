@@ -248,11 +248,11 @@ describe('the drawer', () => {
     await until(async () => (await shown(editor).innerText()) === 'original mine')
   })
 
-  it('hides markers with hidden marks and shows the real text in the raw view over the whole window', async () => {
+  // Hiding the markers is the hidden-marks plugin's, proved with it in hetu-plugins
+  it('shows the real text in the raw view over the whole window', async () => {
     const { editor } = await started({ notes: { 'a.md': '# Title\n\n**bold** text' } })
     await open(editor, 'a.md')
-    await until(async () => (await shown(editor).innerText()).includes('bold text'))
-    expect(await shown(editor).innerText()).not.toContain('**')
+    await until(async () => (await shown(editor).innerText()).includes('**bold** text'))
     await shown(editor).click()
     await editor.keyboard.press('ControlOrMeta+/')
     await until(async () => editor.locator('#raw').isVisible())
@@ -569,7 +569,9 @@ describe('the drawer', () => {
   // #73, #154: how long a keystroke takes to reach the screen and to come back from a worker as a decoration, on a large
   // note, with nothing else running and under three loads in turn, in one app. HETU_MEASURE names a file for the numbers,
   // which npm run measure:bridge takes three times and writes under docs/measurements
-  it('measures the bridge from a key to the text and to a decoration, quiet and under three loads', async () => {
+  // Skipped: the big note is marked by the real hidden-marks plugin, which no longer ships with hetu. The measure moves to
+  // hetu-plugins with the plugin
+  it.skip('measures the bridge from a key to the text and to a decoration, quiet and under three loads', async () => {
     const reader: Capability[] = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'ui.decoration' }]
     // The last line is plain, so its text on screen is the text typed. Each line above it is an item of a list, as a long
     // note's lines sit in blocks of their own: one paragraph of 2,000 lines would have every key parse all its links again
@@ -720,8 +722,9 @@ describe('the drawer', () => {
 
 // The answers of 2026-11-09 that only the window shows, against the real hidden-marks plugin: the mouse with Alt and
 // without it, where Chromium puts typed text at a run's end, the system clipboard and the plugin's settings popover.
-// The rest are proved against the real plugin in hidden-marks-joined.test.ts
-describe('hidden marks in the window', () => {
+// The rest were proved against the real plugin in a joined test. Skipped: hidden marks no longer ships with hetu, these
+// run with the plugin in hetu-plugins
+describe.skip('hidden marks in the window', () => {
   it('reveals on Alt+click only, keeps typing in a run until its key, copies the markdown and hides by its settings', async () => {
     const text = 'x **bold** y\nx **bold text** y\nx [link](https://e.com) y'
     const { app, editor, folder } = await started({ notes: { 'a.md': text } })

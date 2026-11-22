@@ -105,7 +105,7 @@ const hitAt = (editor: Page, x: number, y: number) => editor.evaluate(([px, py])
   const at = document.elementFromPoint(px as number, py as number)
   return { inEditor: at?.closest('.cm-content') !== null, inTitle: at?.closest('.hetu-title') !== null }
 }, [x, y])
-// The fixture's button and not hidden marks' Marks button, its settings item in the status row of every run
+// The fixture's button, of the plugins a test runs
 const viewButton = (editor: Page) => editor.locator('#editors .hetu-surface .hetu-button', { hasText: 'Press ' })
 
 async function withLayout(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
@@ -116,9 +116,25 @@ async function withLayout(setup: { notes?: Record<string, string>, plugins?: Rec
   return { ...made, layout }
 }
 
+// The fixture layout drawing each open view titled in a column beside the note's editor, again at every state, since
+// hetu has no layout of its own to place them
+async function inColumns(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }) {
+  const made = await withLayout(setup)
+  await run(made.layout, `
+    const draw = state => ctx.ui.layout.draw({ kind: 'box', id: 'root', style: { display: 'flex', height: '100%' }, children: [
+      ...state.views.map(view => ({ kind: 'box', id: 'c-' + view.instance, style: { display: 'flex', 'flex-direction': 'column', width: '300px' }, children: [
+        { kind: 'title', id: 't-' + view.instance, of: view.instance },
+        { kind: 'slot', id: 's-' + view.instance, instance: view.instance, style: { flex: '1' } } ] })),
+      { kind: 'editor', id: 'e', instance: 'current', style: { flex: '1' } } ] }).catch(() => {})
+    ctx.ui.on('layout.state', event => { void draw(event.state) })
+    await draw(heard.filter(e => e.topic === 'layout.state').at(-1).state)
+  `)
+  return made
+}
+
 describe('a popover', () => {
   it('keeps its owner strip on top of it and its size within the drawer\'s cap, whatever style the plugin gives it', async () => {
-    const { app, editor } = await started({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
+    const { app, editor } = await inColumns({ notes: { 'a.md': 'the real words' }, plugins: { board: { granted: viewer, manifest: { name: 'Boards', views: view('cards') } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     await open(editor, 'a.md')
     const board = await pluginWorker(app, 'board')
@@ -152,7 +168,7 @@ describe('a popover', () => {
 
 describe('a plugin named hetu', () => {
   it('shows under its id in titles and strips, never the name it picked', async () => {
-    const { app, editor } = await started({ plugins: { board: { granted: viewer, manifest: { name: 'hetu', views: { checks: { title: 'Security check', kind: 'view' } } } } } })
+    const { app, editor } = await inColumns({ plugins: { board: { granted: viewer, manifest: { name: 'hetu', views: { checks: { title: 'Security check', kind: 'view' } } } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     const board = await pluginWorker(app, 'board')
     await run(board, `
@@ -268,7 +284,7 @@ describe('the editor\'s text', () => {
 
 describe('a busy view', () => {
   it('leaves typing in the editor working while it changes one text of a large tree ten times a second', async () => {
-    const { app, editor } = await started({ notes: { 'a.md': '' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
+    const { app, editor } = await inColumns({ notes: { 'a.md': '' }, plugins: { board: { granted: viewer, manifest: { views: view('cards') } } } })
     await until(async () => (await viewButton(editor).count()) === 1)
     const board = await pluginWorker(app, 'board')
     await open(editor, 'a.md')
@@ -319,7 +335,7 @@ const framePage = '<!doctype html><html><head><meta charset="utf-8"></head><body
 
 describe('a view frame', () => {
   async function framed() {
-    const made = await started({
+    const made = await inColumns({
       notes: { 'a.md': '' },
       plugins: {
         kanban: {
