@@ -42,7 +42,7 @@ describe('a release zip of built plugins', () => {
   it('unpacks and each plugin is found with the hash of the bytes written', async () => {
     const { into } = await staging()
     const zip = makeZip([...pluginEntries('alpha', 'alpha', '1.2.0'), ...pluginEntries('beta', 'beta')])
-    expect(await unpackZip(zip, into)).toBeNull()
+    expect((await unpackZip(zip, into)).problem).toBeNull()
     const found = (await findPlugins(into)).plugins
     expect(found.map(each => [each.id, each.version, each.read.problem])).toEqual([['alpha', '1.2.0', null], ['beta', '1.0.0', null]])
     expect(found[0].read.hash).toBe(await hashOf(path.join(into, 'alpha')))
@@ -53,7 +53,7 @@ describe('Zip Slip', () => {
   it('writes nothing for a name that climbs out, in any spelling', async () => {
     for (const name of ['../../evil.js', 'alpha/../../../evil.js', '..\\..\\evil.js', 'alpha\\..\\..\\..\\evil.js', '/evil.js', 'C:/evil.js', 'C:\\evil.js', 'C:evil.js']) {
       const { base, into } = await staging()
-      expect(await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name, data: 'evil' }]), into), name).not.toBeNull()
+      expect((await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name, data: 'evil' }]), into)).problem, name).not.toBeNull()
       expect(await everything(base), name).toEqual(untouched)
     }
   })
@@ -67,7 +67,7 @@ describe('a link', () => {
       { name: 'alpha/dist', data: '../../../../escape', mode: 0o120777 },
       { name: 'alpha/dist/worker.js', data: 'evil' },
     ])
-    expect(await unpackZip(zip, into)).toBe('special')
+    expect((await unpackZip(zip, into)).problem).toBe('special')
     expect(await everything(base)).toEqual(untouched)
   })
 })
@@ -79,14 +79,14 @@ describe('bombs', () => {
     const copies = Array.from({ length: 70 }, (_, i): ZipEntry => ({ name: `alpha/${i + 1}.bin`, sameDataAs: 0 }))
     const zip = makeZip([block, ...copies])
     expect(zip.length).toBeLessThan(20_000)
-    expect(await unpackZip(zip, into)).toBe('too-big')
+    expect((await unpackZip(zip, into)).problem).toBe('too-big')
     expect(await readdir(into)).toEqual([])
   }, BOMB_MS)
 
   it('writes a zip inside the zip as bytes and never opens it, so nesting as 42.zip does unpacks one level', async () => {
     const { into } = await staging()
     const inner = makeZip([{ name: 'big.bin', data: Buffer.alloc(1024 * 1024) }])
-    expect(await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name: 'alpha/inner.zip', data: inner }]), into)).toBeNull()
+    expect((await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name: 'alpha/inner.zip', data: inner }]), into)).problem).toBeNull()
     expect(await everything(into)).toEqual(['alpha', 'alpha/hetu-plugin.json', 'alpha/inner.zip', 'alpha/worker.js'])
     expect(await readFile(path.join(into, 'alpha', 'inner.zip'))).toEqual(inner)
   })
@@ -97,7 +97,7 @@ describe('two readers, two answers', () => {
     for (const second of ['alpha/hetu-plugin.json', 'alpha/HETU-PLUGIN.json', 'ALPHA/hetu-plugin.json']) {
       const { into } = await staging()
       const more = JSON.stringify(workerManifest('alpha', { capabilities: [{ type: 'notes.read', scope: '**' }] }))
-      expect(await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name: second, data: more }]), into), second).toBe('duplicate')
+      expect((await unpackZip(makeZip([...pluginEntries('alpha', 'alpha'), { name: second, data: more }]), into)).problem, second).toBe('duplicate')
       expect(await readdir(into)).toEqual([])
     }
   })
@@ -105,7 +105,7 @@ describe('two readers, two answers', () => {
   it('writes under the central directory\'s name whatever the local header says, and the hash is of the bytes written', async () => {
     const { into } = await staging()
     const zip = makeZip([...pluginEntries('alpha', 'alpha'), { name: 'alpha/extra.js', localName: 'alpha/../../evil.js', data: 'extra' }])
-    expect(await unpackZip(zip, into)).toBeNull()
+    expect((await unpackZip(zip, into)).problem).toBeNull()
     expect(await everything(into)).toEqual(['alpha', 'alpha/extra.js', 'alpha/hetu-plugin.json', 'alpha/worker.js'])
     const [found] = (await findPlugins(into)).plugins
     expect(found.read.files.find(file => file.path === 'extra.js')?.bytes.toString()).toBe('extra')
@@ -117,7 +117,7 @@ describe('a locked zip', () => {
   it('refuses an entry ZipCrypto encrypted, whose bytes no one could read before they run', async () => {
     const { into } = await staging()
     const zip = makeZip([...pluginEntries('alpha', 'alpha'), { name: 'alpha/payload.js', data: Buffer.alloc(40, 7), flags: 1 }])
-    expect(await unpackZip(zip, into)).toBe('encrypted')
+    expect((await unpackZip(zip, into)).problem).toBe('encrypted')
     expect(await readdir(into)).toEqual([])
   })
 })

@@ -22,6 +22,10 @@ const DEPTH_CAP = 32
 // that disagrees with the name. not-a-folder: a picked folder that is missing, a file or a link
 export type UnpackProblem = 'invalid' | 'name' | 'duplicate' | 'special' | 'encrypted' | 'too-many' | 'too-big' | 'not-a-folder'
 
+// What staging answers: the refusal or null, and whether anything may be left in the staging folder after a refusal,
+// when emptying it failed
+export type Staged = { problem: UnpackProblem | null, leftovers: boolean }
+
 class Refused extends Error {
   readonly problem: UnpackProblem
 
@@ -218,16 +222,28 @@ async function folderInto(dir: string, prefix: string, writer: Writer): Promise<
 // Whether the path is a folder and no link to one. One that can't be looked at, a missing one among them, is not
 export const isRealFolder = (dir: string) => lstat(dir).then(stat => stat.isDirectory(), () => false)
 
+// Empties the staging folder after a refusal or a failure, answering whether something may be left
+async function emptied(into: string): Promise<boolean> {
+  try {
+    for (const name of await readdir(into)) await clear(path.join(into, name))
+    return true
+  } catch {
+    // The clear's own error is dropped: the refusal or the failure that started it is the answer, with leftovers set
+    return false
+  }
+}
+
 // Fills an empty staging folder from one source. A folder that isn't empty is the caller's mistake and throws. A
-// refusal or a failure leaves the folder empty
-async function staged(into: string, limits: UnpackLimits, fill: (writer: Writer) => Promise<void>): Promise<UnpackProblem | null> {
+// refusal empties the folder and says when that failed. Any other failure throws its own error after the same attempt,
+// so a caller removes the staging folder itself on a throw
+async function staged(into: string, limits: UnpackLimits, fill: (writer: Writer) => Promise<void>): Promise<Staged> {
   if (!(await lstat(into)).isDirectory() || (await readdir(into)).length > 0) throw new Error('staging takes an empty folder')
   try {
     await fill(new Writer(into, limits))
-    return null
+    return { problem: null, leftovers: false }
   } catch (err) {
-    for (const name of await readdir(into)) await clear(path.join(into, name))
-    if (err instanceof Refused) return err.problem
+    const leftovers = !(await emptied(into))
+    if (err instanceof Refused) return { problem: err.problem, leftovers }
     throw err
   }
 }
@@ -235,13 +251,13 @@ async function staged(into: string, limits: UnpackLimits, fill: (writer: Writer)
 // Unpacks a plugin zip into an empty staging folder, read once from the bytes handed in. Every name is checked before
 // anything is written for it and every file is opened as new, so nothing is overwritten and nothing lands outside the
 // folder
-export async function unpackZip(zip: Buffer, into: string, limits: UnpackLimits = unpackLimits): Promise<UnpackProblem | null> {
+export async function unpackZip(zip: Buffer, into: string, limits: UnpackLimits = unpackLimits): Promise<Staged> {
   return staged(into, limits, writer => zipInto(zip, writer, limits))
 }
 
 // Copies a folder the human picked into an empty staging folder under the same checks and caps as a zip, so what is
 // read and hashed after is only ever the copy. A picked folder that is missing, a file or a link is refused
-export async function stageFolder(from: string, into: string, limits: UnpackLimits = unpackLimits): Promise<UnpackProblem | null> {
+export async function stageFolder(from: string, into: string, limits: UnpackLimits = unpackLimits): Promise<Staged> {
   return staged(into, limits, async writer => {
     if (!(await isRealFolder(from))) throw new Refused('not-a-folder')
     await folderInto(from, '', writer)

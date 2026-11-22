@@ -18,10 +18,39 @@ vi.mock('yauzl', async importOriginal => {
   }
 })
 
+// A clear that fails, as one a Windows lock outlasts, and a write that fails, as a full disk's
+const disk = vi.hoisted(() => ({ clearFails: false, writeFails: false }))
+vi.mock('../backend/plugins-manager/folders.ts', async importOriginal => {
+  const real = await importOriginal<typeof import('../backend/plugins-manager/folders.ts')>()
+  return {
+    ...real,
+    clear: async (dir: string) => {
+      if (disk.clearFails) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+      return real.clear(dir)
+    },
+  }
+})
+vi.mock('node:fs/promises', async importOriginal => {
+  const real = await importOriginal<typeof import('node:fs/promises')>()
+  const open = async (...args: Parameters<typeof real.open>) => {
+    const handle = await real.open(...args)
+    return new Proxy(handle, {
+      get(target, key) {
+        if (key === 'write' && disk.writeFails) return async () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }) }
+        const value: unknown = Reflect.get(target, key, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
+  return { ...real, open }
+})
+
 const made: string[] = []
 
 afterEach(async () => {
   reader.sizesUnchecked = false
+  disk.clearFails = false
+  disk.writeFails = false
   for (const dir of made.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 
@@ -40,7 +69,7 @@ const listed = async (root: string) => (await readdir(root, { recursive: true, w
 
 async function unpacked(entries: readonly ZipEntry[], limits = unpackLimits) {
   const { base, into } = await staging()
-  const problem = await unpackZip(makeZip(entries), into, limits)
+  const problem = (await unpackZip(makeZip(entries), into, limits)).problem
   return { problem, base, into, files: await listed(into) }
 }
 
@@ -75,7 +104,7 @@ describe('a zip unpacked into a staging folder', () => {
     broken.fill(0xff, 35, 40)
     for (const bytes of [Buffer.from('not a zip at all'), zip.subarray(0, zip.length - 10), broken]) {
       const { into } = await staging()
-      expect(await unpackZip(bytes, into)).toBe('invalid')
+      expect((await unpackZip(bytes, into)).problem).toBe('invalid')
       expect(await listed(into)).toEqual([])
     }
   })
@@ -83,6 +112,28 @@ describe('a zip unpacked into a staging folder', () => {
   it('refuses a size the zip declares that its data does not have', async () => {
     expect((await unpacked([{ name: 'a.txt', data: 'x'.repeat(100), declaredSize: 10 }])).problem).toBe('invalid')
     expect((await unpacked([{ name: 'a.txt', data: 'x'.repeat(100), declaredSize: 1000 }])).problem).toBe('invalid')
+  })
+})
+
+describe('what a refusal leaves', () => {
+  it('says nothing is left when the folder was emptied', async () => {
+    const bad = makeZip([{ name: 'a.js', data: 'x' }, { name: 'a.js.', data: 'x' }])
+    const { into } = await staging()
+    expect(await unpackZip(bad, into)).toEqual({ problem: 'name', leftovers: false })
+    expect(await unpackZip(makeZip([{ name: 'a.js', data: 'x' }]), (await staging()).into)).toEqual({ problem: null, leftovers: false })
+  })
+
+  it('keeps the refusal and says something may be left when the folder can not be emptied', async () => {
+    const { into } = await staging()
+    disk.clearFails = true
+    expect(await unpackZip(makeZip([{ name: 'a.js', data: 'x' }, { name: 'a.js.', data: 'x' }]), into)).toEqual({ problem: 'name', leftovers: true })
+  })
+
+  it('throws the failure itself, not the clear\'s, when neither the write nor the clear goes through', async () => {
+    const { into } = await staging()
+    disk.writeFails = true
+    disk.clearFails = true
+    await expect(unpackZip(makeZip([{ name: 'a.js', data: 'x' }]), into)).rejects.toMatchObject({ code: 'ENOSPC' })
   })
 })
 

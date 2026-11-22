@@ -36,7 +36,7 @@ describe('a picked folder staged', () => {
     const picked = path.join(await temp(), 'alpha')
     await writeFolder(picked, { ...filesFor(workerManifest('alpha')), 'assets/icons/a.svg': '<svg/>', 'empty.txt': '' })
     const into = await staging()
-    expect(await stageFolder(picked, into)).toBeNull()
+    expect((await stageFolder(picked, into)).problem).toBeNull()
     expect(await listed(into)).toEqual(['assets/', 'assets/icons/', 'assets/icons/a.svg', 'empty.txt', 'hetu-plugin.json', 'worker.js'])
     expect(await readFile(path.join(into, 'assets', 'icons', 'a.svg'), 'utf8')).toBe('<svg/>')
     const finding = await findPlugins(into)
@@ -52,7 +52,7 @@ describe('a picked folder staged', () => {
     await symlink(real, path.join(base, 'linked'), 'junction')
     for (const picked of ['none', 'a.zip', 'linked']) {
       const into = await staging()
-      expect(await stageFolder(path.join(base, picked), into), picked).toBe('not-a-folder')
+      expect((await stageFolder(path.join(base, picked), into)).problem, picked).toBe('not-a-folder')
       expect(await readdir(into)).toEqual([])
     }
   })
@@ -65,7 +65,7 @@ describe('a picked folder staged', () => {
     await writeFolder(picked, filesFor(workerManifest('alpha')))
     await symlink(outside, path.join(picked, 'assets'), 'junction')
     const into = await staging()
-    expect(await stageFolder(picked, into)).toBe('special')
+    expect((await stageFolder(picked, into)).problem).toBe('special')
     expect(await readdir(into)).toEqual([])
   })
 
@@ -76,7 +76,7 @@ describe('a picked folder staged', () => {
     await writeFolder(odd, { 'a\u200cb.js': 'x' })
     for (const picked of [deep, odd]) {
       const into = await staging()
-      expect(await stageFolder(picked, into)).toBe('name')
+      expect((await stageFolder(picked, into)).problem).toBe('name')
       expect(await readdir(into)).toEqual([])
     }
   })
@@ -84,12 +84,12 @@ describe('a picked folder staged', () => {
   it('holds a folder to the caps, counted as written, every folder counted', async () => {
     const picked = path.join(await temp(), 'alpha')
     await writeFolder(picked, { 'a/b/c.txt': 'x'.repeat(600), 'd.txt': 'x'.repeat(400) })
-    expect(await stageFolder(picked, await staging(), { entries: 4, bytes: 1000 })).toBeNull()
+    expect((await stageFolder(picked, await staging(), { entries: 4, bytes: 1000 })).problem).toBeNull()
     const few = await staging()
-    expect(await stageFolder(picked, few, { entries: 3, bytes: 1000 })).toBe('too-many')
+    expect((await stageFolder(picked, few, { entries: 3, bytes: 1000 })).problem).toBe('too-many')
     expect(await readdir(few)).toEqual([])
     const small = await staging()
-    expect(await stageFolder(picked, small, { entries: 4, bytes: 999 })).toBe('too-big')
+    expect((await stageFolder(picked, small, { entries: 4, bytes: 999 })).problem).toBe('too-big')
     expect(await readdir(small)).toEqual([])
   })
 
@@ -99,7 +99,7 @@ describe('a picked folder staged', () => {
     for (let i = 0; i < 100; i++) files[`node_modules/p${i % 10}/f${i}.js`] = ''
     await writeFolder(picked, files)
     const into = await staging()
-    expect(await stageFolder(picked, into, { entries: 50, bytes: unpackLimits.bytes })).toBe('too-many')
+    expect((await stageFolder(picked, into, { entries: 50, bytes: unpackLimits.bytes })).problem).toBe('too-many')
     expect(await readdir(into)).toEqual([])
   })
 
@@ -107,7 +107,7 @@ describe('a picked folder staged', () => {
     const picked = path.join(await temp(), 'alpha')
     await writeFolder(picked, { ...filesFor(workerManifest('alpha')), '__MACOSX/._worker.js': 'fork' })
     const into = await staging()
-    expect(await stageFolder(picked, into)).toBeNull()
+    expect((await stageFolder(picked, into)).problem).toBeNull()
     expect(await listed(into)).toEqual(['hetu-plugin.json', 'worker.js'])
   })
 

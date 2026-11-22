@@ -25,7 +25,7 @@ async function unpacked(fixture: string) {
   made.push(path.dirname(into))
   await mkdir(into)
   const zip = await readFile(path.join(fixtures, fixture))
-  const problem = await unpackZip(zip, into)
+  const problem = (await unpackZip(zip, into)).problem
   const files = (await readdir(into, { recursive: true })).map(name => name.split(path.sep).join('/')).sort()
   return { zip, into, problem, files }
 }
