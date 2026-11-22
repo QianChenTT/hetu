@@ -18,8 +18,9 @@ vi.mock('yauzl', async importOriginal => {
   }
 })
 
-// A clear that fails, as one a Windows lock outlasts, and a write that fails, as a full disk's
-const disk = vi.hoisted(() => ({ clearFails: false, writeFails: false }))
+// A clear that fails, as one a Windows lock outlasts, a write that fails, as a full disk's, and writes that take at most
+// 7 bytes each, as a write may
+const disk = vi.hoisted(() => ({ clearFails: false, writeFails: false, shortWrites: false }))
 vi.mock('../backend/plugins-manager/folders.ts', async importOriginal => {
   const real = await importOriginal<typeof import('../backend/plugins-manager/folders.ts')>()
   return {
@@ -37,6 +38,9 @@ vi.mock('node:fs/promises', async importOriginal => {
     return new Proxy(handle, {
       get(target, key) {
         if (key === 'write' && disk.writeFails) return async () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }) }
+        if (key === 'write' && disk.shortWrites) {
+          return async (buffer: Buffer, offset = 0) => target.write(buffer, offset, Math.min(7, buffer.length - offset))
+        }
         const value: unknown = Reflect.get(target, key, target)
         return typeof value === 'function' ? value.bind(target) : value
       },
@@ -51,6 +55,7 @@ afterEach(async () => {
   reader.sizesUnchecked = false
   disk.clearFails = false
   disk.writeFails = false
+  disk.shortWrites = false
   for (const dir of made.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 
@@ -86,6 +91,15 @@ describe('a zip unpacked into a staging folder', () => {
     expect(await readFile(path.join(into, 'hetu-plugin.json'), 'utf8')).toBe('{"id":"x"}')
     expect(await readFile(path.join(into, 'dist', 'worker.js'), 'utf8')).toBe('export {}\n'.repeat(50))
     expect(await readFile(path.join(into, 'assets', 'empty.txt'), 'utf8')).toBe('')
+  })
+
+  it('writes all of each chunk when a write takes only part of it', async () => {
+    disk.shortWrites = true
+    const text = Array.from({ length: 300 }, (_, i) => `line ${i}\n`).join('')
+    const { problem, into } = await unpacked([{ name: 'a.txt', data: text }, { name: 'b.txt', data: text, stored: true }])
+    expect(problem).toBeNull()
+    expect(await readFile(path.join(into, 'a.txt'), 'utf8')).toBe(text)
+    expect(await readFile(path.join(into, 'b.txt'), 'utf8')).toBe(text)
   })
 
   it('takes only an empty folder', async () => {

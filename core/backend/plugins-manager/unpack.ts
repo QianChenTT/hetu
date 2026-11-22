@@ -129,7 +129,8 @@ class Writer {
       for await (const chunk of await data()) {
         this.#written += chunk.length
         if (this.#written > this.#limits.bytes) throw new Refused('too-big')
-        await file.write(chunk)
+        // A write may take part of the chunk, so it goes on from where the last one stopped
+        for (let at = 0; at < chunk.length;) at += (await file.write(chunk, at)).bytesWritten
       }
     } finally {
       await file.close()
