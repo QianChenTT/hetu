@@ -64,18 +64,6 @@
     },
     {
       "files": [
-        "core/api/plugin-version.ts",
-        "core/api/manifest.ts"
-      ],
-      "hash": "5d9d206721bbfe46",
-      "at": [
-        "core/api/plugin-version.ts:5-10",
-        "core/api/manifest.ts:79-80"
-      ],
-      "judged": "not yet"
-    },
-    {
-      "files": [
         "core/api/scope.ts",
         "core/api/scope.ts"
       ],
@@ -142,7 +130,7 @@
       "hash": "cb81b7e639e95a46",
       "at": [
         "core/backend/boot/state.ts:37-42",
-        "core/backend/plugins-manager/base.ts:135-142"
+        "core/backend/plugins-manager/base.ts:134-141"
       ],
       "judged": "not yet"
     },
@@ -297,8 +285,8 @@
       ],
       "hash": "64c06c4eb1d29f22",
       "at": [
-        "core/backend/plugins-manager/changes.ts:154-158",
-        "core/backend/plugins-manager/changes.ts:443-447"
+        "core/backend/plugins-manager/changes.ts:156-160",
+        "core/backend/plugins-manager/changes.ts:445-449"
       ],
       "judged": "not yet"
     },
@@ -309,7 +297,7 @@
       ],
       "hash": "2c2066769d83be6a",
       "at": [
-        "core/backend/plugins-manager/changes.ts:30-35",
+        "core/backend/plugins-manager/changes.ts:32-37",
         "core/backend/plugins-manager/requests.ts:202-209"
       ],
       "judged": "not yet"
