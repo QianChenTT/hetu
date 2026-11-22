@@ -115,17 +115,16 @@ const frameName = localName.refine(name => name !== 'worker' && name !== 'host' 
 export const FRAME_TOKEN = /^[0-9a-f]{32}$/
 const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-f]{32}\/[a-z0-9/._-]*$/)
 
-// The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub link
-// whose release main lists the zip assets of. The core copies the source into a staging folder of its own and answers
-// what it found there. One Confirm then installs the plugins the human ticked from those staged bytes and approves each
-// with the hash of what it wrote, so the bytes shown are the bytes that run. Each is the trusted window's alone and none
-// is a read, so inside the input delay each counts for nothing. The core may drop a staging nobody installed or
-// cancelled, as it does once one is installed
+// The Install button's flow (D-673, D-676). The human picks a zip or a folder in main's dialog, or pastes a GitHub
+// link whose release main lists the zip assets of. The core copies the source into a staging folder of its own and
+// answers what it found there. Install then sends plugin.install through security.request, held like every other
+// change, and its one Confirm installs the plugins the human ticked from those staged bytes and approves each with the
+// hash of what it wrote, so the bytes shown are the bytes that run. Each is the trusted window's alone and none is a
+// read, so inside the input delay each counts for nothing. The core may drop a staging nobody installed or cancelled,
+// as it does once one is installed
 
 // The longest link the human may paste
 export const MAX_LINK_LENGTH = 2048
-// The most plugins one Confirm installs
-export const MAX_STAGED_PLUGINS = 64
 // The longest file name of a release's asset
 const MAX_ASSET_LENGTH = 255
 
@@ -136,9 +135,6 @@ const installSource = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('link'), link, asset: screenText(MAX_ASSET_LENGTH) }),
 ])
 export type InstallSource = z.infer<typeof installSource>
-// Each plugin ticked with the digest of its manifest as the stage answer gave it, so the Confirm names what it drew
-const ticked = z.array(z.strictObject({ id: pluginId, digest: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).max(MAX_STAGED_PLUGINS)
-  .refine(plugins => new Set(plugins.map(plugin => plugin.id)).size === plugins.length, 'an id twice')
 
 const installTable = {
   // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, answering the
@@ -148,9 +144,6 @@ const installTable = {
   'core.findRelease': { from: 'trusted', args: z.strictObject({ link }) },
   // Copies the source into a staging folder of the core's own and answers each plugin found there under a handle
   'core.stage': { from: 'trusted', args: z.strictObject({ source: installSource }) },
-  // The Confirm: installs the ticked plugins of a staging into the plugin folder and approves each by its hash, all or
-  // none. A digest that isn't the one of the manifest the core would write is refused stale with nothing installed
-  'core.install': { from: 'trusted', args: z.strictObject({ staged: token, plugins: ticked }) },
   // Cancel: the staging dropped with nothing installed
   'core.unstage': { from: 'trusted', args: z.strictObject({ staged: token }) },
 } satisfies Record<string, CoreAction>
@@ -548,6 +541,5 @@ export type InstallResults = {
   'app.pickPlugins': string | null
   'core.findRelease': FoundRelease
   'core.stage': Staged
-  'core.install': { installed: string[] }
   'core.unstage': null
 }

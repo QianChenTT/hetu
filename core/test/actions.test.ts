@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   coreActions, coreTopics, eventActions, installProblems, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LINK_LENGTH, MAX_LOCK_PATHS,
-  MAX_REFUSAL_COUNT, MAX_STAGED_PLUGINS, providerActions, refusedReasons,
+  MAX_REFUSAL_COUNT, providerActions, refusedReasons,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
 import { coreNamespaces, guardableActions, providers } from '../api/ids.ts'
@@ -32,7 +32,6 @@ describe('the core actions', () => {
       'app.pickPlugins': 'trusted',
       'core.findRelease': 'trusted',
       'core.stage': 'trusted',
-      'core.install': 'trusted',
       'core.unstage': 'trusted',
       'gate.reach': 'windows',
       'core.views': 'windows',
@@ -142,7 +141,8 @@ describe('the core actions', () => {
     // A half speaks only about itself, so no plugin is named
     ['core.bindFailed', { reason: 'port-taken', plugin: 'gate' }, false],
     ['core.bindFailed', { reason: 'port-taken', port: 4748 }, false],
-    // The Install button's flow: a picked zip or folder or a link's release zip staged, then the ticked plugins installed
+    // The Install button's flow: a picked zip or folder or a link's release zip staged, then dropped. Its Confirm is a
+    // security request
     ['app.pickPlugins', { source: 'zip' }, true],
     ['app.pickPlugins', { source: 'folder' }, true],
     ['app.pickPlugins', { source: 'link' }, false],
@@ -159,18 +159,7 @@ describe('the core actions', () => {
     ['core.stage', { source: { kind: 'zip', path: '' } }, false],
     ['core.stage', { source: { kind: 'url', path: 'a.zip' } }, false],
     ['core.stage', { source: { kind: 'zip', path: 'a.zip', asset: 'b.zip' } }, false],
-    // Each plugin ticked with the digest of the manifest the Confirm drew, which the core checks against what it writes
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64) }, { id: 'layout', digest: 'b'.repeat(64) }] }, true],
-    ['core.install', { staged: 'stage-1', plugins: [] }, false],
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64) }, { id: 'search', digest: 'b'.repeat(64) }] }, false],
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'Search', digest: 'a'.repeat(64) }] }, false],
-    ['core.install', { staged: 'stage-1', plugins: ['search'] }, false],
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'search' }] }, false],
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64), path: '/tmp/x' }] }, false],
-    ['core.install', { staged: 'stage-1', plugins: [{ id: 'search', digest: 'A'.repeat(64) }] }, false],
-    ['core.install', { staged: 'stage-1', plugins: Array.from({ length: MAX_STAGED_PLUGINS + 1 }, (_, i) => ({ id: `p${i}`, digest: 'a'.repeat(64) })) }, false],
-    ['core.install', { staged: 'a b', plugins: [{ id: 'search', digest: 'a'.repeat(64) }] }, false],
-    ['core.install', { plugins: [{ id: 'search', digest: 'a'.repeat(64) }] }, false],
+    ['security.request', { change: { kind: 'plugin.install', staged: 'stage-1', plugins: [{ id: 'search', digest: 'a'.repeat(64) }] } }, true],
     ['core.unstage', { staged: 'stage-1' }, true],
     ['core.unstage', {}, false],
   ])('checks %s with %j', (action, args, ok) => {
