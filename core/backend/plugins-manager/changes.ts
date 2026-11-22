@@ -345,10 +345,19 @@ export abstract class PluginsChanges extends PluginsInstall {
 
   // ---- staged updates
 
+  // The build an update put in allowed in the old build's place, written after the entry, so a stop between the two
+  // leaves the plugin refused unsigned. The old build stays allowed while another entry names it
+  protected async allowBuild(old: string, next: string): Promise<void> {
+    const named = Object.values(this.state.plugins).some(entry => entry.contentHash === old)
+    const allowUnsigned = [...this.state.switches.allowUnsigned.filter(hash => named || hash !== old), next]
+    await this.writeSwitches({ ...this.state.switches, allowUnsigned: [...new Set(allowUnsigned)] })
+  }
+
   // An update staged beside the old version, resolved against the live graph before anything changes. One that closes
   // a cycle is refused, and so is a version that isn't newer, so an old release with a known hole can't be swapped
   // back in. Every other one waits for the human's Confirm, raised as plugin.update naming the running plugins it
-  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked. The signer is checked against the pin once provenance exists
+  // stops, itself and its dependents included, unless the grant risk classifier answers that it loads unasked and
+  // allowUnsigned names the new build already. The Confirm allows the build it puts in, so the plan judges it allowed
   update(id: string, dir: string): Promise<UpdateOutcome> {
     // No plugin starts once shutdown began, so an update has nothing to restart into
     if (this.closing) return Promise.reject({ code: 'stopped' })
@@ -366,7 +375,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     const nodes: Node[] = [...this.known.values()].map(other => {
       const entry = { ...k.entry!, contentHash: read.hash!, version: read.manifest!.version }
       const next = other === k ? { ...k, read, entry, held: null } : other
-      return { id: other.id, status: this.status(next), requires: next.read.manifest?.requires ?? [], rank: this.rank(other) }
+      return { id: other.id, status: this.status(next, other === k ? read.hash : null), requires: next.read.manifest?.requires ?? [], rank: this.rank(other) }
     })
     const after = plan(nodes)
     const verdict = after.verdicts.get(id)!
@@ -379,8 +388,10 @@ export abstract class PluginsChanges extends PluginsInstall {
     const stops = [...stopping].sort()
     this.staged.set(id, { dir, read })
     // An update loads on its own only when the grant risk classifier answers that it does, so never while it is off or
-    // down. Its record lands first as any update's does
-    if (this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
+    // down, and only for a build allowUnsigned names, since no Confirm allows it. Its record lands first as any update's
+    // does
+    const allowed = isOne(this.state.switches.allowUnsigned, read.hash!)
+    if (allowed && this.classes('update', id, k.entry, false, read.manifest!.capabilities ?? []).unasked) {
       await this.applyStaged(id, false)
       return { outcome: 'applied' }
     }
@@ -432,6 +443,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     k.entry = entry
     k.read = read
     k.place = placeOf(k.id, read, 'folder')
+    await this.allowBuild(old.contentHash, entry.contentHash)
     if (k.held?.reason === 'update') k.held = null
     this.bump()
     this.replan()

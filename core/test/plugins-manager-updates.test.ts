@@ -25,14 +25,14 @@ async function running(extra: Parameters<typeof harness>[0] = {}) {
   return made
 }
 
-// A build staged beside the running one, which the human allowed by its hash first, since an unsigned plugin's new build
-// runs only once allowUnsigned names it
+// A build staged beside the running one
 async function stage(made: Awaited<ReturnType<typeof harness>>, files: Files): Promise<string> {
   const dir = path.join(made.dataDir, 'staging', 'alpha-next')
   await writeFolder(dir, files)
-  await made.pluginsManager.apply({ kind: 'allowUnsigned', hash: await hashOf(dir), on: true })
   return dir
 }
+
+const allowedNow = async (made: Awaited<ReturnType<typeof harness>>) => (await new StateStore(made.dataDir).load()).state.switches.allowUnsigned
 
 describe('a staged update', () => {
   it('applies once confirmed and its record has landed: the folder swapped, the entry written last, the old incarnation stopped and the new one started', async () => {
@@ -40,6 +40,7 @@ describe('a staged update', () => {
     const next = worker('alpha', { version: '1.1.0' })
     const dir = await stage(made, next)
     const hash = await hashOf(dir)
+    const old = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
     // alpha is class 1, and only a class 0 update loads on its own, so this one waits for a Confirm naming what it
     // stops: the plugin itself and what requires it
     expect(await made.pluginsManager.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
@@ -52,6 +53,9 @@ describe('a staged update', () => {
     expect(await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))).toBe(hash)
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
     expect(entry).toMatchObject({ version: '1.1.0', contentHash: hash, signer: null })
+    // The Confirm allowed the build it put in, in the old one's place
+    expect(await allowedNow(made)).toContain(hash)
+    expect(await allowedNow(made)).not.toContain(old)
     // The old incarnation stopped after its dependent, the new one runs the staged bytes
     const lines = made.link.timeline.filter(line => /^(stop|init) (alpha|beta)$/.test(line))
     expect(lines).toEqual(['init alpha', 'init beta', 'stop beta', 'stop alpha', 'init alpha', 'init beta'])
@@ -103,6 +107,20 @@ describe('a staged update', () => {
   })
 
   // Held for an entry that came to name a signer while the Confirm waited, which no path in a run makes
+  // Another entry naming the same build keeps it allowed
+  it('keeps the old build allowed while another entry names it', async () => {
+    const made = await running({
+      folder: { alpha: worker('alpha'), beta: worker('beta', { requires: ['alpha'] }) },
+      entries: { alpha: signed(), beta: signed(), twin: root => entryFor(path.join(path.dirname(root), 'alpha')) },
+    })
+    const old = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
+    const next = await hashOf(dir)
+    await made.pluginsManager.update('alpha', dir)
+    await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })
+    expect(await allowedNow(made)).toEqual(expect.arrayContaining([old, next]))
+  })
+
   it('applies nothing when the entry names a signer by the Confirm', async () => {
     const made = await running()
     const dir = await stage(made, worker('alpha', { version: '1.1.0' }))

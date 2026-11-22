@@ -372,8 +372,9 @@ ${capabilityKey(change.capability)}`)
 
   // What the checks and this run make of a plugin, before the graph. The human's switch comes first, so a plugin the
   // human switched off reads off whatever its check said and a failed check never reads as off
-  protected status(k: Known): Status {
-    return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k)
+  // allowing is a build judged as allowUnsigned would name it, the build an update's Confirm allows
+  protected status(k: Known, allowing: string | null = null): Status {
+    return k.from === 'install' ? this.installStatus(k) : this.folderStatus(k, allowing)
   }
 
   // Dev mode on a core plugin loads its bytes unhashed, from the install and never from the plugin folder
@@ -397,7 +398,7 @@ ${capabilityKey(change.capability)}`)
   // No signer is taken until provenance lands, so an entry naming one is refused, the first-party signer an older build
   // wrote included, and runs only once the human approves the plugin again. A null signer loads only for a build
   // allowUnsigned names by the hash of the bytes read, or in dev mode, which is for a build with no fixed hash
-  protected folderStatus(k: Known): Status {
+  protected folderStatus(k: Known, allowing: string | null = null): Status {
     const { id, read, entry } = k
     if (entry === null) {
       const result = this.entryChecks.get(id) ?? 'absent'
@@ -414,7 +415,7 @@ ${capabilityKey(change.capability)}`)
     if (read.problem !== null) return refused(read.problem)
     if (entry.signer !== null) {
       return refused('signer')
-    } else if (!dev && !isOne(this.state.switches.allowUnsigned, read.hash)) {
+    } else if (!dev && read.hash !== allowing && !isOne(this.state.switches.allowUnsigned, read.hash)) {
       return refused('unsigned')
     }
     if (this.requiresProblem(k)) return refused('requires')

@@ -92,14 +92,17 @@ describe('an approval', () => {
   })
 })
 
-// A class 0 update or another staged for calc, with what its entry holds and what the new version asks for
-async function updating(entry: object, broken = false, next: Capability[] = [], given: { modules?: object, switches?: Partial<Switches> } = {}) {
+// A class 0 update or another staged for calc, with what its entry holds and what the new version asks for. The human
+// allowed the new build first unless unallowed
+async function updating(entry: object, broken = false, next: Capability[] = [], given: { modules?: object, switches?: Partial<Switches>, unallowed?: true } = {}) {
+  const { unallowed, ...rest } = given
   const made = await harness({
-    ...(broken ? { modules: down() } : {}), ...given, folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) },
+    ...(broken ? { modules: down() } : {}), ...rest, folder: { calc: worker('calc') }, entries: { calc: root => entryFor(root, { granted: [], ...entry }) },
   })
   await made.pluginsManager.start()
   const dir = path.join(made.dataDir, 'staging', 'calc-next')
   await writeFolder(dir, filesFor(workerManifest('calc', { version: '1.1.0', capabilities: next })))
+  if (unallowed !== true) await made.pluginsManager.apply({ kind: 'allowUnsigned', hash: await hashOf(dir), on: true })
   return { made, outcome: await made.pluginsManager.update('calc', dir) }
 }
 
@@ -114,6 +117,13 @@ describe('a staged update', () => {
     expect(outcome).toEqual({ outcome: 'applied' })
     expect(made.pluginsManager.pending()).toEqual([])
     expect(made.link.events('plugin.updated')).toEqual([{ plugin: 'calc', from: '1.0.0', to: '1.1.0' }])
+  })
+
+  // allowUnsigned names one build, so an update the human hasn't allowed would stop the plugin and never start it again
+  it('waits for the Confirm for a class 0 plugin whose new build allowUnsigned does not name', async () => {
+    const { made, outcome } = await updating({ class: 0 }, false, [], { unallowed: true })
+    expect(outcome).toMatchObject({ outcome: 'confirm' })
+    expect(made.link.events('plugin.updated')).toEqual([])
   })
 
   it.each([
@@ -1427,6 +1437,7 @@ describe('an update applied with no Confirm', () => {
   const staged = async (made: Made, id: string, capabilities: Capability[]) => {
     const dir = path.join(made.dataDir, 'staging', `${id}-next`)
     await writeFolder(dir, filesFor(workerManifest(id, { version: '1.1.0', capabilities })))
+    await made.pluginsManager.apply({ kind: 'allowUnsigned', hash: await hashOf(dir), on: true })
     return made.pluginsManager.update(id, dir)
   }
 
