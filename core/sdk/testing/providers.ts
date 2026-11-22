@@ -3,8 +3,10 @@ import { LIST_PAGE, type HistoryCommit, type ResultOf } from '../../api/actions.
 import type { RefusalCode } from '../../api/envelope.ts'
 import { HISTORY_COMMIT_BYTES, HISTORY_FILE_BYTES, LOG_PAGE } from '../../api/exec.ts'
 import { isDotName } from '../../api/names.ts'
-import { signatureOf, type Call, type Prepared, type Provider, type ProviderRefusal } from '../../api/policy-jobs.ts'
+import { signatureOf, type Call, type Guard, type Prepared, type Provider, type ProviderRefusal } from '../../api/policy-jobs.ts'
 import { quotas, spaceOf } from '../../api/storage.ts'
+import type { LockOptions } from '../../backend/lock/header.ts'
+import { createLock } from '../../backend/lock/lock.ts'
 
 // Each call waits ms before it is performed, as a provider on a slow disk would
 const after = (ms: number) => (ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve())
@@ -185,6 +187,21 @@ export class MemoryStorage implements Provider {
       this.spaces[kind].set(name, space)
     }
     return space
+  }
+}
+
+// lock.* and the lock guard of the lock module itself, its table, holder, caps and expiry on the clock given, with the
+// paths taken as spelled where the module makes them canonical on the disk. The folder it is handed is one no prepare
+// here reads
+export function memoryLock(options: LockOptions): { provider: Provider, guard: Guard } {
+  const lock = createLock(options)
+  lock.role.open({ folder: 'memory', dataDir: '', installDir: '' })
+  return {
+    provider: {
+      prepare: async call => ({ scope: { paths: [...(call.args as { paths: string[] }).paths] } }),
+      perform: (call, prepared) => lock.provider.perform(call, prepared),
+    },
+    guard: lock.guard,
   }
 }
 
