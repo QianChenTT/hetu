@@ -1842,6 +1842,18 @@ describe('lock.changed', () => {
     expect(search.events().map(message => message.path)).toEqual(['notes/z.md'])
   })
 
+  // The human switched the gate off, so nothing is judged and every path goes to every subscriber, as luoshu.changed does
+  it('gives every subscriber the event with the gate off by the human, a plugin that reads nothing included', async () => {
+    const { router, pluginsManager, git, told, gate } = locking()
+    pluginsManager.policyJobs.gate = 'off'
+    router.changed()
+    expect(code(await git.ask('events.subscribe', { topics: ['lock.changed'] }))).toBeNull()
+    told('secret/a.md', { locked: true, until: 5 })
+    await until(() => git.events().length === 1)
+    expect(git.events()).toStrictEqual([{ v: 1, kind: 'event', seq: 1, topic: 'lock.changed', path: 'secret/a.md', locked: true, until: 5 }])
+    expect(gate.reads).toEqual([])
+  })
+
   it('holds the event back while the gate is down and resyncs the subscriber once it is up', async () => {
     const { router, pluginsManager, search, told } = locking()
     await search.ask('events.subscribe', { topics: ['lock.changed'] })
