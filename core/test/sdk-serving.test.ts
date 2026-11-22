@@ -151,7 +151,7 @@ describe('a plugin serving a role through the SDK', () => {
 
   it('serves no role under a plugin\'s own action of the same name', async () => {
     const { http } = await holder(ctx => { ctx.provide('handle', () => ({ status: 200, body: '' })) })
-    expect(code(await http.ask('door.handle', { body: '', headers: {} }))).toBe('failed')
+    expect(code(await http.ask('door.handle', { body: '', headers: {} }, { onBehalf: 'claude-code#1' }))).toBe('failed')
   })
 
   it('refuses a name with a dot that is no role, so a plugin names no other plugin\'s action', async () => {

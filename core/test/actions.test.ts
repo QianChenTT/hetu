@@ -327,6 +327,8 @@ describe('the role actions', () => {
       'door.handle': ['utility', 'door.handle'],
     })
     for (const action of Object.keys(roleActions)) expect(serverOf(namespace(action))?.route).toBe('role')
+    // Each call names the label it is made for, so what the holder does under it is judged for that pair
+    expect(roleActions['door.handle'].onBehalf).toBe(true)
   })
 
   it('is frozen with no prototype', () => {

@@ -177,7 +177,7 @@ describe('the door', () => {
     const page = await workersPage(app, 'caller')
     await until(() => page.workers().length === 1)
     const worker = page.workers()[0] as Worker
-    const ask = (target: string) => worker.evaluate(`globalThis.ctx.call('${target}', 'handle', { body: '{}', headers: {} }).then(value => ({ value }), error => ({ refused: error.code }))`)
+    const ask = (target: string) => worker.evaluate(`globalThis.ctx.call('${target}', 'handle', { body: '{}', headers: {} }, { onBehalf: 'claude-code#1' }).then(value => ({ value }), error => ({ refused: error.code }))`)
     expect(await ask('door')).toEqual({ refused: 'not-granted' })
     expect(await ask('mcp')).toEqual({ refused: 'not-found' })
   })

@@ -15,6 +15,8 @@ function door(over: Parameters<typeof harness>[0] = {}) {
 }
 
 const request = { body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}', headers: { 'mcp-protocol-version': '2026-07-28' } }
+// The label the door names on every call
+const as = { onBehalf: 'claude-code#1' }
 
 async function written(recording: Recording, log: FakeLog) {
   await recording.flush()
@@ -37,7 +39,7 @@ describe('door.handle', () => {
   it('answers unavailable while no plugin holds the role', async () => {
     const { http, pluginsManager, mcp } = door()
     delete pluginsManager.roles['door.handle']
-    expect(code(await http.ask('door.handle', request))).toBe('unavailable')
+    expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
@@ -49,16 +51,16 @@ describe('door.handle', () => {
   ] as const)('answers a holder that is %s with %s', async (state, answer) => {
     const { http, pluginsManager } = door()
     pluginsManager.sandboxed('mcp', {}, state)
-    expect(code(await http.ask('door.handle', request))).toBe(answer)
+    expect(code(await http.ask('door.handle', request, as))).toBe(answer)
   })
 
   it('answers unavailable when the table names a plugin it has no row for, or its way is gone', async () => {
     const { http, pluginsManager } = door()
     pluginsManager.roles['door.handle'] = 'ghost'
-    expect(code(await http.ask('door.handle', request))).toBe('unavailable')
+    expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
     pluginsManager.sandboxed('quiet')
     pluginsManager.roles['door.handle'] = 'quiet'
-    expect(code(await http.ask('door.handle', request))).toBe('unavailable')
+    expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
   })
 
   // The floor decides who calls it, as for a core action, so a grant names no way in
@@ -66,24 +68,32 @@ describe('door.handle', () => {
     const { connect, gate, pluginsManager, router, mcp } = door()
     gate.grants.search = [{ type: 'plugin.call', targets: ['mcp'] }, { type: 'door.handle' }]
     pluginsManager.sandboxed('search')
-    expect(code(await connect(worker('search')).ask('door.handle', request))).toBe('not-granted')
+    expect(code(await connect(worker('search')).ask('door.handle', request, as))).toBe('not-granted')
     // The holder itself, which would answer its own call
-    expect(code(await mcp.ask('door.handle', request))).toBe('not-granted')
+    expect(code(await mcp.ask('door.handle', request, as))).toBe('not-granted')
     // A host half on a handle in main is no utility half
     pluginsManager.installed('watcher')
-    expect(code(await hostHalf(router, host('watcher')).ask('door.handle', request))).toBe('not-granted')
+    expect(code(await hostHalf(router, host('watcher')).ask('door.handle', request, as))).toBe('not-granted')
     const windows = windowWay(router, { editor, trusted })
-    expect(code(await windows.ask('editor', 'door.handle', request))).toBe('not-granted')
-    expect(code(await windows.ask('trusted', 'door.handle', request))).toBe('not-granted')
+    expect(code(await windows.ask('editor', 'door.handle', request, as))).toBe('not-granted')
+    expect(code(await windows.ask('trusted', 'door.handle', request, as))).toBe('not-granted')
+    expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
+  })
+
+  // With no label the holder's calls under it would carry no pair and be judged on its own items alone
+  it('refuses a call naming no onBehalf as invalid before anything is asked', async () => {
+    const { http, gate, mcp } = door()
+    expect(code(await http.ask('door.handle', request))).toBe('invalid')
+    expect(gate.asked).toEqual([])
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
 
   it('refuses arguments outside the contract as invalid before anything is asked', async () => {
     const { http, gate, mcp } = door()
-    expect(code(await http.ask('door.handle', { body: 1, headers: {} }))).toBe('invalid')
-    expect(code(await http.ask('door.handle', { ...request, extra: true }))).toBe('invalid')
-    expect(code(await http.ask('door.handle.other', request))).toBe('invalid')
-    expect(code(await http.ask('door.other', request))).toBe('invalid')
+    expect(code(await http.ask('door.handle', { body: 1, headers: {} }, as))).toBe('invalid')
+    expect(code(await http.ask('door.handle', { ...request, extra: true }, as))).toBe('invalid')
+    expect(code(await http.ask('door.handle.other', request, as))).toBe('invalid')
+    expect(code(await http.ask('door.other', request, as))).toBe('invalid')
     expect(gate.asked).toEqual([])
     expect(mcp.inbox.filter(message => message.kind === 'call')).toEqual([])
   })
@@ -116,11 +126,11 @@ describe('door.handle', () => {
 
   it('passes on a refusal the holder may give and fails one it may not', async () => {
     const { http, mcp } = door()
-    const first = http.call('door.handle', request)
+    const first = http.call('door.handle', request, as)
     const one = await mcp.delivered('door.handle')
     mcp.post({ v: 1, kind: 'reply', callId: one.callId, ok: false, refusal: { code: 'not-found', action: 'door.handle' } })
     expect(code(await http.reply(first))).toBe('not-found')
-    const second = http.call('door.handle', request)
+    const second = http.call('door.handle', request, as)
     const two = await mcp.waitFor(message => message.kind === 'call' && message.callId !== one.callId)
     mcp.post({ v: 1, kind: 'reply', callId: two.callId, ok: false, refusal: { code: 'policy-down', action: 'door.handle' } })
     expect(code(await http.reply(second))).toBe('failed')
@@ -159,13 +169,13 @@ describe('door.handle', () => {
     expect(code(await mcp.reply(read))).toBe('stale')
     await mcp.waitFor(message => message.kind === 'cancel' && message.callId === delivered.callId)
     // A second call finds no holder
-    expect(code(await http.ask('door.handle', request))).toBe('unavailable')
+    expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
     letGo()
   })
 
   it('leaves an open call running while the table still names its holder', async () => {
     const { http, mcp, router, pluginsManager } = door()
-    const id = http.call('door.handle', request)
+    const id = http.call('door.handle', request, as)
     const delivered = await mcp.delivered('door.handle')
     pluginsManager.current++
     router.changed()
@@ -177,6 +187,6 @@ describe('door.handle', () => {
   it('answers unavailable when the table throws, as for a plugin it can\'t read', async () => {
     const { http, pluginsManager } = door()
     pluginsManager.role = () => { throw new Error('table down') }
-    expect(code(await http.ask('door.handle', request))).toBe('unavailable')
+    expect(code(await http.ask('door.handle', request, as))).toBe('unavailable')
   })
 })

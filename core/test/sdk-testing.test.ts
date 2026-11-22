@@ -872,9 +872,9 @@ describe('the fake core playing another plugin', () => {
 
     it('answers unavailable with no stand-in holding it, and refuses a worker under test at the floor', async () => {
       const { ctx } = await started(http, made => { made.standIn('mcp', { actions: {} }) })
-      await expect(ctx.call('door', 'handle', request)).rejects.toMatchObject({ code: 'unavailable' })
+      await expect(ctx.call('door', 'handle', request, { onBehalf: 'claude-code#1' })).rejects.toMatchObject({ code: 'unavailable' })
       const worker = await started(callerManifest, made => { made.standIn('mcp', { actions: {}, roles: ['door.handle'] }) })
-      await expect(worker.ctx.call('door', 'handle', request)).rejects.toMatchObject({ code: 'not-granted' })
+      await expect(worker.ctx.call('door', 'handle', request, { onBehalf: 'claude-code#1' })).rejects.toMatchObject({ code: 'not-granted' })
     })
 
     it('tells http under test through deps whether the role is served, as has and onDeps read it', async () => {

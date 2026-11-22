@@ -50,6 +50,8 @@ export function shape(c: Context, way: Way, message: unknown): Shaped {
   if (schema !== null && !schema.success) return refuse('invalid')
   const args = schema !== null ? schema.data : parsed.data.args
 
+  // A role that names a label is refused without one, before anything is asked
+  if (target.kind === 'role' && target.spec.onBehalf && onBehalf === undefined) return refuse('invalid')
   if (parentId !== undefined) {
     if (parent === null || parsed.data.onBehalf !== undefined) return refuse('invalid')
     if (parent.depth + 1 > c.limits.of(way.plugin, 'parentDepth')) return refuse('invalid')

@@ -198,10 +198,10 @@ export class Half {
     return this.inbox.filter(message => message.kind === kind)
   }
 
-  // A call from this half through the router, its reply or null when none came within ms
-  async ask(action: string, args: unknown = {}, ms = 1000): Promise<Message | null> {
+  // A call from this half through the router, its reply or null when none came within ms. extra adds envelope fields
+  async ask(action: string, args: unknown = {}, ms = 1000, extra: object = {}): Promise<Message | null> {
     const id = 1000 + this.id++
-    this.post({ v: 1, kind: 'call', id, action, args })
+    this.post({ v: 1, kind: 'call', id, action, args, ...extra })
     const end = Date.now() + ms
     while (Date.now() < end) {
       const reply = this.inbox.find(message => message.kind === 'reply' && message.id === id)

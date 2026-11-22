@@ -1006,7 +1006,7 @@ describe('the door through the joined core', () => {
   // The floor admits only a utility half's call to the role, so neither a grant on mcp nor mcp's own action reaches it
   it('refuses another plugin\'s worker holding plugin.call on mcp at door.handle\'s floor, the gate never asked', async () => {
     const { runtime, decisions } = await door()
-    const reply = await runtime.half('beta').ask('door.handle', { body: '{}', headers: {} })
+    const reply = await runtime.half('beta').ask('door.handle', { body: '{}', headers: {} }, 1000, { onBehalf: 'claude-code#1' })
     expect(code(reply!)).toBe('not-granted')
     expect(code((await runtime.half('beta').ask('mcp.handle', { body: '{}', headers: {} }))!)).toBe('not-found')
     expect(decisions.filter(decision => decision.caller === 'beta' && decision.target === undefined)).toEqual([])

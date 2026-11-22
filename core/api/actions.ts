@@ -307,8 +307,9 @@ const providerTable = {
 export const providerActions = lookup<ProviderAction>(providerTable)
 
 // A role: an action the core names and the one plugin holding capability serves, delivered to it as this same action.
-// from is who may call it, which the floor decides as for a core action and never the gate
-export type RoleAction = { readonly from: CoreFrom, readonly capability: CapabilityType, readonly args: z.ZodType }
+// from is who may call it, which the floor decides as for a core action and never the gate. onBehalf says every call
+// names the label it is made for, so the holder's calls under it are judged for that pair beside its own items
+export type RoleAction = { readonly from: CoreFrom, readonly capability: CapabilityType, readonly args: z.ZodType, readonly onBehalf: boolean }
 
 const roleTable = {
   // A request that passed every check at the door: its body as text and its mcp- headers, on behalf of the label the
@@ -316,6 +317,7 @@ const roleTable = {
   'door.handle': {
     from: 'utility',
     capability: 'door.handle',
+    onBehalf: true,
     args: z.strictObject({
       body: z.string(),
       headers: z.record(z.string(), z.string()).refine(headers => Object.keys(headers).length <= MAX_LIST, 'too many headers'),
