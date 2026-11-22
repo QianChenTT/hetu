@@ -4,9 +4,14 @@ import { SCHEME } from './before-ready.ts'
 
 export const EDITOR_URL = `${SCHEME}://editor/`
 
-// On every web contents, DevTools' included: no navigation a page starts, no new window, no webview and no Bluetooth
-// device, which Electron would otherwise pick for the page itself
+// On every web contents, DevTools' included: no navigation a page starts, no new window, no webview, no Bluetooth
+// device, which Electron would otherwise pick for the page itself, and no WebRTC over UDP
 export function guardContents(contents: WebContents): void {
+  // CSP's connect-src doesn't cover WebRTC and Chromium doesn't enforce webrtc 'block', so a frame under
+  // connect-src 'none' still reached a STUN server over UDP. disable_non_proxied_udp leaves WebRTC only TCP through the
+  // session's proxy, which leads nowhere (lockDown). Applies to every frame of the contents
+  // https://www.electronjs.org/docs/latest/api/web-contents#contentssetwebrtciphandlingpolicypolicy
+  contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
   contents.on('will-navigate', event => event.preventDefault())
   contents.setWindowOpenHandler(() => ({ action: 'deny' }))
   contents.on('will-attach-webview', event => event.preventDefault())

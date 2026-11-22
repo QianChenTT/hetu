@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Caller } from '../../../api/envelope.ts'
 import type { Call, GuardCall } from '../../../api/policy-jobs.ts'
-import { MAX_LOCK_MS, MAX_LOCKS_PER_ROOT } from '../../../backend/lock/header.ts'
+import { MAX_LOCK_MS, MAX_LOCKS_PER_CLIENT, MAX_LOCKS_PER_ROOT } from '../../../backend/lock/header.ts'
 import { createLock, type Lock } from '../../../backend/lock/lock.ts'
 
 // The lock module on its own, with a real notes folder for the canonical paths and a clock the test moves
@@ -58,6 +58,14 @@ async function ask(lock: Lock, action: string, args: unknown, chain: Chain): Pro
     return await lock.provider.perform(call, prepared)
   } catch (err) {
     return { refused: err }
+  }
+}
+
+// Sets count locks on many/<prefix><i>.md for a chain, 64 paths a call, each set taken
+async function fill(lock: Lock, prefix: string, count: number, chain: Chain): Promise<void> {
+  for (let i = 0; i < count; i += 64) {
+    const paths = Array.from({ length: Math.min(64, count - i) }, (_, j) => `many/${prefix}${i + j}.md`)
+    expect(await ask(lock, 'lock.set', { paths, ms: 1000 }, chain)).toEqual({ ms: 1000 })
   }
 }
 
@@ -144,18 +152,61 @@ describe('lock.set', () => {
     expect(check(lock, ['projects/plan.md'], { root: editor })).toBe('allow')
   })
 
-  // Pairs together, so one plugin can't fill main with locks by naming new fields
+  // Pairs together, so one plugin can't fill main with locks by naming new fields. Each client its own, so the root's
+  // cap is reached past the clients' own
   it('refuses a root plugin past its live locks with quota, the expired ones not counted', async () => {
     const { lock, pass } = made()
     for (let i = 0; i < MAX_LOCKS_PER_ROOT; i += 64) {
       const paths = Array.from({ length: 64 }, (_, j) => `many/${i + j}.md`)
-      expect(await ask(lock, 'lock.set', { paths, ms: 1000 }, agent(`claude-code#${i}`))).toEqual({ ms: 1000 })
+      expect(await ask(lock, 'lock.set', { paths, ms: 1000 }, agent(`client-${i}#1`))).toEqual({ ms: 1000 })
     }
-    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#new'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('client-new#1'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
     expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, { root: leases })).toEqual({ ms: 1000 })
     pass(1000)
-    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#new'))).toEqual({ ms: 1000 })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('client-new#1'))).toEqual({ ms: 1000 })
   // A thousand paths each turned canonical on the disk, past five seconds on a busy Windows machine
+  }, 60_000)
+
+  // The field up to its first # as a pair's grants are keyed, so a client opening more sessions gets no more locks
+  it('holds a client\'s sessions under one root to MAX_LOCKS_PER_CLIENT live locks together while another client still takes', async () => {
+    const { lock } = made()
+    await fill(lock, 'a', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#1'))
+    await fill(lock, 'b', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#2'))
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#3'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['many/a0.md', 'one.md'], ms: 1000 }, agent('claude-code#1'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(check(lock, ['one.md'], { root: editor })).toBe('allow')
+    expect(await ask(lock, 'lock.set', { paths: ['many/a0.md', 'many/a1.md'], ms: 1000 }, agent('claude-code#1'))).toEqual({ ms: 1000 })
+    await fill(lock, 'c', MAX_LOCKS_PER_CLIENT, agent('codex#1'))
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('codex#2'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+  }, 60_000)
+
+  // grantKeyOf's split, so a session name holding a # of its own is still the same client
+  it('takes the client from a field up to its first # when the field holds two', async () => {
+    const { lock } = made()
+    await fill(lock, 'a', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#1#x'))
+    await fill(lock, 'b', MAX_LOCKS_PER_CLIENT / 2, agent('claude-code#2'))
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#3'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#1#y'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+  }, 60_000)
+
+  it('gives a client its count back as its sessions\' locks clear and expire', async () => {
+    const { lock, pass } = made()
+    await fill(lock, 'a', MAX_LOCKS_PER_CLIENT, agent('claude-code#1'))
+    const first = Array.from({ length: 64 }, (_, i) => `many/a${i}.md`)
+    expect(await ask(lock, 'lock.clear', { paths: first }, agent('claude-code#1'))).toBeNull()
+    await fill(lock, 'c', 64, agent('claude-code#2'))
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#2'))).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    pass(1000)
+    await fill(lock, 'd', MAX_LOCKS_PER_CLIENT, agent('claude-code#3'))
+  }, 60_000)
+
+  // A plugin calling with no field holds as itself, one client beside its pairs' clients, under the same cap
+  it('counts a root plugin\'s locks with no onBehalf as a client of its own, held to the same cap', async () => {
+    const { lock } = made()
+    await fill(lock, 'a', MAX_LOCKS_PER_CLIENT, { root: handler })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, { root: handler })).toEqual({ refused: { code: 'failed', reason: 'quota' } })
+    expect(await ask(lock, 'lock.set', { paths: ['one.md'], ms: 1000 }, agent('claude-code#1'))).toEqual({ ms: 1000 })
   }, 60_000)
 })
 

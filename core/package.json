@@ -26,10 +26,12 @@
     "@humanwhocodes/momoa": "^3.3.13",
     "@lezer/common": "^1.5.4",
     "@lezer/markdown": "^1.8.1",
+    "yauzl": "3.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@types/yauzl": "3.4.0",
     "acorn": "^8.19.0",
     "acorn-walk": "^8.3.5",
     "esbuild": "^0.28.2",
