@@ -149,7 +149,7 @@ export abstract class PluginsClasses extends PluginsIdentities {
   // before the write and one that falls after, then each notice owed raised
   protected async writeClassed(id: string, change: Classed): Promise<void> {
     const entry = change.own!.entry!
-    await this.around(change, async () => {
+    await this.withClassChange(change, async () => {
       await this.store.writePlugin(id, entry)
       this.putEntry(id, entry)
     })
@@ -157,7 +157,7 @@ export abstract class PluginsClasses extends PluginsIdentities {
 
   // A plugin-folder entry gone with the class change its going makes, then gone run
   protected async entryGone(id: string, change: Classed, gone: () => void = () => {}): Promise<void> {
-    await this.around(change, async () => {
+    await this.withClassChange(change, async () => {
       await this.store.removePlugin(id)
       delete this.state.plugins[id]
       gone()
@@ -166,7 +166,7 @@ export abstract class PluginsClasses extends PluginsIdentities {
 
   // The changed plugin's own write with the entries the change moves: those that rise written before it and the rest
   // after, then the notices owed raised
-  protected async around(change: Classed, write: () => Promise<void>): Promise<void> {
+  protected async withClassChange(change: Classed, write: () => Promise<void>): Promise<void> {
     await this.settle(change.others, true)
     await write()
     await this.settle(change.others, false)

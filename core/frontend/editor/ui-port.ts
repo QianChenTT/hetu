@@ -23,7 +23,7 @@ export type UiHooks = {
   // Views came or went, or the layout drawing the window changed
   changed(): void
   // A plugin holding ui.layout came, or came to hold it
-  layoutCame(owner: string): void
+  layoutConnected(owner: string): void
   // A frame view's message from its owner's worker
   post(owner: string, instance: string, data: unknown): RefusalCode | null
   // Opens a note in the editor with the window's own read, once the plugin's reach was checked on the path it named.
@@ -97,7 +97,7 @@ export class UiPort {
       this.surfaces.dropSurface(owner, SKELETON)
     }
     this.settingsChanged()
-    if (came) this.options.hooks.layoutCame(owner)
+    if (came) this.options.hooks.layoutConnected(owner)
   }
 
   ended(owner: string): void {

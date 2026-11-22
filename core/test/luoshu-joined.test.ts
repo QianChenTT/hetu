@@ -285,7 +285,7 @@ describe('an open note judged on where it is, never on the spelling it was opene
     const hooks: UiHooks = {
       drawn() {},
       changed() {},
-      layoutCame() {},
+      layoutConnected() {},
       post: () => 'unavailable',
       open: (at, reads) => opened.open(at, reads).then(() => {}, () => {}),
     }

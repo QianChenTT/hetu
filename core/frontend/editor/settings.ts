@@ -50,13 +50,13 @@ export class Settings {
     this.onChange?.()
     const first = this.early.find(one => one.connected())
     this.early = []
-    if (first !== undefined) await this.firstLayout(first.id)
+    if (first !== undefined) await this.pickIfNone(first.id)
   }
 
   // A layout plugin that came: with no layout picked the first picks itself, so the first layout installed draws. The
   // human's pick and the plain layout picked stay, and a layout coming later changes no pick. One that came before the
   // settings loaded waits for them and is picked only while connected says it is still there
-  async firstLayout(id: string, connected: () => boolean = () => true): Promise<void> {
+  async pickIfNone(id: string, connected: () => boolean = () => true): Promise<void> {
     if (!this.loaded) {
       this.early.push({ id, connected })
       return

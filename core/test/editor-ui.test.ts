@@ -67,7 +67,7 @@ function started(reach: Record<string, Reach>, settings: Partial<SettingsValue> 
       hooks: {
         drawn: (owner, surface) => void drawn.push(`${owner} ${surface}`),
         changed: () => void changed++,
-        layoutCame: owner => void came.push(owner),
+        layoutConnected: owner => void came.push(owner),
         post: (owner, instance, data) => {
           posted.push([owner, instance, data])
           return null
