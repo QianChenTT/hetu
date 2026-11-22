@@ -1017,7 +1017,8 @@ describe('the fake history against the history module', () => {
       const order: string[] = []
       return JSON.parse(JSON.stringify(list, (key, value: unknown) => {
         if (key === 'date') {
-          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/)
+          // git's %aI writes UTC as Z on some builds and +00:00 on others
+          expect(value).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(Z|[+-]\d\d:\d\d)$/)
           return 'date'
         }
         if (key !== 'commit' || typeof value !== 'string') return value
