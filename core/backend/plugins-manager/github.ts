@@ -159,7 +159,8 @@ function redirectedTo(response: Response, from: string): string {
 const rateLimited = (response: Response) => response.status === 429
   || (response.status === 403 && (response.headers.get('x-ratelimit-remaining') === '0' || response.headers.get('retry-after') !== null))
 
-// Why an answer is refused before its body is read, past the cap by its Content-Length among them, or null
+// Why an answer is refused before its body is read, past the cap by its Content-Length among them, or null. A gzip
+// answer's Content-Length is its compressed size, never more than decoded, so it can't refuse one the count would take
 function refusal(response: Response, cap: number): FetchProblem | null {
   if (response.status === 404) return 'not-found'
   if (rateLimited(response)) return 'rate-limited'

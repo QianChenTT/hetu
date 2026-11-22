@@ -136,6 +136,19 @@ describe('a picked zip', () => {
     expect(calls).toEqual([])
   })
 
+  it('is counted across chunks, refused when only its second chunk crosses the cap', async () => {
+    const chunked = () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(600))
+        controller.enqueue(new Uint8Array(600))
+        controller.close()
+      },
+    }), { status: 200 })
+    expect(await downloadZip({ ...zip, size: 1 }, { fetch: fake(chunked).fetch, limits: { bytes: 1000 } })).toEqual({ problem: 'too-big' })
+    const whole = await downloadZip({ ...zip, size: 1 }, { fetch: fake(chunked).fetch, limits: { bytes: 1200 } })
+    expect(whole.problem === null && whole.bytes.length).toBe(1200)
+  })
+
   it('keeps the default cap and time limit for a limit given as undefined', async () => {
     const { fetch, calls } = fake(() => new Response(new Uint8Array(6), { status: 200 }))
     const past = { ...zip, size: zipLimits.bytes + 1 }
