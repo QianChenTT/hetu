@@ -47,7 +47,8 @@ export default definePlugin({
 // Loads for the bridge's measurement, each started and stopped from the test and counting what it did. redraw draws a
 // view of 100 rows ten times a second, each row's text new each time. flood sends decorations of 2,500 marks over the
 // note's lines of more than 20 characters, which leaves out the plain last one, eight at a time and again as each
-// answers, which passes the marks a second the drawer takes
+// answers, which passes the marks a second the drawer takes. index reads each note a change names again, as search
+// does to index it
 const loads = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({
@@ -137,6 +138,11 @@ export default definePlugin({
         }
       }
       pump()
+    }
+    scope.index = async () => {
+      await ctx.events.on(['luoshu.changed', 'luoshu.outside'], event => {
+        if (event.path !== undefined) void ctx.luoshu.read({ path: event.path }).catch(() => {})
+      })
     }
   },
 })
@@ -569,19 +575,24 @@ describe('the drawer', () => {
     // note's lines sit in blocks of their own: one paragraph of 2,000 lines would have every key parse all its links again
     const lines = Array.from({ length: 2000 }, (_, i) => `- line ${i} with **some** text and a [link](https://example.com/${i})`)
     const big = [...lines, '', 'plain'].join('\n')
-    // A folder of a real one's size for search to index
+    // A folder of a real one's size for the indexing load to read
     const note = (i: number, sweep: number) => `# Note ${i}\n\n${Array.from({ length: 40 }, (_, j) => `word${(i * 7 + j) % 997} sweep ${sweep} line ${j}`).join('\n')}\n`
     const notes: Record<string, string> = { 'big.md': big }
     for (let i = 0; i < 469; i++) notes[`note-${String(i).padStart(3, '0')}.md`] = note(i, 0)
     const { app, editor, dataDir, folder } = await started({
       notes,
       plugins: { marker: reader },
-      loads: { painter: { granted: [{ type: 'ui.view' }], manifest: { views: { rows: { title: 'Rows', kind: 'view' } } } }, flooder: { granted: reader } },
+      loads: {
+        painter: { granted: [{ type: 'ui.view' }], manifest: { views: { rows: { title: 'Rows', kind: 'view' } } } },
+        flooder: { granted: reader },
+        indexer: { granted: [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'luoshu.outside'] }] },
+      },
     })
     await open(editor, 'big.md')
     const marker = await pluginWorker(app, 'marker')
     const painter = await pluginWorker(app, 'painter')
     const flooder = await pluginWorker(app, 'flooder')
+    const indexer = await pluginWorker(app, 'indexer')
     await until(async () => (await drive(marker, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
     await until(async () => (await drive(flooder, async scope => scope.editor.instances().then(list => (list as unknown[]).length, () => -1))) === 1)
     // The marking plugin also hears the range the editor draws, as a plugin marking only what is drawn would
@@ -645,7 +656,7 @@ describe('the drawer', () => {
     }
     const counts = (worker: Worker) => drive(worker, async scope => ({ ...(scope as unknown as { counts: Record<string, number> }).counts }))
     const reads = async () => (await records(dataDir)).filter(record => record.event === 'audit.call' && record.action === 'luoshu.read'
-      && String(record.caller).includes('search')).length
+      && String(record.caller).includes('indexer')).length
     const sitting: Partial<Sitting> = {}
 
     sitting.quiet = await keys()
@@ -671,7 +682,8 @@ describe('the drawer', () => {
     expect(sitting.flood.load.throttled).toBeGreaterThan(0)
     await tick(500)
 
-    // Each note rewritten in turn, about 470 a second, each read again by search
+    // Each note rewritten in turn, about 470 a second, each read again by the indexing load
+    await drive(indexer, async scope => (scope as unknown as { index: () => Promise<void> }).index())
     let rewriting = true
     const readsBefore = await reads()
     const rewrites = (async () => {

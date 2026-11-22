@@ -1,14 +1,17 @@
-import { writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ElectronApplication, Page, Worker } from 'playwright'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
-import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
+import { firstPartyIds } from '../../api/ids.ts'
+import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
-import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
+import { entryFor, filesFor, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
-// Plugins drawing to mislead or to take what the human types, as the review of the views tried them, each held
+// Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
+// before the human's Confirm or past the folder the human narrowed them to, each held
 
 afterEach(cleanup)
 
@@ -38,15 +41,21 @@ export default definePlugin({
 })
 `
 
-type Fixture = { granted: Capability[], manifest?: object, files?: Record<string, string> }
+// entry is what the human's approval left beside the grant, such as the class and the items asking at their first use
+type Fixture = { granted: Capability[], manifest?: object, files?: Record<string, string>, entry?: Partial<Plugin> }
 
-async function started(setup: { notes?: Record<string, string>, plugins?: Record<string, Fixture> }): Promise<{ app: ElectronApplication, editor: Page, dataDir: string }> {
+// install holds first-party plugins by the grant each manifest asks for
+type Setup = { notes?: Record<string, string>, plugins?: Record<string, Fixture>, install?: Record<string, Capability[]> }
+
+async function started(setup: Setup): Promise<{ app: ElectronApplication, editor: Page, dataDir: string, folder: string }> {
   const folder = await temp()
-  for (const [name, text] of Object.entries(setup.notes ?? {})) await writeFile(path.join(folder, name), text)
+  for (const [name, text] of Object.entries(setup.notes ?? {})) {
+    await mkdir(path.dirname(path.join(folder, name)), { recursive: true })
+    await writeFile(path.join(folder, name), text)
+  }
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  // These tests hold one fixture view, so the file explorer's view is kept out
-  await store.writeSwitches({ ...defaultSwitches(), off: [], removed: ['file-explorer'] })
+  await store.writeSwitches({ ...defaultSwitches(), off: [] })
   await store.writeLuoshu({ folder })
   const source = await temp()
   await writeFolder(source, { 'src/worker.ts': fixture })
@@ -54,17 +63,27 @@ async function started(setup: { notes?: Record<string, string>, plugins?: Record
   for (const [id, plugin] of Object.entries(setup.plugins ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built!.text, ...plugin.files }))
-    await store.writePlugin(id, await entryFor(root, { granted: plugin.granted }))
+    await store.writePlugin(id, await entryFor(root, { granted: plugin.granted, ...plugin.entry }))
   }
-  const app = await launch(dataDir)
+  // The install plugins in an install of the test's own, which the first start copies in with no entry seeded, so the
+  // copy derives the class and the items asking at first use itself
+  const extra: Record<string, string> = {}
+  if (setup.install !== undefined) {
+    const installDir = await temp()
+    await writeInstall(installDir, Object.fromEntries(Object.entries(setup.install).map(([id, granted]) =>
+      [id, { files: filesFor(workerManifest(id, { capabilities: granted }), { 'worker.js': built!.text }), firstParty: true }])))
+    extra.HETU_INSTALL_DIR = installDir
+  }
+  const app = await launch(dataDir, extra)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'core.ready'))
-  for (const id of Object.keys(setup.plugins ?? {})) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
-  return { app, editor, dataDir }
+  for (const id of [...Object.keys(setup.plugins ?? {}), ...Object.keys(setup.install ?? {})]) await until(() => logged(dataDir, 'plugin.started', { plugin: id }))
+  return { app, editor, dataDir, folder }
 }
 
+// A plugin's worker. The first-party plugins share one host page, which holds only the one plugin a test installs
 async function pluginWorker(app: ElectronApplication, id: string): Promise<Worker> {
-  const page = await workersPage(app, id)
+  const page = await workersPage(app, (firstPartyIds as readonly string[]).includes(id) ? 'first-party' : id)
   await until(() => page.workers().length === 1)
   return page.workers()[0] as Worker
 }
@@ -154,7 +173,7 @@ describe('a plugin named hetu', () => {
       ] })
     `)
     await until(async () => (await editor.locator('#overlay .hetu-strip').count()) === 1)
-    expect((await editor.locator('#editors .hetu-title').allInnerTexts()).filter(title => title !== 'search · Search')).toEqual(['board · Security check'])
+    expect(await editor.locator('#editors .hetu-title').allInnerTexts()).toEqual(['board · Security check'])
     expect(await editor.locator('#overlay .hetu-strip').allInnerTexts()).toEqual(['board'])
   })
 })
@@ -356,5 +375,113 @@ describe('a view frame', () => {
     // A press elsewhere in the page puts the frame back behind its shield
     await shown(editor).click()
     await until(async () => shield.isVisible())
+  })
+})
+
+// The input delay and a little more, so a click after it lands
+const PAST_DELAY = 1300
+const listAll: Capability = { type: 'luoshu.list', paths: ['**'] }
+const readAll: Capability = { type: 'luoshu.read', paths: ['**'] }
+const writeAll: Capability = { type: 'luoshu.write', paths: ['**'] }
+
+const files = async (folder: string) => (await readdir(folder, { recursive: true, withFileTypes: true }))
+  .filter(entry => entry.isFile()).map(entry => path.relative(folder, path.join(entry.parentPath, entry.name)).split(path.sep).join('/')).sort()
+
+// What the writer's worker gets back for each call, the error's code for a refused one
+const write = (worker: Worker, note: string) => run<string>(worker, `return ctx.luoshu.write({ path: '${note}', text: '' }).then(() => 'ok', err => err.code)`)
+const move = (worker: Worker, from: string, to: string) => run<string>(worker, `return ctx.luoshu.move({ from: '${from}', to: '${to}' }).then(() => 'ok', err => err.code)`)
+// A remove names the version it read, as a plugin binning a note it can see does
+const remove = (worker: Worker, note: string) => run<string>(worker, `
+  return ctx.luoshu.read({ path: '${note}' }).then(read => ctx.luoshu.remove({ path: '${note}', baseVersion: read.version })).then(() => 'ok', err => err.code)
+`)
+
+// Puts back what the Windows recycle bin holds from folder, so no run leaves its notes there. Read through the shell's
+// own view of the bin, which names each item's original folder
+async function putBack(folder: string): Promise<void> {
+  if (process.platform !== 'win32') return
+  const from = await realpath(folder)
+  const script = [
+    '$bin = (New-Object -ComObject Shell.Application).NameSpace(10)',
+    `$from = '${from.replace(/'/g, "''")}'`,
+    "$bin.Items() | Where-Object { $bin.GetDetailsOf($_, 1) -eq $from } | ForEach-Object { $_.InvokeVerb('undelete') }",
+  ].join('; ')
+  execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' })
+}
+
+// The first-party id the writer is installed under
+const WRITER = 'git'
+
+describe('a plugin writing notes', () => {
+  // Write on every note is class 4 and asks at its first use. Carried in the install as first-party under an id hetu
+  // doesn't build yet, so its first start copies it in and derives the class and the first use from its grant
+  it('asks once in the trusted window before its first write, writing nothing before the Confirm, then moves and removes unasked', async () => {
+    const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta' }
+    const granted = [listAll, readAll, writeAll]
+    const { app, editor, dataDir, folder } = await started({ notes, install: { [WRITER]: granted } })
+    try {
+      expect(await logged(dataDir, 'plugin.copied', { plugin: WRITER })).toBe(true)
+      expect((await new StateStore(dataDir).load()).state.plugins[WRITER]).toMatchObject({ class: 4, granted, firstUse: [writeAll] })
+      const writer = await pluginWorker(app, WRITER)
+
+      // The first write asks, writes nothing before the Confirm and answers needs-confirm
+      expect(await write(writer, 'inbox/new.md')).toBe('needs-confirm')
+      expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
+      const notice = editor.getByRole('button', { name: `The plugin "${WRITER}" asks to use something for the first time` })
+      await notice.waitFor()
+      await tick(PAST_DELAY)
+      await notice.click()
+      const page = await pageAt(app, 'hetu://trusted/')
+      await until(async () => (await visibleWindows(app)).includes('hetu://trusted/'))
+      await until(async () => (await page.locator('#root').innerText()).includes(`Let ${WRITER} use luoshu.write on "**"`))
+      expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
+      await tick(PAST_DELAY)
+      await page.getByRole('button', { name: 'Confirm' }).click()
+      await until(() => logged(dataDir, 'security.applied', { kind: 'item.on', target: WRITER }))
+      expect((await new StateStore(dataDir).load()).state.plugins[WRITER]?.firstUse).toEqual([])
+      expect(await exists(path.join(folder, 'inbox', 'new.md'))).toBe(false)
+
+      // The same write again, now the item is on, then a move into another folder and a remove
+      expect(await write(writer, 'inbox/new.md')).toBe('ok')
+      expect(await readFile(path.join(folder, 'inbox', 'new.md'), 'utf8')).toBe('')
+      expect(await move(writer, 'inbox/new.md', 'notes/renamed.md')).toBe('ok')
+      expect(await remove(writer, 'inbox/b.md')).toBe('ok')
+      expect(await files(folder)).toEqual(['a.md', 'notes/renamed.md'])
+      // Asked once only
+      expect((await records(dataDir)).filter(record => record.event === 'security.applied' && record.kind === 'item.on' && record.target === WRITER)).toHaveLength(1)
+    } finally {
+      await putBack(folder)
+    }
+  })
+
+  // Its write narrowed to inbox/** by the human at approval: class 2 and nothing asks. It still lists and reads every note
+  it('narrowed to write in inbox/** lists and reads every note and moves and removes only inside inbox/', async () => {
+    const notes = { 'a.md': 'alpha', 'inbox/b.md': 'beta', 'inbox/c.md': 'gamma', 'notes/d.md': 'delta' }
+    const narrowed: Capability = { type: 'luoshu.write', paths: ['inbox/**'] }
+    const granted = [listAll, readAll, narrowed]
+    const { app, dataDir, folder } = await started({ notes, plugins: { writer: { granted, entry: { class: 2 } } } })
+    try {
+      const entry = (await new StateStore(dataDir).load()).state.plugins.writer
+      expect(entry).toMatchObject({ class: 2, granted })
+      expect(entry?.firstUse ?? []).toEqual([])
+      const writer = await pluginWorker(app, 'writer')
+      expect(await run<string[]>(writer, 'return ctx.luoshu.list({}).then(listed => listed.paths)')).toEqual(['a.md', 'inbox/b.md', 'inbox/c.md', 'notes/d.md'])
+      expect(await run<string>(writer, 'return ctx.luoshu.read({ path: "notes/d.md" }).then(read => read.text)')).toBe('delta')
+
+      // Moves inside inbox/, not out of it and not outside it
+      expect(await move(writer, 'inbox/c.md', 'inbox/c2.md')).toBe('ok')
+      expect(await move(writer, 'inbox/c2.md', 'c3.md')).toBe('not-granted')
+      expect(await move(writer, 'notes/d.md', 'notes/d2.md')).toBe('not-granted')
+
+      // Removes inside inbox/ and not outside it
+      expect(await remove(writer, 'inbox/b.md')).toBe('ok')
+      expect(await remove(writer, 'a.md')).toBe('not-granted')
+      expect(await files(folder)).toEqual(['a.md', 'inbox/c2.md', 'notes/d.md'])
+      expect(await readFile(path.join(folder, 'a.md'), 'utf8')).toBe('alpha')
+
+      // Nothing asked: write inside one folder is class 2
+      expect(await logged(dataDir, 'security.applied', { kind: 'item.on', target: 'writer' })).toBe(false)
+    } finally {
+      await putBack(folder)
+    }
   })
 })

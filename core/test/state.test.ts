@@ -322,7 +322,7 @@ describe('writing', () => {
       off: switchable,
       devMode: ids,
       execAnyCommand: ids,
-      removed: ['mcp', 'git', 'search', 'file-explorer', 'artifacts', 'notify'],
+      removed: ['mcp', 'git', 'artifacts', 'notify'],
       limits: { all: {}, plugins: Object.fromEntries(ids.map(id => [id, { heartbeatMs: 9000 }])) },
     }
     await store.writeSwitches(switches)
@@ -485,7 +485,7 @@ describe('writing', () => {
         `switches with no ${key}`,
         switches({ [key]: undefined }),
       ]),
-      ['a first-party id in off', switches({ off: ['search'] })],
+      ['a first-party id in off', switches({ off: ['layout'] })],
       ['a community plugin in off', switches({ off: ['my-plugin'] })],
       ['a namespace in off', switches({ off: ['core'] })],
       ['an id outside the grammar in off', switches({ off: ['../gate'] })],
@@ -673,7 +673,7 @@ const kinds: Kind[] = [
       ['the retired recordNothing that is not a boolean', switchesText({ recordNothing: 'no' })],
       ['skipVerification that is not a boolean', switchesText({ skipVerification: 1 })],
       ['off as a string', switchesText({ off: 'gate' })],
-      ['a first-party id in off', switchesText({ off: ['search'] })],
+      ['a first-party id in off', switchesText({ off: ['layout'] })],
       ['an id outside the grammar in off', switchesText({ off: ['../net'] })],
       ['an id twice in off', switchesText({ off: ['gate', 'net', 'gate'] })],
       ['a namespace no plugin holds in dev mode', switchesText({ devMode: ['ui'] })],
@@ -992,6 +992,21 @@ describe('the dropped core plugins', () => {
     expect(loaded.state.switches.devMode).toEqual(['alpha'])
     await store.writeSwitches(loaded.state.switches)
     expect(await readFile(switchesPath(), 'utf8')).not.toContain(id)
+  })
+})
+
+// The file explorer and search, first-party before they became community plugins, may still be removed in a file: read
+// with the ids dropped
+describe('the retired first-party ids', () => {
+  it('reads a file naming them in removed with the ids dropped and the rest of removed kept, then writes the switches back without it', async () => {
+    await store.writeSwitches(noSwitches)
+    await plant(switchesPath(), JSON.stringify({ format: 3, ...noSwitches, removed: ['git', 'file-explorer', 'search'] }))
+    const loaded = await store.load()
+    expect(loaded.suspect).toBe(false)
+    expect(loaded.removedKnown).toBe(true)
+    expect(loaded.state.switches.removed).toEqual(['git'])
+    await store.writeSwitches(loaded.state.switches)
+    expect(await readFile(switchesPath(), 'utf8')).not.toMatch(/file-explorer|search/)
   })
 })
 
