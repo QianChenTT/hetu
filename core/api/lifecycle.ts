@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { VERSION } from './envelope.ts'
-import { MAX_ID_LENGTH, pluginId } from './ids.ts'
+import { MAX_ID_LENGTH, pluginId, qualifiedName } from './ids.ts'
 import { pluginVersion } from './install.ts'
 import { API_VERSION, MAX_LIST } from './manifest.ts'
 import { frozen } from './plain.ts'
@@ -11,9 +11,9 @@ export const stopReasons = frozen([
   // its check: files gone, a manifest outside the schema or naming another id, an api range outside this core, bytes
   // that don't match, a null signer allowUnsigned doesn't name, any other signer until provenance lands, a reserved id, a
   // requires list it may not have, a host entry the core runs nowhere, a requires cycle, a state entry that failed its
-  // check or is in a newer format
+  // check or is in a newer format, a role another plugin's entry holds
   'missing', 'invalid', 'install-only', 'id', 'api', 'tampered', 'unsigned', 'signer', 'reserved-id', 'requires',
-  'place', 'cycle', 'entry', 'newer',
+  'place', 'cycle', 'entry', 'newer', 'role-taken',
   // found with no entry yet, waiting for the human's approval
   'new',
   // its run: no ready in time, a start that threw, its way closed or flooded, a core module whose push threw, a worker
@@ -56,7 +56,8 @@ export const reason = z.string().max(MAX_ID_LENGTH + 32, { abort: true }).refine
 export const depStates = frozen(['ready', 'starting', 'unavailable'] as const)
 export type DepState = typeof depStates[number]
 
-const deps = z.record(pluginId, z.enum(depStates))
+// By a plugin's id, or by a role's action for the role's holder
+const deps = z.record(z.union([pluginId, qualifiedName]), z.enum(depStates))
   .refine(entries => Object.keys(entries).length <= 2 * MAX_LIST, 'too many')
   .transform(entries => Object.assign(Object.create(null), entries) as typeof entries)
 

@@ -31,9 +31,9 @@ describe('a utility half', () => {
     expect(made.link.registered).toContainEqual(utilityCaller())
     // Main counts the bytes on its port, since no relay page sits in front of it. A worker's it leaves to the relay
     expect(made.runtime.channels).toEqual([{ id: 'mcp-http-handler', counted: true }])
-    // Storage, the core module it requires, serves before it starts
+    // Storage, the core module it requires, serves before it starts. No plugin holds door.handle, the role it calls
     expect(made.runtime.order()).toEqual(['mcp-http-handler'])
-    expect(made.runtime.half('mcp-http-handler', 1, 'utility').got('init')[0].deps).toEqual({ storage: 'ready' })
+    expect(made.runtime.half('mcp-http-handler', 1, 'utility').got('init')[0].deps).toEqual({ storage: 'ready', 'door.handle': 'unavailable' })
   })
 
   it('is never told the data folder', async () => {

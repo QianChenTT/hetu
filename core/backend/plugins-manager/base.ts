@@ -1,4 +1,4 @@
-import type { CoreStatus, StateKind, StoppedMode } from '../../api/actions.ts'
+import { roleActions, type CoreStatus, type StateKind, type StoppedMode } from '../../api/actions.ts'
 import { changeEffect, IDENTITY_ASK_PAUSE_MS, type Change } from '../../api/changes.ts'
 import { INPUT_DELAY_MS } from '../../api/trusted.ts'
 import { type Caller } from '../../api/envelope.ts'
@@ -314,6 +314,33 @@ ${capabilityKey(change.capability)}`)
     return k === undefined ? null : infoOf(k)
   }
 
+  // The one plugin serving a role: its grants hold the role's item, switched on, and it isn't refused or off, gate on or
+  // off. null for none, and for two, which the checks never leave
+  role(action: string): string | null {
+    const spec = Object.hasOwn(roleActions, action) ? roleActions[action] : undefined
+    if (spec === undefined) return null
+    const serving = [...this.known.values()].filter(k => {
+      const held = this.grantsHeld(k).filter(item => item.type === spec.capability)
+      const off = new Set((k.entry?.off ?? []).map(capabilityKey))
+      const verdict = this.verdictOf(k).kind
+      return held.some(item => !off.has(capabilityKey(item))) && verdict !== 'refused' && verdict !== 'off'
+    })
+    return serving.length === 1 ? serving[0].id : null
+  }
+
+  // What a plugin holds: a folder plugin's entry, none before approval, and a core plugin's manifest
+  protected grantsHeld(k: Known): readonly Capability[] {
+    return k.from === 'install' ? k.read.manifest?.capabilities ?? [] : k.entry?.granted ?? []
+  }
+
+  // Whether another plugin holds a role these grants hold or ask for. An entry holds its role, on or off, until it is
+  // removed
+  protected roleTaken(id: string, granted: readonly Capability[]): boolean {
+    const types = new Set(Object.values(roleActions).map(spec => spec.capability).filter(type => granted.some(item => item.type === type)))
+    if (types.size === 0) return false
+    return [...this.known.values()].some(other => other.id !== id && this.grantsHeld(other).some(item => types.has(item.type)))
+  }
+
   limits(): HumanLimits {
     return this.state.switches.limits
   }
@@ -406,6 +433,8 @@ ${capabilityKey(change.capability)}`)
       if (result !== 'ok' && result !== 'absent') return refused('entry')
       if (read.hash === null) return refused('missing')
       if (read.problem !== null) return refused(read.problem)
+      // A role another entry holds raises no approval, so none can make a second holder
+      if (this.roleTaken(id, read.manifest?.capabilities ?? [])) return refused('role-taken')
       return { kind: 'found' }
     }
     if (!entry.enabled) return { kind: 'off' }
@@ -418,6 +447,8 @@ ${capabilityKey(change.capability)}`)
     } else if (!dev && read.hash !== allowing && !isOne(this.state.switches.allowUnsigned, read.hash)) {
       return refused('unsigned')
     }
+    // Two entries holding one role come only from an edited state and carry no order, so neither serves
+    if (this.roleTaken(id, entry.granted)) return refused('role-taken')
     if (this.requiresProblem(k)) return refused('requires')
     return k.held ?? ok
   }
