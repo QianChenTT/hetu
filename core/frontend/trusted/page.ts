@@ -248,7 +248,7 @@ function draw(page: TrustedPage, shown: Screen, note: string | null): void {
 
     const install = element('section')
     install.className = 'install'
-    install.append(element('h2', 'Install'), element('p', shown.install))
+    install.append(element('h2', 'Install'), element('p', shown.installNote))
     parts.push(install)
 
     const limits = element('section')

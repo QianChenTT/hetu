@@ -42,7 +42,7 @@ export type Screen = {
   dev: Switch[]
   limits: Limit[]
   luoshu: string
-  install: string
+  installNote: string
   // Each pair with its Revoke, a revoked one with none, then what the list holds
   identities: { rows: IdentityRow[], about: string }
   // The Install button's box, null while nothing is being installed
@@ -226,7 +226,7 @@ export function screen(list: SecurityList, flow: InstallFlow | null = null): Scr
     dev: devOf(list),
     limits: limitsOf(list),
     luoshu: `Notes folder: ${list.luoshu ?? 'none picked'}`,
-    install: INSTALL_LINE,
+    installNote: INSTALL_LINE,
     identities: { rows: list.identities.map(identityRow), about: IDENTITIES_LINE },
     installing: installBox(flow),
   }
