@@ -111,7 +111,16 @@ function installSection(page: TrustedPage, box: InstallBox): HTMLElement {
     const grants = element('ul')
     grants.setAttribute('aria-label', `What ${row.id} may do`)
     for (const grant of row.grants) grants.append(element('li', grant))
-    group.append(legend, element('p', row.line), grants)
+    const risk = element('p', row.line)
+    if (row.high) risk.className = 'high'
+    group.append(legend, risk, grants)
+    if (row.lines.length > 0) {
+      const why = element('ul')
+      why.className = 'why'
+      why.setAttribute('aria-label', `Why ${row.id} has its class`)
+      for (const line of row.lines) why.append(element('li', line))
+      group.append(why)
+    }
     if (row.problem !== null) {
       const why = element('p', row.problem)
       why.className = 'note'

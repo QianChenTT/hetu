@@ -119,7 +119,8 @@ const frameUrl = z.string().max(MAX_SCOPE_LENGTH).regex(/^hetu:\/\/views\/[0-9a-
 // whose release main lists the zip assets of. The core copies the source into a staging folder of its own and answers
 // what it found there. One Confirm then installs the plugins the human ticked from those staged bytes and approves each
 // with the hash of what it wrote, so the bytes shown are the bytes that run. Each is the trusted window's alone and none
-// is a read, so inside the input delay each counts for nothing
+// is a read, so inside the input delay each counts for nothing. The core may drop a staging nobody installed or
+// cancelled, as it does once one is installed
 
 // The longest link the human may paste
 export const MAX_LINK_LENGTH = 2048
@@ -135,7 +136,9 @@ const installSource = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('link'), link, asset: screenText(MAX_ASSET_LENGTH) }),
 ])
 export type InstallSource = z.infer<typeof installSource>
-const ticked = z.array(pluginId).min(1).max(MAX_STAGED_PLUGINS).refine(ids => new Set(ids).size === ids.length, 'an id twice')
+// Each plugin ticked with the digest of its manifest as the stage answer gave it, so the Confirm names what it drew
+const ticked = z.array(z.strictObject({ id: pluginId, digest: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).max(MAX_STAGED_PLUGINS)
+  .refine(plugins => new Set(plugins.map(plugin => plugin.id)).size === plugins.length, 'an id twice')
 
 const installTable = {
   // The OS dialog over the trusted window for a plugin zip or a folder holding one plugin or several, answering the
@@ -145,7 +148,8 @@ const installTable = {
   'core.findRelease': { from: 'trusted', args: z.strictObject({ link }) },
   // Copies the source into a staging folder of the core's own and answers each plugin found there under a handle
   'core.stage': { from: 'trusted', args: z.strictObject({ source: installSource }) },
-  // The Confirm: installs the ticked plugins of a staging into the plugin folder and approves each by its hash
+  // The Confirm: installs the ticked plugins of a staging into the plugin folder and approves each by its hash, all or
+  // none. A digest that isn't the one of the manifest the core would write is refused stale with nothing installed
   'core.install': { from: 'trusted', args: z.strictObject({ staged: token, plugins: ticked }) },
   // Cancel: the staging dropped with nothing installed
   'core.unstage': { from: 'trusted', args: z.strictObject({ staged: token }) },
@@ -518,21 +522,27 @@ export type FoundRelease = { tag: string, assets: ReleaseAsset[] } | { problem: 
 // install holds, it needs a core API this hetu doesn't have or its id is one hetu keeps
 export type StagedProblem = 'invalid' | 'install-only' | 'api' | 'reserved'
 
-// One plugin found: its id, the name and version its manifest gives, null where it didn't read, what it asks for and
-// the class the grant risk classifier would give it, null for none known. installed is the version it replaces, null
-// for a new one
+// One plugin found: its id, the name and version its manifest gives, null where it didn't read, what it asks for, the
+// class the grant risk classifier would give it, null for none known, and the classifier's lines on why, as an approval's
+// Confirm shows them. replaces is the version it replaces, null for a new one. digest is the SHA-256 of the manifest's
+// bytes as staged, which the Confirm sends back
 export type StagedPlugin = {
   id: string
   name: string | null
   version: string | null
   capabilities: Capability[]
   class: number | null
-  installed: string | null
+  lines: string[]
+  replaces: string | null
+  digest: string
   problem: StagedProblem | null
 }
 
-// A staging: its handle, the source as the human gave it and each plugin found
-export type Staged = { staged: string, source: InstallSource, plugins: StagedPlugin[] } | { problem: InstallProblem }
+// Where a staging came from as the core staged it, a link's with the tag of the release it took the zip from
+export type StagedSource = Exclude<InstallSource, { kind: 'link' }> | (Extract<InstallSource, { kind: 'link' }> & { tag: string })
+
+// A staging: its handle, its source and each plugin found
+export type Staged = { staged: string, source: StagedSource, plugins: StagedPlugin[] } | { problem: InstallProblem }
 
 export type InstallResults = {
   'app.pickPlugins': string | null

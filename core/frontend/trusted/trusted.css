@@ -129,3 +129,12 @@ label {
   width: 24em;
   max-width: 100%;
 }
+
+.high {
+  font-weight: 600;
+  color: #8a1c1c;
+}
+
+.why {
+  color: #5a3b00;
+}

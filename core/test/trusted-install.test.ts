@@ -68,12 +68,13 @@ describe('a grant as a plain sentence', () => {
 })
 
 const found = (over: Partial<StagedPlugin>): StagedPlugin => ({
-  id: 'search', name: 'Search', version: '1.2.0', capabilities: [{ type: 'luoshu.read', paths: ['**'] }], class: 1, installed: null, problem: null,
+  id: 'search', name: 'Search', version: '1.2.0', capabilities: [{ type: 'luoshu.read', paths: ['**'] }], class: 1, lines: [], replaces: null,
+  digest: (over.id ?? 'search').padEnd(64, '0').replace(/[^0-9a-f]/g, '0').slice(0, 64), problem: null,
   ...over,
 })
 
 describe('what the install box draws', () => {
-  const staging = (plugins: StagedPlugin[]) => ({ step: 'found' as const, staged: 's1', tag: null, picked: new Set(['search']), plugins, source: { kind: 'zip' as const, path: 'C:\\plugins.zip' } })
+  const staging = (plugins: StagedPlugin[]) => ({ step: 'found' as const, staged: 's1', picked: new Set(['search']), plugins, source: { kind: 'zip' as const, path: 'C:\\plugins.zip' } })
 
   it('draws nothing while nothing is being installed', () => {
     expect(installBox(null)).toBeNull()
@@ -89,9 +90,9 @@ describe('what the install box draws', () => {
     })
     if (box?.step !== 'found') throw new Error('no found box')
     expect(box.plugins).toEqual([
-      { id: 'search', label: '"Search" (search), version 1.2.0', line: 'class 1, Reader', grants: ['Read all your notes'], problem: null, picked: true },
+      { id: 'search', label: '"Search" (search), version 1.2.0', line: 'class 1, Reader', high: false, lines: [], grants: ['Read all your notes'], problem: null, picked: true },
       {
-        id: 'layout', label: '"Layout" (layout), version 0.3.0', line: 'class 0, Contained',
+        id: 'layout', label: '"Layout" (layout), version 0.3.0', line: 'class 0, Contained', high: false, lines: [],
         grants: ['Lay out the whole editor window once you pick it as the layout'], problem: null, picked: false,
       },
     ])
@@ -99,16 +100,29 @@ describe('what the install box draws', () => {
 
   it('says what a plugin replaces, a class it couldn’t give, a plugin that asks for nothing and why one can’t be installed', () => {
     const box = installBox(staging([
-      found({ installed: '1.0.0', class: null, capabilities: [] }),
-      found({ id: 'odd', name: null, version: null, capabilities: [], class: null, problem: 'api' }),
+      found({ replaces: '1.0.0', class: null, capabilities: [] }),
+      found({ id: 'odd', name: null, version: null, capabilities: [{ type: 'storage' }], class: null, problem: 'api' }),
+      found({ id: 'broken', name: null, version: null, capabilities: [], class: null, problem: 'invalid' }),
     ]))
     if (box?.step !== 'found') throw new Error('no found box')
-    expect(box.plugins[0]).toMatchObject({ line: 'class unknown, counted as 4 · replaces version 1.0.0', grants: ['It asks for nothing'] })
-    expect(box.plugins[1]).toMatchObject({ label: 'odd', problem: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed', picked: false })
+    expect(box.plugins[0]).toMatchObject({ line: 'Higher risk: class unknown, counted as 4 · replaces version 1.0.0', high: true, grants: ['It asks for nothing'] })
+    expect(box.plugins[1]).toMatchObject({ label: 'odd', grants: ['Keep data of its own'], problem: 'It needs a hetu API this hetu doesn’t have, so it can’t be installed', picked: false })
+    // A manifest that doesn't check out says nothing of what it asks for
+    expect(box.plugins[2]).toMatchObject({ grants: [], problem: 'Its manifest doesn’t parse or check out, so what it asks for can’t be read and it can’t be installed' })
+  })
+
+  // The same reasons the approval's Confirm showed, from the grant risk classifier through the core
+  it('marks class 3 and 4 as higher risk and shows the classifier’s lines on why under the grants', () => {
+    const lines = ['It can read notes and reach the network, so it could send notes out']
+    const box = installBox(staging([found({ class: 4, lines }), found({ id: 'net', class: 3 }), found({ id: 'tags', class: 2 })]))
+    if (box?.step !== 'found') throw new Error('no found box')
+    expect(box.plugins.map(row => [row.line, row.high, row.lines])).toEqual([
+      ['Higher risk: class 4, Powerful', true, lines], ['Higher risk: class 3, Network', true, []], ['class 2, Writer', false, []],
+    ])
   })
 
   it('isn’t ready with nothing ticked and names a link’s asset with its release', () => {
-    const box = installBox({ ...staging([found({})]), picked: new Set(), tag: 'v1.0.0', source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip' } })
+    const box = installBox({ ...staging([found({})]), picked: new Set(), source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'plugins.zip', tag: 'v1.0.0' } })
     expect(box).toMatchObject({ ready: false, source: 'From "plugins.zip" in the release "v1.0.0" of "https://github.com/someone/plugins"' })
   })
 
@@ -184,8 +198,9 @@ describe('the install flow against a fake main', () => {
     expect(two.last().screen.installing).toMatchObject({ step: 'assets' })
     two.page.installer.asset('b.zip')
     expect(two.sent.at(-1)).toMatchObject({ action: 'core.stage', args: { source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'b.zip' } } })
-    two.answer({ staged: 's2', source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'b.zip' }, plugins: [found({})] })
-    expect(two.last().screen.installing).toMatchObject({ source: 'From "b.zip" in the release "v1" of "https://github.com/someone/plugins"' })
+    // The release the core staged from, which can be newer than the one listed
+    two.answer({ staged: 's2', source: { kind: 'link', link: 'https://github.com/someone/plugins', asset: 'b.zip', tag: 'v2' }, plugins: [found({})] })
+    expect(two.last().screen.installing).toMatchObject({ source: 'From "b.zip" in the release "v2" of "https://github.com/someone/plugins"' })
   })
 
   it('says in plain words why a link or a source gave nothing, and why an empty link asks for nothing', () => {
@@ -213,7 +228,9 @@ describe('the install flow against a fake main', () => {
     page.installer.tick('tags', true)
     page.installer.tick('layout', true)
     page.installer.install()
-    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { staged: 's1', plugins: ['layout', 'tags'] } })
+    expect(sent.at(-1)).toMatchObject({
+      action: 'core.install', args: { staged: 's1', plugins: [{ id: 'layout', digest: found({ id: 'layout' }).digest }, { id: 'tags', digest: found({ id: 'tags' }).digest }] },
+    })
     answer({ installed: ['layout', 'tags'] })
     expect(last()).toMatchObject({ note: 'Installed layout, tags', screen: { installing: null } })
   })
@@ -228,7 +245,8 @@ describe('the install flow against a fake main', () => {
     if (box?.step !== 'found') throw new Error('no found box')
     expect(box.plugins.map(row => row.picked)).toEqual([true, false])
     page.installer.install()
-    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { plugins: ['search'] } })
+    expect(sent.at(-1)).toMatchObject({ action: 'core.install', args: { plugins: [{ id: 'search' }] } })
+    expect((sent.at(-1)!.args as { plugins: unknown[] }).plugins).toHaveLength(1)
   })
 
   it('sends no Confirm with nothing ticked and keeps the box when the Confirm came too soon', () => {
