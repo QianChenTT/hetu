@@ -135,7 +135,9 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
   })
 }
 
-export type Downloaded = { problem: null, bytes: Buffer } | { problem: FetchProblem }
+// A downloaded zip's bytes and whether they were checked against a sha256 the release gave. The digest comes in the
+// same answer as the download link, so it shows the bytes arrived as GitHub holds them, not who made them
+export type Downloaded = { problem: null, bytes: Buffer, verified: boolean } | { problem: FetchProblem }
 
 // The bytes of a picked zip, refused before any request when the release says it is past the cap and after the
 // download when they don't hash to the sha256 the release gave
@@ -145,6 +147,6 @@ export async function downloadZip(zip: ReleaseZip, options: FetchOptions = {}): 
   return answer(async () => {
     const bytes = await getFromGitHub(zip.url, ZIP_WANTED, limits, options)
     if (zip.digest !== null && createHash('sha256').update(bytes).digest('hex') !== zip.digest) throw new FetchRefused('digest-mismatch')
-    return { problem: null, bytes }
+    return { problem: null, bytes, verified: zip.digest !== null }
   })
 }

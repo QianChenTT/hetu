@@ -174,9 +174,10 @@ describe('a zip\'s sha256 digest', () => {
     }
   })
 
-  it('is checked against the bytes downloaded, which are answered when they match', async () => {
+  it('is checked against the bytes downloaded, which are answered as verified when they match', async () => {
     const got = await downloadZip(zip, { fetch: served() })
     expect(got.problem === null && [...got.bytes]).toEqual([...bytes])
+    expect(got.problem === null && got.verified).toBe(true)
   })
 
   it('refuses bytes that don\'t match it as digest-mismatch', async () => {
@@ -184,8 +185,10 @@ describe('a zip\'s sha256 digest', () => {
     expect(await downloadZip({ ...zip, digest: other }, { fetch: served() })).toEqual({ problem: 'digest-mismatch' })
   })
 
-  it('leaves the bytes unchecked when the release gave none', async () => {
-    expect((await downloadZip({ ...zip, digest: null }, { fetch: served() })).problem).toBeNull()
+  it('leaves the bytes unchecked when the release gave none and answers them as not verified', async () => {
+    const got = await downloadZip({ ...zip, digest: null }, { fetch: served() })
+    expect(got.problem).toBeNull()
+    expect(got.problem === null && got.verified).toBe(false)
   })
 })
 
