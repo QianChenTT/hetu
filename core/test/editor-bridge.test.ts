@@ -849,6 +849,33 @@ describe("the bridge's drawer end", () => {
     expect(alpha.events().filter(event => event.topic === 'editor.key')).toEqual([{ v: 1, kind: 'event', topic: 'editor.key', instance: 'n1', key: 'a' }])
   })
 
+  it('keeps a key stream across core.security while the plugin still holds ui.keystream and ends it once it does not', async () => {
+    const reach: Record<string, Reach> = { alpha: { read: ['a.md'], verbs: ['ui.keystream'] } }
+    const { drawer, core } = started(reach)
+    const alpha = port()
+    drawer.connect('alpha', 1, alpha.port)
+    await alpha.call('editor.keystream', { on: true })
+    const heard = () => alpha.events().filter(event => event.topic === 'editor.key').map(event => event.key)
+    core.event('core.security')
+    await settle()
+    await settle()
+    drawer.key('n1', 'a')
+    await settle()
+    expect(heard()).toEqual(['a'])
+    reach.alpha = { read: ['a.md'], verbs: [] }
+    core.event('core.security')
+    await settle()
+    await settle()
+    // Given back, the grant restarts nothing: the plugin asks for the stream again
+    reach.alpha = { read: ['a.md'], verbs: ['ui.keystream'] }
+    core.event('core.security')
+    await settle()
+    await settle()
+    drawer.key('n1', 'b')
+    await settle()
+    expect(heard()).toEqual(['a'])
+  })
+
   it('asks the core again after core.security and drops what a narrowed plugin no longer reaches', async () => {
     const made = note('n1', 'a.md', 'hello')
     const reach: Record<string, Reach> = { alpha: { read: ['a.md'], verbs: ['ui.decoration', 'ui.command'] } }
