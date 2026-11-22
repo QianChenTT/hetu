@@ -11,8 +11,8 @@ import { buildPlugin } from '../../sdk/build/esbuild.ts'
 import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, pageAt, records, repo, temp, tick, until, workersPage } from './helpers.ts'
 
-// The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the test install
-// only. The shipped token seam refuses every token, so a request that passes the token check runs in the join test
+// The door's proof: the shipped http in its utility process on 127.0.0.1:4747, with a fake mcp in the plugin folder.
+// The shipped token seam refuses every token, so a request that passes the token check runs in the join test
 
 const holders: net.Server[] = []
 
@@ -24,8 +24,8 @@ afterEach(async () => {
 const PORT = 4747
 const sdk = path.join(import.meta.dirname, '..', '..', 'sdk', 'index.ts').split(path.sep).join('/')
 
-// A first-party id, so it ships in this install as a first-party copy, never in hetu's own list. Its handle takes
-// calls from http alone and echoes who called it
+// A plugin-folder plugin hetu doesn't ship, approved unsigned by its hash. Its handle takes calls from http alone and
+// echoes who called it
 const mcp = `
 import { definePlugin } from '${sdk}'
 export default definePlugin({
@@ -52,38 +52,44 @@ const builtWorker = async (text: string) => {
   return built!.text
 }
 
-// The shipped install, with the fake mcp beside it when asked
-async function install(withMcp: boolean): Promise<string> {
+// The shipped install as built, which holds http and never mcp
+async function install(): Promise<string> {
   const dir = await temp()
   const dist = path.join(repo, 'core', 'dist')
   await cp(path.join(dist, 'plugins'), path.join(dir, 'plugins'), { recursive: true })
   const list = JSON.parse(await readFile(path.join(dist, INSTALL_LIST), 'utf8')) as { format: number, plugins: Record<string, unknown> }
   expect(Object.keys(list.plugins)).toContain('mcp-http-handler')
   expect(Object.keys(list.plugins)).not.toContain('mcp')
-  if (withMcp) {
-    const root = path.join(dir, 'plugins', 'mcp')
-    await writeFolder(root, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': await builtWorker(mcp) }))
-    list.plugins.mcp = { path: 'plugins/mcp', version: '1.0.0', hash: hashFiles(await readFiles(root)), firstParty: true }
-  }
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify(list, null, 2)}\n`)
   return dir
 }
 
-// A data folder with a folder plugin that holds plugin.call on mcp
-async function data(): Promise<string> {
+// How the fake mcp sits in the plugin folder: approved unsigned by its hash, unsigned with no allowUnsigned naming its
+// hash, or not there
+type Mcp = 'approved' | 'unsigned' | 'none'
+
+// A data folder with a folder plugin that holds plugin.call on mcp and the fake mcp beside it as asked
+async function data(mcpAs: Mcp): Promise<string> {
   const dataDir = await temp()
   const store = new StateStore(dataDir)
-  await store.writeSwitches(defaultSwitches())
   const root = path.join(dataDir, 'plugins', 'caller')
   const granted = [{ type: 'plugin.call' as const, targets: ['mcp'] }]
   await writeFolder(root, filesFor(workerManifest('caller', { capabilities: granted }), { 'worker.js': await builtWorker(caller) }))
   await store.writePlugin('caller', await entryFor(root, { granted }))
+  const allowUnsigned: string[] = []
+  if (mcpAs !== 'none') {
+    const mcpRoot = path.join(dataDir, 'plugins', 'mcp')
+    await writeFolder(mcpRoot, filesFor(workerManifest('mcp', { provides: { actions: { handle: { from: ['mcp-http-handler'] } } } }), { 'worker.js': await builtWorker(mcp) }))
+    if (mcpAs === 'approved') allowUnsigned.push(hashFiles(await readFiles(mcpRoot)))
+    await store.writePlugin('mcp', await entryFor(mcpRoot, { signer: null }))
+  }
+  await store.writeSwitches({ ...defaultSwitches(), allowUnsigned })
   return dataDir
 }
 
-async function started(withMcp: boolean): Promise<{ app: ElectronApplication, editor: Page, dataDir: string }> {
-  const dataDir = await data()
-  const app = await launch(dataDir, { HETU_INSTALL_DIR: await install(withMcp) })
+async function started(mcpAs: Mcp): Promise<{ app: ElectronApplication, editor: Page, dataDir: string }> {
+  const dataDir = await data(mcpAs)
+  const app = await launch(dataDir, { HETU_INSTALL_DIR: await install() })
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'caller' }))
   return { app, editor, dataDir }
@@ -120,18 +126,36 @@ const ask = (page: Page, action: string, args?: unknown) => page.evaluate(([id, 
 const utilityFolders = async () => (await readdir(tmpdir())).filter(name => name.startsWith('hetu-utility-'))
 
 describe('the door', () => {
-  it('stays closed with no mcp in the install, http reading ready', async () => {
+  it('stays closed with no mcp in the plugin folder, http reading ready', async () => {
     expect(await canConnect()).toBe(false)
-    const { dataDir } = await started(false)
+    const { dataDir } = await started('none')
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp-http-handler' }))
     await tick(500)
     expect(await canConnect()).toBe(false)
     expect(await logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler' })).toBe(false)
   })
 
+  it('stays closed while the folder mcp is refused unsigned, no allowUnsigned naming its hash', async () => {
+    expect(await canConnect()).toBe(false)
+    const { dataDir } = await started('unsigned')
+    await until(() => logged(dataDir, 'plugin.refused', { plugin: 'mcp', reason: 'unsigned' }))
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp-http-handler' }))
+    await tick(500)
+    expect(await canConnect()).toBe(false)
+    expect(await logged(dataDir, 'plugin.started', { plugin: 'mcp' })).toBe(false)
+  })
+
+  it('opens once the folder mcp approved unsigned by its hash is up', async () => {
+    expect(await canConnect()).toBe(false)
+    const { dataDir } = await started('approved')
+    await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp' }))
+    await until(() => canConnect())
+    expect(await post(['Host: 127.0.0.1:4747', 'Authorization: Bearer any'])).toBe(401)
+  })
+
   it('refuses another Host and an Origin with 403, reaching nothing, each reason in one mcp-http-handler.refused with its count', async () => {
     expect(await canConnect()).toBe(false)
-    const { dataDir } = await started(true)
+    const { dataDir } = await started('approved')
     await until(() => canConnect())
     expect(await post(['Host: evil.example', 'Authorization: Bearer any'])).toBe(403)
     expect(await post(['Host: localhost:4747', 'Authorization: Bearer any'])).toBe(403)
@@ -146,7 +170,7 @@ describe('the door', () => {
   })
 
   it('refuses another plugin\'s worker that holds plugin.call on mcp at mcp.handle', async () => {
-    const { app, dataDir } = await started(true)
+    const { app, dataDir } = await started('approved')
     await until(() => logged(dataDir, 'plugin.started', { plugin: 'mcp' }))
     const page = await workersPage(app, 'caller')
     await until(() => page.workers().length === 1)
@@ -160,7 +184,7 @@ describe('the door', () => {
     const holder = net.createServer(socket => socket.destroy())
     holders.push(holder)
     await new Promise<void>(resolve => holder.listen({ host: '127.0.0.1', port: PORT, exclusive: true }, resolve))
-    const { app, editor, dataDir } = await started(true)
+    const { app, editor, dataDir } = await started('approved')
     await until(() => logged(dataDir, 'plugin.failed', { plugin: 'mcp-http-handler', reason: 'port-taken' }))
     expect((await ask(editor, 'app.openSecurity')).ok).toBe(true)
     const trusted = await pageAt(app, 'hetu://trusted/')
@@ -180,7 +204,7 @@ describe('the door', () => {
   it('leaves no utility working folder and the port free after a clean quit', async () => {
     expect(await canConnect()).toBe(false)
     const before = await utilityFolders()
-    const { app } = await started(true)
+    const { app } = await started('approved')
     await until(() => canConnect())
     expect((await utilityFolders()).length).toBeGreaterThan(before.length)
     await app.close()
