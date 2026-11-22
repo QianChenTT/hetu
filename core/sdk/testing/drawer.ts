@@ -13,7 +13,8 @@ import { holds } from './gate.ts'
 // the note's next change. Marks are kept as sent. Where the human is goes as hetu's drawer sends it: the range a note's
 // editor draws only after the plugin asked with editor.viewports and only of a note it reads, each range once. A
 // command goes only when the plugin bound a key to it, with the note, its version and the selection only when it reads
-// the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list
+// the note. A change the test types goes to a plugin that reads the note as CodeMirror's change list. A select is taken
+// once as a note opens, before the test types, clicks or fires a command in it, and in answer to the last command
 
 type Body = UiEvent extends infer E ? E extends UiEvent ? Omit<E, 'v' | 'kind'> : never : never
 type EditorBody = BridgeEvent extends infer E ? E extends BridgeEvent ? Omit<E, 'v' | 'kind'> : never : never
@@ -21,7 +22,8 @@ type Selection = { anchor: number, head: number }[]
 // The range the note's editor draws, stamped in the order the test moved it. It goes in the note's version when sent,
 // as hetu's drawer sends the range the editor still draws
 type Drawn = { from: number, to: number, stamp: number }
-type Note = { path: string, text: Text, version: number, drawn: Drawn, selection?: { anchor: number, head: number } }
+// opening says no key, click or select came since the note opened
+type Note = { path: string, text: Text, version: number, drawn: Drawn, opening: boolean, selection?: { anchor: number, head: number } }
 
 class Refusal {
   readonly code: string
@@ -54,7 +56,7 @@ export class FakeDrawer {
   private asked = false
   private readonly sent = new Map<string, number>()
   private commands = new Set<string>()
-  // The note and version of the last command sent with its note, which one edit may place the cursor in answer to
+  // The note and version of the last command sent with its note, which one edit with a cursor or one select may answer
   private answering: { instance: string, version: number } | null = null
   private stamped = 0
   // Answers held back by verb and the code the next call of a verb is refused with
@@ -112,7 +114,7 @@ export class FakeDrawer {
   openNote(path: string, text: string, drawn?: { from: number, to: number }): string {
     const instance = `n${++this.n}`
     const doc = Text.of(text.split('\n'))
-    const note: Note = { path, text: doc, version: 0, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
+    const note: Note = { path, text: doc, version: 0, opening: true, drawn: { from: drawn?.from ?? 0, to: drawn?.to ?? doc.length, stamp: ++this.stamped } }
     this.notes.set(instance, note)
     if (!this.reads(path)) return instance
     this.tell({ topic: 'editor.opened', instance })
@@ -134,6 +136,7 @@ export class FakeDrawer {
     if (!this.commands.has(command)) return false
     const note = instance === undefined ? undefined : this.notes.get(instance)
     this.answering = null
+    if (note !== undefined) note.opening = false
     if (instance !== undefined && note !== undefined && this.reads(note.path)) {
       this.answering = { instance, version: note.version }
       this.tell({ topic: 'editor.command', command, instance, version: note.version, selection: selection.map(range => ({ ...range })) })
@@ -149,10 +152,20 @@ export class FakeDrawer {
     const note = this.notes.get(instance)
     if (note === undefined) throw new Error(`no note ${instance} is open`)
     this.answering = null
+    note.opening = false
     const set = ChangeSet.of(changes, note.text.length)
     note.text = set.apply(note.text)
     note.version++
     if (told && this.reads(note.path)) this.tell({ topic: 'editor.changed', instance, version: note.version, changes: set.toJSON() })
+  }
+
+  // The human clicked or touched the note's editor: no select at open is taken on it from now on and the last command
+  // on it answers no more
+  click(instance: string): void {
+    const note = this.notes.get(instance)
+    if (note === undefined) throw new Error(`no note ${instance} is open`)
+    note.opening = false
+    if (this.answering?.instance === instance) this.answering = null
   }
 
   // The note closed in the editor, told to the plugin only when it sent marks for it
@@ -177,7 +190,7 @@ export class FakeDrawer {
     this.refusals.set(verb, code)
   }
 
-  // Where the plugin's last edit with a selection put the cursor
+  // Where the plugin's last select or edit with a selection put the cursor
   selection(instance: string): { anchor: number, head: number } | undefined {
     return this.notes.get(instance)?.selection
   }
@@ -314,9 +327,20 @@ export class FakeDrawer {
         this.tell({ topic: 'editor.changed', instance: call.args.instance, version: held.version, changes: changes.toJSON() })
         return { version: held.version }
       }
-      // Not served yet, as hetu's drawer
-      case 'editor.select':
-        throw new Refusal('not-granted')
+      // Anywhere in the note, since a select changes no range
+      case 'editor.select': {
+        const asked = this.answering
+        this.answering = null
+        const held = note(call.args.instance)
+        if (!holds(this.granted, { capability: 'ui.edit', scope: { paths: [held.path] } })) throw new Refusal('not-granted')
+        const { version, selection } = call.args
+        if (!held.opening && (asked?.instance !== call.args.instance || asked.version !== version)) throw new Refusal('not-granted')
+        if (version !== held.version) throw new Refusal('stale')
+        if (selection.anchor > held.text.length || selection.head > held.text.length) throw new Refusal('invalid')
+        held.opening = false
+        held.selection = { anchor: selection.anchor, head: selection.head }
+        return { version }
+      }
       case 'editor.decorate': {
         need('ui.decoration')
         const held = note(call.args.instance)
