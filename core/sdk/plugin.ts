@@ -36,7 +36,8 @@ export type PluginContext = Client & {
   filterReadable(call: IncomingCall, paths: readonly string[]): Promise<string[]>
   // Subscriptions to other plugins' topics and the core's. publish sends its own <id>.<name>
   readonly events: {
-    on(topics: string | readonly string[], handler: EventHandler, options?: EventOptions): Promise<Subscription>
+    // A handler of lock.changed hears the note's lock state too, typed when the topics are named literally
+    on<T extends string>(topics: T | readonly T[], handler: EventHandler<T>, options?: EventOptions): Promise<Subscription>
     publish(name: string, path?: string): Promise<void>
   }
   readonly try: typeof attempt

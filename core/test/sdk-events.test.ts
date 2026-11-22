@@ -175,3 +175,27 @@ describe('an ack the router lost', () => {
     await until(() => seen.includes('notes/after.md'), 2000)
   })
 })
+
+describe('lock.changed through the SDK', () => {
+  it('hands a lock.changed handler the path and the lock state, and a luoshu.changed handler the path alone', async () => {
+    const { ctx, gate, router, publish } = await listening()
+    gate.grants.search = [{ type: 'luoshu.read', paths: ['**'] }, { type: 'events.subscribe', topics: ['luoshu.changed', 'lock.changed'] }]
+    const locks: { path: string, locked: boolean, until: number | null }[] = []
+    const heard: object[] = []
+    await ctx.events.on('lock.changed', event => { locks.push({ path: event.path, locked: event.locked, until: event.until }) })
+    await ctx.events.on(['lock.changed', 'luoshu.changed'], event => { heard.push(event) })
+    router.publishCore('lock', 'changed', 'notes/a.md', { locked: true, until: 1_700_000_060_000 })
+    router.publishCore('lock', 'changed', 'notes/a.md', { locked: false, until: null })
+    await publish('notes/b.md')
+    await until(() => heard.length === 3)
+    expect(locks).toEqual([
+      { path: 'notes/a.md', locked: true, until: 1_700_000_060_000 },
+      { path: 'notes/a.md', locked: false, until: null },
+    ])
+    expect(heard).toStrictEqual([
+      { topic: 'lock.changed', path: 'notes/a.md', locked: true, until: 1_700_000_060_000 },
+      { topic: 'lock.changed', path: 'notes/a.md', locked: false, until: null },
+      { topic: 'luoshu.changed', path: 'notes/b.md' },
+    ])
+  })
+})
