@@ -18,8 +18,8 @@ import { run } from '../sdk/plugin.ts'
 import { code, FakeStorage, FakeLuoshu, windowWay, worker } from './router-fakes.ts'
 import { luoshuModule, storageModule } from './modules-fakes.ts'
 import {
-  allowAll, coreInstall, entryFor, FakeRuntime, filesFor, hashOf, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
-  writeInstall, type Files, type Listing, type Message,
+  allowAll, coreInstall, FakeRuntime, filesFor, hashOf, hostManifest, reasonOf, tempBase, workerManifest, writeFolder,
+  writeInstall, type Files, type Listing, type Message, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
@@ -63,7 +63,7 @@ async function joined(options: {
   for (const [id, files] of Object.entries(options.folder ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, files)
-    await store.writePlugin(id, await entryFor(root, options.entries?.[id]))
+    await writeApproved(store, id, root, options.entries?.[id])
   }
   await options.prepare?.(dataDir)
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
@@ -448,7 +448,8 @@ describe('core.status, for a window\'s banner', () => {
       policyJobs: { gate: 'on', 'grant-risk-classifier': 'on' },
       crashed: [],
       devMode: [],
-      allowUnsigned: 0,
+      // alpha's build, as its approval allowed it
+      allowUnsigned: 1,
       skipVerification: false,
       modulesOff: [],
       logWrites: true,
@@ -926,8 +927,8 @@ describe('the door through the joined core', () => {
       },
       entries: { beta: { granted: [callMcp] }, mcp: { signer: mcpAs === 'first-party-signer' ? 'hetu first-party' : null } },
       prepare: async dataDir => {
-        if (mcpAs === 'unsigned') return
-        const allowUnsigned = [await hashOf(path.join(dataDir, 'plugins', 'mcp'))]
+        const allowUnsigned = [await hashOf(path.join(dataDir, 'plugins', 'beta'))]
+        if (mcpAs !== 'unsigned') allowUnsigned.push(await hashOf(path.join(dataDir, 'plugins', 'mcp')))
         await new StateStore(dataDir).writeSwitches({ ...defaultSwitches(), allowUnsigned })
       },
       modules: { gate },

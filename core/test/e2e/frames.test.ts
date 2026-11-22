@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -118,12 +118,12 @@ async function started(frame: Frame, notes: Record<string, string> = {}): Promis
   })
   const root = path.join(dataDir, 'plugins', 'kanban')
   await writeFolder(root, filesFor(manifest, { 'worker.js': built.text, 'board.html': frame.html, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', ...frame.files }))
-  await store.writePlugin('kanban', await entryFor(root, { granted }))
+  await writeApproved(store, 'kanban', root, { granted })
   const layout = path.join(dataDir, 'plugins', 'columns')
   const [drawn] = await buildPlugin(source, { entries: { 'worker.js': 'src/columns.ts' }, workers: ['worker.js'], write: false })
   const layoutGrants: Capability[] = [{ type: 'ui.layout' }]
   await writeFolder(layout, filesFor(workerManifest('columns', { capabilities: layoutGrants }), { 'worker.js': drawn.text }))
-  await store.writePlugin('columns', await entryFor(layout, { granted: layoutGrants }))
+  await writeApproved(store, 'columns', layout, { granted: layoutGrants })
   const app = await launch(dataDir)
   const editor = await editorPage(app)
   await until(() => logged(dataDir, 'plugin.started', { plugin: 'kanban' }))

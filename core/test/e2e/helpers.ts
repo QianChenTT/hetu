@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 
 export const repo = path.join(import.meta.dirname, '..', '..', '..')
 export const electronPath = createRequire(import.meta.url)('electron') as string
@@ -131,7 +131,7 @@ export async function dataWith(workers: Record<string, string>, limits: Record<s
   for (const [id, code] of Object.entries(workers)) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id), { 'worker.js': code }))
-    await store.writePlugin(id, await entryFor(root))
+    await writeApproved(store, id, root)
   }
   return dataDir
 }

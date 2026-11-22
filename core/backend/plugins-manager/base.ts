@@ -24,9 +24,6 @@ import { Requests } from './requests.ts'
 import { type Read } from './verify.ts'
 import { infoOf } from './reads.ts'
 
-// The signer the first-party copies an older build shipped carried in their entries
-const OLD_FIRST_PARTY_SIGNER = 'hetu first-party'
-
 export type PluginsManagerOptions = {
   // What boot handed over: the state to run with, its checks, the one StateStore and the data folder
   booted: Pick<Booted, 'state' | 'checks' | 'store' | 'dataDir'>
@@ -397,9 +394,9 @@ ${capabilityKey(change.capability)}`)
     return k.held ?? ok
   }
 
-  // The signer an older build's first-party copy carried is refused, so such a copy runs only once the human installs and
-  // approves it again. A null signer loads only for a build allowUnsigned names by the hash of the bytes read, or in dev
-  // mode, which is for a build with no fixed hash
+  // No signer is taken until provenance lands, so an entry naming one is refused, the first-party signer an older build
+  // wrote included, and runs only once the human approves the plugin again. A null signer loads only for a build
+  // allowUnsigned names by the hash of the bytes read, or in dev mode, which is for a build with no fixed hash
   protected folderStatus(k: Known): Status {
     const { id, read, entry } = k
     if (entry === null) {
@@ -415,9 +412,9 @@ ${capabilityKey(change.capability)}`)
     const dev = this.dev(id)
     if (!this.loose(id) && read.hash !== entry.contentHash) return refused('tampered')
     if (read.problem !== null) return refused(read.problem)
-    if (entry.signer === OLD_FIRST_PARTY_SIGNER) {
+    if (entry.signer !== null) {
       return refused('signer')
-    } else if (entry.signer === null && !dev && !isOne(this.state.switches.allowUnsigned, read.hash)) {
+    } else if (!dev && !isOne(this.state.switches.allowUnsigned, read.hash)) {
       return refused('unsigned')
     }
     if (this.requiresProblem(k)) return refused('requires')

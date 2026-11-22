@@ -168,7 +168,7 @@ describe('reserved ids in the plugin folder', () => {
 
 describe('the signer pairing', () => {
   it('refuses a null signer unless allowUnsigned names the build by its hash', async () => {
-    const refused = await harness({ folder: { outline: outline() }, entries: { outline: signed({ signer: null }) } })
+    const refused = await harness({ folder: { outline: outline() }, entries: { outline: signed({ signer: null }) }, switches: { allowUnsigned: [] } })
     await refused.pluginsManager.start()
     expect(reasonOf(refused.pluginsManager, 'outline')).toBe('unsigned')
 
@@ -192,10 +192,16 @@ describe('the signer pairing', () => {
     expect(reasonOf(made.pluginsManager, 'outline')).toBe('unsigned')
   })
 
-  it('takes a signer that is neither null nor the first-party one as pinned at approval', async () => {
-    const made = await harness({ folder: { outline: outline() }, entries: { outline: signed({ signer: 'https://github.com/someone/outline' }) } })
+  // No signer is taken until provenance lands, so a build runs only as allowUnsigned names it
+  it.each(['https://github.com/someone/outline', 'sigstore:someone'])('refuses the signer %j with signer, its build in allowUnsigned and in dev mode too', async signer => {
+    const base = await harness({ folder: { outline: outline() } })
+    const hash = await hashOf(path.join(base.dataDir, 'plugins', 'outline'))
+    const made = await harness({ folder: { outline: outline() }, entries: { outline: signed({ signer }) }, switches: { allowUnsigned: [hash] } })
     await made.pluginsManager.start()
-    expect(stateOf(made.pluginsManager, 'outline')).toBe('ready')
+    expect(reasonOf(made.pluginsManager, 'outline')).toBe('signer')
+    const dev = await harness({ folder: { outline: outline() }, entries: { outline: signed({ signer }) }, switches: { devMode: ['outline'] } })
+    await dev.pluginsManager.start()
+    expect(reasonOf(dev.pluginsManager, 'outline')).toBe('signer')
   })
 })
 

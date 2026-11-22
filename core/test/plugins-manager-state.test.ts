@@ -119,17 +119,19 @@ describe('the human\'s switches, applied', () => {
     expect(reasonOf(made.pluginsManager, 'alpha')).toBe('tampered')
   })
 
-  it('skipVerification lets changed bytes run and its switch-off refuses them again, with no other check moved', async () => {
+  // Every folder plugin is unsigned and allowUnsigned names each build by the hash of its bytes, so changed bytes stay
+  // refused with verification skipped
+  it('skipVerification lets no changed folder build run and its switch-off refuses it as tampered again', async () => {
     const made = await harness({
       folder: { alpha: worker('alpha'), beta: worker('beta') },
-      entries: { alpha: signed(), beta: signed({ signer: null }) },
+      entries: { alpha: signed(), beta: signed() },
       before: ({ dataDir }) => writeFile(path.join(dataDir, 'plugins', 'alpha', 'worker.js'), 'changed()'),
     })
     await made.pluginsManager.start()
     await made.pluginsManager.apply({ kind: 'skipVerification', on: true })
     await made.pluginsManager.settled()
-    expect(stateOf(made.pluginsManager, 'alpha')).toBe('ready')
-    expect(reasonOf(made.pluginsManager, 'beta')).toBe('unsigned')
+    expect(reasonOf(made.pluginsManager, 'alpha')).toBe('unsigned')
+    expect(stateOf(made.pluginsManager, 'beta')).toBe('ready')
     await made.pluginsManager.apply({ kind: 'skipVerification', on: false })
     await made.pluginsManager.settled()
     expect(reasonOf(made.pluginsManager, 'alpha')).toBe('tampered')
@@ -139,6 +141,7 @@ describe('the human\'s switches, applied', () => {
     const made = await harness({
       folder: { alpha: worker('alpha'), beta: worker('beta') },
       entries: { alpha: signed({ signer: null }), beta: signed({ signer: null }) },
+      switches: { allowUnsigned: [] },
     })
     await made.pluginsManager.start()
     const hash = await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))

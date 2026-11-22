@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, launch, logged, temp, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -55,7 +55,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
     for (const [id, plugin] of Object.entries(setup.plugins)) {
       const root = path.join(dataDir, 'plugins', id)
       await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built.text, ...plugin.files }))
-      await store.writePlugin(id, await entryFor(root, { granted: plugin.granted }))
+      await writeApproved(store, id, root, { granted: plugin.granted })
     }
   }
   return { dataDir, folder }

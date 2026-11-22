@@ -4,7 +4,7 @@ import type { ElectronApplication, Page, Worker as PageWorker } from 'playwright
 import { afterEach, describe, expect, it } from 'vitest'
 import { defaultSwitches, StateStore, type Plugin, type Switches } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall } from '../plugins-manager-fakes.ts'
+import { filesFor, hashOf, hostManifest, workerManifest, writeFolder, writeInstall, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -46,7 +46,7 @@ async function data(options: { switches?: Partial<Switches>, workers?: Record<st
   for (const [id, worker] of Object.entries(options.workers ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, worker.manifest ?? {}), { 'worker.js': worker.code }))
-    await store.writePlugin(id, await entryFor(root, worker.entry ?? {}))
+    await writeApproved(store, id, root, worker.entry ?? {})
   }
   await options.before?.(dataDir)
   return dataDir
@@ -446,7 +446,9 @@ describe('a plugin’s class', () => {
           'worker.js': lifecycle('send({ v: 1, kind: \'call\', id: 1, action: \'target.hello\', args: {} })'),
         }))
         // An approval writes no signer until plugin provenance, so this build is trusted as the human would trust one
-        await new StateStore(dir).writeSwitches({ ...defaultSwitches(), allowUnsigned: [await hashOf(root)] })
+        const store = new StateStore(dir)
+        const { switches } = (await store.load()).state
+        await store.writeSwitches({ ...switches, allowUnsigned: [...switches.allowUnsigned, await hashOf(root)] })
       },
     })
     const app = await start(dataDir, await install())

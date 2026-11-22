@@ -6,7 +6,7 @@ import { held, type Run, type Sitting, summary } from '../../../scripts/measure-
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exited, launch, logged, records, temp, tick, until, workersPage } from './helpers.ts'
 
 afterEach(cleanup)
@@ -177,7 +177,7 @@ async function prepared(setup: Setup): Promise<{ dataDir: string, folder: string
   for (const [id, { granted, manifest }, code] of plugins) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted, ...manifest }), { 'worker.js': code }))
-    await store.writePlugin(id, await entryFor(root, { granted }))
+    await writeApproved(store, id, root, { granted })
   }
   return { dataDir, folder }
 }

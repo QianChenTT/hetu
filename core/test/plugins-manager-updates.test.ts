@@ -25,9 +25,12 @@ async function running(extra: Parameters<typeof harness>[0] = {}) {
   return made
 }
 
-async function stage(dataDir: string, files: Files): Promise<string> {
-  const dir = path.join(dataDir, 'staging', 'alpha-next')
+// A build staged beside the running one, which the human allowed by its hash first, since an unsigned plugin's new build
+// runs only once allowUnsigned names it
+async function stage(made: Awaited<ReturnType<typeof harness>>, files: Files): Promise<string> {
+  const dir = path.join(made.dataDir, 'staging', 'alpha-next')
   await writeFolder(dir, files)
+  await made.pluginsManager.apply({ kind: 'allowUnsigned', hash: await hashOf(dir), on: true })
   return dir
 }
 
@@ -35,7 +38,7 @@ describe('a staged update', () => {
   it('applies once confirmed and its record has landed: the folder swapped, the entry written last, the old incarnation stopped and the new one started', async () => {
     const made = await running()
     const next = worker('alpha', { version: '1.1.0' })
-    const dir = await stage(made.dataDir, next)
+    const dir = await stage(made, next)
     const hash = await hashOf(dir)
     // alpha is class 1, and only a class 0 update loads on its own, so this one waits for a Confirm naming what it
     // stops: the plugin itself and what requires it
@@ -48,7 +51,7 @@ describe('a staged update', () => {
     expect(made.link.events('plugin.updated')).toEqual([{ plugin: 'alpha', from: '1.0.0', to: '1.1.0' }])
     expect(await hashOf(path.join(made.dataDir, 'plugins', 'alpha'))).toBe(hash)
     const entry = (await new StateStore(made.dataDir).load()).state.plugins.alpha
-    expect(entry).toMatchObject({ version: '1.1.0', contentHash: hash, signer: 'sigstore:someone' })
+    expect(entry).toMatchObject({ version: '1.1.0', contentHash: hash, signer: null })
     // The old incarnation stopped after its dependent, the new one runs the staged bytes
     const lines = made.link.timeline.filter(line => /^(stop|init) (alpha|beta)$/.test(line))
     expect(lines).toEqual(['init alpha', 'init beta', 'stop beta', 'stop alpha', 'init alpha', 'init beta'])
@@ -60,7 +63,7 @@ describe('a staged update', () => {
 
   it('is refused when it would close a cycle with what runs, and nothing changes', async () => {
     const made = await running()
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0', requires: ['beta'] }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0', requires: ['beta'] }))
     expect(await made.pluginsManager.update('alpha', dir)).toEqual({ outcome: 'refused', reason: 'cycle' })
     expect(made.link.events('plugin.updated')).toEqual([])
     expect(made.pluginsManager.plugin('alpha')?.incarnation).toBe(1)
@@ -69,7 +72,7 @@ describe('a staged update', () => {
 
   it('needs a Confirm naming the plugins it stops when it would leave a running dependent unsatisfied, raised as plugin.update', async () => {
     const made = await running()
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0', requires: ['not-installed'] }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0', requires: ['not-installed'] }))
     expect(await made.pluginsManager.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: ['alpha', 'beta'] })
     expect(made.pluginsManager.pending()).toMatchObject([{ kind: 'plugin.update', plugin: 'alpha' }])
     // Nothing applies until the Confirm
@@ -84,16 +87,16 @@ describe('a staged update', () => {
 
   it('is refused for a manifest that fails its checks, an api range outside this core included', async () => {
     const made = await running()
-    expect(await made.pluginsManager.update('alpha', await stage(made.dataDir, worker('alpha', { api: '^1' })))).toEqual({ outcome: 'refused', reason: 'api' })
-    expect(await made.pluginsManager.update('alpha', await stage(made.dataDir, filesFor(workerManifest('alpha', { entries: { host: 'host.js' } }))))).toEqual({ outcome: 'refused', reason: 'install-only' })
-    expect(await made.pluginsManager.update('nobody', await stage(made.dataDir, worker('nobody')))).toEqual({ outcome: 'refused', reason: 'missing' })
+    expect(await made.pluginsManager.update('alpha', await stage(made, worker('alpha', { api: '^1' })))).toEqual({ outcome: 'refused', reason: 'api' })
+    expect(await made.pluginsManager.update('alpha', await stage(made, filesFor(workerManifest('alpha', { entries: { host: 'host.js' } }))))).toEqual({ outcome: 'refused', reason: 'install-only' })
+    expect(await made.pluginsManager.update('nobody', await stage(made, worker('nobody')))).toEqual({ outcome: 'refused', reason: 'missing' })
   })
 
   it('is staged for git and layout as for any plugin-folder plugin', async () => {
     for (const id of ['git', 'layout']) {
       const made = await running({ folder: { [id]: worker(id) }, entries: { [id]: signed() } })
       expect(stateOf(made.pluginsManager, id)).toBe('ready')
-      expect(await made.pluginsManager.update(id, await stage(made.dataDir, worker(id, { version: '1.1.0' })))).toEqual({ outcome: 'confirm', stops: [id] })
+      expect(await made.pluginsManager.update(id, await stage(made, worker(id, { version: '1.1.0' })))).toEqual({ outcome: 'confirm', stops: [id] })
     }
   })
 
@@ -101,7 +104,7 @@ describe('a staged update', () => {
     const made = await running()
     let land!: (landing: Landing) => void
     made.link.landing = event => event === 'plugin.updated' ? new Promise(resolve => { land = resolve }) : 'landed'
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
     await made.pluginsManager.update('alpha', dir)
     const updating = made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })
     await until(() => made.link.events('plugin.updated').length === 1)
@@ -122,7 +125,7 @@ describe('a staged update', () => {
       signal = given
       return new Promise<Landing>(() => {})
     }
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
     await made.pluginsManager.update('alpha', dir)
     await expect(made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow()
     expect(signal?.aborted).toBe(true)
@@ -136,7 +139,7 @@ describe('a staged update', () => {
     const made = await running()
     const writePlugin = made.store.writePlugin.bind(made.store)
     made.store.writePlugin = async () => { throw new Error('the disk went away') }
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
     await made.pluginsManager.update('alpha', dir)
     await expect(made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow('the disk went away')
     made.store.writePlugin = writePlugin
@@ -152,7 +155,7 @@ describe('a staged update', () => {
 
   it('applies to a plugin switched off without starting it, once confirmed with nothing to stop', async () => {
     const made = await running({ entries: { alpha: signed({ enabled: false }), beta: signed() } })
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
     expect(await made.pluginsManager.update('alpha', dir)).toEqual({ outcome: 'confirm', stops: [] })
     expect(made.link.events('plugin.updated')).toEqual([])
     await made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })
@@ -164,7 +167,7 @@ describe('a staged update', () => {
   // An old release with a known hole can't be swapped back in. Going back is a remove and a new approval
   it.each([['the same', '1.0.0'], ['an older', '0.9.0']])('is refused for %s version, and nothing changes', async (_name, version) => {
     const made = await running()
-    const dir = await stage(made.dataDir, worker('alpha', { version }))
+    const dir = await stage(made, worker('alpha', { version }))
     expect(await made.pluginsManager.update('alpha', dir)).toEqual({ outcome: 'refused', reason: 'not-newer' })
     await expect(made.pluginsManager.apply({ kind: 'plugin.update', plugin: 'alpha' })).rejects.toThrow()
     expect((await new StateStore(made.dataDir).load()).state.plugins.alpha.version).toBe('1.0.0')
@@ -173,7 +176,7 @@ describe('a staged update', () => {
   it('puts in place the bytes it hashed, whatever the staged folder holds by the Confirm', async () => {
     const made = await running()
     const next = worker('alpha', { version: '1.1.0' })
-    const dir = await stage(made.dataDir, next)
+    const dir = await stage(made, next)
     const hash = await hashOf(dir)
     await made.pluginsManager.update('alpha', dir)
     await writeFile(path.join(dir, 'worker.js'), 'swapped()')
@@ -196,7 +199,7 @@ describe('the request for an update', () => {
 
   it('names the version it goes from and to', async () => {
     const made = await running()
-    const dir = await stage(made.dataDir, worker('alpha', { version: '1.1.0' }))
+    const dir = await stage(made, worker('alpha', { version: '1.1.0' }))
     await made.pluginsManager.update('alpha', dir)
     const list = await made.pluginsManager.serve(call('security.list')) as { requests: { kind: string, notes: string[] }[] }
     expect(list.requests[0].notes).toContain('From 1.0.0 to 1.1.0')
@@ -204,7 +207,7 @@ describe('the request for an update', () => {
 
   it('is withdrawn when a newer update is staged, which raises a request of its own', async () => {
     const made = await running()
-    await made.pluginsManager.update('alpha', await stage(made.dataDir, worker('alpha', { version: '1.1.0' })))
+    await made.pluginsManager.update('alpha', await stage(made, worker('alpha', { version: '1.1.0' })))
     const [first] = made.pluginsManager.pending()
     const later = path.join(made.dataDir, 'staging', 'alpha-later')
     await writeFolder(later, worker('alpha', { version: '1.2.0' }))

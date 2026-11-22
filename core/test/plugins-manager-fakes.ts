@@ -460,9 +460,25 @@ export async function writeInstall(dir: string, plugins: Record<string, Listing>
   await writeFile(path.join(dir, INSTALL_LIST), `${JSON.stringify({ format: 1, plugins: listed }, null, 2)}\n`)
 }
 
-// An approved entry for the folder at root
+// An approved entry for the folder at root, unsigned as an approval writes it. It runs once allowUnsigned names its
+// hash, which allowed adds
 export async function entryFor(root: string, extra: Partial<Plugin> = {}): Promise<Plugin> {
-  return { version: '1.0.0', contentHash: await hashOf(root), signer: 'sigstore:someone', granted: [], class: 1, enabled: true, ...extra }
+  return { version: '1.0.0', contentHash: await hashOf(root), signer: null, granted: [], class: 1, enabled: true, ...extra }
+}
+
+// The switches with each entry's build added to allowUnsigned, as the human's approval and allow leave them
+export function allowed(switches: Switches, ...entries: Plugin[]): Switches {
+  const hashes = entries.filter(entry => entry.signer === null).map(entry => entry.contentHash)
+  return { ...switches, allowUnsigned: [...new Set([...switches.allowUnsigned, ...hashes])] }
+}
+
+// An approved plugin written into a store: its entry and its build added to the allowUnsigned the switches file holds
+export async function writeApproved(store: StateStore, id: string, root: string, extra: Partial<Plugin> = {}): Promise<Plugin> {
+  const entry = await entryFor(root, extra)
+  await store.writePlugin(id, entry)
+  const { state } = await store.load()
+  await store.writeSwitches(allowed(state.switches, entry))
+  return entry
 }
 
 // The entry an older build wrote for a first-party copy it shipped, which carried this signer
@@ -518,7 +534,8 @@ export async function tempBase(): Promise<string> {
 }
 
 // A plugins manager over a real StateStore, the core modules and a real router, with the fake runtime. state writes the
-// entries and switches the boot hands over. The gate allows everything unless modules hands another, as the gate the
+// entries and switches the boot hands over, each unsigned entry's build added to allowUnsigned unless the test names
+// allowUnsigned itself, a base used again keeping what it allowed. The gate allows everything unless modules hands another, as the gate the
 // install held did, and every other core module is the real one unless modules hands a fake
 export async function harness(options: {
   base?: string
@@ -542,11 +559,17 @@ export async function harness(options: {
   if (options.install !== null) await writeInstall(installDir, options.install ?? coreInstall())
   for (const [id, files] of Object.entries(options.folder ?? {})) await writeFolder(path.join(dataDir, 'plugins', id), files)
   const store = new StateStore(dataDir)
-  await store.writeSwitches({ ...defaultSwitches(), ...options.switches })
+  const written: Plugin[] = []
   for (const [id, entry] of Object.entries(options.entries ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
-    await store.writePlugin(id, typeof entry === 'function' ? await entry(root) : entry)
+    const one = typeof entry === 'function' ? await entry(root) : entry
+    written.push(one)
+    await store.writePlugin(id, one)
   }
+  // A base used again keeps the builds a run before allowed, as a restart keeps the human's switches
+  const kept = options.base !== undefined ? (await store.load()).state.switches.allowUnsigned : []
+  const switches = { ...defaultSwitches(), allowUnsigned: kept, ...options.switches }
+  await store.writeSwitches(options.switches?.allowUnsigned === undefined ? allowed(switches, ...written) : switches)
   await options.before?.({ dataDir, installDir })
   const loaded = await store.load()
   const link = new FakeLink()

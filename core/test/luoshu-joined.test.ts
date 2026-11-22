@@ -18,7 +18,7 @@ import type { SettingsValue } from '../frontend/editor/settings.ts'
 import type { UiHooks } from '../frontend/editor/ui-port.ts'
 import { Versions } from '../frontend/editor/versions.ts'
 import { cleanup, FakeGuard, harness, windowWay } from './router-fakes.ts'
-import { coreInstall, entryFor, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall } from './plugins-manager-fakes.ts'
+import { coreInstall, FakeRuntime, filesFor, tempBase, tick, workerManifest, writeFolder, writeInstall, writeApproved } from './plugins-manager-fakes.ts'
 
 const open: (() => Promise<void>)[] = []
 const versionOf = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -48,7 +48,7 @@ async function joined(folder: string, options: { gate?: 'off', holder?: Gate, wi
   for (const [id, { granted, api }] of Object.entries(options.plugins ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: granted, ...(api === undefined ? {} : { api }) })))
-    await store.writePlugin(id, await entryFor(root, { granted, class: 4 }))
+    await writeApproved(store, id, root, { granted, class: 4 })
   }
   const booted = await boot({ packaged: false, installDir, env: { HETU_DATA_DIR: dataDir }, platform: process.platform })
   const luoshu = createLuoshu()

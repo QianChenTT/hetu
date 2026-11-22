@@ -6,7 +6,7 @@ import { boot } from '../backend/boot/boot.ts'
 import { defaultSwitches, StateStore, type Plugin } from '../backend/boot/state.ts'
 import { wireCore } from '../backend/wire.ts'
 import {
-  coreInstall, entryFor, FakeRuntime, filesFor, hashOf, oldFirstPartyEntry, plant, tempBase, until, workerManifest, writeFolder, writeInstall,
+  coreInstall, FakeRuntime, filesFor, hashOf, oldFirstPartyEntry, plant, tempBase, until, workerManifest, writeFolder, writeInstall, writeApproved,
 } from './plugins-manager-fakes.ts'
 
 // Folder plugins on the joined core over a real boot, the core modules as they ship and the log on
@@ -109,7 +109,7 @@ describe('a plugin wanting the luoshu before a folder is picked', () => {
     const { pluginsManager, modules, records, call } = await joined(async (dataDir, store) => {
       const root = path.join(dataDir, 'plugins', 'reader')
       await writeFolder(root, filesFor(workerManifest('reader', { requires: ['luoshu'], capabilities: [readAll] })))
-      await store.writePlugin('reader', await entryFor(root, { granted: [readAll], class: 1 }))
+      await writeApproved(store, 'reader', root, { granted: [readAll], class: 1 })
     }, null)
     await until(() => pluginsManager.plugin('reader')?.state === 'ready')
     expect(modules.state('luoshu')).toBe('on')
@@ -130,7 +130,7 @@ describe('the reads the audit counts', () => {
     const { pluginsManager, records, call } = await joined(async (dataDir, store) => {
       const root = path.join(dataDir, 'plugins', 'lister')
       await writeFolder(root, filesFor(workerManifest('lister', { capabilities: [listAll, readAll] })))
-      await store.writePlugin('lister', await entryFor(root, { granted: [listAll, readAll], class: 1 }))
+      await writeApproved(store, 'lister', root, { granted: [listAll, readAll], class: 1 })
     }, await notesFolder({ 'a.md': 'alpha', 'inbox/b.md': 'beta' }))
     await until(() => pluginsManager.plugin('lister')?.state === 'ready')
     for (let i = 0; i < 3; i++) expect((await call('lister', 'luoshu.list', {}))?.result).toMatchObject({ paths: ['a.md', 'inbox/b.md'] })

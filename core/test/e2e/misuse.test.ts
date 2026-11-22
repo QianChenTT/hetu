@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Capability } from '../../api/capabilities.ts'
 import { defaultSwitches, type Plugin, StateStore } from '../../backend/boot/state.ts'
 import { buildPlugin } from '../../sdk/build/esbuild.ts'
-import { entryFor, filesFor, workerManifest, writeFolder } from '../plugins-manager-fakes.ts'
+import { filesFor, workerManifest, writeFolder, writeApproved } from '../plugins-manager-fakes.ts'
 import { cleanup, editorPage, exists, launch, logged, pageAt, records, temp, tick, until, visibleWindows, workersPage } from './helpers.ts'
 
 // Plugins drawing to mislead or to take what the human types, as the review of the views tried them, and writing notes
@@ -61,7 +61,7 @@ async function started(setup: Setup): Promise<{ app: ElectronApplication, editor
   for (const [id, plugin] of Object.entries(setup.plugins ?? {})) {
     const root = path.join(dataDir, 'plugins', id)
     await writeFolder(root, filesFor(workerManifest(id, { capabilities: plugin.granted, ...plugin.manifest }), { 'worker.js': built!.text, ...plugin.files }))
-    await store.writePlugin(id, await entryFor(root, { granted: plugin.granted, ...plugin.entry }))
+    await writeApproved(store, id, root, { granted: plugin.granted, ...plugin.entry })
   }
   const app = await launch(dataDir)
   const editor = await editorPage(app)
