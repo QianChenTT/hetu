@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { FetchRefused, getFromGitHub, type Fetch, type FetchLimits, type FetchProblem } from './github.ts'
+import { FetchRefused, getFromGitHub, onGitHub, type Fetch, type FetchLimits, type FetchProblem, type Wanted } from './github.ts'
 
 // A GitHub release's zips: a pasted repo or release link resolved through GitHub's API to the release's .zip assets,
 // and the bytes of the one the human picks. Nothing here unpacks or installs
@@ -73,8 +73,9 @@ const releaseAnswer = z.object({
 })
 
 const API = 'https://api.github.com'
-const JSON_TYPE = 'application/vnd.github+json'
-const BYTES_TYPE = 'application/octet-stream'
+// The answer GitHub's docs ask a client to accept and the API version whose release shape is read here
+const RELEASE_WANTED: Wanted = Object.freeze({ accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' })
+const ZIP_WANTED: Wanted = Object.freeze({ accept: 'application/octet-stream' })
 
 function parsedRelease(bytes: Buffer): z.infer<typeof releaseAnswer> {
   let body: unknown
@@ -104,11 +105,13 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
   const which = link.tag === null ? 'latest' : `tags/${encodeURIComponent(link.tag)}`
   const url = `${API}/repos/${link.owner}/${link.repo}/releases/${which}`
   return answer(async () => {
-    const bytes = await getFromGitHub(url, JSON_TYPE, { ...releaseLimits, ...options.limits }, options)
+    const bytes = await getFromGitHub(url, RELEASE_WANTED, { ...releaseLimits, ...options.limits }, options)
     const release = parsedRelease(bytes)
     const zips = release.assets
       .filter(asset => asset.state === 'uploaded' && asset.name.toLowerCase().endsWith('.zip'))
       .map(asset => ({ name: asset.name, size: asset.size, url: asset.browser_download_url }))
+    // An answer that points a download off GitHub's hosts would steer main elsewhere, so none of it is offered
+    if (zips.some(zip => !onGitHub(zip.url))) throw new FetchRefused('off-github')
     return { problem: null, tag: release.tag_name, zips }
   })
 }
@@ -119,5 +122,5 @@ export type Downloaded = { problem: null, bytes: Buffer } | { problem: FetchProb
 export async function downloadZip(zip: ReleaseZip, options: FetchOptions = {}): Promise<Downloaded> {
   const limits = { ...zipLimits, ...options.limits }
   if (zip.size > limits.bytes) return { problem: 'too-big' }
-  return answer(async () => ({ problem: null, bytes: await getFromGitHub(zip.url, BYTES_TYPE, limits, options) }))
+  return answer(async () => ({ problem: null, bytes: await getFromGitHub(zip.url, ZIP_WANTED, limits, options) }))
 }
