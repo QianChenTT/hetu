@@ -50,14 +50,19 @@ describe('a plugin\'s life through the SDK', () => {
     expect(seen).toMatchObject({ id: 'search', incarnation: 2, lastStop: 'off', previousVersion: '1.0.0' })
   })
 
-  it('hands start the data folder init carries to an install host half and null when it carries none', async () => {
-    let host: PluginContext | null = null
-    let other: PluginContext | null = null
-    running({ start: ctx => { host = ctx } }, init({ dataDir: 'C:\\data' }))
-    running({ start: ctx => { other = ctx } }, init())
-    await until(() => host !== null && other !== null)
-    expect(host!.dataDir).toBe('C:\\data')
-    expect(other!.dataDir).toBeNull()
+  it('hands start no data folder, even from an init that names one', async () => {
+    let seen: PluginContext | null = null
+    running({ start: ctx => { seen = ctx } }, init({ dataDir: 'C:\\data' }))
+    await until(() => seen !== null)
+    expect('dataDir' in seen!).toBe(false)
+    expect(JSON.stringify(seen)).not.toContain('C:\\\\data')
+  })
+
+  it('hands start no bind failure call of its own', async () => {
+    let seen: PluginContext | null = null
+    running({ start: ctx => { seen = ctx } })
+    await until(() => seen !== null)
+    expect('bindFailed' in seen!).toBe(false)
   })
 
   it('reads its requires and plugin.call targets from deps', async () => {
@@ -70,11 +75,11 @@ describe('a plugin\'s life through the SDK', () => {
     expect(ctx!.has('mcp')).toBe(true)
   })
 
-  // Only http's utility half may make the call, so search's worker is refused at the floor
-  it('tells the core a failed bind as core.bindFailed with the reason and nothing else', async () => {
+  // Only http's utility half may make the call, so search's worker making it as a raw core call is refused at the floor
+  it('carries core.bindFailed as a raw core call with the reason and nothing else, refused to a worker', async () => {
     let answer: unknown = null
     const { transport } = running({
-      start: async ctx => { answer = await ctx.bindFailed('port-taken').then(() => 'answered', (error: Refused) => error.code) },
+      start: async ctx => { answer = await ctx.call('core', 'bindFailed', { reason: 'port-taken' }).then(() => 'answered', (error: Refused) => error.code) },
     })
     await until(() => answer !== null)
     expect(answer).toBe('not-granted')
