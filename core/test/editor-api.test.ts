@@ -7,7 +7,7 @@ const call = (verb: string, args: unknown, id = 1) => JSON.stringify({ v: 1, kin
 
 describe("the bridge's verbs", () => {
   it('names each verb with what it needs: a read of the note, ui.edit on it for an edit and a ui item', () => {
-    expect(editorVerbs).toEqual(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys', 'editor.viewports'])
+    expect(editorVerbs).toEqual(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.select', 'editor.bind', 'editor.keys', 'editor.viewports'])
     expect(verbNeeds['editor.instances']).toEqual({ read: false, edit: false, ui: null })
     expect(verbNeeds['editor.read']).toEqual({ read: true, edit: false, ui: null })
     expect(verbNeeds['editor.decorate']).toEqual({ read: true, edit: false, ui: 'ui.decoration' })

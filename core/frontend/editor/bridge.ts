@@ -503,6 +503,9 @@ export class Drawer {
         this.edited(instance.id, plugin)
         return { version: instance.versions.version }
       }
+      // Not served yet
+      case 'editor.select':
+        throw new Refusal('not-granted')
       case 'editor.bind': {
         const bindings = call.args.bindings.map(binding => [normalKey(binding.key, this.mac), binding.command] as const)
         if (bindings.some(([key]) => RESERVED_KEYS.includes(key))) throw new Refusal('invalid')

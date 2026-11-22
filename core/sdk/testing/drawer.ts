@@ -314,6 +314,9 @@ export class FakeDrawer {
         this.tell({ topic: 'editor.changed', instance: call.args.instance, version: held.version, changes: changes.toJSON() })
         return { version: held.version }
       }
+      // Not served yet, as hetu's drawer
+      case 'editor.select':
+        throw new Refusal('not-granted')
       case 'editor.decorate': {
         need('ui.decoration')
         const held = note(call.args.instance)

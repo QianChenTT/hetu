@@ -21,6 +21,9 @@ export type EditorClient = {
   // selection places the cursor after it, taken only in answer to the command the human just invoked on that note at
   // its version and inside the range the edit changed
   edit(instance: string, version: number, changes: ChangeJson, selection?: { anchor: number, head: number }): Promise<{ version: number }>
+  // Moves the cursor in the note at version, changing no text. Taken once as the note opens, before the human's first
+  // key or click in it, and in answer to the command the human just invoked on that note at its version
+  select(instance: string, version: number, selection: { anchor: number, head: number }): Promise<{ version: number }>
   // Replaces every binding. The command named comes back as a command event
   bind(bindings: { key: string, command: string }[]): Promise<void>
   keys(on: boolean): Promise<void>
@@ -117,6 +120,10 @@ export class Editor implements EditorClient {
   edit(instance: string, version: number, changes: ChangeJson, selection?: { anchor: number, head: number }): Promise<{ version: number }> {
     const args = selection === undefined ? { instance, version, changes } : { instance, version, changes, selection: { anchor: selection.anchor, head: selection.head } }
     return this.send('editor.edit', args) as Promise<{ version: number }>
+  }
+
+  select(instance: string, version: number, selection: { anchor: number, head: number }): Promise<{ version: number }> {
+    return this.send('editor.select', { instance, version, selection: { anchor: selection.anchor, head: selection.head } }) as Promise<{ version: number }>
   }
 
   async bind(bindings: { key: string, command: string }[]): Promise<void> {

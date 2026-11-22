@@ -12,7 +12,7 @@ import { VERSION } from './version.ts'
 // the ui item named here. Instances and versions are the drawer's: an instance is one open note and its version counts the changes made
 // to it since it opened
 
-export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.bind', 'editor.keys', 'editor.viewports'] as const)
+export const editorVerbs = frozen(['editor.instances', 'editor.read', 'editor.decorate', 'editor.edit', 'editor.select', 'editor.bind', 'editor.keys', 'editor.viewports'] as const)
 export type EditorVerb = typeof editorVerbs[number]
 
 export type VerbNeeds = { readonly read: boolean, readonly edit: boolean, readonly ui: 'ui.decoration' | 'ui.command' | 'ui.keys' | null }
@@ -25,6 +25,7 @@ export const verbNeeds: Readonly<Record<EditorVerb, VerbNeeds>> = table({
   'editor.read': { read: true, edit: false, ui: null },
   'editor.decorate': { read: true, edit: false, ui: 'ui.decoration' },
   'editor.edit': { read: true, edit: true, ui: null },
+  'editor.select': { read: true, edit: true, ui: null },
   'editor.bind': { read: false, edit: false, ui: 'ui.command' },
   'editor.keys': { read: false, edit: false, ui: 'ui.keys' },
   'editor.viewports': { read: false, edit: false, ui: null },
@@ -100,6 +101,14 @@ export const bridgeCall = z.discriminatedUnion('verb', [
   }),
   z.strictObject({
     ...head,
+    verb: z.literal('editor.select'),
+    // Moves the cursor in the note at that version, changing no text. The drawer takes it once as the note opens, before
+    // the human's first key or click in it, and in answer to a command the human just invoked through the plugin's
+    // binding, on that note at the version the command named. It came within API version 3 as an addition
+    args: z.strictObject({ instance, version, selection: z.strictObject({ anchor: position, head: position }) }),
+  }),
+  z.strictObject({
+    ...head,
     verb: z.literal('editor.bind'),
     // Replaces every binding the plugin held. A key the drawer takes for itself never reaches a binding
     args: z.strictObject({ bindings: z.array(z.strictObject({ key, command: localName })).max(MAX_BINDINGS) }),
@@ -157,6 +166,7 @@ export type BridgeResults = {
   'editor.read': { text: string, version: number, selection: { anchor: number, head: number }[] }
   'editor.decorate': { version: number }
   'editor.edit': { version: number }
+  'editor.select': { version: number }
   'editor.bind': null
   'editor.keys': null
   'editor.viewports': null
