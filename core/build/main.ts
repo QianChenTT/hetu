@@ -73,6 +73,9 @@ export async function buildMain(outDir: string = path.join(core, 'dist'), kind: 
   // The core plugins, each built into dist/plugins/<id> and listed with the hash of its files, which the plugins manager checks
   // before it starts the host half in its utility process
   const plugins: Record<string, unknown> = {}
+  // A plugin folder an older build wrote and this one doesn't, never listed and never read, goes
+  const stale = await readdir(path.join(outDir, 'plugins')).catch(() => [])
+  for (const name of stale) if (!INSTALL.includes(name)) await rm(path.join(outDir, 'plugins', name), { recursive: true, force: true })
   for (const id of INSTALL) {
     const source = path.join(core, '..', 'core-plugins', id)
     const root = path.join(outDir, 'plugins', id)

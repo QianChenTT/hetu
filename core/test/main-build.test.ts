@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -44,6 +44,14 @@ describe('the main bundle', () => {
     const list = parseStrict(await readFile(path.join(out, INSTALL_LIST)), installList)
     expect(Object.keys(list.plugins)).toEqual(['mcp-http-handler'])
     for (const id of ['layout', 'hidden-marks']) await expect(stat(path.join(out, 'plugins', id))).rejects.toThrow('ENOENT')
+  })
+
+  // An output folder an older build wrote to still holds its plugins, which the list no longer names and nothing reads
+  it('clears every plugin folder it does not build out of the output, the layout and hidden marks an older build wrote included', async () => {
+    const out = await outDir()
+    for (const id of ['layout', 'hidden-marks']) await writeFolder(path.join(out, 'plugins', id), { 'hetu-plugin.json': '{}', 'dist/worker.js': '' })
+    await buildMain(out)
+    expect(await readdir(path.join(out, 'plugins'))).toEqual(['mcp-http-handler'])
   })
 
   // The build takes source only from this repository, so nothing outside it can name another folder for it
