@@ -60,7 +60,7 @@ export abstract class PluginsInstall extends PluginsClasses {
     }
     const root = folders.plugins(this.dataDir, id)
     const entry = this.state.plugins[id] ?? null
-    const read = present ? await readPlugin(root, id, 'folder') : unread
+    const read = present ? await readPlugin(root, id) : unread
     this.know(id, 'folder', root, read, entry)
     this.checked(id, 'folder', read, entry?.contentHash ?? null, this.loose(id))
   }

@@ -380,7 +380,7 @@ export abstract class PluginsChanges extends PluginsInstall {
     if (k === undefined || k.from !== 'folder' || k.entry === null) return { outcome: 'refused', reason: 'missing' }
     // An entry naming a signer is refused signer as the folder check refuses it, so no update carries one on
     if (k.entry.signer !== null) return { outcome: 'refused', reason: 'signer' }
-    const read = await readPlugin(dir, id, 'folder')
+    const read = await readPlugin(dir, id)
     if (read.problem !== null) return { outcome: 'refused', reason: read.problem }
     if (!isNewer(read.manifest!.version, k.entry.version)) return { outcome: 'refused', reason: 'not-newer' }
     const nodes: Node[] = [...this.known.values()].map(other => {
