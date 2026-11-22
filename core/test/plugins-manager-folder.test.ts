@@ -295,7 +295,7 @@ describe('the scan', () => {
 describe('removing a plugin-folder plugin', () => {
   const exists = (file: string) => stat(file).then(() => true, () => false)
 
-  it('removes the entry first, then the code, the storage and the cache, and leaves the switches as they were', async () => {
+  it('removes the entry first, then the code, the storage and the cache', async () => {
     const made = await harness({
       folder: { outline: outline() },
       entries: { outline: signed() },
@@ -308,7 +308,6 @@ describe('removing a plugin-folder plugin', () => {
       },
     })
     await made.pluginsManager.start()
-    const before = await readFile(path.join(made.dataDir, 'state', 'switches.json'), 'utf8')
     const order: string[] = []
     const removePlugin = made.store.removePlugin.bind(made.store)
     made.store.removePlugin = async id => {
@@ -320,6 +319,5 @@ describe('removing a plugin-folder plugin', () => {
     expect(made.pluginsManager.plugin('outline')).toBe(null)
     for (const kind of ['plugins', 'storage', 'cache']) expect(await exists(path.join(made.dataDir, kind, 'outline')), kind).toBe(false)
     expect(await exists(path.join(made.dataDir, 'storage', 'other'))).toBe(true)
-    expect(await readFile(path.join(made.dataDir, 'state', 'switches.json'), 'utf8')).toBe(before)
   })
 })

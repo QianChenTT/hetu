@@ -318,16 +318,21 @@ export abstract class PluginsChanges extends PluginsInstall {
   protected async remove(id: string, confirm: boolean): Promise<void> {
     const k = this.known.get(id)
     if (k === undefined || k.from !== 'folder') throw new Error(`${id} is not a plugin-folder plugin`)
+    const builds = [k.entry?.contentHash ?? null, k.read.hash].filter(hash => hash !== null)
     await this.entryGone(id, this.classes('remove', id, null, confirm), () => this.pairsGone(id))
-    // What the human let this plugin do goes with it, so a plugin added later under the id asks again
+    // What the human let this plugin do goes with it, so a plugin added later under the id asks again. Its build's allow
+    // too, unless another entry names the same build
     const { switches } = this.state
     const plugins = bare({ ...switches.limits.plugins })
     delete plugins[id]
-    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins) {
+    const named = new Set(Object.values(this.state.plugins).map(entry => entry.contentHash))
+    const allowUnsigned = switches.allowUnsigned.filter(hash => named.has(hash) || !builds.includes(hash))
+    if (isOne(switches.execAnyCommand, id) || isOne(switches.devMode, id) || id in switches.limits.plugins || allowUnsigned.length < switches.allowUnsigned.length) {
       await this.writeSwitches({
         ...switches,
         execAnyCommand: switches.execAnyCommand.filter(held => held !== id),
         devMode: switches.devMode.filter(held => held !== id),
+        allowUnsigned,
         limits: { all: switches.limits.all, plugins },
       })
     }
