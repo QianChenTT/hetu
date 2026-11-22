@@ -105,7 +105,10 @@ export async function releaseZips(pasted: string, options: FetchOptions = {}): P
   const which = link.tag === null ? 'latest' : `tags/${encodeURIComponent(link.tag)}`
   const url = `${API}/repos/${link.owner}/${link.repo}/releases/${which}`
   return answer(async () => {
-    const bytes = await getFromGitHub(url, RELEASE_WANTED, { ...releaseLimits, ...options.limits }, options)
+    const bytes = await getFromGitHub(url, RELEASE_WANTED, { ...releaseLimits, ...options.limits }, options).catch((err: unknown) => {
+      // The API's 404 is a repo or a release it doesn't have
+      throw err instanceof FetchRefused && err.problem === 'not-found' ? new FetchRefused('no-release') : err
+    })
     const release = parsedRelease(bytes)
     const zips = release.assets
       .filter(asset => asset.state === 'uploaded' && asset.name.toLowerCase().endsWith('.zip'))

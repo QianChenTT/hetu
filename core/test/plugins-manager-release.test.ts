@@ -156,10 +156,13 @@ describe('a failed fetch', () => {
   const zip: ReleaseZip = { name: 'a.zip', size: 1, url: download('a.zip') }
   const status = (code: number, headers: Record<string, string> = {}) => () => new Response('{"message":"x"}', { status: code, headers })
 
-  it('answers no-release for a repo or a tag GitHub doesn\'t have, and for a file gone since', async () => {
+  it('answers no-release for a repo or a tag GitHub doesn\'t have', async () => {
     expect(await releaseZips('https://github.com/o/r', { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
     expect(await releaseZips('https://github.com/o/r/releases/tag/v9', { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
-    expect(await downloadZip(zip, { fetch: failing(status(404)) })).toEqual({ problem: 'no-release' })
+  })
+
+  it('answers not-found for a picked file GitHub no longer has', async () => {
+    expect(await downloadZip(zip, { fetch: failing(status(404)) })).toEqual({ problem: 'not-found' })
   })
 
   it('answers no-zip for a release with no uploaded .zip', async () => {

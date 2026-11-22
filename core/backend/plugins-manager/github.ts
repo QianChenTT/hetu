@@ -11,8 +11,9 @@ export type FetchLimits = { bytes: number, ms: number }
 
 // Why a fetch from GitHub was refused. not-github: the pasted text is no repo or release link on github.com
 // off-github: a URL or a redirect to a host not listed in githubHosts, or not over https
-// no-release: GitHub answered 404, for a repo that is missing or private, one with no published release, a tag with
-// no release or a file gone since its release was read
+// no-release: the API answered 404, for a repo that is missing or private, one with no published release or a tag
+// with no release
+// not-found: a picked file answered 404, gone since its release was read
 // no-zip: the release holds no .zip asset uploaded whole
 // too-big: past the byte cap
 // rate-limited: GitHub's rate limit for this address, 60 API requests an hour with no token
@@ -21,7 +22,7 @@ export type FetchLimits = { bytes: number, ms: number }
 // cancelled: the caller stopped it
 // bad-answer: a status or a body GitHub doesn't answer for a release or a file
 export const fetchProblems = Object.freeze([
-  'not-github', 'off-github', 'no-release', 'no-zip', 'too-big', 'rate-limited', 'offline', 'timed-out', 'cancelled', 'bad-answer',
+  'not-github', 'off-github', 'no-release', 'not-found', 'no-zip', 'too-big', 'rate-limited', 'offline', 'timed-out', 'cancelled', 'bad-answer',
 ] as const)
 export type FetchProblem = typeof fetchProblems[number]
 
@@ -30,6 +31,7 @@ export const fetchProblemWords: Readonly<Record<FetchProblem, string>> = Object.
   'not-github': 'That is not a link to a GitHub repo or release. Paste one like https://github.com/owner/repo',
   'off-github': 'GitHub pointed the download away from GitHub, so nothing was fetched from there',
   'no-release': 'GitHub has no published release there. The repo may be private or missing, or hold only drafts and prereleases',
+  'not-found': 'GitHub no longer has that file. Paste the link again to see what the release holds now',
   'no-zip': 'That release holds no .zip file to install from',
   'too-big': 'That zip is bigger than a plugin may be',
   'rate-limited': 'GitHub is limiting requests from this network for now. Try again in an hour or install from a downloaded zip',
@@ -134,7 +136,7 @@ const rateLimited = (response: Response) => response.status === 429
 
 // Why an answer is refused before its body is read, past the cap by its Content-Length among them, or null
 function refusal(response: Response, cap: number): FetchProblem | null {
-  if (response.status === 404) return 'no-release'
+  if (response.status === 404) return 'not-found'
   if (rateLimited(response)) return 'rate-limited'
   if (response.status !== 200) return 'bad-answer'
   const length = Number(response.headers.get('content-length') ?? Number.NaN)
