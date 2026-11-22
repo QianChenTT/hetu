@@ -170,8 +170,10 @@ export class EditorViews implements Editors {
     element.className = 'editor'
     element.hidden = true
     this.host.append(element)
-    element.addEventListener('keydown', () => this.hooks.touched(id), true)
-    element.addEventListener('pointerdown', () => this.hooks.touched(id), true)
+    // Input with no key or click in it reaches the editor too: a paste or undo from the menu, dictation, an IME, a drop
+    for (const type of ['keydown', 'pointerdown', 'beforeinput', 'compositionstart', 'paste', 'cut', 'drop']) {
+      element.addEventListener(type, () => this.hooks.touched(id), true)
+    }
     // A note saved with CRLF keeps it: CodeMirror counts a line break as one place whichever it is
     const separator: Extension = text.includes('\r\n') ? EditorState.lineSeparator.of('\r\n') : []
     let instance: Instance | null = null
@@ -217,6 +219,8 @@ export class EditorViews implements Editors {
               const remote = tr.annotation(Transaction.remote) === true
               const human = !remote && tr.annotation(fromPlugin) === undefined
               const hid = human ? hiddenBy(tr.startState.field(pluginMarks).owned, tr.changes) : []
+              // A change of the human's that no event above told, as one execCommand makes
+              if (human) this.hooks.touched(id)
               this.hooks.changed(instance, tr.changes, remote, hid)
             }
             // After the changes reached versions, so the range counts in the version it was drawn at
