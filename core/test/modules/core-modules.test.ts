@@ -147,7 +147,7 @@ describe('the core modules', () => {
     expect(modules.provider('exec')).toBe(options.exec!.provider)
   })
 
-  it('look a provider up by namespace: cache through storage, leases and net with no module, anything else nothing', async () => {
+  it('look a provider up by namespace: cache through storage, lock and net with no module, anything else nothing', async () => {
     const { options } = fakes()
     const modules = made(options)
     await modules.start([], handing().handed)
@@ -156,7 +156,7 @@ describe('the core modules', () => {
     expect(modules.provider('luoshu')).toBe(options.luoshu!.provider)
     expect(modules.provider('history')).toBe(options.history!.provider)
     expect(modules.provider('exec')).toBe(options.exec!.provider)
-    expect(modules.provider('leases')).toBeNull()
+    expect(modules.provider('lock')).toBeNull()
     expect(modules.provider('net')).toBeNull()
     expect(modules.provider('gate')).toBeNull()
     expect(modules.provider('constructor')).toBeNull()

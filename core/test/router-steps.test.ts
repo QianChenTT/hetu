@@ -202,6 +202,17 @@ describe('guards', () => {
     expect(luoshu.performed).toEqual([])
   })
 
+  // The refusal names no holder, the lock's or any other
+  it('answers a deny from the lock guard with locked and asks no guard after it', async () => {
+    const { connect, guards, luoshu } = setup(['lock', 'second'])
+    guards.lock.answer = () => 'deny'
+    const reply = await connect(worker('scribe')).ask('luoshu.write', { path: 'notes/a.md', text: 'x' })
+    expect(reply.refusal).toEqual({ code: 'locked', action: 'luoshu.write' })
+    expect(guards.second.calls).toEqual([])
+    expect(luoshu.performed).toEqual([])
+    expect(luoshu.released).toHaveLength(1)
+  })
+
   it('counts a promise as no answer, since a host guard answers from its own state', async () => {
     const { connect, guards } = setup()
     guards.leases.answer = async () => 'allow'

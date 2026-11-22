@@ -54,7 +54,7 @@ export const namespaces = table({
   gate: { part: 'gate', route: 'action' },
   app: { part: 'runtime', route: 'action', each: true },
   luoshu: { part: 'luoshu', route: 'provider' },
-  leases: { part: 'leases', route: 'provider' },
+  lock: { part: 'lock', route: 'provider' },
   history: { part: 'history', route: 'provider' },
   exec: { part: 'exec', route: 'provider' },
   storage: { part: 'storage', route: 'provider' },
@@ -82,11 +82,14 @@ export const coreNamespaces = frozen(Object.keys(namespaces).filter(namespace =>
 export const guardableActions = frozen(['luoshu.write', 'luoshu.remove', 'luoshu.move'] as const)
 export type GuardableAction = typeof guardableActions[number]
 
-// The guards expected on each guardable action, in the order they answer. Empty until leases ships with #77, since an
-// expected guard that isn't running refuses every write
+// The guards expected on each guardable action, in the order they answer. Empty until the lock module is wired, since
+// an expected guard that isn't running refuses every write
 export const guards: Readonly<Record<GuardableAction, readonly string[]>> = table({
   'luoshu.write': [], 'luoshu.remove': [], 'luoshu.move': [],
 })
+
+// The guard holding note locks. Its deny answers locked, any other guard's guard-refused
+export const LOCK_GUARD = 'lock'
 
 // The core modules that judge yes or no: the gate on every call and flood control on every message, which bounds what
 // plugins and windows may cost main. With every guard core/api expects they are the security controls one rule holds:
@@ -124,9 +127,8 @@ export function failSafeControls(guardsOf: (action: GuardableAction) => readonly
 export const coreModuleIds = frozen(['gate', 'grant-risk-classifier', 'storage', 'luoshu', 'history', 'exec', 'flood-control', 'heartbeat', 'recording', 'security-view'] as const)
 export type CoreModuleId = typeof coreModuleIds[number]
 
-// Core plugins, which load only from the install: mcp-http-handler in a utility process. Leases and net are designed
-// and not built
-export const corePluginIds = frozen(['leases', 'mcp-http-handler', 'net'] as const)
+// Core plugins, which load only from the install: mcp-http-handler in a utility process. net is designed and not built
+export const corePluginIds = frozen(['mcp-http-handler', 'net'] as const)
 
 // Core plugins whose host entry runs in a utility process of its own and never in main: Node, no sandbox, none of
 // main's environment and no data folder. The manifest still names a host entry and the caller stays its host half

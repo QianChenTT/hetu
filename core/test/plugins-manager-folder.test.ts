@@ -123,7 +123,7 @@ describe('where a plugin\'s code came from', () => {
 })
 
 describe('reserved ids in the plugin folder', () => {
-  it.each(['gate', 'luoshu', 'leases', 'hidden-marks', 'editor', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
+  it.each(['gate', 'luoshu', 'lock', 'hidden-marks', 'editor', 'cache', 'core', 'events'])('refuses %s with reserved-id and keeps it apart from the install', async id => {
     const made = await harness({ folder: { [id]: filesFor(workerManifest(id)) }, entries: { [id]: signed() } })
     await made.pluginsManager.start()
     expect(made.pluginsManager.list()).toContainEqual({ id, from: 'folder', place: 'sandboxed', state: 'refused', reason: 'reserved-id', incarnation: 0 })

@@ -138,7 +138,7 @@ export class CoreModules implements Holder {
     return this.serving('heartbeat') ? this.heartbeatTold : null
   }
 
-  // The provider serving a namespace, cache through storage. leases and net have no module and answer null. A module
+  // The provider serving a namespace, cache through storage. lock and net have no module yet and answer null. A module
   // serves only while what it requires does
   provider(namespace: string): Provider | null {
     const id = Object.hasOwn(providers, namespace) ? (providers as Readonly<Record<string, string>>)[namespace] : undefined

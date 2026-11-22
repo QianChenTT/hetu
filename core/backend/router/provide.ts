@@ -1,7 +1,7 @@
 import { LIST_PAGE, providerActions, subscribeAction } from '../../api/actions.ts'
 import type { CapabilityType } from '../../api/capabilities.ts'
 import { token, type Caller, type RefusalCode } from '../../api/envelope.ts'
-import { guardableActions } from '../../api/ids.ts'
+import { guardableActions, LOCK_GUARD } from '../../api/ids.ts'
 import { frozen } from '../../api/plain.ts'
 import { spaceOf } from '../../api/storage.ts'
 import type { Access, GuardCall, Prepared, Scope } from '../../api/policy-jobs.ts'
@@ -286,7 +286,8 @@ export function rejudge(c: Context): void {
 }
 
 // 9 guard: every expected guard on the action, in core/api's order, unless the human switched it off. A GuardCall
-// carries no arguments. The answer is timed once it returns and a late one counts as guard-down
+// carries no arguments. The answer is timed once it returns and a late one counts as guard-down. The lock guard's deny
+// answers locked
 function guard(c: Context, pending: Pending, prepared: Prepared): RefusalCode | null {
   if (!isOne(guardableActions, pending.action)) return null
   for (const id of c.guardsFor(pending.action)) {
@@ -313,7 +314,7 @@ function guard(c: Context, pending: Pending, prepared: Prepared): RefusalCode | 
       c.fault(id, 'guard-late')
       return 'guard-down'
     }
-    if (answer === 'deny') return 'guard-refused'
+    if (answer === 'deny') return id === LOCK_GUARD ? 'locked' : 'guard-refused'
     if (answer !== 'allow') return 'guard-down'
   }
   return null

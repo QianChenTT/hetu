@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LEASE_PATHS, MAX_REFUSAL_COUNT,
+  coreActions, coreTopics, eventActions, LIST_PAGE, MAX_CALL_TOPICS, MAX_FILTER_PATHS, MAX_LOCK_PATHS, MAX_REFUSAL_COUNT,
   providerActions, refusedReasons,
 } from '../api/actions.ts'
 import { answer, cancel, cancelled, delivery, request, callEnvelope } from '../api/envelope.ts'
@@ -190,10 +190,10 @@ describe('the provider actions', () => {
       'luoshu.move': 'luoshu.write',
       // Free at the gate's decide step: the router keeps only the names the gate's canList allows
       'luoshu.list': null,
-      'leases.acquire': 'luoshu.write',
-      'leases.renew': null,
-      'leases.release': null,
-      'leases.list': null,
+      'lock.set': 'lock.set',
+      // A plugin clears only its own chain's locks, so it needs no grant
+      'lock.clear': null,
+      'lock.held': 'luoshu.read',
       'storage.get': null,
       'storage.set': null,
       'storage.delete': null,
@@ -219,7 +219,7 @@ describe('the provider actions', () => {
   it('keeps writes one audit record each and the guardable action among them', () => {
     const writes = Object.entries(providerActions).filter(([, spec]) => spec.write).map(([action]) => action)
     expect(writes).toEqual([
-      'luoshu.write', 'luoshu.remove', 'luoshu.move', 'leases.acquire', 'leases.renew', 'leases.release', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete',
+      'luoshu.write', 'luoshu.remove', 'luoshu.move', 'lock.set', 'lock.clear', 'storage.set', 'storage.delete', 'cache.set', 'cache.delete',
       'history.commit', 'exec.run',
     ])
     for (const action of guardableActions) expect(providerActions[action].write).toBe(true)
@@ -235,8 +235,9 @@ describe('the provider actions', () => {
 
   it('takes the raw scope from the argument it names', () => {
     expect(providerActions['luoshu.read'].scope).toBe('path')
-    expect(providerActions['leases.acquire'].scope).toBe('paths')
-    expect(providerActions['leases.list'].scope).toBeNull()
+    expect(providerActions['lock.set'].scope).toBe('paths')
+    expect(providerActions['lock.held'].scope).toBe('paths')
+    expect(providerActions['lock.clear'].scope).toBeNull()
     expect(providerActions['history.commit'].scope).toBe('paths')
     expect(providerActions['exec.run'].scope).toBe('command')
     expect(providerActions['luoshu.remove'].scope).toBe('path')
@@ -289,19 +290,29 @@ describe('the provider actions', () => {
     ['luoshu.list', { folder: 'notes\\b' }, false],
     ['luoshu.list', { after: '../a.md' }, false],
     ['luoshu.list', { page: 2 }, false],
-    ['leases.acquire', { paths: ['a.md'] }, true],
-    ['leases.acquire', { paths: [] }, false],
-    ['leases.acquire', { paths: Array.from({ length: MAX_LEASE_PATHS + 1 }, (_, i) => `${i}.md`) }, false],
-    ['leases.acquire', { paths: ['notes/a.md', 'notes\\b.md'] }, false],
-    ['leases.list', undefined, true],
-    ['leases.list', { paths: ['a.md'] }, false],
+    ['lock.set', { paths: ['a.md'], ms: 600000 }, true],
+    // Over the cap is the module's to clamp
+    ['lock.set', { paths: ['a.md'], ms: Number.MAX_SAFE_INTEGER }, true],
+    ['lock.set', { paths: ['a.md'] }, false],
+    ['lock.set', { paths: ['a.md'], ms: 0 }, false],
+    ['lock.set', { paths: ['a.md'], ms: 1.5 }, false],
+    ['lock.set', { paths: [], ms: 1000 }, false],
+    ['lock.set', { paths: Array.from({ length: MAX_LOCK_PATHS + 1 }, (_, i) => `${i}.md`), ms: 1000 }, false],
+    ['lock.set', { paths: ['notes/a.md', 'notes\\b.md'], ms: 1000 }, false],
+    // The holder is the caller's own chain, never one the arguments name
+    ['lock.set', { paths: ['a.md'], ms: 1000, holder: 'claude-code#1' }, false],
+    ['lock.clear', { paths: ['a.md'] }, true],
+    ['lock.clear', { paths: [] }, false],
+    ['lock.clear', { paths: ['a.md'], holder: 'claude-code#1' }, false],
+    ['lock.held', { paths: ['a.md', 'b/c.md'] }, true],
+    ['lock.held', { paths: Array.from({ length: MAX_LOCK_PATHS + 1 }, (_, i) => `${i}.md`) }, false],
+    ['lock.held', undefined, false],
     ['storage.get', { key: 'index' }, true],
     ['storage.get', { key: '../search/index' }, false],
     ['storage.set', { key: 'index', value: { a: [1] } }, true],
     ['storage.set', { key: '../search/index', value: 1 }, false],
     ['cache.set', { key: 'a/b', value: 1 }, false],
     ['storage.get', { key: 'index', plugin: 'search' }, false],
-    ['leases.list', undefined, true],
   ])('checks %s with %j', (action, args, ok) => {
     expect(providerActions[action].args.safeParse(args).success).toBe(ok)
   })

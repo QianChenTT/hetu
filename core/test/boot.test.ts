@@ -139,10 +139,10 @@ describe('a later run', () => {
     const load = vi.spyOn(StateStore.prototype, 'load')
     const booted = await started()
     expect(load.mock.contexts[0]).toBe(booted.store)
-    await booted.store.writeSwitches({ ...noSwitches, off: ['leases'], removed: ['git'] })
+    await booted.store.writeSwitches({ ...noSwitches, off: ['net'], removed: ['git'] })
     await stopped(booted)
     const again = await started()
-    expect(again.state.switches.off).toEqual(['leases'])
+    expect(again.state.switches.off).toEqual(['net'])
     expect(again.state.switches.removed).toEqual(['git'])
     expect(again.removedKnown).toBe(true)
   })
@@ -225,7 +225,7 @@ describe('the luoshu file', () => {
 
   it('keeps the switches when the luoshu file is bad and writes nothing over it', async () => {
     const first = await started()
-    await first.store.writeSwitches({ ...noSwitches, off: ['leases'] })
+    await first.store.writeSwitches({ ...noSwitches, off: ['net'] })
     await first.store.writeLuoshu(notes)
     await stopped(first)
     await writeFile(stateFile('luoshu.json'), 'tampered')
@@ -233,7 +233,7 @@ describe('the luoshu file', () => {
     expect(booted.checks).toEqual([{ check: 'switches', result: 'ok' }, { check: 'luoshu', result: 'hash-missing' }])
     expect(booted.suspect).toBe(true)
     expect(booted.state.luoshu).toBeNull()
-    expect(booted.state.switches.off).toEqual(['leases'])
+    expect(booted.state.switches.off).toEqual(['net'])
     expect(await readFile(stateFile('luoshu.json'), 'utf8')).toBe('tampered')
   })
 

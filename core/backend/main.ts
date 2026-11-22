@@ -17,6 +17,7 @@ import { utilityRuntime } from './runtime/utility.ts'
 import { freezeIntrinsics } from './runtime/intrinsics.ts'
 import { afterFailure, DRAFT_GRACE_MS, Ending, quitInOrder, relaunches, stoppedBox, type QuitParts } from './runtime/quit.ts'
 import { lockDown, partition, ROLES, type Role } from './runtime/sessions.ts'
+import { runShim, shimArgv, shimError } from './runtime/shim.ts'
 import { ViewFiles } from './runtime/views.ts'
 import { WindowWay, type WindowContents } from './runtime/window-way.ts'
 import { pickFolder, TrustedWindow } from './runtime/trusted.ts'
@@ -309,7 +310,11 @@ let early: ReturnType<typeof beforeReady> = null
 try {
   early = beforeReady(app, protocol, { env: process.env, platform: process.platform, locked: LOCKED, argv: process.argv })
 } catch (err) {
-  tell(err)
+  // The shim speaks on stderr alone
+  if (shimArgv(process.argv, LOCKED)) shimError(`could not start: ${reason(err)}`)
+  else tell(err)
   app.exit(1)
 }
-if (early !== null) void start()
+// The shim relays and nothing else: no boot, no log, no window
+if (early?.shim === true) runShim(app)
+else if (early !== null) void start()

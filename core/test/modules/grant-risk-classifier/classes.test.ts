@@ -46,6 +46,24 @@ describe('an approval\'s answer', () => {
   })
 })
 
+// A lock keeps every other writer off a note, the human included until he takes it over and tells its holder nothing
+describe('lock.set', () => {
+  it('is class 2 confined to a folder or a note and asks nothing at first use', () => {
+    const locks: Capability = { type: 'lock.set', paths: ['projects/**', 'plan.md'] }
+    expect(approval({ leases: [locks] }, 'leases')).toMatchObject({ class: 2, firstUse: [] })
+  })
+
+  it.each([['**'], ['*.md'], ['projects/**', '**/plan.md']])('is class 4 on %j and asks at first use', (...paths) => {
+    const locks: Capability = { type: 'lock.set', paths }
+    expect(approval({ leases: [locks] }, 'leases')).toMatchObject({ class: 4, firstUse: [locks] })
+  })
+
+  it('reads nothing, so beside network it stays a writer\'s class', () => {
+    const locks: Capability = { type: 'lock.set', paths: ['projects/**'] }
+    expect(approval({ leases: [locks, fetchOne] }, 'leases')).toMatchObject({ class: 3, firstUse: [] })
+  })
+})
+
 describe('the plugins connected through plugin.call', () => {
   it('count both ways, so a reader and a network plugin sharing a callee are class 4, the callee too', () => {
     const plugins = rows({ reader: [[read, calls('bridge')], 1], bridge: [[storage], 0] })

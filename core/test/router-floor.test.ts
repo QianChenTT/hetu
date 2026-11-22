@@ -67,7 +67,7 @@ describe('shape', () => {
     const search = connect(worker('search'))
     expect((await search.ask('luoshu.read', { path })).refusal).toEqual({ code: 'invalid', action: 'luoshu.read' })
     expect(code(await search.ask('luoshu.write', { path, text: 'x' }))).toBe('invalid')
-    expect(code(await search.ask('leases.acquire', { paths: ['notes/a.md', path] }))).toBe('invalid')
+    expect(code(await search.ask('lock.set', { paths: ['notes/a.md', path], ms: 1000 }))).toBe('invalid')
     expect(gate.asked).toEqual([])
     expect(luoshu.prepared).toEqual([])
   })
@@ -346,34 +346,37 @@ describe('the floor', () => {
     expect(gate.asked).toEqual([])
   })
 
-  it('lets a lease holder\'s own lease actions skip the gate while acquire asks it', async () => {
-    const { connect, pluginsManager, gate, providers } = harness()
-    pluginsManager.installed('leases')
-    providers.leases = { prepare: async () => ({ scope: {} }), perform: async call => call.action }
-    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
+  // The lock keeps a plugin to its own chain's locks and lets a window clear any, so the clear needs no grant
+  it('lets a plugin and the editor window clear locks with no gate, never the trusted window, while set and held ask it', async () => {
+    const { router, connect, gate, providers } = harness()
+    providers.lock = { prepare: async () => ({ scope: {} }), perform: async call => call.action }
+    gate.grants.scribe = [{ type: 'lock.set', paths: ['notes/**'] }, { type: 'luoshu.read', paths: ['notes/**'] }]
     const scribe = connect(worker('scribe'))
-    expect((await scribe.ask('leases.renew')).result).toBe('leases.renew')
-    expect((await scribe.ask('leases.release')).result).toBe('leases.release')
-    expect((await scribe.ask('leases.list')).result).toBe('leases.list')
+    expect((await scribe.ask('lock.clear', { paths: ['secret/a.md'] })).result).toBe('lock.clear')
+    const windows = windowWay(router, { 'editor-1': editor, 'trusted-1': trusted })
+    expect((await windows.ask('editor-1', 'lock.clear', { paths: ['secret/a.md'] })).result).toBe('lock.clear')
+    expect(code(await windows.ask('trusted-1', 'lock.clear', { paths: ['secret/a.md'] }))).toBe('not-granted')
     expect(gate.asked).toEqual([])
-    expect((await scribe.ask('leases.acquire', { paths: ['notes/a.md'] })).ok).toBe(true)
-    expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([['raw', 'luoshu.write'], ['canonical', 'luoshu.write']])
+    expect((await scribe.ask('lock.set', { paths: ['notes/a.md'], ms: 1000 })).ok).toBe(true)
+    expect((await scribe.ask('lock.held', { paths: ['notes/a.md'] })).ok).toBe(true)
+    expect(gate.asked.map(access => [access.stage, access.capability])).toEqual([
+      ['raw', 'lock.set'], ['canonical', 'lock.set'], ['raw', 'luoshu.read'], ['canonical', 'luoshu.read'],
+    ])
   })
 
-  // Acquire takes the luoshu's latch on a path, so a path the grant doesn't cover must not reach prepare
-  it('prechecks every path a lease names before prepare', async () => {
-    const { connect, pluginsManager, gate, providers } = harness()
-    pluginsManager.installed('leases')
+  // A path the grant doesn't cover must not reach prepare
+  it('prechecks every path a lock names before prepare', async () => {
+    const { connect, gate, providers } = harness()
     const prepared: Call[] = []
-    providers.leases = {
+    providers.lock = {
       prepare: async call => {
         prepared.push(call)
         return { scope: { paths: (call.args as { paths: string[] }).paths } }
       },
       perform: async () => null,
     }
-    gate.grants.scribe = [{ type: 'luoshu.write', paths: ['notes/**'] }]
-    expect(code(await connect(worker('scribe')).ask('leases.acquire', { paths: ['notes/a.md', 'secret/b.md'] }))).toBe('not-granted')
+    gate.grants.scribe = [{ type: 'lock.set', paths: ['notes/**'] }]
+    expect(code(await connect(worker('scribe')).ask('lock.set', { paths: ['notes/a.md', 'secret/b.md'], ms: 1000 }))).toBe('not-granted')
     expect(prepared).toEqual([])
     expect(gate.asked[0].scope).toEqual({ paths: ['notes/a.md', 'secret/b.md'] })
   })
@@ -635,7 +638,7 @@ describe('a path with a dot segment', () => {
   const calls = (path: string): [string, unknown][] => [
     ['luoshu.read', { path }], ['luoshu.write', { path, text: 'x' }], ['luoshu.remove', { path, baseVersion: '0'.repeat(64) }],
     ['luoshu.move', { from: 'notes/a.md', to: path }], ['luoshu.move', { from: path, to: 'notes/a.md' }], ['luoshu.list', { folder: path }],
-    ['luoshu.list', { after: path }], ['history.log', { path }], ['leases.acquire', { paths: ['notes/a.md', path] }],
+    ['luoshu.list', { after: path }], ['history.log', { path }], ['lock.set', { paths: ['notes/a.md', path], ms: 1000 }],
     ['events.publish', { topic: 'search.indexed', path }],
   ]
 
